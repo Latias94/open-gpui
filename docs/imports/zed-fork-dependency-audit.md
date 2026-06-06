@@ -1,15 +1,15 @@
 # Zed Fork Dependency Audit
 
 **Date**: 2026-06-06
-**Status**: Initial audit
+**Status**: In progress
 **Related**: [ADR 0001](../adr/0001-open-gpui-fork-strategy.md), [Verification](../verification.md)
 
 ## Problem
 
 Open GPUI still depends on a small set of Zed-maintained external forks after the initial clean
-workspace import. These forks are intentionally allowed by the current import-boundary scan, but
-they remain follow-up debt because they keep framework builds coupled to Zed-controlled git
-repositories.
+workspace import. The remaining forks are intentionally allowed by the current import-boundary
+scan, but they remain follow-up debt because they keep framework builds coupled to Zed-controlled
+git repositories.
 
 The goal is to replace, justify, or own each fork without weakening the clean license and dependency
 boundary established by ADR 0001.
@@ -18,7 +18,6 @@ boundary established by ADR 0001.
 
 ```mermaid
 flowchart TD
-    Reqwest[zed-reqwest] --> ReqwestClient[reqwest_client]
     Scap[zed-scap] --> Gpui[gpui screen-capture feature]
     Scap --> GpuiLinux[gpui_linux screen-capture feature]
     Scap --> GpuiWindows[gpui_windows screen-capture feature]
@@ -29,11 +28,16 @@ flowchart TD
     Wgpu[Zed wgpu fork] --> GpuiWgpu
 ```
 
+## Resolved Forks
+
+| Fork | Resolution | Compatibility note | Evidence |
+| --- | --- | --- | --- |
+| `zed-reqwest` | Replaced with crates.io `reqwest = "=0.12.15"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` now caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. | `cargo check -p reqwest_client`; `cargo nextest run -p reqwest_client` |
+
 ## Inventory
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| `zed-reqwest` | `zed-industries/reqwest.git`, package `zed-reqwest`, version `0.12.15-zed` | `reqwest_client` only | `reqwest = 0.13.4` from crates.io search | Medium | Audit API differences first; likely the best first replacement candidate because the blast radius is isolated to HTTP client construction and body streaming. |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | Medium-high | Treat as a feature-gated migration. Compare frame/capturer API and platform support before changing manifests. |
 | `zed-font-kit` | `zed-industries/font-kit`, package `zed-font-kit`, version `0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io search | High | Defer until text/font rendering has stronger coverage; this touches font matching and platform font behavior. |
 | `zed-xim` | `zed-industries/xim-rs.git`, package `zed-xim`, version `0.4.0-zed` | `gpui_linux` X11 input method path | `xim = 0.5.0` from crates.io search | Medium-high | Migrate after Linux/X11-focused checks exist; input-method regressions are hard to catch from Windows CI. |
@@ -105,23 +109,20 @@ Decision: rejected as a long-term strategy.
 
 ## Recommended Work Order
 
-1. **`zed-reqwest`**: inspect the delta between Zed's fork and crates.io `reqwest`; try a focused
-   manifest switch in `reqwest_client`; verify with `cargo check -p reqwest_client` and
-   `cargo run -p xtask -- verify`.
-2. **`zed-scap`**: compare fork API to crates.io `scap`; keep the migration feature-gated and verify
+1. **`zed-scap`**: compare fork API to crates.io `scap`; keep the migration feature-gated and verify
    all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-3. **`zed-xim`**: replace only with Linux/X11-focused build evidence. Add a Linux CI lane first if
+2. **`zed-xim`**: replace only with Linux/X11-focused build evidence. Add a Linux CI lane first if
    practical.
-4. **`zed-font-kit`**: defer until text/font tests are stronger because it affects font matching and
+3. **`zed-font-kit`**: defer until text/font tests are stronger because it affects font matching and
    renderer behavior.
-5. **Zed `wgpu` fork**: defer until a dedicated renderer compatibility lane can compare behavior
+4. **Zed `wgpu` fork**: defer until a dedicated renderer compatibility lane can compare behavior
    against crates.io `wgpu = 29.0.3`.
 
 ## Success Metrics
 
 | Metric | Target | Measurement |
 | --- | --- | --- |
-| Zed fork count | Reduced one fork at a time | `rg 'zed-reqwest|zed-scap|zed-font-kit|zed-xim|zed-industries/wgpu' Cargo.toml Cargo.lock` |
+| Zed fork count | Reduced one fork at a time | `rg 'zed-scap|zed-font-kit|zed-xim|zed-industries/wgpu' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
 | Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks or documented limitation |

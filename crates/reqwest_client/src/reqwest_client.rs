@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
+use std::{
+    borrow::Cow, collections::HashMap, mem, pin::Pin, sync::Mutex, task::Poll, time::Duration,
+};
 
 use gpui_util::defer;
 
@@ -22,6 +24,8 @@ pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<Url>,
     user_agent: Option<HeaderValue>,
+    use_platform_tls: bool,
+    redirect_clients: Mutex<HashMap<RedirectPolicy, reqwest::Client>>,
     handle: tokio::runtime::Handle,
 }
 
@@ -40,10 +44,13 @@ impl ReqwestClient {
     }
 
     pub fn user_agent(agent: &str) -> anyhow::Result<Self> {
+        let user_agent = HeaderValue::from_str(agent)?;
         let mut map = HeaderMap::new();
-        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        map.insert(http::header::USER_AGENT, user_agent.clone());
         let client = Self::builder().default_headers(map).build()?;
-        Ok(client.into())
+        let mut client: ReqwestClient = client.into();
+        client.user_agent = Some(user_agent);
+        Ok(client)
     }
 
     pub fn proxy_and_user_agent(proxy: Option<Url>, user_agent: &str) -> anyhow::Result<Self> {
@@ -78,7 +85,60 @@ impl ReqwestClient {
         let mut client: ReqwestClient = client.into();
         client.proxy = client_has_proxy.then_some(proxy).flatten();
         client.user_agent = Some(user_agent);
+        client.use_platform_tls = true;
         Ok(client)
+    }
+
+    fn client_for_redirect_policy(
+        &self,
+        redirect_policy: Option<&RedirectPolicy>,
+    ) -> anyhow::Result<reqwest::Client> {
+        let Some(redirect_policy) = redirect_policy else {
+            return Ok(self.client.clone());
+        };
+
+        if let Some(client) = self
+            .redirect_clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(redirect_policy)
+            .cloned()
+        {
+            return Ok(client);
+        }
+
+        let mut builder = Self::builder().redirect(reqwest_redirect_policy(redirect_policy));
+
+        if let Some(user_agent) = self.user_agent.clone() {
+            let mut headers = HeaderMap::new();
+            headers.insert(http::header::USER_AGENT, user_agent);
+            builder = builder.default_headers(headers);
+        }
+
+        if let Some(proxy_url) = self.proxy.as_ref() {
+            let proxy = reqwest::Proxy::all(proxy_url.clone())?;
+            builder = builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
+        }
+
+        if self.use_platform_tls {
+            builder = builder.use_preconfigured_tls(http_client_tls::tls_config());
+        }
+
+        let client = builder.build()?;
+        self.redirect_clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(redirect_policy.clone(), client.clone());
+
+        Ok(client)
+    }
+}
+
+fn reqwest_redirect_policy(redirect_policy: &RedirectPolicy) -> redirect::Policy {
+    match redirect_policy {
+        RedirectPolicy::NoFollow => redirect::Policy::none(),
+        RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
+        RedirectPolicy::FollowAll => redirect::Policy::limited(100),
     }
 }
 
@@ -104,6 +164,8 @@ impl From<reqwest::Client> for ReqwestClient {
             handle,
             proxy: None,
             user_agent: None,
+            use_platform_tls: false,
+            redirect_clients: Mutex::default(),
         }
     }
 }
@@ -232,15 +294,14 @@ impl http_client::HttpClient for ReqwestClient {
     > {
         let (parts, body) = req.into_parts();
 
-        let mut request = self.client.request(parts.method, parts.uri.to_string());
+        let client = match self.client_for_redirect_policy(parts.extensions.get::<RedirectPolicy>())
+        {
+            Ok(client) => client,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+
+        let mut request = client.request(parts.method, parts.uri.to_string());
         request = request.headers(parts.headers);
-        if let Some(redirect_policy) = parts.extensions.get::<RedirectPolicy>() {
-            request = request.redirect_policy(match redirect_policy {
-                RedirectPolicy::NoFollow => redirect::Policy::none(),
-                RedirectPolicy::FollowLimit(limit) => redirect::Policy::limited(*limit as usize),
-                RedirectPolicy::FollowAll => redirect::Policy::limited(100),
-            });
-        }
         let request = request.body(match body.0 {
             http_client::Inner::Empty => reqwest::Body::default(),
             http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
@@ -277,9 +338,9 @@ impl http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use http_client::{HttpClient, Url};
+    use http_client::{HttpClient, RedirectPolicy, Url};
 
-    use crate::ReqwestClient;
+    use crate::{ReqwestClient, reqwest_redirect_policy};
 
     #[test]
     fn test_proxy_uri() {
@@ -319,5 +380,48 @@ mod tests {
             client.proxy.is_none(),
             "An invalid proxy URL should add no proxy to the client!"
         )
+    }
+
+    #[test]
+    fn test_user_agent_is_recorded_for_redirect_clients() {
+        let client = ReqwestClient::user_agent("test-agent").unwrap();
+        assert_eq!(client.user_agent().unwrap().to_str().unwrap(), "test-agent");
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::FollowAll))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_redirect_policy_clients_build_with_upstream_reqwest() {
+        let client = ReqwestClient::new();
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::NoFollow))
+            .unwrap();
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
+            .unwrap();
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::FollowAll))
+            .unwrap();
+
+        let _ = reqwest_redirect_policy(&RedirectPolicy::NoFollow);
+    }
+
+    #[test]
+    fn test_redirect_policy_clients_are_cached() {
+        let client = ReqwestClient::new();
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
+            .unwrap();
+        client
+            .client_for_redirect_policy(Some(&RedirectPolicy::FollowLimit(3)))
+            .unwrap();
+
+        let cache = client
+            .redirect_clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(&RedirectPolicy::FollowLimit(3)));
     }
 }
