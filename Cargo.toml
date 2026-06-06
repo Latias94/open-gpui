@@ -23,6 +23,7 @@ members = [
     "crates/sum_tree",
     "crates/util",
     "crates/util_macros",
+    "examples/smoke-native",
 ]
 exclude = [
     "repo-ref/*",

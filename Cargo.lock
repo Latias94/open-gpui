@@ -4395,6 +4395,14 @@ name = "open-gpui"
 version = "0.1.0"
 
 [[package]]
+name = "open-gpui-smoke-native"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "gpui_platform",
+]
+
+[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
