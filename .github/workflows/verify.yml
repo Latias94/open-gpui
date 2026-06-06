@@ -1,0 +1,46 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Local verification gate
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run verification gate
+        shell: pwsh
+        run: cargo run -p xtask -- verify
+
+      - name: Run xtask tests
+        shell: pwsh
+        run: cargo nextest run -p xtask

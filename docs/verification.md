@@ -13,6 +13,9 @@ The gate runs:
 - `cargo check -p open-gpui-smoke-native`
 - `cargo run -p xtask -- scan-import-boundary`
 
+CI runs the same gate on Windows for pushes to `master`, pull requests, and manual workflow
+dispatches. It also runs the `xtask` unit tests with nextest.
+
 The import-boundary scan rejects dependency files that reintroduce Zed's GPL tracing stack
 (`ztracing`, `ztracing_macro`, `zlog`), the old `zed-sum-tree` dependency, the Zed monorepo as a
 Cargo git dependency, or the removed Zed `perf` crate dependency.
