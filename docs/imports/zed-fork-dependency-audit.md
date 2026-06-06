@@ -33,12 +33,13 @@ flowchart TD
 | Fork | Resolution | Compatibility note | Evidence |
 | --- | --- | --- | --- |
 | `zed-reqwest` | Replaced with crates.io `reqwest = "=0.12.15"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` now caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. | `cargo check -p reqwest_client`; `cargo nextest run -p reqwest_client` |
+| `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
 
 ## Inventory
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | Medium-high | Treat as a feature-gated migration. Compare frame/capturer API and platform support before changing manifests. |
+| `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
 | `zed-font-kit` | `zed-industries/font-kit`, package `zed-font-kit`, version `0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io search | High | Defer until text/font rendering has stronger coverage; this touches font matching and platform font behavior. |
 | `zed-xim` | `zed-industries/xim-rs.git`, package `zed-xim`, version `0.4.0-zed` | `gpui_linux` X11 input method path | `xim = 0.5.0` from crates.io search | Medium-high | Migrate after Linux/X11-focused checks exist; input-method regressions are hard to catch from Windows CI. |
 | Zed `wgpu` fork | `zed-industries/wgpu.git`, version `29.0.3` | `gpui_wgpu` | `wgpu = 29.0.3` from crates.io search | High | Defer. The version line matches crates.io, but the fork may carry unpublished patches in rendering internals. Compare lockfile and API behavior before replacing. |
@@ -59,6 +60,36 @@ cargo search font-kit --limit 5
 cargo search xim --limit 10
 cargo search wgpu --limit 5
 ```
+
+Additional `zed-scap` migration probe on 2026-06-06:
+
+```sh
+cargo update -p zed-scap --precise 0.1.0-beta.1
+cargo check -p gpui --all-features
+cargo check -p gpui_windows --all-features
+cargo check -p gpui_linux --all-features --target x86_64-unknown-linux-gnu
+cargo info scap
+cargo info windows-capture
+```
+
+Result:
+
+- `scap = 0.1.0-beta.1` is the current crates.io release.
+- On Windows, `scap` fails before Open GPUI-specific code is checked because it calls
+  `windows_capture::frame::Frame::timespan()`, which is not present in `windows-capture = 1.5.0`.
+- The same Windows path also calls `WCSettings::new` with the display branch argument order from an
+  older `windows-capture` API.
+- The Linux cross-check did not run because `x86_64-unknown-linux-gnu` is not installed in this
+  Windows toolchain, but the Windows compile failure is already sufficient to block this migration.
+- The probe was reverted; `Cargo.toml` and `Cargo.lock` continue to use `zed-scap`.
+
+Follow-up lockfile check:
+
+- The existing `zed-scap` fork also fails with `windows-capture = 1.5.0`, but for a different API
+  shape: its Windows path still uses the five-argument `WCSettings::new`.
+- `windows-capture = 1.3.6` is too old for the fork because it lacks `capture::Context` and exposes
+  `FrameBuffer::as_raw_nopadding_buffer()` instead of `as_nopadding_buffer()`.
+- `windows-capture = 1.4.0` matches the fork and restores `cargo check -p gpui_windows --all-features`.
 
 ## Alternatives Considered
 
@@ -109,8 +140,9 @@ Decision: rejected as a long-term strategy.
 
 ## Recommended Work Order
 
-1. **`zed-scap`**: compare fork API to crates.io `scap`; keep the migration feature-gated and verify
-   all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
+1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
+   the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
+   Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
 2. **`zed-xim`**: replace only with Linux/X11-focused build evidence. Add a Linux CI lane first if
    practical.
 3. **`zed-font-kit`**: defer until text/font tests are stronger because it affects font matching and
