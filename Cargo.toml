@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/open-gpui",
+]
+exclude = [
+    "repo-ref/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/open-gpui/open-gpui"
+homepage = "https://github.com/open-gpui/open-gpui"
+documentation = "https://docs.rs/open-gpui"
+
+[workspace.dependencies]
+tracing = "0.1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
