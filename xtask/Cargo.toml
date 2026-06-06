@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Workspace automation for Open GPUI."
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+toml = "0.8.23"
+
+[lints]
+workspace = true

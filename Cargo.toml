@@ -24,6 +24,7 @@ members = [
     "crates/util",
     "crates/util_macros",
     "examples/smoke-native",
+    "xtask",
 ]
 exclude = [
     "repo-ref/*",
