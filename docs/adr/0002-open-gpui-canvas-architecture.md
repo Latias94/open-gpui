@@ -150,6 +150,15 @@ contract. `redb`, Loro, and `rkyv` remain adapter choices: `redb` can back a loc
 store, Loro can translate transactions or diffs into collaborative operations, and `rkyv` can
 optimize snapshots once the public record format stabilizes.
 
+The persistence byte boundary is separate from the typed store boundary. `CanvasPersistenceCodec`
+encodes and decodes typed checkpoints and log entries, while `CanvasPersistenceByteStore` only
+persists checkpoint bytes and sequence-keyed log-entry bytes. `CanvasJsonPersistenceCodec` is the
+default codec and wraps every record in a `CanvasPersistenceEnvelope` containing the codec version,
+document format version, record kind, sequence, and payload. `CanvasPersistenceByteStoreAdapter`
+turns any byte store plus codec into the existing typed `CanvasPersistenceStore`. This keeps redb
+and other local KV stores focused on durability, and leaves a future `rkyv` codec free to replace
+the JSON byte format without changing the editor or transaction APIs.
+
 Optional persistence and collaboration adapters have explicit feature boundaries before concrete
 dependencies are introduced. `redb-store`, `loro-crdt`, and `rkyv-snapshot` are reserved feature
 names, and `CanvasPersistenceAdapterStatus` reports both whether a feature is enabled and whether

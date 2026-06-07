@@ -21,6 +21,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   custom tools.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
   redb, Loro, or rkyv into the default build.
+- `CanvasPersistenceCodec` and `CanvasPersistenceByteStore` separate typed canvas records from
+  encoded bytes so local databases and zero-copy snapshot formats can plug in later.
 
 ## Build A Document
 
@@ -237,6 +239,24 @@ apply_persistent_transaction(
 .unwrap();
 
 save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
+```
+
+For byte-oriented stores, wrap a `CanvasPersistenceByteStore` with
+`CanvasPersistenceByteStoreAdapter`. The default `CanvasJsonPersistenceCodec` writes an explicit
+envelope containing the codec version, document format version, record kind, sequence, and typed
+payload.
+
+```rust
+use open_gpui_canvas::{
+    CanvasCheckpoint, CanvasDocument, CanvasPersistenceByteStoreAdapter,
+    CanvasPersistenceStore, MemoryCanvasPersistenceByteStore,
+};
+
+let mut store =
+    CanvasPersistenceByteStoreAdapter::new(MemoryCanvasPersistenceByteStore::default());
+store
+    .save_checkpoint(CanvasCheckpoint::new(0, &CanvasDocument::default()))
+    .unwrap();
 ```
 
 For tool reducers, use `apply_persistent_tool_effect` or `apply_persistent_tool_effects` so

@@ -8,6 +8,437 @@ use std::{convert::Infallible, error::Error, fmt};
 pub const CANVAS_REDB_STORE_FEATURE: &str = "redb-store";
 pub const CANVAS_LORO_CRDT_FEATURE: &str = "loro-crdt";
 pub const CANVAS_RKYV_SNAPSHOT_FEATURE: &str = "rkyv-snapshot";
+pub const CANVAS_PERSISTENCE_CODEC_VERSION: u32 = 1;
+
+fn default_persistence_codec_version() -> u32 {
+    CANVAS_PERSISTENCE_CODEC_VERSION
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanvasPersistenceRecordKind {
+    Checkpoint,
+    LogEntry,
+}
+
+impl CanvasPersistenceRecordKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Checkpoint => "checkpoint",
+            Self::LogEntry => "log_entry",
+        }
+    }
+}
+
+impl fmt::Display for CanvasPersistenceRecordKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "record_kind", content = "payload", rename_all = "snake_case")]
+pub enum CanvasPersistenceRecord {
+    Checkpoint(CanvasCheckpoint),
+    LogEntry(CanvasLogEntry),
+}
+
+impl CanvasPersistenceRecord {
+    pub fn kind(&self) -> CanvasPersistenceRecordKind {
+        match self {
+            Self::Checkpoint(_) => CanvasPersistenceRecordKind::Checkpoint,
+            Self::LogEntry(_) => CanvasPersistenceRecordKind::LogEntry,
+        }
+    }
+
+    pub fn sequence(&self) -> u64 {
+        match self {
+            Self::Checkpoint(checkpoint) => checkpoint.sequence,
+            Self::LogEntry(entry) => entry.sequence,
+        }
+    }
+
+    pub fn document_format_version(&self) -> u32 {
+        match self {
+            Self::Checkpoint(checkpoint) => checkpoint.snapshot.format_version,
+            Self::LogEntry(_) => crate::CANVAS_DOCUMENT_FORMAT_VERSION,
+        }
+    }
+}
+
+impl From<CanvasCheckpoint> for CanvasPersistenceRecord {
+    fn from(value: CanvasCheckpoint) -> Self {
+        Self::Checkpoint(value)
+    }
+}
+
+impl From<CanvasLogEntry> for CanvasPersistenceRecord {
+    fn from(value: CanvasLogEntry) -> Self {
+        Self::LogEntry(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CanvasPersistenceEnvelope {
+    #[serde(default = "default_persistence_codec_version")]
+    pub codec_version: u32,
+    pub document_format_version: u32,
+    pub record: CanvasPersistenceRecord,
+}
+
+impl CanvasPersistenceEnvelope {
+    pub fn new(record: impl Into<CanvasPersistenceRecord>) -> Self {
+        let record = record.into();
+        Self {
+            codec_version: CANVAS_PERSISTENCE_CODEC_VERSION,
+            document_format_version: record.document_format_version(),
+            record,
+        }
+    }
+
+    pub fn kind(&self) -> CanvasPersistenceRecordKind {
+        self.record.kind()
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.record.sequence()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum CanvasPersistenceCodecError {
+    UnsupportedCodecVersion {
+        expected: u32,
+        found: u32,
+    },
+    UnsupportedDocumentFormatVersion {
+        expected: u32,
+        found: u32,
+    },
+    RecordFormatVersionMismatch {
+        envelope: u32,
+        payload: u32,
+    },
+    UnexpectedRecordKind {
+        expected: CanvasPersistenceRecordKind,
+        found: CanvasPersistenceRecordKind,
+    },
+    Json(String),
+}
+
+impl CanvasPersistenceCodecError {
+    fn json(error: serde_json::Error) -> Self {
+        Self::Json(error.to_string())
+    }
+}
+
+impl fmt::Display for CanvasPersistenceCodecError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedCodecVersion { expected, found } => write!(
+                f,
+                "unsupported canvas persistence codec version `{found}`, expected `{expected}`"
+            ),
+            Self::UnsupportedDocumentFormatVersion { expected, found } => write!(
+                f,
+                "unsupported canvas persistence document format version `{found}`, expected `{expected}`"
+            ),
+            Self::RecordFormatVersionMismatch { envelope, payload } => write!(
+                f,
+                "canvas persistence envelope document format version `{envelope}` does not match payload version `{payload}`"
+            ),
+            Self::UnexpectedRecordKind { expected, found } => write!(
+                f,
+                "canvas persistence record kind `{found}` cannot be decoded as `{expected}`"
+            ),
+            Self::Json(error) => write!(f, "canvas persistence JSON codec error: {error}"),
+        }
+    }
+}
+
+impl Error for CanvasPersistenceCodecError {}
+
+pub trait CanvasPersistenceCodec {
+    type Error: fmt::Debug + fmt::Display;
+
+    fn encode_checkpoint(&self, checkpoint: &CanvasCheckpoint) -> Result<Vec<u8>, Self::Error>;
+
+    fn decode_checkpoint(&self, bytes: &[u8]) -> Result<CanvasCheckpoint, Self::Error>;
+
+    fn encode_log_entry(&self, entry: &CanvasLogEntry) -> Result<Vec<u8>, Self::Error>;
+
+    fn decode_log_entry(&self, bytes: &[u8]) -> Result<CanvasLogEntry, Self::Error>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CanvasJsonPersistenceCodec;
+
+impl CanvasJsonPersistenceCodec {
+    pub fn encode_record(
+        &self,
+        record: impl Into<CanvasPersistenceRecord>,
+    ) -> Result<Vec<u8>, CanvasPersistenceCodecError> {
+        serde_json::to_vec(&CanvasPersistenceEnvelope::new(record))
+            .map_err(CanvasPersistenceCodecError::json)
+    }
+
+    pub fn decode_record(
+        &self,
+        bytes: &[u8],
+    ) -> Result<CanvasPersistenceRecord, CanvasPersistenceCodecError> {
+        Ok(self.decode_envelope(bytes)?.record)
+    }
+
+    pub fn decode_envelope(
+        &self,
+        bytes: &[u8],
+    ) -> Result<CanvasPersistenceEnvelope, CanvasPersistenceCodecError> {
+        let envelope: CanvasPersistenceEnvelope =
+            serde_json::from_slice(bytes).map_err(CanvasPersistenceCodecError::json)?;
+        validate_persistence_envelope(&envelope)?;
+        Ok(envelope)
+    }
+}
+
+impl CanvasPersistenceCodec for CanvasJsonPersistenceCodec {
+    type Error = CanvasPersistenceCodecError;
+
+    fn encode_checkpoint(&self, checkpoint: &CanvasCheckpoint) -> Result<Vec<u8>, Self::Error> {
+        self.encode_record(checkpoint.clone())
+    }
+
+    fn decode_checkpoint(&self, bytes: &[u8]) -> Result<CanvasCheckpoint, Self::Error> {
+        let envelope = self.decode_envelope(bytes)?;
+        let found = envelope.kind();
+        let CanvasPersistenceRecord::Checkpoint(checkpoint) = envelope.record else {
+            return Err(CanvasPersistenceCodecError::UnexpectedRecordKind {
+                expected: CanvasPersistenceRecordKind::Checkpoint,
+                found,
+            });
+        };
+        if checkpoint.snapshot.format_version != envelope.document_format_version {
+            return Err(CanvasPersistenceCodecError::RecordFormatVersionMismatch {
+                envelope: envelope.document_format_version,
+                payload: checkpoint.snapshot.format_version,
+            });
+        }
+        Ok(checkpoint)
+    }
+
+    fn encode_log_entry(&self, entry: &CanvasLogEntry) -> Result<Vec<u8>, Self::Error> {
+        self.encode_record(entry.clone())
+    }
+
+    fn decode_log_entry(&self, bytes: &[u8]) -> Result<CanvasLogEntry, Self::Error> {
+        let envelope = self.decode_envelope(bytes)?;
+        let found = envelope.kind();
+        let CanvasPersistenceRecord::LogEntry(entry) = envelope.record else {
+            return Err(CanvasPersistenceCodecError::UnexpectedRecordKind {
+                expected: CanvasPersistenceRecordKind::LogEntry,
+                found,
+            });
+        };
+        Ok(entry)
+    }
+}
+
+fn validate_persistence_envelope(
+    envelope: &CanvasPersistenceEnvelope,
+) -> Result<(), CanvasPersistenceCodecError> {
+    if envelope.codec_version != CANVAS_PERSISTENCE_CODEC_VERSION {
+        return Err(CanvasPersistenceCodecError::UnsupportedCodecVersion {
+            expected: CANVAS_PERSISTENCE_CODEC_VERSION,
+            found: envelope.codec_version,
+        });
+    }
+
+    if envelope.document_format_version < crate::CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION
+        || envelope.document_format_version > crate::CANVAS_DOCUMENT_FORMAT_VERSION
+    {
+        return Err(
+            CanvasPersistenceCodecError::UnsupportedDocumentFormatVersion {
+                expected: crate::CANVAS_DOCUMENT_FORMAT_VERSION,
+                found: envelope.document_format_version,
+            },
+        );
+    }
+
+    let payload_format_version = envelope.record.document_format_version();
+    if payload_format_version != envelope.document_format_version {
+        return Err(CanvasPersistenceCodecError::RecordFormatVersionMismatch {
+            envelope: envelope.document_format_version,
+            payload: payload_format_version,
+        });
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanvasEncodedLogEntry {
+    pub sequence: u64,
+    pub bytes: Vec<u8>,
+}
+
+impl CanvasEncodedLogEntry {
+    pub fn new(sequence: u64, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            sequence,
+            bytes: bytes.into(),
+        }
+    }
+}
+
+pub trait CanvasPersistenceByteStore {
+    type Error: fmt::Debug + fmt::Display;
+
+    fn load_checkpoint_bytes(&self) -> Result<Option<Vec<u8>>, Self::Error>;
+
+    fn save_checkpoint_bytes(&mut self, bytes: Vec<u8>) -> Result<(), Self::Error>;
+
+    fn append_log_entry_bytes(&mut self, sequence: u64, bytes: Vec<u8>) -> Result<(), Self::Error>;
+
+    fn load_log_entry_bytes(
+        &self,
+        after_sequence: u64,
+    ) -> Result<Vec<CanvasEncodedLogEntry>, Self::Error>;
+
+    fn compact_log_entry_bytes(&mut self, through_sequence: u64) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum CanvasPersistenceByteStoreError<StoreError, CodecError> {
+    Store(StoreError),
+    Codec(CodecError),
+    LogSequenceMismatch { key: u64, payload: u64 },
+}
+
+impl<StoreError, CodecError> fmt::Display
+    for CanvasPersistenceByteStoreError<StoreError, CodecError>
+where
+    StoreError: fmt::Display,
+    CodecError: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Store(error) => write!(f, "canvas persistence byte store error: {error}"),
+            Self::Codec(error) => fmt::Display::fmt(error, f),
+            Self::LogSequenceMismatch { key, payload } => write!(
+                f,
+                "canvas persistence log key sequence `{key}` does not match payload sequence `{payload}`"
+            ),
+        }
+    }
+}
+
+impl<StoreError, CodecError> Error for CanvasPersistenceByteStoreError<StoreError, CodecError>
+where
+    StoreError: fmt::Debug + fmt::Display,
+    CodecError: fmt::Debug + fmt::Display,
+{
+}
+
+#[derive(Clone, Debug)]
+pub struct CanvasPersistenceByteStoreAdapter<S, C = CanvasJsonPersistenceCodec> {
+    store: S,
+    codec: C,
+}
+
+impl<S> CanvasPersistenceByteStoreAdapter<S, CanvasJsonPersistenceCodec> {
+    pub fn new(store: S) -> Self {
+        Self::with_codec(store, CanvasJsonPersistenceCodec)
+    }
+}
+
+impl<S, C> CanvasPersistenceByteStoreAdapter<S, C> {
+    pub fn with_codec(store: S, codec: C) -> Self {
+        Self { store, codec }
+    }
+
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    pub fn store_mut(&mut self) -> &mut S {
+        &mut self.store
+    }
+
+    pub fn into_store(self) -> S {
+        self.store
+    }
+
+    pub fn codec(&self) -> &C {
+        &self.codec
+    }
+}
+
+impl<S, C> CanvasPersistenceStore for CanvasPersistenceByteStoreAdapter<S, C>
+where
+    S: CanvasPersistenceByteStore,
+    C: CanvasPersistenceCodec,
+{
+    type Error = CanvasPersistenceByteStoreError<S::Error, C::Error>;
+
+    fn load_checkpoint(&self) -> Result<Option<CanvasCheckpoint>, Self::Error> {
+        self.store
+            .load_checkpoint_bytes()
+            .map_err(CanvasPersistenceByteStoreError::Store)?
+            .map(|bytes| {
+                self.codec
+                    .decode_checkpoint(&bytes)
+                    .map_err(CanvasPersistenceByteStoreError::Codec)
+            })
+            .transpose()
+    }
+
+    fn save_checkpoint(&mut self, checkpoint: CanvasCheckpoint) -> Result<(), Self::Error> {
+        let bytes = self
+            .codec
+            .encode_checkpoint(&checkpoint)
+            .map_err(CanvasPersistenceByteStoreError::Codec)?;
+        self.store
+            .save_checkpoint_bytes(bytes)
+            .map_err(CanvasPersistenceByteStoreError::Store)
+    }
+
+    fn append_log_entry(&mut self, entry: CanvasLogEntry) -> Result<(), Self::Error> {
+        let sequence = entry.sequence;
+        let bytes = self
+            .codec
+            .encode_log_entry(&entry)
+            .map_err(CanvasPersistenceByteStoreError::Codec)?;
+        self.store
+            .append_log_entry_bytes(sequence, bytes)
+            .map_err(CanvasPersistenceByteStoreError::Store)
+    }
+
+    fn load_log_entries(&self, after_sequence: u64) -> Result<Vec<CanvasLogEntry>, Self::Error> {
+        self.store
+            .load_log_entry_bytes(after_sequence)
+            .map_err(CanvasPersistenceByteStoreError::Store)?
+            .into_iter()
+            .map(|encoded| {
+                let entry = self
+                    .codec
+                    .decode_log_entry(&encoded.bytes)
+                    .map_err(CanvasPersistenceByteStoreError::Codec)?;
+                if entry.sequence != encoded.sequence {
+                    return Err(CanvasPersistenceByteStoreError::LogSequenceMismatch {
+                        key: encoded.sequence,
+                        payload: entry.sequence,
+                    });
+                }
+                Ok(entry)
+            })
+            .collect()
+    }
+
+    fn compact_log_entries(&mut self, through_sequence: u64) -> Result<(), Self::Error> {
+        self.store
+            .compact_log_entry_bytes(through_sequence)
+            .map_err(CanvasPersistenceByteStoreError::Store)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanvasPersistenceAdapter {
@@ -501,6 +932,59 @@ impl CanvasPersistenceStore for MemoryCanvasPersistenceStore {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MemoryCanvasPersistenceByteStore {
+    checkpoint: Option<Vec<u8>>,
+    log_entries: Vec<CanvasEncodedLogEntry>,
+}
+
+impl MemoryCanvasPersistenceByteStore {
+    pub fn checkpoint_bytes(&self) -> Option<&[u8]> {
+        self.checkpoint.as_deref()
+    }
+
+    pub fn encoded_log_entries(&self) -> &[CanvasEncodedLogEntry] {
+        &self.log_entries
+    }
+}
+
+impl CanvasPersistenceByteStore for MemoryCanvasPersistenceByteStore {
+    type Error = Infallible;
+
+    fn load_checkpoint_bytes(&self) -> Result<Option<Vec<u8>>, Self::Error> {
+        Ok(self.checkpoint.clone())
+    }
+
+    fn save_checkpoint_bytes(&mut self, bytes: Vec<u8>) -> Result<(), Self::Error> {
+        self.checkpoint = Some(bytes);
+        Ok(())
+    }
+
+    fn append_log_entry_bytes(&mut self, sequence: u64, bytes: Vec<u8>) -> Result<(), Self::Error> {
+        self.log_entries
+            .push(CanvasEncodedLogEntry::new(sequence, bytes));
+        Ok(())
+    }
+
+    fn load_log_entry_bytes(
+        &self,
+        after_sequence: u64,
+    ) -> Result<Vec<CanvasEncodedLogEntry>, Self::Error> {
+        Ok(self
+            .log_entries
+            .iter()
+            .filter(|entry| entry.sequence > after_sequence)
+            .cloned()
+            .collect())
+    }
+
+    fn compact_log_entry_bytes(&mut self, through_sequence: u64) -> Result<(), Self::Error> {
+        self.log_entries
+            .retain(|entry| entry.sequence > through_sequence);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +1202,182 @@ mod tests {
                 .map(|entry| entry.sequence)
                 .collect::<Vec<_>>(),
             vec![3]
+        );
+    }
+
+    #[test]
+    fn json_persistence_codec_round_trips_checkpoint_envelope() {
+        let codec = CanvasJsonPersistenceCodec;
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let checkpoint = CanvasCheckpoint::new(7, &document);
+
+        let bytes = codec.encode_checkpoint(&checkpoint).unwrap();
+        let envelope = codec.decode_envelope(&bytes).unwrap();
+        let decoded = codec.decode_checkpoint(&bytes).unwrap();
+
+        assert_eq!(envelope.codec_version, CANVAS_PERSISTENCE_CODEC_VERSION);
+        assert_eq!(
+            envelope.document_format_version,
+            crate::CANVAS_DOCUMENT_FORMAT_VERSION
+        );
+        assert_eq!(envelope.kind(), CanvasPersistenceRecordKind::Checkpoint);
+        assert_eq!(envelope.sequence(), 7);
+        assert_eq!(decoded, checkpoint);
+    }
+
+    #[test]
+    fn json_persistence_codec_round_trips_log_entry_envelope() {
+        let codec = CanvasJsonPersistenceCodec;
+        let entry = CanvasLogEntry::new(
+            3,
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+        );
+
+        let bytes = codec.encode_log_entry(&entry).unwrap();
+        let envelope = codec.decode_envelope(&bytes).unwrap();
+        let decoded = codec.decode_log_entry(&bytes).unwrap();
+
+        assert_eq!(envelope.kind(), CanvasPersistenceRecordKind::LogEntry);
+        assert_eq!(envelope.sequence(), 3);
+        assert_eq!(decoded, entry);
+    }
+
+    #[test]
+    fn json_persistence_codec_rejects_unsupported_codec_version() {
+        let codec = CanvasJsonPersistenceCodec;
+        let bytes = br#"{
+            "codec_version": 999,
+            "document_format_version": 1,
+            "record": {
+                "record_kind": "log_entry",
+                "payload": {
+                    "sequence": 1,
+                    "transaction": {
+                        "commands": [],
+                        "metadata": {}
+                    }
+                }
+            }
+        }"#;
+
+        let err = codec.decode_log_entry(bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistenceCodecError::UnsupportedCodecVersion {
+                expected: CANVAS_PERSISTENCE_CODEC_VERSION,
+                found: 999,
+            }
+        );
+    }
+
+    #[test]
+    fn json_persistence_codec_rejects_unsupported_document_format_version() {
+        let codec = CanvasJsonPersistenceCodec;
+        let bytes = br#"{
+            "codec_version": 1,
+            "document_format_version": 999,
+            "record": {
+                "record_kind": "log_entry",
+                "payload": {
+                    "sequence": 1,
+                    "transaction": {
+                        "commands": [],
+                        "metadata": {}
+                    }
+                }
+            }
+        }"#;
+
+        let err = codec.decode_log_entry(bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistenceCodecError::UnsupportedDocumentFormatVersion {
+                expected: crate::CANVAS_DOCUMENT_FORMAT_VERSION,
+                found: 999,
+            }
+        );
+    }
+
+    #[test]
+    fn json_persistence_codec_rejects_checkpoint_as_log_entry() {
+        let codec = CanvasJsonPersistenceCodec;
+        let checkpoint = CanvasCheckpoint::new(1, &CanvasDocument::default());
+        let bytes = codec.encode_checkpoint(&checkpoint).unwrap();
+
+        let err = codec.decode_log_entry(&bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistenceCodecError::UnexpectedRecordKind {
+                expected: CanvasPersistenceRecordKind::LogEntry,
+                found: CanvasPersistenceRecordKind::Checkpoint,
+            }
+        );
+    }
+
+    #[test]
+    fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
+        let mut typed_store =
+            CanvasPersistenceByteStoreAdapter::new(MemoryCanvasPersistenceByteStore::default());
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        typed_store
+            .save_checkpoint(CanvasCheckpoint::new(1, &document))
+            .unwrap();
+        typed_store
+            .append_log_entry(CanvasLogEntry::new(
+                2,
+                DocumentCommand::InsertNode(CanvasNode::new(
+                    "b",
+                    point(px(20.0), px(0.0)),
+                    size(px(10.0), px(10.0)),
+                )),
+            ))
+            .unwrap();
+
+        let restored = load_canvas_document(&typed_store).unwrap();
+        let byte_store = typed_store.store();
+
+        assert!(restored.nodes.contains_key(&NodeId::from("a")));
+        assert!(restored.nodes.contains_key(&NodeId::from("b")));
+        assert!(byte_store.checkpoint_bytes().is_some());
+        assert_eq!(byte_store.encoded_log_entries().len(), 1);
+    }
+
+    #[test]
+    fn byte_store_adapter_rejects_log_key_sequence_mismatch() {
+        let codec = CanvasJsonPersistenceCodec;
+        let entry = CanvasLogEntry::new(2, CanvasTransaction::default());
+        let mut byte_store = MemoryCanvasPersistenceByteStore::default();
+        byte_store
+            .append_log_entry_bytes(9, codec.encode_log_entry(&entry).unwrap())
+            .unwrap();
+        let typed_store = CanvasPersistenceByteStoreAdapter::new(byte_store);
+
+        let err = typed_store.load_log_entries(0).unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistenceByteStoreError::LogSequenceMismatch { key: 9, payload: 2 }
         );
     }
 

@@ -122,6 +122,7 @@ stop_conditions:
 | Persistence checkpoint helper | Done | `save_canvas_checkpoint` persists an editor snapshot at the current cursor sequence and compacts older log entries through the same store abstraction. |
 | Persistent tool effect runner | Done | `apply_persistent_tool_effects` logs recorded tool transactions and commits finished unrecorded gestures through `PushUndo` while leaving transient updates out of the log. |
 | Persistent event dispatch helper | Done | `handle_persistent_event*` helpers reduce built-in, custom, or registry-dispatched tool events into effects and apply them through the persistence runner without making `CanvasEditor` own the store. |
+| Persistence byte codec boundary | Done | `CanvasPersistenceCodec`, `CanvasJsonPersistenceCodec`, `CanvasPersistenceByteStore`, and `CanvasPersistenceByteStoreAdapter` separate typed checkpoint/log records from encoded bytes before redb/rkyv adapters land. |
 
 ## Next Implementation Slices
 

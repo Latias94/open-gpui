@@ -39,10 +39,14 @@ pub use json_canvas::{
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
 pub use persistence::{
-    CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_REDB_STORE_FEATURE,
-    CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceAdapter,
-    CanvasPersistenceAdapterStatus, CanvasPersistenceCursor, CanvasPersistenceError,
-    CanvasPersistenceStore, CanvasPersistentToolRegistryError, CanvasReplayError,
+    CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_PERSISTENCE_CODEC_VERSION,
+    CANVAS_REDB_STORE_FEATURE, CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint,
+    CanvasEncodedLogEntry, CanvasJsonPersistenceCodec, CanvasLogEntry, CanvasPersistenceAdapter,
+    CanvasPersistenceAdapterStatus, CanvasPersistenceByteStore, CanvasPersistenceByteStoreAdapter,
+    CanvasPersistenceByteStoreError, CanvasPersistenceCodec, CanvasPersistenceCodecError,
+    CanvasPersistenceCursor, CanvasPersistenceEnvelope, CanvasPersistenceError,
+    CanvasPersistenceRecord, CanvasPersistenceRecordKind, CanvasPersistenceStore,
+    CanvasPersistentToolRegistryError, CanvasReplayError, MemoryCanvasPersistenceByteStore,
     MemoryCanvasPersistenceStore, apply_persistent_tool_effect, apply_persistent_tool_effects,
     apply_persistent_transaction, canvas_persistence_adapter_statuses, handle_persistent_event,
     handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
