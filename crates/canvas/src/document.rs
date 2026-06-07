@@ -336,11 +336,16 @@ pub struct CanvasDocumentDiff {
     pub updated: IndexSet<CanvasRecordId>,
     #[serde(default)]
     pub removed: IndexSet<CanvasRecordId>,
+    #[serde(default)]
+    pub metadata_changed: bool,
 }
 
 impl CanvasDocumentDiff {
     pub fn is_empty(&self) -> bool {
-        self.inserted.is_empty() && self.updated.is_empty() && self.removed.is_empty()
+        self.inserted.is_empty()
+            && self.updated.is_empty()
+            && self.removed.is_empty()
+            && !self.metadata_changed
     }
 
     pub fn record_insert(&mut self, id: impl Into<CanvasRecordId>) {
@@ -526,12 +531,12 @@ impl CanvasDocument {
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<CanvasDocumentDiff, DocumentError> {
-        let mut draft = self.clone();
-        let mut diff = CanvasDocumentDiff::default();
+        let previous = self.clone();
+        let mut draft = previous.clone();
         for command in transaction.commands {
-            diff.record_command(&command, &draft);
             draft.apply(command)?;
         }
+        let diff = draft.diff_against(&previous);
         *self = draft;
         Ok(diff)
     }
@@ -696,6 +701,55 @@ impl CanvasDocument {
         ))
     }
 
+    pub fn diff_against(&self, previous: &CanvasDocument) -> CanvasDocumentDiff {
+        let mut diff = CanvasDocumentDiff::default();
+
+        for id in previous.nodes.keys() {
+            if !self.nodes.contains_key(id) {
+                diff.record_remove(id.clone());
+            }
+        }
+
+        for (id, node) in &self.nodes {
+            match previous.nodes.get(id) {
+                None => diff.record_insert(id.clone()),
+                Some(previous_node) if previous_node != node => diff.record_update(id.clone()),
+                Some(_) => {}
+            }
+        }
+
+        for id in previous.edges.keys() {
+            if !self.edges.contains_key(id) {
+                diff.record_remove(id.clone());
+            }
+        }
+
+        for (id, edge) in &self.edges {
+            match previous.edges.get(id) {
+                None => diff.record_insert(id.clone()),
+                Some(previous_edge) if previous_edge != edge => diff.record_update(id.clone()),
+                Some(_) => {}
+            }
+        }
+
+        for id in previous.shapes.keys() {
+            if !self.shapes.contains_key(id) {
+                diff.record_remove(id.clone());
+            }
+        }
+
+        for (id, shape) in &self.shapes {
+            match previous.shapes.get(id) {
+                None => diff.record_insert(id.clone()),
+                Some(previous_shape) if previous_shape != shape => diff.record_update(id.clone()),
+                Some(_) => {}
+            }
+        }
+
+        diff.metadata_changed = self.metadata != previous.metadata;
+        diff
+    }
+
     fn validate_node(node: &CanvasNode) -> Result<(), DocumentError> {
         let mut handle_ids = IndexSet::new();
         for handle in &node.handles {
@@ -851,29 +905,6 @@ impl CanvasDocument {
                     .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
                     .clone(),
             )]),
-        }
-    }
-}
-
-impl CanvasDocumentDiff {
-    fn record_command(&mut self, command: &DocumentCommand, document: &CanvasDocument) {
-        match command {
-            DocumentCommand::InsertNode(node) => self.record_insert(node.id.clone()),
-            DocumentCommand::UpdateNode(node) => self.record_update(node.id.clone()),
-            DocumentCommand::RemoveNode(id) => {
-                self.record_remove(id.clone());
-                for edge in document.edges.values() {
-                    if edge.source.node_id == *id || edge.target.node_id == *id {
-                        self.record_remove(edge.id.clone());
-                    }
-                }
-            }
-            DocumentCommand::InsertEdge(edge) => self.record_insert(edge.id.clone()),
-            DocumentCommand::UpdateEdge(edge) => self.record_update(edge.id.clone()),
-            DocumentCommand::RemoveEdge(id) => self.record_remove(id.clone()),
-            DocumentCommand::InsertShape(shape) => self.record_insert(shape.id.clone()),
-            DocumentCommand::UpdateShape(shape) => self.record_update(shape.id.clone()),
-            DocumentCommand::RemoveShape(id) => self.record_remove(id.clone()),
         }
     }
 }
@@ -1328,5 +1359,19 @@ mod tests {
             ]
         );
         assert!(document.edges.is_empty());
+    }
+
+    #[test]
+    fn document_diff_tracks_metadata_changes() {
+        let previous = CanvasDocument::default();
+        let mut document = previous.clone();
+        document
+            .metadata
+            .insert("title".to_string(), serde_json::json!("Canvas"));
+
+        let diff = document.diff_against(&previous);
+
+        assert!(diff.metadata_changed);
+        assert!(!diff.is_empty());
     }
 }
