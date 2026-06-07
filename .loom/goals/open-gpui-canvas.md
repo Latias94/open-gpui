@@ -103,13 +103,13 @@ stop_conditions:
 | Persistent storage traits | Done | `CanvasPersistenceStore` defines checkpoint plus monotonic transaction-log replay without introducing redb/Loro/rkyv core dependencies. |
 | Randomized invariant tests | Done | Deterministic stress tests cover transaction inverse/diff replay and incremental spatial-index equivalence against full rebuilds. |
 | GPUI adapter prototype | Done | `canvas_view` renders a model snapshot through GPUI's low-level canvas callback using spatial culling and batched paint commands. |
+| Smoke example | Done | `open-gpui-smoke-native` renders nodes, handles, shapes, routed edges, and the default GPUI canvas paint adapter. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Smoke example | Provide a runnable canvas example that exercises nodes, handles, routed edges, viewport, and default paint theme. | `cargo check -p smoke-native` or example-specific check |
-| Medium | Adapter interaction bridge | Map GPUI pointer/wheel input into `CanvasEvent` while keeping document/model mutation separate from paint. | focused tool and adapter tests |
+| High | Adapter interaction bridge | Map GPUI pointer/wheel input into `CanvasEvent` while keeping document/model mutation separate from paint. | focused tool and adapter tests |
 | Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait boundary has survived real document workflows. | adapter-specific integration tests |
 
 ## Deferred Work
