@@ -117,12 +117,13 @@ stop_conditions:
 | Crate README/API examples | Done | `crates/canvas/README.md` documents the model, graph queries, GPUI rendering path, custom tools, JSON Canvas, and persistence boundaries with copyable API snippets. |
 | Package README verification | Done | `cargo package -p open-gpui-canvas --locked --allow-dirty` verifies the crate README is packaged with the future publish artifact. |
 | Editor persistence hook | Done | `CanvasPersistenceCursor` and `apply_persistent_transaction` connect successful recorded editor transactions to monotonic store log entries without binding `CanvasEditor` to a concrete backend. |
+| Persistence checkpoint helper | Done | `save_canvas_checkpoint` persists an editor snapshot at the current cursor sequence and compacts older log entries through the same store abstraction. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Persistence checkpoint helper | Add an explicit checkpoint/compaction helper around `CanvasEditor` state so applications can bound replay length without knowing store internals. | focused unit tests |
+| High | Persistent tool effect runner | Add an optional helper that applies `CanvasToolEffect::ApplyTransaction` through the persistence hook while keeping unrecorded gesture effects out of the log. | focused unit tests |
 | Medium | Cached graph indexes | Add an optional incremental adjacency index if real examples show `CanvasGraph` scan-based queries becoming hot. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 

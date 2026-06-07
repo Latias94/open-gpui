@@ -41,7 +41,7 @@ pub use persistence::{
     CanvasPersistenceAdapterStatus, CanvasPersistenceCursor, CanvasPersistenceError,
     CanvasPersistenceStore, CanvasReplayError, MemoryCanvasPersistenceStore,
     apply_persistent_transaction, canvas_persistence_adapter_statuses, load_canvas_document,
-    load_canvas_persistence_cursor, replay_canvas_log,
+    load_canvas_persistence_cursor, replay_canvas_log, save_canvas_checkpoint,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,

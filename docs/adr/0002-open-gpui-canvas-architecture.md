@@ -159,6 +159,10 @@ ownership while giving future redb, Loro, and `rkyv` adapters one consistent tra
 point. Unrecorded gesture updates remain outside the persistence log until committed as explicit
 transactions.
 
+`save_canvas_checkpoint` complements the log hook by writing a snapshot at the current cursor
+sequence and compacting log entries through that sequence. Checkpointing is explicit rather than
+automatic so applications can choose their own durability cadence and retry policy.
+
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
 Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the

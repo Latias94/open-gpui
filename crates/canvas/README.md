@@ -174,7 +174,7 @@ The default crate ships only the persistence contract and an in-memory store.
 use open_gpui_canvas::{
     CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
     CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
-    apply_persistent_transaction, load_canvas_document,
+    apply_persistent_transaction, load_canvas_document, save_canvas_checkpoint,
 };
 
 let document = CanvasDocument::default();
@@ -197,6 +197,8 @@ apply_persistent_transaction(
     ))),
 )
 .unwrap();
+
+save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
 ```
 
 Feature names are reserved for future adapters:

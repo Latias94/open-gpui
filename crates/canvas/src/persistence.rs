@@ -253,6 +253,24 @@ where
     Ok(diff)
 }
 
+pub fn save_canvas_checkpoint<S>(
+    editor: &CanvasEditor,
+    store: &mut S,
+    cursor: &CanvasPersistenceCursor,
+) -> Result<CanvasCheckpoint, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let checkpoint = CanvasCheckpoint::new(cursor.sequence(), &editor.document);
+    store
+        .save_checkpoint(checkpoint.clone())
+        .map_err(CanvasPersistenceError::Store)?;
+    store
+        .compact_log_entries(checkpoint.sequence)
+        .map_err(CanvasPersistenceError::Store)?;
+    Ok(checkpoint)
+}
+
 fn replay_checkpoint_and_log<E>(
     checkpoint: Option<CanvasCheckpoint>,
     log_entries: impl IntoIterator<Item = CanvasLogEntry>,
@@ -651,5 +669,92 @@ mod tests {
         assert_eq!(cursor.sequence(), 0);
         assert!(editor.document.nodes.is_empty());
         assert_eq!(editor.history.undo_depth(), 0);
+    }
+
+    #[test]
+    fn save_checkpoint_persists_editor_snapshot_and_compacts_log() {
+        let mut editor = CanvasEditor::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        apply_persistent_transaction(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))),
+        )
+        .unwrap();
+        apply_persistent_transaction(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))),
+        )
+        .unwrap();
+
+        let checkpoint = save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
+
+        assert_eq!(checkpoint.sequence, 2);
+        assert_eq!(cursor.sequence(), 2);
+        assert!(store.log_entries().is_empty());
+        assert_eq!(store.checkpoint().unwrap(), &checkpoint);
+
+        let restored = load_canvas_document(&store).unwrap();
+        assert!(restored.nodes.contains_key(&NodeId::from("a")));
+        assert!(restored.nodes.contains_key(&NodeId::from("b")));
+    }
+
+    #[test]
+    fn save_checkpoint_reports_store_failure() {
+        #[derive(Debug, Eq, PartialEq)]
+        struct StoreFailure;
+
+        impl fmt::Display for StoreFailure {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("store failure")
+            }
+        }
+
+        struct FailingCheckpointStore;
+
+        impl CanvasPersistenceStore for FailingCheckpointStore {
+            type Error = StoreFailure;
+
+            fn load_checkpoint(&self) -> Result<Option<CanvasCheckpoint>, Self::Error> {
+                Ok(None)
+            }
+
+            fn save_checkpoint(&mut self, _: CanvasCheckpoint) -> Result<(), Self::Error> {
+                Err(StoreFailure)
+            }
+
+            fn append_log_entry(&mut self, _: CanvasLogEntry) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn load_log_entries(&self, _: u64) -> Result<Vec<CanvasLogEntry>, Self::Error> {
+                Ok(Vec::new())
+            }
+
+            fn compact_log_entries(&mut self, _: u64) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        let editor = CanvasEditor::default();
+        let mut store = FailingCheckpointStore;
+        let cursor = CanvasPersistenceCursor::new(3);
+
+        let err = save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap_err();
+
+        assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
     }
 }
