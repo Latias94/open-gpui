@@ -229,7 +229,7 @@ impl CanvasEditor {
         let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.history.push_undo(inverse);
         self.selection.retain_document(&self.document);
-        self.rebuild_index();
+        self.index.apply_diff(&self.document, &diff);
         Ok(diff)
     }
 
@@ -239,10 +239,10 @@ impl CanvasEditor {
         };
 
         let redo = self.document.invert_transaction(&transaction)?;
-        self.document.apply_transaction(transaction)?;
+        let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.history.push_redo(redo);
         self.selection.retain_document(&self.document);
-        self.rebuild_index();
+        self.index.apply_diff(&self.document, &diff);
         Ok(true)
     }
 
@@ -252,10 +252,10 @@ impl CanvasEditor {
         };
 
         let undo = self.document.invert_transaction(&transaction)?;
-        self.document.apply_transaction(transaction)?;
+        let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.history.push_undo(undo);
         self.selection.retain_document(&self.document);
-        self.rebuild_index();
+        self.index.apply_diff(&self.document, &diff);
         Ok(true)
     }
 
@@ -481,9 +481,9 @@ impl CanvasEditor {
     }
 
     fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
-        self.document.apply_transaction(transaction)?;
+        let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.selection.retain_document(&self.document);
-        self.rebuild_index();
+        self.index.apply_diff(&self.document, &diff);
         Ok(())
     }
 
@@ -753,5 +753,34 @@ mod tests {
             .unwrap();
 
         assert!(editor.selection.is_empty());
+    }
+
+    #[test]
+    fn editor_keeps_spatial_index_in_sync_with_transactions() {
+        let mut editor = CanvasEditor::default();
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            )))
+            .unwrap();
+
+        assert!(
+            editor
+                .index
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_some()
+        );
+
+        assert!(editor.undo().unwrap());
+        assert!(
+            editor
+                .index
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_none()
+        );
     }
 }
