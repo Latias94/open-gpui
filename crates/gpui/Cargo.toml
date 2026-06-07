@@ -123,8 +123,7 @@ core-foundation-sys.workspace = true
 core-graphics = "0.24"
 core-video.workspace = true
 core-text = "21"
-# Keep the Zed API surface until upstream font-kit compatibility is handled separately.
-font-kit = { package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true

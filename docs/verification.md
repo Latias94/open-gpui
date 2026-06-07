@@ -31,5 +31,7 @@ The import-boundary scan rejects dependency files that reintroduce Zed's GPL tra
 Cargo git dependency, retired Zed Git fork sources that have already been migrated, or the removed
 Zed `perf` crate dependency.
 
-The scan intentionally does not reject the current external Zed-maintained forks that are still
-tracked as follow-up debt: `zed-scap` and crates.io `zed-font-kit`.
+The scan intentionally does not reject the current external Zed-maintained fork that is still
+tracked as follow-up debt: `zed-scap`. The old crates.io `zed-font-kit` package is retired and
+should not be reintroduced; font-kit now resolves through the Open GPUI-owned fork configured in
+the crate manifests.

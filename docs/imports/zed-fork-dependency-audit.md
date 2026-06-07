@@ -6,10 +6,9 @@
 
 ## Problem
 
-Open GPUI still depends on a small set of Zed-maintained external forks after the initial clean
-workspace import. The remaining forks are intentionally allowed by the current import-boundary
-scan, but they remain follow-up debt because they keep framework builds coupled to Zed-controlled
-git repositories.
+Open GPUI still depends on one Zed-maintained external fork after the initial clean workspace
+import: `zed-scap`. The former `zed-font-kit` dependency now resolves through an Open GPUI-owned
+`font-kit` fork, preserving the Zed API surface without depending on a Zed-published package.
 
 The goal is to replace, justify, or own each fork without weakening the clean license and dependency
 boundary established by ADR 0001. The goal is not to remove behavior for the sake of avoiding forks:
@@ -23,7 +22,7 @@ flowchart TD
     Scap[zed-scap] --> Gpui[gpui screen-capture feature]
     Scap --> GpuiLinux[gpui_linux screen-capture feature]
     Scap --> GpuiWindows[gpui_windows screen-capture feature]
-    FontKit[zed-font-kit] --> GpuiFont[gpui font-kit feature]
+    FontKit[Latias94/font-kit] --> GpuiFont[gpui font-kit feature]
     FontKit --> GpuiMacos[gpui_macos]
     FontKit --> GpuiWgpu[gpui_wgpu font matching]
 ```
@@ -36,6 +35,7 @@ flowchart TD
 | `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
 | `zed-font-kit` Git source | Replaced the Git dependency with crates.io `zed-font-kit = "0.14.1-zed"` while keeping the Zed API surface. | This removes `github.com/zed-industries/font-kit` from manifests and lockfile, but it is not an upstream `font-kit` replacement. The published crate uses `dirs = "5.0"` while the previously locked Git rev had `dirs = "6.0"`. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert zed-font-kit`; `rg 'zed-industries/font-kit|git\+https://github.com/zed-industries/font-kit' Cargo.toml Cargo.lock crates` |
+| `zed-font-kit` package | Replaced with the Open GPUI-owned `font-kit` fork at `https://github.com/Latias94/font-kit`, branch `main`. | The fork keeps the needed Zed API surface, including public `matching` and macOS native CoreText handle behavior, while using the normal `font-kit` package name. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo check -p gpui_macos --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert font-kit` |
 | Zed `wgpu` fork | Replaced with crates.io `wgpu = "=29.0.3"`. | The public `wgpu`, `naga`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`, and `wgpu-types` packages are the same version line and are compile-compatible with `gpui_wgpu` and Linux all-features checks. A focused native smoke now requests a real adapter/device and creates the core renderer pipelines. | `cargo check -p gpui_wgpu --locked`; `cargo check -p gpui_wgpu --features font-kit --locked`; WSL Ubuntu: `cargo check -p gpui_linux --all-features --locked`; `cargo run -p xtask -- renderer-smoke`; `cargo run -p xtask -- scan-import-boundary` |
 
 ## Inventory
@@ -43,7 +43,6 @@ flowchart TD
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
-| `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io, or an Open GPUI-owned fork if native CoreText behavior is required | High | The Git source is removed. `gpui_wgpu` no longer depends on Zed's public `matching` module, but `gpui_macos` still depends on Zed-only native CoreText handle behavior. Preserve that behavior via upstream-compatible code or an Open GPUI-owned fork; do not cut font functionality merely to avoid a fork. |
 
 ## Evidence Commands
 
@@ -168,11 +167,9 @@ Result:
 Decision:
 
 - Treat Git-source removal and upstream replacement as two separate migrations.
-- Git-source removal is complete for `zed-font-kit`: the three manifests now use crates.io
-  `zed-font-kit = 0.14.1-zed`.
-- Replacing `zed-font-kit` with upstream `font-kit` still needs a macOS compatibility lane. That
-  lane should either adapt Open GPUI to upstream APIs without behavior loss, or create an Open
-  GPUI-owned `font-kit` fork that carries the required native CoreText handle behavior.
+- Git-source removal is complete for `zed-font-kit`, and the follow-up package dependency has now
+  been replaced by the Open GPUI-owned `font-kit` fork. The direct upstream `font-kit` path remains
+  useful background research, but it is no longer the chosen endpoint for this migration.
 
 Additional `zed-font-kit` upstream compatibility probe on 2026-06-07:
 
@@ -207,6 +204,29 @@ Result:
 - Source inspection still shows macOS-specific blockers: upstream `font-kit` lacks Zed's
   `Handle::Native` / `Handle::from_native`, and upstream `from_native_font` takes the native font
   by value rather than by reference.
+
+Additional `font-kit` owned fork switch on 2026-06-07:
+
+```sh
+# In gpui, gpui_macos, and gpui_wgpu:
+# font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", optional = true }
+cargo check -p gpui_wgpu --features font-kit
+cargo check -p gpui_wgpu --features font-kit --locked
+cargo check -p gpui_macos --features font-kit --locked
+cargo tree --workspace --all-features --target all --edges normal --invert font-kit
+```
+
+Result:
+
+- The workspace now resolves `font-kit v0.14.3` from
+  `https://github.com/Latias94/font-kit?branch=main#7c6bb817b6878a3e6b44e4fa0902cd48c4905107`.
+- `zed-font-kit` is removed from `Cargo.lock`.
+- The fork preserves the Zed API surface used by Open GPUI: public `matching`,
+  `Handle::Native` / `Handle::from_native`, borrowed `from_native_font`, CoreText no-path native
+  font loading, and the `core-text = 21.0.0` dependency line.
+- Windows-host checks pass for `gpui_wgpu` and `gpui_macos` with the `font-kit` feature. This still
+  does not claim macOS runtime equivalence, but it verifies that the fork keeps the required API
+  surface used by this workspace.
 
 Additional `wgpu` fork migration probe on 2026-06-07:
 
@@ -334,10 +354,7 @@ behavior remains necessary.
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
    the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
    Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-2. **`zed-font-kit` ownership decision**: run a dedicated macOS text/font compatibility lane. Prefer
-   upstream `font-kit` when it preserves behavior; otherwise create an Open GPUI-owned `font-kit`
-   fork for APIs such as `Handle::from_native` and reference-taking `from_native_font`.
-3. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
+2. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
    offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
 ## Success Metrics
@@ -345,7 +362,7 @@ behavior remains necessary.
 | Metric | Target | Measurement |
 | --- | --- | --- |
 | Zed Git source count | Reduced one Git source at a time | `rg 'github.com/zed-industries/(scap|font-kit)|zed-industries/wgpu' Cargo.toml Cargo.lock` |
-| Zed package dependency count | Reduced only after upstream replacement, not source-only migration | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
+| Zed package dependency count | Keep only currently accepted Zed fork packages | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
 | Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks, such as `cargo run -p xtask -- renderer-smoke`, or documented limitation |
@@ -361,11 +378,6 @@ behavior remains necessary.
 
 ## Open Questions
 
-- What namespace and release policy should Open GPUI use for owned forks when upstream crates are
-  not compatible yet?
-- Should Open GPUI create its own font-kit fork namespace now, given that crates.io
-  `zed-font-kit = 0.14.1-zed` is still Zed-published?
-- Which runtime checks should be added before replacing `zed-font-kit` with upstream `font-kit`?
 - Should the renderer smoke grow into an offscreen pixel comparison before claiming pixel-output
   equivalence for the `wgpu` migration?
 - Should Linux all-features CI be added as a permanent gate for future Linux dependency changes?

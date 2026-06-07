@@ -34,8 +34,7 @@ gpui_util.workspace = true
 wgpu.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
-# Keep the Zed API surface until upstream font-kit compatibility is handled separately.
-font-kit = { package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true

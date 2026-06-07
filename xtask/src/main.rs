@@ -4,8 +4,14 @@ use std::{
     process::{Command, ExitCode},
 };
 
-const DISALLOWED_DEPENDENCY_NAMES: &[&str] =
-    &["ztracing", "ztracing_macro", "zlog", "zed-sum-tree", "perf"];
+const DISALLOWED_DEPENDENCY_NAMES: &[&str] = &[
+    "ztracing",
+    "ztracing_macro",
+    "zlog",
+    "zed-sum-tree",
+    "zed-font-kit",
+    "perf",
+];
 const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/font-kit",
     "zed-industries/reqwest",
@@ -474,11 +480,13 @@ perf.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 sum_tree = { package = 'zed-sum-tree', version = '0.1' }
+font-kit = { package = 'zed-font-kit', version = '0.14.1-zed' }
 "#,
         );
 
         assert!(has_failure(&failures, "perf"));
         assert!(has_failure(&failures, "zed-sum-tree"));
+        assert!(has_failure(&failures, "zed-font-kit"));
     }
 
     #[test]
@@ -539,6 +547,10 @@ name = "perf"
 version = "0.1.0"
 
 [[package]]
+name = "zed-font-kit"
+version = "0.14.1-zed"
+
+[[package]]
 name = "allowed"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed.git?rev=abc#123"
@@ -546,6 +558,7 @@ source = "git+https://github.com/zed-industries/zed.git?rev=abc#123"
         );
 
         assert!(has_failure(&failures, "perf"));
+        assert!(has_failure(&failures, "zed-font-kit"));
         assert!(has_failure(&failures, "zed-industries/zed.git"));
     }
 
