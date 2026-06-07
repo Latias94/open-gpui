@@ -638,9 +638,8 @@ fn find_best_match(
         })
         .collect::<Result<SmallVec<[_; 4]>>>()?;
 
-    let ix =
-        font_kit::matching::find_best_match(&candidate_properties, &font_into_properties(font))
-            .context("requested font family contains no font matching the other parameters")?;
+    let ix = find_best_font_kit_match(&candidate_properties, &font_into_properties(font))
+        .context("requested font family contains no font matching the other parameters")?;
 
     Ok(ix)
 }
@@ -820,6 +819,132 @@ fn cosmic_font_features(features: &FontFeatures) -> Result<CosmicFontFeatures> {
 }
 
 #[cfg(feature = "font-kit")]
+fn find_best_font_kit_match(
+    candidates: &[font_kit::properties::Properties],
+    query: &font_kit::properties::Properties,
+) -> Option<usize> {
+    use font_kit::properties::{Stretch, Style, Weight};
+
+    let mut matching_set = (0..candidates.len()).collect::<SmallVec<[_; 8]>>();
+    if matching_set.is_empty() {
+        return None;
+    }
+
+    let matching_stretch = if matching_set
+        .iter()
+        .any(|&index| candidates[index].stretch == query.stretch)
+    {
+        query.stretch
+    } else if query.stretch <= Stretch::NORMAL {
+        matching_set
+            .iter()
+            .filter(|&index| candidates[*index].stretch < query.stretch)
+            .min_by(|&a, &b| {
+                stretch_distance(candidates[*a].stretch, query.stretch)
+                    .total_cmp(&stretch_distance(candidates[*b].stretch, query.stretch))
+            })
+            .or_else(|| {
+                matching_set.iter().min_by(|&a, &b| {
+                    stretch_distance(candidates[*a].stretch, query.stretch)
+                        .total_cmp(&stretch_distance(candidates[*b].stretch, query.stretch))
+                })
+            })
+            .map(|index| candidates[*index].stretch)?
+    } else {
+        matching_set
+            .iter()
+            .filter(|&index| candidates[*index].stretch > query.stretch)
+            .min_by(|&a, &b| {
+                stretch_distance(candidates[*a].stretch, query.stretch)
+                    .total_cmp(&stretch_distance(candidates[*b].stretch, query.stretch))
+            })
+            .or_else(|| {
+                matching_set.iter().min_by(|&a, &b| {
+                    stretch_distance(candidates[*a].stretch, query.stretch)
+                        .total_cmp(&stretch_distance(candidates[*b].stretch, query.stretch))
+                })
+            })
+            .map(|index| candidates[*index].stretch)?
+    };
+    matching_set.retain(|index| candidates[*index].stretch == matching_stretch);
+
+    let style_preference = match query.style {
+        Style::Italic => [Style::Italic, Style::Oblique, Style::Normal],
+        Style::Oblique => [Style::Oblique, Style::Italic, Style::Normal],
+        Style::Normal => [Style::Normal, Style::Oblique, Style::Italic],
+    };
+    let matching_style = *style_preference.iter().find(|&query_style| {
+        matching_set
+            .iter()
+            .any(|&index| candidates[index].style == *query_style)
+    })?;
+    matching_set.retain(|index| candidates[*index].style == matching_style);
+
+    let matching_weight = if matching_set
+        .iter()
+        .any(|&index| candidates[index].weight == query.weight)
+    {
+        query.weight
+    } else if query.weight >= Weight(400.0)
+        && query.weight < Weight(450.0)
+        && matching_set
+            .iter()
+            .any(|&index| candidates[index].weight == Weight(500.0))
+    {
+        Weight(500.0)
+    } else if query.weight >= Weight(450.0)
+        && query.weight <= Weight(500.0)
+        && matching_set
+            .iter()
+            .any(|&index| candidates[index].weight == Weight(400.0))
+    {
+        Weight(400.0)
+    } else if query.weight <= Weight(500.0) {
+        matching_set
+            .iter()
+            .filter(|&index| candidates[*index].weight <= query.weight)
+            .min_by(|&a, &b| {
+                weight_distance(candidates[*a].weight, query.weight)
+                    .total_cmp(&weight_distance(candidates[*b].weight, query.weight))
+            })
+            .or_else(|| {
+                matching_set.iter().min_by(|&a, &b| {
+                    weight_distance(candidates[*a].weight, query.weight)
+                        .total_cmp(&weight_distance(candidates[*b].weight, query.weight))
+                })
+            })
+            .map(|index| candidates[*index].weight)?
+    } else {
+        matching_set
+            .iter()
+            .filter(|&index| candidates[*index].weight >= query.weight)
+            .min_by(|&a, &b| {
+                weight_distance(candidates[*a].weight, query.weight)
+                    .total_cmp(&weight_distance(candidates[*b].weight, query.weight))
+            })
+            .or_else(|| {
+                matching_set.iter().min_by(|&a, &b| {
+                    weight_distance(candidates[*a].weight, query.weight)
+                        .total_cmp(&weight_distance(candidates[*b].weight, query.weight))
+                })
+            })
+            .map(|index| candidates[*index].weight)?
+    };
+    matching_set.retain(|index| candidates[*index].weight == matching_weight);
+    matching_set.into_iter().next()
+}
+
+#[cfg(feature = "font-kit")]
+fn stretch_distance(a: font_kit::properties::Stretch, b: font_kit::properties::Stretch) -> f32 {
+    (a.0 - b.0).abs()
+}
+
+#[cfg(feature = "font-kit")]
+fn weight_distance(a: font_kit::properties::Weight, b: font_kit::properties::Weight) -> f32 {
+    (a.0 - b.0).abs()
+}
+
+#[cfg(feature = "font-kit")]
 fn font_into_properties(font: &gpui::Font) -> font_kit::properties::Properties {
     font_kit::properties::Properties {
         style: match font.style {
@@ -866,6 +991,19 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "font-kit")]
+    fn props(
+        style: font_kit::properties::Style,
+        weight: f32,
+        stretch: font_kit::properties::Stretch,
+    ) -> font_kit::properties::Properties {
+        font_kit::properties::Properties {
+            style,
+            weight: font_kit::properties::Weight(weight),
+            stretch,
+        }
+    }
+
     fn fid(i: usize) -> FontId {
         FontId(i)
     }
@@ -883,6 +1021,82 @@ mod tests {
             slot,
             font_id,
         }
+    }
+
+    #[cfg(feature = "font-kit")]
+    #[test]
+    fn font_kit_match_returns_none_for_empty_candidates() {
+        use font_kit::properties::{Stretch, Style};
+
+        assert_eq!(
+            find_best_font_kit_match(&[], &props(Style::Normal, 400.0, Stretch::NORMAL)),
+            None
+        );
+    }
+
+    #[cfg(feature = "font-kit")]
+    #[test]
+    fn font_kit_match_prefers_stretch_before_style_and_weight() {
+        use font_kit::properties::{Stretch, Style};
+
+        let candidates = [
+            props(Style::Italic, 400.0, Stretch::EXPANDED),
+            props(Style::Normal, 900.0, Stretch::CONDENSED),
+            props(Style::Oblique, 700.0, Stretch::NORMAL),
+        ];
+
+        assert_eq!(
+            find_best_font_kit_match(
+                &candidates,
+                &props(Style::Normal, 400.0, Stretch::SEMI_CONDENSED)
+            ),
+            Some(1)
+        );
+    }
+
+    #[cfg(feature = "font-kit")]
+    #[test]
+    fn font_kit_match_uses_css_style_preference_order() {
+        use font_kit::properties::{Stretch, Style};
+
+        let candidates = [
+            props(Style::Normal, 400.0, Stretch::NORMAL),
+            props(Style::Oblique, 400.0, Stretch::NORMAL),
+            props(Style::Italic, 400.0, Stretch::NORMAL),
+        ];
+
+        assert_eq!(
+            find_best_font_kit_match(&candidates, &props(Style::Italic, 400.0, Stretch::NORMAL)),
+            Some(2)
+        );
+        assert_eq!(
+            find_best_font_kit_match(
+                &candidates[..2],
+                &props(Style::Italic, 400.0, Stretch::NORMAL)
+            ),
+            Some(1)
+        );
+    }
+
+    #[cfg(feature = "font-kit")]
+    #[test]
+    fn font_kit_match_keeps_css_weight_edge_cases() {
+        use font_kit::properties::{Stretch, Style};
+
+        let candidates = [
+            props(Style::Normal, 300.0, Stretch::NORMAL),
+            props(Style::Normal, 400.0, Stretch::NORMAL),
+            props(Style::Normal, 500.0, Stretch::NORMAL),
+        ];
+
+        assert_eq!(
+            find_best_font_kit_match(&candidates, &props(Style::Normal, 425.0, Stretch::NORMAL)),
+            Some(2)
+        );
+        assert_eq!(
+            find_best_font_kit_match(&candidates, &props(Style::Normal, 475.0, Stretch::NORMAL)),
+            Some(1)
+        );
     }
 
     #[test]

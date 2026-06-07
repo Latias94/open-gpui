@@ -41,7 +41,7 @@ flowchart TD
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
-| `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io | High | The Git source is removed. Defer replacing the Zed package with upstream `font-kit` because current code depends on Zed-only APIs and public/private module behavior. |
+| `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io | High | The Git source is removed. `gpui_wgpu` no longer depends on Zed's public `matching` module, but `gpui_macos` still depends on Zed-only native CoreText handle behavior. |
 
 ## Evidence Commands
 
@@ -146,9 +146,9 @@ Result:
   previously locked Git rev `94b0f28166665e8fd2f53ff6d268a14955c82269`: crates.io declares
   `dirs = "5.0"` while that Git rev declares `dirs = "6.0"`. The lockfile now carries
   `dirs = 5.0.1` for `zed-font-kit` and keeps `dirs = 6.0.0` for the rest of the workspace.
-- Upstream `font-kit = 0.14.3` is not a drop-in replacement. The same `gpui_wgpu` check fails
-  because `font_kit::matching` is private in upstream `font-kit`, while
-  `crates/gpui_wgpu/src/cosmic_text_system.rs` calls `font_kit::matching::find_best_match`.
+- A dependency-only switch to upstream `font-kit = 0.14.3` originally failed in `gpui_wgpu`
+  because `font_kit::matching` is private in upstream `font-kit`. `gpui_wgpu` now owns a local CSS
+  font matching helper, so that private-module dependency is no longer a renderer-side blocker.
 - `gpui_macos` also depends on Zed-only APIs:
   `font_kit::handle::Handle::from_native` in `crates/gpui_macos/src/text_system.rs`, and
   reference-taking `font_kit::font::Font::from_native_font(&new_font)` in
@@ -168,9 +168,43 @@ Decision:
 - Treat Git-source removal and upstream replacement as two separate migrations.
 - Git-source removal is complete for `zed-font-kit`: the three manifests now use crates.io
   `zed-font-kit = 0.14.1-zed`.
-- Replacing `zed-font-kit` with upstream `font-kit` needs a compatibility lane that either removes
-  the Zed-only API usages from Open GPUI or owns a small Open GPUI font-kit fork carrying the needed
-  native-handle and public matching behavior.
+- Replacing `zed-font-kit` with upstream `font-kit` still needs a macOS compatibility lane that
+  removes the Zed-only native-handle usages from Open GPUI or owns a small Open GPUI font-kit fork
+  carrying that behavior.
+
+Additional `zed-font-kit` upstream compatibility probe on 2026-06-07:
+
+```sh
+# Temporary probe worktree:
+# %TEMP%/open-gpui-font-kit-probe-20260607
+# In gpui, gpui_macos, and gpui_wgpu:
+# font-kit = { package = "font-kit", version = "0.14.3", optional = true }
+#
+# In gpui_wgpu:
+# use a local CSS font matching helper instead of font_kit::matching.
+cargo check -p gpui_wgpu --features font-kit
+cargo check -p gpui_macos --features font-kit
+cargo check -p gpui_macos --target aarch64-apple-darwin --features font-kit
+
+# Applied to the main workspace without changing the dependency source:
+cargo nextest run -p gpui_wgpu --features font-kit font_kit_match
+cargo check -p gpui_wgpu --features font-kit --locked
+```
+
+Result:
+
+- `gpui_wgpu` compiles against upstream `font-kit = 0.14.3` after replacing the private
+  `font_kit::matching` call with a local CSS Fonts Level 3 matching helper.
+- The main workspace keeps crates.io `zed-font-kit = 0.14.1-zed`, but `gpui_wgpu` no longer calls
+  the Zed-only public `font_kit::matching` module.
+- `cargo check -p gpui_macos --features font-kit` passes on the Windows host, but this does not
+  compile the macOS `target_os = "macos"` CoreText implementation.
+- `cargo check -p gpui_macos --target aarch64-apple-darwin --features font-kit` did not reach
+  Open GPUI code because this toolchain does not have the `aarch64-apple-darwin` standard library
+  installed.
+- Source inspection still shows macOS-specific blockers: upstream `font-kit` lacks Zed's
+  `Handle::Native` / `Handle::from_native`, and upstream `from_native_font` takes the native font
+  by value rather than by reference.
 
 Additional `wgpu` fork migration probe on 2026-06-07:
 
@@ -280,9 +314,9 @@ crate preserves the required API surface.
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
    the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
    Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-2. **`zed-font-kit` upstream replacement**: defer until a dedicated text/font compatibility lane can
-   replace or own Zed-only APIs such as `Handle::from_native`, reference-taking
-   `from_native_font`, and public `matching::find_best_match`.
+2. **`zed-font-kit` upstream replacement**: defer until a dedicated macOS text/font compatibility
+   lane can replace or own Zed-only APIs such as `Handle::from_native` and reference-taking
+   `from_native_font`.
 3. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
    offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
