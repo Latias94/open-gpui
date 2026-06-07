@@ -19,6 +19,9 @@ The project also has two reference inputs:
 
 The first architectural problem is not implementation velocity. It is preserving a clean license
 and dependency boundary while keeping enough API compatibility for the existing GPUI ecosystem.
+This does not require a fork-free dependency graph. When an upstream crate lacks behavior that is
+necessary for GPUI's renderer, text, or platform backend correctness, Open GPUI may own a focused
+fork rather than removing framework functionality.
 
 ## Decision
 
@@ -54,6 +57,18 @@ The initial import set is expected to include:
 The project must not import Zed's GPL-licensed tracing crates. Any dependency on `ztracing` or
 `ztracing_macro` must be replaced with ordinary `tracing`, feature-gated local instrumentation, or
 a new Apache-2.0 compatible crate owned by this workspace.
+
+For permissively licensed third-party crates, the preferred order is:
+
+1. Use the crates.io upstream crate unchanged when it preserves required behavior.
+2. Adapt Open GPUI code to upstream APIs when that does not regress renderer, text, or platform
+   behavior.
+3. Own a small Open GPUI fork when the fork carries necessary behavior that upstream lacks or has
+   not accepted yet.
+
+Owned forks must preserve the required behavior, keep their delta documented, remain license-clean,
+and have focused verification gates. Open GPUI must not drop capabilities merely to avoid carrying
+an owned fork.
 
 `gpui-component` will be forked or imported only after the core Open GPUI workspace can build and
 run at least one native example. Its first integration target is dependency rewiring and smoke
@@ -148,3 +163,5 @@ reference.
 - The first substantial code lane is GPUI core import and manifest normalization.
 - `ztracing` replacement is a serial blocker for any imported crate that currently depends on it.
 - `gpui-component` is intentionally delayed until the core framework has a verified build surface.
+- Some dependencies may become Open GPUI-owned forks when that is the cleanest way to preserve
+  framework behavior without depending on Zed-controlled fork artifacts.

@@ -12,7 +12,9 @@ scan, but they remain follow-up debt because they keep framework builds coupled 
 git repositories.
 
 The goal is to replace, justify, or own each fork without weakening the clean license and dependency
-boundary established by ADR 0001.
+boundary established by ADR 0001. The goal is not to remove behavior for the sake of avoiding forks:
+if a fork carries renderer, text, screen-capture, or platform behavior that Open GPUI needs, the
+right endpoint can be an Open GPUI-owned fork with a documented delta and verification gates.
 
 ## Current Dependency Map
 
@@ -41,7 +43,7 @@ flowchart TD
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
-| `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io | High | The Git source is removed. `gpui_wgpu` no longer depends on Zed's public `matching` module, but `gpui_macos` still depends on Zed-only native CoreText handle behavior. |
+| `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io, or an Open GPUI-owned fork if native CoreText behavior is required | High | The Git source is removed. `gpui_wgpu` no longer depends on Zed's public `matching` module, but `gpui_macos` still depends on Zed-only native CoreText handle behavior. Preserve that behavior via upstream-compatible code or an Open GPUI-owned fork; do not cut font functionality merely to avoid a fork. |
 
 ## Evidence Commands
 
@@ -168,9 +170,9 @@ Decision:
 - Treat Git-source removal and upstream replacement as two separate migrations.
 - Git-source removal is complete for `zed-font-kit`: the three manifests now use crates.io
   `zed-font-kit = 0.14.1-zed`.
-- Replacing `zed-font-kit` with upstream `font-kit` still needs a macOS compatibility lane that
-  removes the Zed-only native-handle usages from Open GPUI or owns a small Open GPUI font-kit fork
-  carrying that behavior.
+- Replacing `zed-font-kit` with upstream `font-kit` still needs a macOS compatibility lane. That
+  lane should either adapt Open GPUI to upstream APIs without behavior loss, or create an Open
+  GPUI-owned `font-kit` fork that carries the required native CoreText handle behavior.
 
 Additional `zed-font-kit` upstream compatibility probe on 2026-06-07:
 
@@ -309,14 +311,32 @@ Cons:
 Decision: implemented for `zed-font-kit`; keep this pattern for other forks only when a published
 crate preserves the required API surface.
 
+### Option E: Own focused Open GPUI forks for necessary behavior
+
+Pros:
+
+- Preserves framework behavior when upstream crates do not expose the APIs or fixes GPUI needs.
+- Moves control from Zed-maintained artifacts to Open GPUI-owned release and review processes.
+- Keeps the door open for upstreaming while avoiding premature feature removal.
+
+Cons:
+
+- Requires maintenance, release, and security ownership.
+- Requires clear documentation of the fork delta and verification gates.
+- Can drift from upstream if not actively managed.
+
+Decision: recommended when upstream adaptation would remove required behavior or create excessive
+platform risk. This is the likely endpoint for `font-kit` if the macOS native CoreText handle
+behavior remains necessary.
+
 ## Recommended Work Order
 
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
    the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
    Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-2. **`zed-font-kit` upstream replacement**: defer until a dedicated macOS text/font compatibility
-   lane can replace or own Zed-only APIs such as `Handle::from_native` and reference-taking
-   `from_native_font`.
+2. **`zed-font-kit` ownership decision**: run a dedicated macOS text/font compatibility lane. Prefer
+   upstream `font-kit` when it preserves behavior; otherwise create an Open GPUI-owned `font-kit`
+   fork for APIs such as `Handle::from_native` and reference-taking `from_native_font`.
 3. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
    offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
@@ -337,14 +357,14 @@ crate preserves the required API surface.
 | Public crate API differs from Zed fork | High | Medium | Compare with a focused manifest switch before changing code broadly. |
 | Platform-specific regression is missed on Windows CI | High | Medium | Add Linux/macOS or feature-specific CI before migrating platform-sensitive forks. |
 | Lockfile churn hides the actual dependency change | Medium | Medium | Commit one fork migration at a time with focused verification evidence. |
-| Fork has unpublished behavioral fixes | High | Medium | Inspect fork delta or run compatibility tests before replacement. |
+| Fork has unpublished behavioral fixes | High | Medium | Inspect fork delta or run compatibility tests before replacement; keep or own the fork when the behavior is necessary. |
 
 ## Open Questions
 
-- Should Open GPUI publish temporary internal forks under its own organization when upstream crates
-  are not compatible yet?
-- Should Open GPUI create its own font-kit fork namespace before upstream replacement work, given
-  that crates.io `zed-font-kit = 0.14.1-zed` is still Zed-published?
+- What namespace and release policy should Open GPUI use for owned forks when upstream crates are
+  not compatible yet?
+- Should Open GPUI create its own font-kit fork namespace now, given that crates.io
+  `zed-font-kit = 0.14.1-zed` is still Zed-published?
 - Which runtime checks should be added before replacing `zed-font-kit` with upstream `font-kit`?
 - Should the renderer smoke grow into an offscreen pixel comparison before claiming pixel-output
   equivalence for the `wgpu` migration?
