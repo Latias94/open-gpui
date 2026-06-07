@@ -174,8 +174,8 @@ The default crate ships only the persistence contract and an in-memory store.
 use open_gpui_canvas::{
     CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
     CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
-    apply_persistent_tool_effect, apply_persistent_transaction, load_canvas_document,
-    save_canvas_checkpoint,
+    apply_persistent_tool_effect, apply_persistent_transaction, handle_persistent_event,
+    load_canvas_document, save_canvas_checkpoint,
 };
 
 let document = CanvasDocument::default();
@@ -204,6 +204,11 @@ save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
 
 For tool reducers, use `apply_persistent_tool_effect` or `apply_persistent_tool_effects` so
 recorded transactions enter the log and unrecorded gesture updates stay transient until committed.
+Applications that want one entrypoint can dispatch normalized canvas events through
+`handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
+`handle_persistent_event_with_tool_registry`; those helpers reduce the active tool to effects, log
+recorded transactions, apply transient updates in memory, and leave concrete storage ownership in
+the application.
 
 Feature names are reserved for future adapters:
 

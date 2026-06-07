@@ -167,6 +167,12 @@ automatic so applications can choose their own durability cadence and retry poli
 Recorded tool transactions are appended to the log before they are applied, transient
 `ApplyUnrecorded` gesture updates remain in-memory, and the final `PushUndo` effect commits the
 completed gesture as one forward transaction derived from the editor's current document state.
+`handle_persistent_event`, `handle_persistent_event_with_custom_tool`, and
+`handle_persistent_event_with_tool_registry` provide the application-level convenience path over
+that same boundary. They reduce the active tool event into effects first, then apply the effects
+through the persistence runner, so applications can choose either explicit effect orchestration or a
+single event-dispatch entrypoint. The editor still does not own the store or cursor; this keeps
+redb, Loro, `rkyv`, and application retry policy outside the core editor state.
 
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.

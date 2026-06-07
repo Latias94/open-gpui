@@ -539,13 +539,20 @@ impl CanvasEditor {
     }
 
     pub fn handle_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
-        let effects = match &self.tool {
+        let effects = self.event_effects(event)?;
+        self.apply_tool_effects(effects)
+    }
+
+    pub fn event_effects(
+        &self,
+        event: CanvasEvent,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        Ok(match &self.tool {
             CanvasTool::Select => self.select_effects(event)?,
             CanvasTool::Pan => self.pan_effects(event),
             CanvasTool::Connect => self.connect_effects(event),
             CanvasTool::Custom(_) => Vec::new(),
-        };
-        self.apply_tool_effects(effects)
+        })
     }
 
     pub fn handle_event_with_custom_tool<T>(
@@ -556,13 +563,24 @@ impl CanvasEditor {
     where
         T: CanvasToolReducer + ?Sized,
     {
-        let effects = match &self.tool {
+        let effects = self.event_effects_with_custom_tool(event, custom_tool)?;
+        self.apply_tool_effects(effects)
+    }
+
+    pub fn event_effects_with_custom_tool<T>(
+        &self,
+        event: CanvasEvent,
+        custom_tool: &mut T,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError>
+    where
+        T: CanvasToolReducer + ?Sized,
+    {
+        Ok(match &self.tool {
             CanvasTool::Select => self.select_effects(event)?,
             CanvasTool::Pan => self.pan_effects(event),
             CanvasTool::Connect => self.connect_effects(event),
             CanvasTool::Custom(_) => custom_tool.handle_event(self.tool_context(), event)?,
-        };
-        self.apply_tool_effects(effects)
+        })
     }
 
     pub fn handle_event_with_tool_registry(
@@ -570,16 +588,24 @@ impl CanvasEditor {
         event: CanvasEvent,
         registry: &mut CanvasToolRegistry,
     ) -> Result<(), CanvasToolRegistryError> {
+        let effects = self.event_effects_with_tool_registry(event, registry)?;
+        self.apply_tool_effects(effects)?;
+        Ok(())
+    }
+
+    pub fn event_effects_with_tool_registry(
+        &self,
+        event: CanvasEvent,
+        registry: &mut CanvasToolRegistry,
+    ) -> Result<Vec<CanvasToolEffect>, CanvasToolRegistryError> {
         let Some(tool_id) = self.tool.custom_id().cloned() else {
-            self.handle_event(event)?;
-            return Ok(());
+            return Ok(self.event_effects(event)?);
         };
 
         let reducer = registry
             .reducer_mut(&tool_id)
             .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
-        self.handle_event_with_custom_tool(event, reducer)?;
-        Ok(())
+        Ok(self.event_effects_with_custom_tool(event, reducer)?)
     }
 
     fn select_effects(&self, event: CanvasEvent) -> Result<Vec<CanvasToolEffect>, DocumentError> {

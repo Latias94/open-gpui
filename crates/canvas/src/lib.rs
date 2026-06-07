@@ -39,10 +39,12 @@ pub use persistence::{
     CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_REDB_STORE_FEATURE,
     CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceAdapter,
     CanvasPersistenceAdapterStatus, CanvasPersistenceCursor, CanvasPersistenceError,
-    CanvasPersistenceStore, CanvasReplayError, MemoryCanvasPersistenceStore,
-    apply_persistent_tool_effect, apply_persistent_tool_effects, apply_persistent_transaction,
-    canvas_persistence_adapter_statuses, load_canvas_document, load_canvas_persistence_cursor,
-    replay_canvas_log, save_canvas_checkpoint,
+    CanvasPersistenceStore, CanvasPersistentToolRegistryError, CanvasReplayError,
+    MemoryCanvasPersistenceStore, apply_persistent_tool_effect, apply_persistent_tool_effects,
+    apply_persistent_transaction, canvas_persistence_adapter_statuses, handle_persistent_event,
+    handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
+    load_canvas_document, load_canvas_persistence_cursor, replay_canvas_log,
+    save_canvas_checkpoint,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,

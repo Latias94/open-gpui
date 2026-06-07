@@ -1,5 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasSnapshot, CanvasToolEffect,
+    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent, CanvasSnapshot,
+    CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
     CanvasTransaction, DocumentError,
 };
 use std::{convert::Infallible, error::Error, fmt};
@@ -135,6 +136,53 @@ impl<E> From<DocumentError> for CanvasPersistenceError<E> {
 }
 
 pub type CanvasReplayError = CanvasPersistenceError<Infallible>;
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum CanvasPersistentToolRegistryError<E = Infallible> {
+    MissingTool(CanvasToolId),
+    Persistence(CanvasPersistenceError<E>),
+}
+
+impl<E> CanvasPersistentToolRegistryError<E> {
+    fn from_tool_registry_error(error: CanvasToolRegistryError) -> Self {
+        match error {
+            CanvasToolRegistryError::MissingTool(id) => Self::MissingTool(id),
+            CanvasToolRegistryError::Document(error) => {
+                Self::Persistence(CanvasPersistenceError::Document(error))
+            }
+        }
+    }
+}
+
+impl<E> From<CanvasPersistenceError<E>> for CanvasPersistentToolRegistryError<E> {
+    fn from(value: CanvasPersistenceError<E>) -> Self {
+        Self::Persistence(value)
+    }
+}
+
+impl<E> fmt::Display for CanvasPersistentToolRegistryError<E>
+where
+    E: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingTool(id) => write!(f, "canvas custom tool `{id}` is not registered"),
+            Self::Persistence(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl<E> Error for CanvasPersistentToolRegistryError<E>
+where
+    E: fmt::Debug + fmt::Display + 'static,
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MissingTool(_) => None,
+            Self::Persistence(error) => Some(error),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanvasPersistenceCursor {
@@ -293,6 +341,51 @@ where
     Ok(())
 }
 
+pub fn handle_persistent_event<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    event: CanvasEvent,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let effects = editor.event_effects(event)?;
+    apply_persistent_tool_effects(editor, store, cursor, effects)
+}
+
+pub fn handle_persistent_event_with_custom_tool<S, T>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    event: CanvasEvent,
+    custom_tool: &mut T,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+    T: CanvasToolReducer + ?Sized,
+{
+    let effects = editor.event_effects_with_custom_tool(event, custom_tool)?;
+    apply_persistent_tool_effects(editor, store, cursor, effects)
+}
+
+pub fn handle_persistent_event_with_tool_registry<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    event: CanvasEvent,
+    registry: &mut CanvasToolRegistry,
+) -> Result<(), CanvasPersistentToolRegistryError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let effects = editor
+        .event_effects_with_tool_registry(event, registry)
+        .map_err(CanvasPersistentToolRegistryError::from_tool_registry_error)?;
+    apply_persistent_tool_effects(editor, store, cursor, effects)?;
+    Ok(())
+}
+
 pub fn save_canvas_checkpoint<S>(
     editor: &CanvasEditor,
     store: &mut S,
@@ -412,9 +505,45 @@ impl CanvasPersistenceStore for MemoryCanvasPersistenceStore {
 mod tests {
     use super::*;
     use crate::{
-        CanvasEditor, CanvasNode, CanvasRecordId, CanvasSelection, DocumentCommand, NodeId,
+        CanvasEditor, CanvasNode, CanvasRecordId, CanvasSelection, CanvasTool, CanvasToolContext,
+        CanvasToolRegistry, DocumentCommand, NodeId, PointerButton, ToolState,
     };
     use open_gpui::{point, px, size};
+
+    #[derive(Default)]
+    struct PersistentStampTool {
+        calls: usize,
+    }
+
+    impl CanvasToolReducer for PersistentStampTool {
+        fn handle_event(
+            &mut self,
+            context: CanvasToolContext<'_>,
+            event: CanvasEvent,
+        ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+            self.calls += 1;
+
+            let CanvasEvent::PointerDown {
+                position,
+                button: PointerButton::Primary,
+            } = event
+            else {
+                return Ok(Vec::new());
+            };
+
+            let node_id = NodeId::new(format!("persistent-stamp-{}", context.document.nodes.len()));
+            Ok(vec![
+                CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+                    DocumentCommand::InsertNode(CanvasNode::new(
+                        node_id,
+                        context.document_position(position),
+                        size(px(24.0), px(24.0)),
+                    )),
+                )),
+                CanvasToolEffect::SetState(ToolState::Idle),
+            ])
+        }
+    }
 
     #[test]
     fn persistence_adapter_statuses_describe_default_and_future_adapters() {
@@ -928,5 +1057,167 @@ mod tests {
             editor.document.nodes[&NodeId::from("a")].position,
             point(px(12.0), px(0.0))
         );
+    }
+
+    #[test]
+    fn persistent_event_dispatch_logs_builtin_connect_transaction() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect);
+        let mut store = MemoryCanvasPersistenceStore::default();
+        store
+            .save_checkpoint(CanvasCheckpoint::new(0, &editor.document))
+            .unwrap();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        handle_persistent_event(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            },
+        )
+        .unwrap();
+        assert_eq!(cursor.sequence(), 0);
+        assert!(store.log_entries().is_empty());
+
+        handle_persistent_event(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasEvent::PointerUp {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(editor.document.edges.len(), 1);
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert!(matches!(
+            store.log_entries()[0].transaction.commands.as_slice(),
+            [DocumentCommand::InsertEdge(edge)]
+                if edge.source.node_id == NodeId::from("a")
+                    && edge.target.node_id == NodeId::from("b")
+        ));
+
+        let restored = load_canvas_document(&store).unwrap();
+        assert_eq!(restored.edges.len(), 1);
+    }
+
+    #[test]
+    fn persistent_event_dispatch_logs_custom_tool_transaction() {
+        let mut editor = CanvasEditor::default();
+        editor.viewport = crate::CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        editor.set_tool(CanvasTool::custom("stamp"));
+        let mut tool = PersistentStampTool::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        handle_persistent_event_with_custom_tool(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasEvent::PointerDown {
+                position: point(px(20.0), px(10.0)),
+                button: PointerButton::Primary,
+            },
+            &mut tool,
+        )
+        .unwrap();
+
+        assert_eq!(tool.calls, 1);
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("persistent-stamp-0")].position,
+            point(px(110.0), px(55.0))
+        );
+
+        let restored = load_canvas_document(&store).unwrap();
+        assert!(
+            restored
+                .nodes
+                .contains_key(&NodeId::from("persistent-stamp-0"))
+        );
+    }
+
+    #[test]
+    fn persistent_registry_event_dispatch_logs_registered_custom_tool_transaction() {
+        let mut editor = CanvasEditor::default();
+        editor.set_tool(CanvasTool::custom("stamp"));
+        let mut registry = CanvasToolRegistry::new();
+        registry.insert("stamp", PersistentStampTool::default());
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        handle_persistent_event_with_tool_registry(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasEvent::PointerDown {
+                position: point(px(12.0), px(18.0)),
+                button: PointerButton::Primary,
+            },
+            &mut registry,
+        )
+        .unwrap();
+
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert!(
+            editor
+                .document
+                .nodes
+                .contains_key(&NodeId::from("persistent-stamp-0"))
+        );
+    }
+
+    #[test]
+    fn persistent_registry_event_dispatch_reports_missing_custom_tool_without_mutation() {
+        let mut editor = CanvasEditor::default();
+        editor.set_tool(CanvasTool::custom("missing"));
+        let mut registry = CanvasToolRegistry::new();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        let err = handle_persistent_event_with_tool_registry(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasEvent::PointerDown {
+                position: point(px(0.0), px(0.0)),
+                button: PointerButton::Primary,
+            },
+            &mut registry,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistentToolRegistryError::MissingTool(CanvasToolId::from("missing"))
+        );
+        assert_eq!(cursor.sequence(), 0);
+        assert!(store.log_entries().is_empty());
+        assert!(editor.document.nodes.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 }
