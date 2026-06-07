@@ -36,9 +36,7 @@ part of the default `verify` gate because it depends on local GPU, driver, and s
 The import-boundary scan rejects dependency files that reintroduce Zed's GPL tracing stack
 (`ztracing`, `ztracing_macro`, `zlog`), the old `zed-sum-tree` dependency, the Zed monorepo as a
 Cargo git dependency, retired Zed Git fork sources that have already been migrated, or the removed
-Zed `perf` crate dependency.
-
-The scan intentionally does not reject the current external Zed-maintained fork that is still
-tracked as follow-up debt: `zed-scap`. The old crates.io `zed-font-kit` package is retired and
-should not be reintroduced; font-kit now resolves through the Open GPUI-owned fork configured in
-the crate manifests.
+Zed `perf` crate dependency. The retired `zed-scap` package and `zed-industries/scap` Git source
+are also rejected now that screen capture resolves through the Open GPUI-owned
+`open-gpui-scap` fork. The old crates.io `zed-font-kit` package is retired and should not be
+reintroduced; font-kit resolves through the Open GPUI-owned fork configured in the crate manifests.

@@ -1,14 +1,15 @@
 # Zed Fork Dependency Audit
 
 **Date**: 2026-06-06
-**Status**: In progress
+**Status**: Resolved
 **Related**: [ADR 0001](../adr/0001-open-gpui-fork-strategy.md), [Verification](../verification.md)
 
 ## Problem
 
-Open GPUI still depends on one Zed-maintained external fork after the initial clean workspace
-import: `zed-scap`. The former `zed-font-kit` dependency now resolves through an Open GPUI-owned
-`font-kit` fork, preserving the Zed API surface without depending on a Zed-published package.
+Open GPUI initially depended on Zed-maintained external forks after the clean workspace import.
+Those fork dependencies now resolve either to public crates.io packages or Open GPUI-owned forks.
+The former `zed-scap` dependency resolves through `open-gpui-scap`, and the former
+`zed-font-kit` dependency resolves through an Open GPUI-owned `font-kit` fork.
 
 The goal is to replace, justify, or own each fork without weakening the clean license and dependency
 boundary established by ADR 0001. The goal is not to remove behavior for the sake of avoiding forks:
@@ -19,7 +20,7 @@ right endpoint can be an Open GPUI-owned fork with a documented delta and verifi
 
 ```mermaid
 flowchart TD
-    Scap[zed-scap] --> Gpui[gpui screen-capture feature]
+    Scap[Latias94/scap open-gpui-scap] --> Gpui[gpui screen-capture feature]
     Scap --> GpuiLinux[gpui_linux screen-capture feature]
     Scap --> GpuiWindows[gpui_windows screen-capture feature]
     FontKit[Latias94/font-kit] --> GpuiFont[gpui font-kit feature]
@@ -32,7 +33,8 @@ flowchart TD
 | Fork | Resolution | Compatibility note | Evidence |
 | --- | --- | --- | --- |
 | `zed-reqwest` | Replaced with crates.io `reqwest = "=0.12.15"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` now caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. | `cargo check -p reqwest_client`; `cargo nextest run -p reqwest_client` |
-| `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
+| `zed-scap` package | Replaced with the Open GPUI-owned `open-gpui-scap` fork at `https://github.com/Latias94/scap`, branch `main`. | The fork keeps the public `scap` crate API by setting `[lib] name = "scap"` while using an owned package name. It also adapts the Windows path to `windows-capture = 1.5.0` by using `Frame::timestamp()`. | `cargo check --locked` in `Latias94/scap`; `cargo package --no-verify` in `Latias94/scap`; `cargo check -p gpui_windows --all-features --locked`; `cargo run -p xtask -- scan-import-boundary` |
+| `zed-scap` transitive `windows-capture` drift | Superseded by the `open-gpui-scap` migration. | Earlier recovery pinned `windows-capture = 1.4.0` while Open GPUI still consumed `zed-scap`; the owned fork now adapts to `windows-capture = 1.5.0` instead. | Historical evidence: `cargo check -p gpui_windows --all-features`; current evidence is covered by the `open-gpui-scap` row. |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
 | `zed-font-kit` Git source | Replaced the Git dependency with crates.io `zed-font-kit = "0.14.1-zed"` while keeping the Zed API surface. | This removes `github.com/zed-industries/font-kit` from manifests and lockfile, but it is not an upstream `font-kit` replacement. The published crate uses `dirs = "5.0"` while the previously locked Git rev had `dirs = "6.0"`. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert zed-font-kit`; `rg 'zed-industries/font-kit|git\+https://github.com/zed-industries/font-kit' Cargo.toml Cargo.lock crates` |
 | `zed-font-kit` package | Replaced with the Open GPUI-owned `font-kit` fork at `https://github.com/Latias94/font-kit`, branch `main`. | The fork keeps the needed Zed API surface, including public `matching` and macOS native CoreText handle behavior, while using the normal `font-kit` package name. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo check -p gpui_macos --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert font-kit` |
@@ -42,7 +44,7 @@ flowchart TD
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package lacks the `x11` feature used by Open GPUI's Linux feature wiring and fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
+| None | No remaining Zed-maintained external fork dependencies. | `gpui`, `gpui_linux`, and `gpui_windows` use `open-gpui-scap` under `screen-capture` / all-features. | `open-gpui-scap = 0.1.0-beta.1` from `Latias94/scap`. | Low | Keep the Open GPUI-owned fork until upstream `scap` can provide the required API and feature surface. |
 
 ## Evidence Commands
 
@@ -81,7 +83,8 @@ Result:
   older `windows-capture` API.
 - The Linux cross-check did not run because `x86_64-unknown-linux-gnu` is not installed in this
   Windows toolchain, but the Windows compile failure is already sufficient to block this migration.
-- The probe was reverted; `Cargo.toml` and `Cargo.lock` continue to use `zed-scap`.
+- The probe was reverted at the time. This blocker is now superseded by the owned
+  `open-gpui-scap` fork.
 
 Follow-up lockfile check:
 
@@ -125,8 +128,8 @@ Result:
   it calls `windows_capture::frame::Frame::timespan()`, which is not present in
   `windows-capture = 1.5.0`, and its display branch calls `WCSettings::new` with the older argument
   order.
-- The probe was not applied to the workspace. Keep `zed-scap` until upstream `scap` publishes a
-  compatible feature/API surface, or until Open GPUI owns a focused fork/patch.
+- The probe was not applied to the workspace at the time. Open GPUI now owns the focused
+  `open-gpui-scap` fork for this compatibility surface.
 
 Additional `zed-xim` migration probe on 2026-06-07:
 
@@ -382,25 +385,20 @@ Cons:
 - Requires clear documentation of the fork delta and verification gates.
 - Can drift from upstream if not actively managed.
 
-Decision: recommended when upstream adaptation would remove required behavior or create excessive
-platform risk. This is the likely endpoint for `font-kit` if the macOS native CoreText handle
-behavior remains necessary.
+Decision: implemented for `font-kit` and `open-gpui-scap` where upstream adaptation would remove
+required behavior or create excessive platform risk.
 
 ## Recommended Work Order
 
-1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
-   the Linux feature/API mismatch and the Windows `windows-capture` API mismatch, or after deciding
-   to own a small Open GPUI patch/fork. Any retry should verify all-features builds for `gpui`,
-   `gpui_linux`, and `gpui_windows`.
-2. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
+1. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
    offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
 ## Success Metrics
 
 | Metric | Target | Measurement |
 | --- | --- | --- |
-| Zed Git source count | Reduced one Git source at a time | `rg 'github.com/zed-industries/(scap|font-kit)|zed-industries/wgpu' Cargo.toml Cargo.lock` |
-| Zed package dependency count | Keep only currently accepted Zed fork packages | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
+| Zed Git source count | Keep at zero for migrated fork dependencies | `rg 'github.com/zed-industries/(scap|font-kit)|zed-industries/wgpu' Cargo.toml Cargo.lock` |
+| Zed package dependency count | Keep at zero for retired fork packages | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
 | Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks, such as `cargo run -p xtask -- renderer-smoke`, or documented limitation |

@@ -43,8 +43,7 @@ The first import copied the Apache-2.0 GPUI framework closure from Zed into this
 
 ## Known Follow-Ups
 
-- Replace or justify the remaining Zed-maintained dependency: the `zed-scap` Git fork. The former
-  crates.io `zed-font-kit` dependency now resolves through the Open GPUI-owned `font-kit` fork.
+- Continue monitoring Open GPUI-owned fork dependencies: `font-kit` and `open-gpui-scap`.
 - Clean up Zed product naming in comments, examples, window class names, and README content.
 - Decide whether platform backend crates should be published as-is or renamed under the Open GPUI
   package strategy.

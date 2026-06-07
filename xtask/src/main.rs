@@ -9,12 +9,14 @@ const DISALLOWED_DEPENDENCY_NAMES: &[&str] = &[
     "ztracing_macro",
     "zlog",
     "zed-sum-tree",
+    "zed-scap",
     "zed-font-kit",
     "perf",
 ];
 const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
     "zed-industries/font-kit",
     "zed-industries/reqwest",
+    "zed-industries/scap",
     "zed-industries/wgpu",
     "zed-industries/xim",
 ];
@@ -524,7 +526,7 @@ xim = { git = 'https://github.com/zed-industries/xim.git', package = 'zed-xim' }
     }
 
     #[test]
-    fn manifest_scan_allows_current_zed_scap_fork() {
+    fn manifest_scan_rejects_retired_zed_scap_fork() {
         let failures = manifest_failures(
             r#"
 [dependencies]
@@ -532,9 +534,22 @@ scap = { git = 'https://github.com/zed-industries/scap.git', package = 'zed-scap
 "#,
         );
 
+        assert!(has_failure(&failures, "zed-scap"));
+        assert!(has_failure(&failures, "zed-industries/scap.git"));
+    }
+
+    #[test]
+    fn manifest_scan_allows_open_gpui_scap_fork() {
+        let failures = manifest_failures(
+            r#"
+[dependencies]
+scap = { git = 'https://github.com/Latias94/scap', branch = 'main', package = 'open-gpui-scap', version = '0.1.0-beta.1' }
+"#,
+        );
+
         assert!(
             failures.is_empty(),
-            "expected current zed-scap fork to be allowed, got: {failures:?}"
+            "expected Open GPUI scap fork to be allowed, got: {failures:?}"
         );
     }
 
@@ -551,6 +566,10 @@ name = "zed-font-kit"
 version = "0.14.1-zed"
 
 [[package]]
+name = "zed-scap"
+version = "0.0.8-zed"
+
+[[package]]
 name = "allowed"
 version = "0.1.0"
 source = "git+https://github.com/zed-industries/zed.git?rev=abc#123"
@@ -559,6 +578,7 @@ source = "git+https://github.com/zed-industries/zed.git?rev=abc#123"
 
         assert!(has_failure(&failures, "perf"));
         assert!(has_failure(&failures, "zed-font-kit"));
+        assert!(has_failure(&failures, "zed-scap"));
         assert!(has_failure(&failures, "zed-industries/zed.git"));
     }
 
