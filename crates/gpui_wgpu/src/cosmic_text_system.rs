@@ -1,15 +1,15 @@
 use anyhow::{Context as _, Ok, Result};
-use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
     FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine,
 };
-use gpui::{
+use open_gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
     LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
     size,
 };
+use open_gpui_collections::HashMap;
 
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -266,7 +266,7 @@ impl CosmicTextSystemState {
             _ => Arc::from(Vec::new()),
         };
 
-        let name = gpui::font_name_with_fallbacks(name, &self.system_font_fallback);
+        let name = open_gpui::font_name_with_fallbacks(name, &self.system_font_fallback);
 
         let families = self
             .font_system
@@ -660,7 +660,7 @@ fn find_best_match(
     let target_weight = font.weight.0;
     let target_italic = matches!(
         font.style,
-        gpui::FontStyle::Italic | gpui::FontStyle::Oblique
+        open_gpui::FontStyle::Italic | open_gpui::FontStyle::Oblique
     );
 
     let mut best_index = 0;
@@ -945,12 +945,12 @@ fn weight_distance(a: font_kit::properties::Weight, b: font_kit::properties::Wei
 }
 
 #[cfg(feature = "font-kit")]
-fn font_into_properties(font: &gpui::Font) -> font_kit::properties::Properties {
+fn font_into_properties(font: &open_gpui::Font) -> font_kit::properties::Properties {
     font_kit::properties::Properties {
         style: match font.style {
-            gpui::FontStyle::Normal => font_kit::properties::Style::Normal,
-            gpui::FontStyle::Italic => font_kit::properties::Style::Italic,
-            gpui::FontStyle::Oblique => font_kit::properties::Style::Oblique,
+            open_gpui::FontStyle::Normal => font_kit::properties::Style::Normal,
+            open_gpui::FontStyle::Italic => font_kit::properties::Style::Italic,
+            open_gpui::FontStyle::Oblique => font_kit::properties::Style::Oblique,
         },
         weight: font_kit::properties::Weight(font.weight.0),
         stretch: Default::default(),

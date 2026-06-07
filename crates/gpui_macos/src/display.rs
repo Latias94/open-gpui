@@ -8,8 +8,8 @@ use cocoa::{
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
 use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
-use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
 use objc::{msg_send, sel, sel_impl};
+use open_gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
 use uuid::Uuid;
 
 #[derive(Debug)]

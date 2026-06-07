@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use scheduler::{Instant, SpawnTime};
+use open_gpui_scheduler::{Instant, SpawnTime};
 use std::{
     cell::LazyCell,
     collections::{HashMap, VecDeque},
@@ -22,18 +22,18 @@ use serde::{Deserialize, Serialize};
 use crate::{SharedString, TasksIncluded};
 
 #[doc(hidden)]
-pub fn get_all_timings(included: gpui::TasksIncluded) -> Vec<gpui::ThreadTaskTimings> {
+pub fn get_all_timings(included: open_gpui::TasksIncluded) -> Vec<open_gpui::ThreadTaskTimings> {
     let global_thread_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskTimings::collect(&global_thread_timings, included)
 }
 
 #[doc(hidden)]
-pub fn get_current_thread_timings(included: TasksIncluded) -> gpui::ThreadTaskTimings {
-    gpui::profiler::get_current_thread_task_timings(included)
+pub fn get_current_thread_timings(included: TasksIncluded) -> open_gpui::ThreadTaskTimings {
+    open_gpui::profiler::get_current_thread_task_timings(included)
 }
 
 #[doc(hidden)]
-pub fn take_all_stats(included: TasksIncluded) -> Vec<gpui::ThreadTaskStatistics> {
+pub fn take_all_stats(included: TasksIncluded) -> Vec<open_gpui::ThreadTaskStatistics> {
     let global_timings = GLOBAL_THREAD_TIMINGS.lock();
     ThreadTaskStatistics::collect_and_reset(&global_timings, included)
 }

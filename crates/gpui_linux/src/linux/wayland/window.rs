@@ -6,8 +6,8 @@ use std::{
     sync::Arc,
 };
 
-use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
+use open_gpui_collections::{FxHashSet, HashMap};
 
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
@@ -29,7 +29,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
-use gpui::{
+use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, GpuSpecs, Modifiers, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
@@ -37,12 +37,12 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use open_gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
     request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
-    input: Option<Box<dyn FnMut(gpui::PlatformInput) -> gpui::DispatchEventResult>>,
+    input: Option<Box<dyn FnMut(open_gpui::PlatformInput) -> open_gpui::DispatchEventResult>>,
     active_status_change: Option<Box<dyn FnMut(bool)>>,
     hover_status_change: Option<Box<dyn FnMut(bool)>>,
     resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
@@ -326,7 +326,7 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: gpui_wgpu::GpuContext,
+        gpu_context: open_gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
@@ -512,7 +512,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: gpui_wgpu::GpuContext,
+        gpu_context: open_gpui_wgpu::GpuContext,
         compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
@@ -1361,7 +1361,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().request_frame = Some(callback);
     }
 
-    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> gpui::DispatchEventResult>) {
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> open_gpui::DispatchEventResult>) {
         self.0.callbacks.borrow_mut().input = Some(callback);
     }
 
@@ -1470,7 +1470,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn start_window_resize(&self, edge: gpui::ResizeEdge) {
+    fn start_window_resize(&self, edge: open_gpui::ResizeEdge) {
         let state = self.borrow();
         if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel.resize(
@@ -1544,7 +1544,7 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
+    fn a11y_init(&self, callbacks: open_gpui::A11yCallbacks) {
         let activation_handler = TrivialActivationHandler {
             callback: callbacks.activation,
         };

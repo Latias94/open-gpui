@@ -45,9 +45,9 @@ use futures::channel::oneshot;
 use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
+use open_gpui_scheduler::Instant;
+pub use open_gpui_scheduler::RunnableMeta;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use scheduler::Instant;
-pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -755,7 +755,7 @@ pub trait PlatformHeadlessRenderer {
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
 #[doc(hidden)]
-pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
+pub type TimerResolutionGuard = open_gpui_core_util::Deferred<Box<dyn FnOnce() + Send>>;
 
 #[doc(hidden)]
 pub enum TasksIncluded {
@@ -779,7 +779,7 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        gpui_util::defer(Box::new(|| {}))
+        open_gpui_core_util::defer(Box::new(|| {}))
     }
 
     #[cfg(any(test, feature = "test-support"))]

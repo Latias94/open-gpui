@@ -1,6 +1,6 @@
 use std::{rc::Rc, sync::atomic::Ordering};
 
-use ::util::ResultExt;
+use ::open_gpui_util::ResultExt;
 use anyhow::Context as _;
 use windows::{
     Win32::{
@@ -18,7 +18,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui::*;
+use open_gpui::*;
 
 pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;

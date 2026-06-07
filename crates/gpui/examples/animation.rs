@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use gpui::{
+use open_gpui::{
     Animation, AnimationExt as _, App, AssetSource, Bounds, Context, SharedString, Transformation,
     Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage, prelude::*, px,
     size, svg,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct Assets {}
 
@@ -44,8 +44,8 @@ impl Render for AnimationExample {
             .flex()
             .flex_col()
             .size_full()
-            .bg(gpui::white())
-            .text_color(gpui::black())
+            .bg(open_gpui::white())
+            .text_color(open_gpui::black())
             .justify_around()
             .child(
                 div()
@@ -72,7 +72,7 @@ impl Render for AnimationExample {
                                     .size_20()
                                     .overflow_hidden()
                                     .path(ARROW_CIRCLE_SVG)
-                                    .text_color(gpui::black())
+                                    .text_color(open_gpui::black())
                                     .with_animation(
                                         "image_circle",
                                         Animation::new(Duration::from_secs(2))
@@ -95,8 +95,8 @@ impl Render for AnimationExample {
                             .justify_center()
                             .items_center()
                             .border_t_1()
-                            .border_color(gpui::black().opacity(0.1))
-                            .bg(gpui::black().opacity(0.05))
+                            .border_color(open_gpui::black().opacity(0.1))
+                            .bg(open_gpui::black().opacity(0.05))
                             .child("Other Panel"),
                     ),
             )
@@ -129,6 +129,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

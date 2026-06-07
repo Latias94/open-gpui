@@ -1,9 +1,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ::util::ResultExt;
+use ::open_gpui_util::ResultExt;
 use anyhow::Result;
-use gpui::*;
+use open_gpui::*;
 use windows::Win32::{
     Foundation::*,
     Graphics::{DirectManipulation::*, Gdi::*},

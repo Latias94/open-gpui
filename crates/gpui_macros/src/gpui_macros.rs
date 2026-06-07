@@ -52,7 +52,7 @@ pub fn derive_render(input: TokenStream) -> TokenStream {
 /// # #[macro_use] extern crate gpui;
 /// #[derive(AppContext)]
 /// struct MyContext<'a> {
-///     app: &'a mut gpui::App
+///     app: &'a mut open_gpui::App
 /// }
 /// ```
 #[proc_macro_derive(AppContext, attributes(app))]
@@ -73,8 +73,8 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 /// #[derive(VisualContext)]
 /// struct MyContext<'a, 'b> {
 ///     #[app]
-///     app: &'a mut gpui::App,
-///     window: &'b mut gpui::Window
+///     app: &'a mut open_gpui::App,
+///     window: &'b mut open_gpui::Window
 /// }
 /// ```
 ///
@@ -83,9 +83,9 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 /// # #[macro_use] extern crate gpui;
 /// #[derive(VisualContext)]
 /// struct MyContext<'a, 'b> {
-///     app: &'a mut gpui::App,
+///     app: &'a mut open_gpui::App,
 ///     #[window]
-///     window: &'b mut gpui::Window
+///     window: &'b mut open_gpui::Window
 /// }
 /// ```
 #[proc_macro_derive(VisualContext, attributes(window, app))]
@@ -148,7 +148,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
     styles::box_shadow_style_methods(input)
 }
 
-/// `#[gpui::test]` can be used to annotate test functions that run with GPUI support.
+/// `#[open_gpui::test]` can be used to annotate test functions that run with GPUI support.
 ///
 /// It supports both synchronous and asynchronous tests, and can provide you with
 /// as many `TestAppContext` instances as you need.
@@ -156,7 +156,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// test harness (`cargo test` or `cargo-nextest`).
 ///
 /// ```
-/// #[gpui::test]
+/// #[open_gpui::test]
 /// async fn test_foo(mut cx: &TestAppContext) { }
 /// ```
 ///
@@ -168,18 +168,18 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 ///
 /// # Arguments
 ///
-/// - `#[gpui::test]` with no arguments runs once with the seed `0` or `SEED` env var if set.
-/// - `#[gpui::test(seed = 10)]` runs once with the seed `10`.
-/// - `#[gpui::test(seeds(10, 20, 30))]` runs three times with seeds `10`, `20`, and `30`.
-/// - `#[gpui::test(iterations = 5)]` runs five times, providing as seed the values in the range `0..5`.
-/// - `#[gpui::test(retries = 3)]` runs up to four times if it fails to try and make it pass.
-/// - `#[gpui::test(on_failure = "crate::test::report_failure")]` will call the specified function after the
+/// - `#[open_gpui::test]` with no arguments runs once with the seed `0` or `SEED` env var if set.
+/// - `#[open_gpui::test(seed = 10)]` runs once with the seed `10`.
+/// - `#[open_gpui::test(seeds(10, 20, 30))]` runs three times with seeds `10`, `20`, and `30`.
+/// - `#[open_gpui::test(iterations = 5)]` runs five times, providing as seed the values in the range `0..5`.
+/// - `#[open_gpui::test(retries = 3)]` runs up to four times if it fails to try and make it pass.
+/// - `#[open_gpui::test(on_failure = "crate::test::report_failure")]` will call the specified function after the
 ///   tests fail so that you can write out more detail about the failure.
 ///
 /// You can combine `iterations = ...` with `seeds(...)`:
-/// - `#[gpui::test(iterations = 5, seed = 10)]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10))]`.
-/// - `#[gpui::test(iterations = 5, seeds(10, 20, 30)]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
-/// - `#[gpui::test(seeds(10, 20, 30), iterations = 5]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
+/// - `#[open_gpui::test(iterations = 5, seed = 10)]` is equivalent to `#[open_gpui::test(seeds(0, 1, 2, 3, 4, 10))]`.
+/// - `#[open_gpui::test(iterations = 5, seeds(10, 20, 30)]` is equivalent to `#[open_gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
+/// - `#[open_gpui::test(seeds(10, 20, 30), iterations = 5]` is equivalent to `#[open_gpui::test(seeds(0, 1, 2, 3, 4, 10, 20, 30))]`.
 ///
 /// # Environment Variables
 ///
@@ -190,18 +190,18 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
 }
 
-/// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
+/// `#[open_gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
 #[proc_macro_attribute]
 pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     bench::bench(args, function)
 }
 
-/// A variant of `#[gpui::test]` that supports property-based testing.
+/// A variant of `#[open_gpui::test]` that supports property-based testing.
 ///
 /// A property test, much like a standard GPUI randomized test, allows testing
 /// claims of the form "for any possible X, Y should hold". For example:
 /// ```
-/// #[gpui::property_test]
+/// #[open_gpui::property_test]
 /// fn test_arithmetic(x: i32, y: i32) {
 ///     assert!(x == y || x < y || x > y);
 /// }
@@ -228,7 +228,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 /// ## Customizing random values
 ///
 /// This macro is based on the [`#[proptest::property_test]`] macro, but handles
-/// some of the same GPUI-specific arguments as `#[gpui::test]`. Specifically,
+/// some of the same GPUI-specific arguments as `#[open_gpui::test]`. Specifically,
 /// `&{mut,} TestAppContext` and `BackgroundExecutor` work as normal. `StdRng`
 /// arguments are **explicitly forbidden**, since they break shrinking, and are
 /// a common footgun.
@@ -240,11 +240,11 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 ///
 /// Random values of type `T` are generated by a `Strategy<Value = T>` object.
 /// Some types have a canonical `Strategy` - these types also implement
-/// `Arbitrary`. Parameters to a `#[gpui::property_test]`, by default, use a
+/// `Arbitrary`. Parameters to a `#[open_gpui::property_test]`, by default, use a
 /// type's `Arbitrary` implementation. If you'd like to provide a custom
 /// strategy, you can use `#[strategy = ...]` on the argument:
 /// ```
-/// #[gpui::property_test]
+/// #[open_gpui::property_test]
 /// fn int_test(#[strategy = 1..10] x: i32, #[strategy = "[a-zA-Z0-9]{20}"] s: String) {
 ///   assert!(s.len() > (x as usize));
 /// }
@@ -255,7 +255,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 ///
 /// ## Scheduler
 ///
-/// Similar to `#[gpui::test]`, this macro will choose random seeds for the test
+/// Similar to `#[open_gpui::test]`, this macro will choose random seeds for the test
 /// scheduler. It uses `.no_shrink()` to tell proptest that all seeds are
 /// roughly equivalent in terms of "complexity". If `$SEED` is set, it will
 /// affect **ONLY** the seed passed to the scheduler. To control other values,
@@ -278,9 +278,9 @@ pub fn property_test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// following functions:
 ///
 /// ```ignore
-/// pub fn methods::<T: TheTrait + 'static>() -> Vec<gpui::inspector_reflection::FunctionReflection<T>>;
+/// pub fn methods::<T: TheTrait + 'static>() -> Vec<open_gpui::inspector_reflection::FunctionReflection<T>>;
 ///
-/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::FunctionReflection<T>>;
+/// pub fn find_method::<T: TheTrait + 'static>() -> Option<open_gpui::inspector_reflection::FunctionReflection<T>>;
 /// ```
 ///
 /// The `invoke` method on `FunctionReflection` will run the method. `FunctionReflection` also

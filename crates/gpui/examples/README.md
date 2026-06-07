@@ -1,9 +1,9 @@
-# GPUI Examples
+# Open GPUI Examples
 
-Examples can be run from the Zed repository root:
+Examples can be run from the Open GPUI repository root:
 
 ```sh
-cargo run -p gpui --example hello_world
+cargo run -p open-gpui --example hello_world
 ```
 
 ## Where to start
@@ -13,7 +13,7 @@ cargo run -p gpui --example hello_world
 - `input` demonstrates text input, focus, selections, clipboard actions, and
   keyboard bindings.
 - `uniform_list` shows how to render a simple virtualized list.
-- `testing` demonstrates `#[gpui::test]`, `TestAppContext`, actions, focus, and
+- `testing` demonstrates `#[open_gpui::test]`, `TestAppContext`, actions, focus, and
   window-based tests.
 
 ## Layout and styling
@@ -40,7 +40,7 @@ cargo run -p gpui --example hello_world
 
 ## Images, drawing, and animation
 
-- `animation` demonstrates GPUI animations and animated SVG transforms.
+- `animation` demonstrates Open GPUI animations and animated SVG transforms.
 - `gif_viewer` shows GIF rendering.
 - `gradient` demonstrates linear gradients and color spaces.
 - `image` shows local and remote image loading, image sizing, and asset setup.
@@ -60,7 +60,7 @@ cargo run -p gpui --example hello_world
 
 ## Specialized examples
 
-These examples are useful when working on GPUI itself, but they may not be the
+These examples are useful when working on Open GPUI itself, but they may not be the
 best starting point for new applications:
 
 - `active_state_bug` is a focused active-state reproduction.

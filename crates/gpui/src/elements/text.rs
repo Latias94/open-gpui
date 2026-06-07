@@ -6,8 +6,8 @@ use crate::{
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
-use gpui_util::ResultExt;
 use itertools::Itertools;
+use open_gpui_core_util::ResultExt;
 use smallvec::SmallVec;
 use std::{
     borrow::Cow,
@@ -22,7 +22,7 @@ use std::{
 ///
 /// In general, [`Text`] objects should be created via the [`text`] macro:
 /// ```rust
-/// # use gpui::*;
+/// # use open_gpui::*;
 /// # fn render() -> impl IntoElement {
 /// div().child(text!("hello"))
 /// # }
@@ -44,7 +44,7 @@ use std::{
 /// unique ID, derived from its position in the source code (filename, line, and
 /// column). For example:
 /// ```rust
-/// # use gpui::*;
+/// # use open_gpui::*;
 /// let x = text!("hello");
 /// let y = text!("hello");
 /// // not equal, because different `text!` invocations produced them
@@ -147,7 +147,7 @@ pub const fn __hash_text_macro_location_unstable_do_not_use(s: &'static str) -> 
 /// Create a new [`Text`] element.
 ///
 /// ```rust
-/// # use gpui::*;
+/// # use open_gpui::*;
 /// let a = text!("hello");
 /// let b = text!(id = "farewell-message", "hello");
 ///

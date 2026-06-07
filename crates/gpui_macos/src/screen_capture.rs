@@ -5,7 +5,6 @@ use cocoa::{
     base::{YES, id, nil},
     foundation::NSArray,
 };
-use collections::HashMap;
 use core_foundation::base::TCFType;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayModeGetPixelHeight,
@@ -13,10 +12,6 @@ use core_graphics::display::{
 };
 use ctor::ctor;
 use futures::channel::oneshot;
-use gpui::{
-    DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SharedString, SourceMetadata, size,
-};
 use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
 use metal::NSInteger;
 use objc::{
@@ -26,6 +21,11 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use open_gpui::{
+    DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SharedString, SourceMetadata, size,
+};
+use open_gpui_collections::HashMap;
 use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
 use crate::NSStringExt;

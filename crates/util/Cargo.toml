@@ -1,10 +1,15 @@
 [package]
-name = "util"
-version = "0.1.0"
+name = "open-gpui-util"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "A collection of utility structs and functions used by Zed and GPUI"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "General-purpose utility helpers used by Open GPUI."
 
 
 [lints]
@@ -15,12 +20,12 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["rand", "util_macros"]
+test-support = ["rand", "open_gpui_util_macros"]
 
 [dependencies]
 anyhow.workspace = true
 async_zip.workspace = true
-collections.workspace = true
+open_gpui_collections.workspace = true
 dunce.workspace = true
 futures-lite.workspace = true
 futures.workspace = true
@@ -40,8 +45,8 @@ tempfile.workspace = true
 unicase.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
-util_macros = { workspace = true, optional = true }
-gpui_util.workspace = true
+open_gpui_util_macros = { workspace = true, optional = true }
+open_gpui_core_util.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 smol.workspace = true
@@ -63,5 +68,5 @@ tendril = "0.4.3"
 
 [dev-dependencies]
 rand.workspace = true
-util_macros.workspace = true
+open_gpui_util_macros.workspace = true
 pretty_assertions.workspace = true

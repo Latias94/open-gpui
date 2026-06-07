@@ -22,7 +22,7 @@ pub use conditional::*;
 mod conditional {
     use super::*;
     use crate::{AnyElement, App, Context, Empty, IntoElement, Render, Window};
-    use collections::{FxHashMap, TypeIdHashMap};
+    use open_gpui_collections::{FxHashMap, TypeIdHashMap};
     use std::any::{Any, TypeId};
 
     /// `GlobalElementId` qualified by source location of element construction.

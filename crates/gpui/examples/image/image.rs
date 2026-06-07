@@ -5,13 +5,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{
+use open_gpui::{
     App, AppContext, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point,
     SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
     img, prelude::*, px, rgb, size,
 };
 #[cfg(not(target_family = "wasm"))]
-use reqwest_client::ReqwestClient;
+use open_gpui_reqwest_client::ReqwestClient;
 
 struct Assets {
     base: PathBuf,
@@ -78,7 +78,7 @@ impl Render for ImageShowcase {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("main")
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .overflow_y_scroll()
             .p_5()
             .size_full()
@@ -152,9 +152,9 @@ fn run_example() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     #[cfg(not(target_family = "wasm"))]
-    let app = gpui_platform::application();
+    let app = open_gpui_platform::application();
     #[cfg(target_family = "wasm")]
-    let app = gpui_platform::application();
+    let app = open_gpui_platform::application();
     app.with_assets(Assets {
         base: manifest_dir.join("examples"),
     })
@@ -169,7 +169,7 @@ fn run_example() {
             // Safety: the web examples run single-threaded; the client is
             // created and used exclusively on the main thread.
             let http_client = unsafe {
-                gpui_web::FetchHttpClient::with_user_agent("gpui example")
+                open_gpui_web::FetchHttpClient::with_user_agent("gpui example")
                     .expect("failed to create FetchHttpClient")
             };
             cx.set_http_client(Arc::new(http_client));
@@ -220,6 +220,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

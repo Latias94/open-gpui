@@ -1,11 +1,11 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
     px, rgb,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct WindowContent {
     text: SharedString,
@@ -88,7 +88,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Top Left {:?}", screen.id()).into(),
-                    bg: gpui::red(),
+                    bg: open_gpui::red(),
                     bounds,
                 })
             })
@@ -103,7 +103,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Top Right {:?}", screen.id()).into(),
-                    bg: gpui::red(),
+                    bg: open_gpui::red(),
                     bounds,
                 })
             })
@@ -118,7 +118,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Bottom Left {:?}", screen.id()).into(),
-                    bg: gpui::blue(),
+                    bg: open_gpui::blue(),
                     bounds,
                 })
             })
@@ -133,7 +133,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Bottom Right {:?}", screen.id()).into(),
-                    bg: gpui::blue(),
+                    bg: open_gpui::blue(),
                     bounds,
                 })
             })
@@ -147,7 +147,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Top Center {:?}", screen.id()).into(),
-                    bg: gpui::black(),
+                    bg: open_gpui::black(),
                     bounds,
                 })
             })
@@ -161,7 +161,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Left Center {:?}", screen.id()).into(),
-                    bg: gpui::black(),
+                    bg: open_gpui::black(),
                     bounds,
                 })
             })
@@ -178,7 +178,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Center {:?}", screen.id()).into(),
-                    bg: gpui::black(),
+                    bg: open_gpui::black(),
                     bounds,
                 })
             })
@@ -195,7 +195,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Right Center {:?}", screen.id()).into(),
-                    bg: gpui::black(),
+                    bg: open_gpui::black(),
                     bounds,
                 })
             })
@@ -212,7 +212,7 @@ fn run_example() {
             cx.open_window(build_window_options(screen.id(), bounds), |_, cx| {
                 cx.new(|_| WindowContent {
                     text: format!("Bottom Center {:?}", screen.id()).into(),
-                    bg: gpui::black(),
+                    bg: open_gpui::black(),
                     bounds,
                 })
             })
@@ -229,6 +229,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

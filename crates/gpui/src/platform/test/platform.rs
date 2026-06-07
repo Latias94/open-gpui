@@ -7,8 +7,8 @@ use crate::{
     size,
 };
 use anyhow::Result;
-use collections::VecDeque;
 use futures::channel::oneshot;
+use open_gpui_collections::VecDeque;
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,

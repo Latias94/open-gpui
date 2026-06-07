@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use ::util::ResultExt;
+use ::open_gpui_util::ResultExt;
 use anyhow::Context;
 use windows::{
     UI::{
@@ -15,7 +15,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui::*;
+use open_gpui::*;
 
 pub(crate) trait HiLoWord {
     fn hiword(&self) -> u16;

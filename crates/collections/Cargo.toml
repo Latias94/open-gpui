@@ -1,10 +1,15 @@
 [package]
-name = "collections"
-version = "0.1.0"
+name = "open-gpui-collections"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "Standard collection types used by Zed and GPUI"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Standard collection types used by Open GPUI."
 
 [lints]
 workspace = true
@@ -19,4 +24,4 @@ test-support = []
 [dependencies]
 indexmap.workspace = true
 rustc-hash.workspace = true
-gpui_util.workspace = true
+open_gpui_core_util.workspace = true

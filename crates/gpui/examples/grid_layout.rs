@@ -1,9 +1,9 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, Hsla, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 // https://en.wikipedia.org/wiki/Holy_grail_(web_design)
 struct HolyGrailExample {}
@@ -17,7 +17,7 @@ impl Render for HolyGrailExample {
                 .border_1()
                 .border_dashed()
                 .rounded_md()
-                .border_color(gpui::white())
+                .border_color(open_gpui::white())
                 .items_center()
         };
 
@@ -32,35 +32,35 @@ impl Render for HolyGrailExample {
             .grid_cols(5)
             .grid_rows(5)
             .child(
-                block(gpui::white())
+                block(open_gpui::white())
                     .row_span(1)
                     .col_span_full()
                     .child("Header"),
             )
             .child(
-                block(gpui::red())
+                block(open_gpui::red())
                     .col_span(1)
                     .h_56()
                     .child("Table of contents"),
             )
             .child(
-                block(gpui::green())
+                block(open_gpui::green())
                     .col_span(3)
                     .row_span(3)
                     .child("Content"),
             )
             .child(
-                block(gpui::blue())
+                block(open_gpui::blue())
                     .col_span(1)
                     .row_span(3)
                     .child("AD :(")
-                    .text_color(gpui::white()),
+                    .text_color(open_gpui::white()),
             )
             .child(
-                block(gpui::black())
+                block(open_gpui::black())
                     .row_span(1)
                     .col_span_full()
-                    .text_color(gpui::white())
+                    .text_color(open_gpui::white())
                     .child("Footer"),
             )
     }
@@ -89,6 +89,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

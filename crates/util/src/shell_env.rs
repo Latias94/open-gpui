@@ -1,12 +1,14 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 use serde::Deserialize;
 
 use crate::shell::ShellKind;
 
-fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
+fn parse_env_map_from_noisy_output(
+    output: &str,
+) -> Result<open_gpui_collections::HashMap<String, String>> {
     for (position, _) in output.match_indices('{') {
         let candidate = &output[position..];
         let mut deserializer = serde_json::Deserializer::from_str(candidate);
@@ -31,7 +33,7 @@ pub async fn capture(
     shell_path: impl AsRef<Path>,
     args: &[String],
     directory: impl AsRef<Path>,
-) -> Result<collections::HashMap<String, String>> {
+) -> Result<open_gpui_collections::HashMap<String, String>> {
     #[cfg(windows)]
     return capture_windows(shell_path.as_ref(), args, directory.as_ref()).await;
     #[cfg(unix)]
@@ -48,7 +50,7 @@ fn parse_env_output(
     status: &std::process::ExitStatus,
     successful_capture_warning: impl FnOnce() -> String,
     failed_capture_error: impl FnOnce() -> String,
-) -> Result<collections::HashMap<String, String>> {
+) -> Result<open_gpui_collections::HashMap<String, String>> {
     match parse_env_map_from_noisy_output(env_output) {
         Ok(env_map) => {
             if !status.success() {
@@ -76,7 +78,7 @@ async fn capture_unix(
     shell_path: &Path,
     args: &[String],
     directory: &Path,
-) -> Result<collections::HashMap<String, String>> {
+) -> Result<open_gpui_collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
 
     use crate::command::new_std_command;
@@ -209,7 +211,7 @@ async fn capture_windows(
     shell_path: &Path,
     args: &[String],
     directory: &Path,
-) -> Result<collections::HashMap<String, String>> {
+) -> Result<open_gpui_collections::HashMap<String, String>> {
     use std::process::Stdio;
 
     let zed_path =

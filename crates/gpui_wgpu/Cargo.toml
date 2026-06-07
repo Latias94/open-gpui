@@ -1,9 +1,15 @@
 [package]
-name = "gpui_wgpu"
-version = "0.1.0"
+name = "open-gpui-wgpu"
+version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 publish.workspace = true
-license = "Apache-2.0"
+description = "wgpu renderer backend for Open GPUI."
 
 [lints]
 workspace = true
@@ -16,10 +22,10 @@ default = []
 font-kit = ["dep:font-kit"]
 
 [dependencies]
-gpui.workspace = true
+open_gpui.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
-collections.workspace = true
+open_gpui_collections.workspace = true
 cosmic-text = "0.19.0"
 etagere = "0.2"
 itertools.workspace = true
@@ -30,11 +36,11 @@ raw-window-handle = "0.6"
 smallvec.workspace = true
 swash = "0.2.6"
 unicode-segmentation.workspace = true
-gpui_util.workspace = true
+open_gpui_core_util.workspace = true
 wgpu.workspace = true
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)
-font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", optional = true }
+font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", version = "0.14.3", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 pollster.workspace = true

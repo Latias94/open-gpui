@@ -27,12 +27,6 @@ use core_foundation::{
 use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
-use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
-};
 use itertools::Itertools;
 use objc::{
     class,
@@ -40,6 +34,16 @@ use objc::{
     msg_send,
     runtime::{Class, Object, Sel},
     sel, sel_impl,
+};
+use open_gpui::{
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+};
+use open_gpui_util::{
+    ResultExt,
+    command::{new_command, new_std_command},
 };
 use parking_lot::Mutex;
 use ptr::null_mut;
@@ -56,10 +60,6 @@ use std::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
-};
-use util::{
-    ResultExt,
-    command::{new_command, new_std_command},
 };
 
 #[allow(non_upper_case_globals)]
@@ -194,7 +194,7 @@ impl MacPlatform {
         let text_system = Arc::new(crate::MacTextSystem::new());
 
         #[cfg(not(feature = "font-kit"))]
-        let text_system = Arc::new(gpui::NoopTextSystem::new());
+        let text_system = Arc::new(open_gpui::NoopTextSystem::new());
 
         let keyboard_layout = MacKeyboardLayout::new();
         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
@@ -330,14 +330,14 @@ impl MacPlatform {
                         .map(|binding| binding.keystrokes());
 
                     let selector = match os_action {
-                        Some(gpui::OsAction::Cut) => selector("cut:"),
-                        Some(gpui::OsAction::Copy) => selector("copy:"),
-                        Some(gpui::OsAction::Paste) => selector("paste:"),
-                        Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
+                        Some(open_gpui::OsAction::Cut) => selector("cut:"),
+                        Some(open_gpui::OsAction::Copy) => selector("copy:"),
+                        Some(open_gpui::OsAction::Paste) => selector("paste:"),
+                        Some(open_gpui::OsAction::SelectAll) => selector("selectAll:"),
                         // "undo:" and "redo:" are always disabled in our case, as
                         // we don't have a NSTextView/NSTextField to enable them on.
-                        Some(gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
-                        Some(gpui::OsAction::Redo) => selector("handleGPUIMenuItem:"),
+                        Some(open_gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
+                        Some(open_gpui::OsAction::Redo) => selector("handleGPUIMenuItem:"),
                         None => selector("handleGPUIMenuItem:"),
                     };
 
@@ -463,7 +463,7 @@ impl Platform for MacPlatform {
         self.0.lock().background_executor.clone()
     }
 
-    fn foreground_executor(&self) -> gpui::ForegroundExecutor {
+    fn foreground_executor(&self) -> open_gpui::ForegroundExecutor {
         self.0.lock().foreground_executor.clone()
     }
 
@@ -608,7 +608,7 @@ impl Platform for MacPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>> {
         crate::screen_capture::get_sources()
     }
 

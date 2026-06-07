@@ -6,7 +6,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     if !args.is_empty() {
         return error_to_stream(syn::Error::new(
             proc_macro2::TokenStream::from(args).span(),
-            "#[gpui::bench] does not accept arguments yet",
+            "#[open_gpui::bench] does not accept arguments yet",
         ));
     }
 
@@ -18,7 +18,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
     if let Some(asyncness) = &inner_fn.sig.asyncness {
         return error_to_stream(syn::Error::new(
             asyncness.span(),
-            "#[gpui::bench] does not support async benchmark functions yet",
+            "#[open_gpui::bench] does not support async benchmark functions yet",
         ));
     }
 
@@ -31,7 +31,7 @@ pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
 
         fn #outer_fn_name(criterion: &mut criterion::Criterion) {
             criterion.bench_function(stringify!(#outer_fn_name), |bencher| {
-                let mut cx = gpui::BenchAppContext::new(Some(stringify!(#outer_fn_name)));
+                let mut cx = open_gpui::BenchAppContext::new(Some(stringify!(#outer_fn_name)));
                 #inner_fn_name(bencher, &mut cx);
                 cx.teardown();
             });

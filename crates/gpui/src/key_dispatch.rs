@@ -53,7 +53,7 @@ use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
     Keystroke, ModifiersChangedEvent, Window,
 };
-use collections::FxHashMap;
+use open_gpui_collections::FxHashMap;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},

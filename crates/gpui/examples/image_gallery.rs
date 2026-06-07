@@ -1,14 +1,14 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use futures::FutureExt;
-use gpui::{
+use open_gpui::{
     App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
     ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
     RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
 #[cfg(not(target_family = "wasm"))]
-use reqwest_client::ReqwestClient;
+use open_gpui_reqwest_client::ReqwestClient;
 use std::{collections::HashMap, sync::Arc};
 
 const IMAGES_IN_GALLERY: usize = 30;
@@ -44,13 +44,13 @@ impl Render for ImageGallery {
         div()
             .flex()
             .flex_col()
-            .text_color(gpui::white())
+            .text_color(open_gpui::white())
             .child("Manually managed image cache:")
             .child(
                 div()
                     .image_cache(self.image_cache.clone())
                     .id("main")
-                    .text_color(gpui::black())
+                    .text_color(open_gpui::black())
                     .bg(rgb(0xE9E9E9))
                     .overflow_y_scroll()
                     .p_4()
@@ -74,9 +74,9 @@ impl Render for ImageGallery {
                                     .id("btn")
                                     .py_1()
                                     .px_4()
-                                    .bg(gpui::black())
+                                    .bg(open_gpui::black())
                                     .hover(|this| this.opacity(0.8))
-                                    .text_color(gpui::white())
+                                    .text_color(open_gpui::white())
                                     .text_center()
                                     .w_40()
                                     .child("Next Photos")
@@ -105,7 +105,7 @@ impl Render for ImageGallery {
                 div()
                     .id("main")
                     .bg(rgb(0xE9E9E9))
-                    .text_color(gpui::black())
+                    .text_color(open_gpui::black())
                     .overflow_y_scroll()
                     .p_4()
                     .size_full()
@@ -144,7 +144,7 @@ struct SimpleLruCacheProvider {
 }
 
 impl ImageCacheProvider for SimpleLruCacheProvider {
-    fn provide(&mut self, window: &mut Window, cx: &mut App) -> gpui::AnyImageCache {
+    fn provide(&mut self, window: &mut Window, cx: &mut App) -> open_gpui::AnyImageCache {
         window
             .with_global_id(self.id.clone(), |global_id, window| {
                 window.with_element_state::<Entity<SimpleLruCache>, _>(
@@ -167,7 +167,7 @@ impl ImageCacheProvider for SimpleLruCacheProvider {
 struct SimpleLruCache {
     max_items: usize,
     usages: Vec<u64>,
-    cache: HashMap<u64, gpui::ImageCacheItem>,
+    cache: HashMap<u64, open_gpui::ImageCacheItem>,
 }
 
 impl SimpleLruCache {
@@ -192,10 +192,10 @@ impl SimpleLruCache {
 impl ImageCache for SimpleLruCache {
     fn load(
         &mut self,
-        resource: &gpui::Resource,
+        resource: &open_gpui::Resource,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>> {
+    ) -> Option<Result<Arc<open_gpui::RenderImage>, open_gpui::ImageCacheError>> {
         assert_eq!(self.usages.len(), self.cache.len());
         assert!(self.cache.len() <= self.max_items);
 
@@ -226,7 +226,7 @@ impl ImageCache for SimpleLruCache {
             }
         }
         self.cache
-            .insert(hash, gpui::ImageCacheItem::Loading(task.clone()));
+            .insert(hash, open_gpui::ImageCacheItem::Loading(task.clone()));
         self.usages.insert(0, hash);
 
         let entity = window.current_view();
@@ -249,9 +249,9 @@ actions!(image, [Quit]);
 
 fn run_example() {
     #[cfg(not(target_family = "wasm"))]
-    let app = gpui_platform::application();
+    let app = open_gpui_platform::application();
     #[cfg(target_family = "wasm")]
-    let app = gpui_platform::single_threaded_web();
+    let app = open_gpui_platform::single_threaded_web();
 
     app.run(move |cx: &mut App| {
         #[cfg(not(target_family = "wasm"))]
@@ -264,7 +264,7 @@ fn run_example() {
             // Safety: the web examples run single-threaded; the client is
             // created and used exclusively on the main thread.
             let http_client = unsafe {
-                gpui_web::FetchHttpClient::with_user_agent("gpui example")
+                open_gpui_web::FetchHttpClient::with_user_agent("gpui example")
                     .expect("failed to create FetchHttpClient")
             };
             cx.set_http_client(Arc::new(http_client));
@@ -312,6 +312,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

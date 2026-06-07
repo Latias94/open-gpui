@@ -3,11 +3,11 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::Result;
-use gpui::{
+use open_gpui::{
     App, AssetSource, Bounds, BoxShadow, ClickEvent, Context, SharedString, Task, Window,
     WindowBounds, WindowOptions, div, hsla, img, point, prelude::*, px, rgb, size, svg,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct Assets {
     base: PathBuf,
@@ -83,7 +83,7 @@ impl Render for HelloWorld {
                     .justify_center()
                     .items_center()
                     .border_1()
-                    .text_color(gpui::blue())
+                    .text_color(open_gpui::blue())
                     .child(div().child("This is background text.")),
             )
             .child(
@@ -99,10 +99,10 @@ impl Render for HelloWorld {
                     .flex()
                     .justify_center()
                     .items_center()
-                    .bg(gpui::white())
+                    .bg(open_gpui::white())
                     .border_3()
-                    .border_color(gpui::red())
-                    .text_color(gpui::yellow())
+                    .border_color(open_gpui::red())
+                    .text_color(open_gpui::yellow())
                     .child(
                         div()
                             .flex()
@@ -111,9 +111,9 @@ impl Render for HelloWorld {
                             .justify_center()
                             .items_center()
                             .size(px(300.))
-                            .bg(gpui::blue())
+                            .bg(open_gpui::blue())
                             .border_3()
-                            .border_color(gpui::black())
+                            .border_color(open_gpui::black())
                             .shadow(vec![BoxShadow {
                                 color: hsla(0.0, 0.0, 0.0, 0.5),
                                 blur_radius: px(1.0),
@@ -130,17 +130,17 @@ impl Render for HelloWorld {
                                     .justify_center()
                                     .items_center()
                                     .p_4()
-                                    .bg(gpui::black())
-                                    .text_color(gpui::white())
+                                    .bg(open_gpui::black())
+                                    .text_color(open_gpui::white())
                                     .text_decoration_2()
                                     .text_decoration_wavy()
-                                    .text_decoration_color(gpui::red())
+                                    .text_decoration_color(open_gpui::red())
                                     .child(format!("opacity: {:.1}", self.opacity)),
                             )
                             .child(
                                 svg()
                                     .path("image/arrow_circle.svg")
-                                    .text_color(gpui::black())
+                                    .text_color(open_gpui::black())
                                     .text_2xl()
                                     .size_8(),
                             )
@@ -186,6 +186,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

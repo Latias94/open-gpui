@@ -14,7 +14,7 @@ use std::{
     cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
 
-/// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
+/// A TestAppContext is provided to tests created with `#[open_gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
 #[derive(Clone)]
 pub struct TestAppContext {
@@ -122,14 +122,14 @@ impl AppContext for TestAppContext {
 }
 
 impl TestAppContext {
-    /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
+    /// Creates a new `TestAppContext`. Usually you can rely on `#[open_gpui::test]` to do this for you.
     pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
+        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
         let app = App::new_app(platform.clone(), asset_source, http_client);
@@ -1118,7 +1118,7 @@ mod tests {
     use crate::{PathPromptOptions, TestAppContext};
     use std::path::PathBuf;
 
-    #[gpui::test]
+    #[open_gpui::test]
     async fn test_simulate_path_prompt_response(cx: &mut TestAppContext) {
         assert!(!cx.did_prompt_for_paths());
 
@@ -1146,7 +1146,7 @@ mod tests {
         assert_eq!(response, Some(selected));
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     async fn test_simulate_path_prompt_cancellation(cx: &mut TestAppContext) {
         let receiver = cx.update(|cx| {
             cx.prompt_for_paths(PathPromptOptions {

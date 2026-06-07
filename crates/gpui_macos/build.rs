@@ -98,7 +98,7 @@ mod macos_build {
 
     /// Locate the gpui crate directory relative to this crate.
     fn find_gpui_crate_dir() -> PathBuf {
-        gpui::GPUI_MANIFEST_DIR.into()
+        open_gpui::GPUI_MANIFEST_DIR.into()
     }
 
     /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header

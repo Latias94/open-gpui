@@ -7,7 +7,7 @@ use calloop::channel::Channel;
 use calloop::{EventSource, Poll, PostAction, Readiness, Token, TokenFactory};
 use smol::stream::StreamExt;
 
-use gpui::{BackgroundExecutor, WindowAppearance};
+use open_gpui::{BackgroundExecutor, WindowAppearance};
 
 pub enum Event {
     WindowAppearance(WindowAppearance),

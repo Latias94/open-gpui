@@ -4,13 +4,13 @@ use crate::keyboard::WebKeyboardLayout;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
-use gpui::{
+use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     ThermalState, WindowAppearance, WindowParams,
 };
-use gpui_wgpu::WgpuContext;
+use open_gpui_wgpu::WgpuContext;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -67,7 +67,7 @@ impl WebPlatform {
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
+        let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
             "IBM Plex Sans",
         ));
         let fonts = BUNDLED_FONTS

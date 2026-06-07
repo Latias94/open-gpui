@@ -1,7 +1,7 @@
 use crate::{App, AppContext, GpuiBorrow, VisualContext, Window, seal::Sealed};
 use anyhow::{Context as _, Result};
-use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
+use open_gpui_collections::FxHashSet;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
@@ -22,7 +22,7 @@ use std::{
 use super::Context;
 use crate::util::atomic_incr_if_not_zero;
 #[cfg(any(test, feature = "leak-detection"))]
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 
 slotmap::new_key_type! {
     /// A unique identifier for a entity across the application.
@@ -942,7 +942,7 @@ pub(crate) struct LeakDetector {
 /// handles remain between the snapshot and the current state.
 #[cfg(any(test, feature = "leak-detection"))]
 pub struct LeakDetectorSnapshot {
-    entity_ids: collections::HashSet<EntityId>,
+    entity_ids: open_gpui_collections::HashSet<EntityId>,
 }
 
 #[cfg(any(test, feature = "leak-detection"))]
@@ -964,7 +964,7 @@ impl LeakDetector {
         entity_id: EntityId,
         type_name: Option<&'static str>,
     ) -> HandleId {
-        let id = gpui_util::post_inc(&mut self.next_handle_id);
+        let id = open_gpui_core_util::post_inc(&mut self.next_handle_id);
         let handle_id = HandleId { id };
         let handles = self
             .entity_handles
@@ -1158,10 +1158,10 @@ impl fmt::Debug for BacktraceFormatter {
             {
                 match filename {
                     "test::run_test_in_process"
-                    | "scheduler::executor::spawn_local_with_source_location::impl$1::poll<core::pin::Pin<alloc::boxed::Box<dyn$<core::future::future::Future<assoc$<Output,enum2$<core::result::Result<workspace::OpenResult,anyhow::Error> > > > >,alloc::alloc::Global> > >" => {
+                    | "open_gpui_scheduler::executor::spawn_local_with_source_location::impl$1::poll<core::pin::Pin<alloc::boxed::Box<dyn$<core::future::future::Future<assoc$<Output,enum2$<core::result::Result<workspace::OpenResult,anyhow::Error> > > > >,alloc::alloc::Global> > >" => {
                         strip = true
                     }
-                    "gpui::app::entity_map::LeakDetector::handle_created" => {
+                    "open_gpui::app::entity_map::LeakDetector::handle_created" => {
                         strip = false;
                         continue;
                     }

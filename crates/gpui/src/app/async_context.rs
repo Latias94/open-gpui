@@ -266,10 +266,10 @@ impl AsyncApp {
         &self,
         entity: &WeakEntity<T>,
         f: Callback,
-    ) -> gpui_util::Deferred<impl FnOnce() + use<T, Callback>> {
+    ) -> open_gpui_core_util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
-        gpui_util::defer(move || {
+        open_gpui_core_util::defer(move || {
             entity.update(&mut cx, f).ok();
         })
     }

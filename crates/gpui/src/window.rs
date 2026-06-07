@@ -21,22 +21,22 @@ use crate::{
     transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
-use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
-use gpui_util::post_inc;
-use gpui_util::{ResultExt, measure};
 #[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
+use open_gpui_collections::{FxHashMap, FxHashSet};
+use open_gpui_core_util::post_inc;
+use open_gpui_core_util::{ResultExt, measure};
+use open_gpui_refineable::Refineable;
+use open_gpui_scheduler::Instant;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
-use refineable::Refineable;
-use scheduler::Instant;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
 use std::{

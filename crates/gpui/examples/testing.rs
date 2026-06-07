@@ -7,24 +7,24 @@
 //! Run the app: cargo run -p gpui --example testing
 //! Run tests:   cargo test -p gpui --example testing --features test-support
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, FocusHandle, Focusable, Render, Task, Window, WindowBounds,
     WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 actions!(counter, [Increment, Decrement]);
 
 struct Counter {
     count: i32,
     focus_handle: FocusHandle,
-    _subscription: gpui::Subscription,
+    _subscription: open_gpui::Subscription,
 }
 
 /// Event emitted by Counter
 struct CounterEvent;
 
-impl gpui::EventEmitter<CounterEvent> for Counter {}
+impl open_gpui::EventEmitter<CounterEvent> for Counter {}
 
 impl Counter {
     fn new(cx: &mut Context<Self>) -> Self {
@@ -180,8 +180,8 @@ impl Render for Counter {
 fn run_example() {
     application().run(|cx: &mut App| {
         cx.bind_keys([
-            gpui::KeyBinding::new("up", Increment, Some("Counter")),
-            gpui::KeyBinding::new("down", Decrement, Some("Counter")),
+            open_gpui::KeyBinding::new("up", Increment, Some("Counter")),
+            open_gpui::KeyBinding::new("down", Decrement, Some("Counter")),
         ]);
 
         let bounds = Bounds::centered(None, size(px(300.), px(200.)), cx);
@@ -208,20 +208,20 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use open_gpui::{TestAppContext, VisualTestContext};
     use rand::prelude::*;
 
     /// Here's a basic GPUI test. Just add the macro and take a TestAppContext as an argument!
     ///
     /// Note that synchronous side effects run immediately after your "update*" calls complete.
-    #[gpui::test]
+    #[open_gpui::test]
     fn basic_testing(cx: &mut TestAppContext) {
         let counter = cx.new(|cx| Counter::new(cx));
 
@@ -248,7 +248,7 @@ mod tests {
     /// Tests which involve the window require you to construct a VisualTestContext.
     /// Just like synchronous side effects, the window will be drawn after every "update*"
     /// call, so you can test render-dependent behavior.
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_counter_in_window(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| cx.new(|cx| Counter::new(cx)))
@@ -275,7 +275,7 @@ mod tests {
     /// GPUI tests can also be async, simply add the async keyword before the test.
     /// Note that the test executor is single thread, so async side effects (including
     /// background tasks) won't run until you explicitly yield control.
-    #[gpui::test]
+    #[open_gpui::test]
     async fn test_async_operations(cx: &mut TestAppContext) {
         let counter = cx.new(|cx| Counter::new(cx));
 
@@ -304,7 +304,7 @@ mod tests {
     /// to detect potential deadlocks in your async code.
     ///
     /// However, if you want to disable this check use `allow_parking()`
-    #[gpui::test]
+    #[open_gpui::test]
     async fn test_allow_parking(cx: &mut TestAppContext) {
         // Allow the thread to park
         cx.executor().allow_parking();
@@ -323,7 +323,7 @@ mod tests {
     }
 
     /// GPUI also provides support for property testing, via the iterations flag
-    #[gpui::test(iterations = 10)]
+    #[open_gpui::test(iterations = 10)]
     fn test_counter_random_operations(cx: &mut TestAppContext, mut rng: StdRng) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| cx.new(|cx| Counter::new(cx)))
@@ -429,7 +429,7 @@ mod tests {
             }
         }
 
-        use gpui::Context;
+        use open_gpui::Context;
 
         /// A networked counter that can send/receive over a mock network.
         struct NetworkedCounter {
@@ -467,7 +467,7 @@ mod tests {
 
         /// You can simulate distributed systems with multiple app contexts, simply by adding
         /// additional parameters.
-        #[gpui::test]
+        #[open_gpui::test]
         fn test_app_sync(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
             let network = MockNetwork::new();
 
@@ -490,7 +490,7 @@ mod tests {
         /// a dispatcher. Whenever you call `run_until_parked`, the dispatcher will randomly
         /// pick which app's tasks to run next. This allows you to test that your distributed code
         /// is robust to different execution orderings.
-        #[gpui::test(iterations = 10)]
+        #[open_gpui::test(iterations = 10)]
         fn test_random_interleaving(
             cx_a: &mut TestAppContext,
             cx_b: &mut TestAppContext,

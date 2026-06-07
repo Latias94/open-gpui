@@ -1,7 +1,9 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
-use gpui_platform::application;
+use open_gpui::{
+    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+};
+use open_gpui_platform::application;
 
 struct Scrollable {}
 
@@ -12,14 +14,14 @@ impl Render for Scrollable {
             .id("vertical")
             .p_4()
             .overflow_scroll()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .child("Example for test 2 way scroll in nested layout")
             .child(
                 div()
                     .h(px(5000.))
                     .border_1()
-                    .border_color(gpui::blue())
-                    .bg(gpui::blue().opacity(0.05))
+                    .border_color(open_gpui::blue())
+                    .bg(open_gpui::blue().opacity(0.05))
                     .p_4()
                     .child(
                         div()
@@ -31,10 +33,10 @@ impl Render for Scrollable {
                                 div()
                                     .w(px(2000.))
                                     .h(px(150.))
-                                    .bg(gpui::green().opacity(0.1))
-                                    .hover(|this| this.bg(gpui::green().opacity(0.2)))
+                                    .bg(open_gpui::green().opacity(0.1))
+                                    .hover(|this| this.bg(open_gpui::green().opacity(0.2)))
                                     .border_1()
-                                    .border_color(gpui::green())
+                                    .border_color(open_gpui::green())
                                     .p_4()
                                     .child("Scroll Horizontal"),
                             ),
@@ -67,6 +69,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

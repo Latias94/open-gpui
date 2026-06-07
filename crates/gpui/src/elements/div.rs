@@ -26,9 +26,9 @@ use crate::{
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
     size,
 };
-use collections::HashMap;
-use gpui_util::ResultExt;
-use refineable::Refineable;
+use open_gpui_collections::HashMap;
+use open_gpui_core_util::ResultExt;
+use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
 use stacksafe::{StackSafe, stacksafe};
 use std::{

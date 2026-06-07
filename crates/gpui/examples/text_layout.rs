@@ -1,17 +1,17 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, FontStyle, FontWeight, StyledText, Window, WindowBounds, WindowOptions,
     div, prelude::*, px, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct HelloWorld {}
 
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .flex()
             .flex_col()
             .gap_2()
@@ -55,7 +55,7 @@ impl Render for HelloWorld {
                         div()
                             .w(px(400.))
                             .border_1()
-                            .border_color(gpui::blue())
+                            .border_color(open_gpui::blue())
                             .p_1()
                             .whitespace_nowrap()
                             .overflow_hidden()
@@ -66,7 +66,7 @@ impl Render for HelloWorld {
                         div()
                             .w_32()
                             .border_1()
-                            .border_color(gpui::blue())
+                            .border_color(open_gpui::blue())
                             .p_1()
                             .whitespace_nowrap()
                             .overflow_hidden()
@@ -106,6 +106,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

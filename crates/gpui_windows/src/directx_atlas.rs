@@ -1,5 +1,5 @@
-use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
+use open_gpui_collections::FxHashMap;
 use parking_lot::Mutex;
 use windows::Win32::Graphics::{
     Direct3D11::{
@@ -9,7 +9,7 @@ use windows::Win32::Graphics::{
     Dxgi::Common::*,
 };
 
-use gpui::{
+use open_gpui::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
     PlatformAtlas, Point, Size,
 };

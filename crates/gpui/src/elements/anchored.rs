@@ -326,7 +326,7 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_anchored_position_without_scroll(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
             position: point(px(100.), px(100.)),
@@ -345,7 +345,7 @@ mod tests {
         assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_anchored_position_when_scrolled(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
             position: point(px(100.), px(100.)),
@@ -355,9 +355,9 @@ mod tests {
 
         window
             .update(cx, |_, window, cx| {
-                let event = gpui::ScrollWheelEvent {
+                let event = open_gpui::ScrollWheelEvent {
                     position: point(px(400.), px(300.)),
-                    delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                    delta: open_gpui::ScrollDelta::Pixels(point(px(0.), px(-1000.))),
                     ..Default::default()
                 };
                 window.dispatch_event(PlatformInput::ScrollWheel(event), cx);
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(menu_bounds.size, size(px(200.), px(300.)));
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_anchored_snaps_to_window(cx: &mut TestAppContext) {
         let window = cx.open_window(size(px(800.), px(600.)), |_, _| AnchoredTestView {
             position: point(px(100.), px(500.)),

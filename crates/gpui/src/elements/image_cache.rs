@@ -6,7 +6,7 @@ use crate::{
 };
 
 use futures::{FutureExt, future::Shared};
-use refineable::Refineable;
+use open_gpui_refineable::Refineable;
 use smallvec::SmallVec;
 use std::{collections::HashMap, fmt, sync::Arc};
 

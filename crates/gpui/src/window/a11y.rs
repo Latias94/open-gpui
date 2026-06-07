@@ -88,7 +88,7 @@
 
 use crate::{App, Bounds, FocusId, Pixels, Window};
 use accesskit::{Action, NodeId, TreeUpdate};
-use collections::{FxHashMap, FxHashSet};
+use open_gpui_collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::sync::{
     Arc,

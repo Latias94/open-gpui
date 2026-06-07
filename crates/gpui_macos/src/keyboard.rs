@@ -1,9 +1,9 @@
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 use std::ffi::{CStr, c_void};
 
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use gpui::{KeybindingKeystroke, Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper};
+use open_gpui::{KeybindingKeystroke, Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper};
 
 use crate::{
     TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, kTISPropertyInputSourceID,

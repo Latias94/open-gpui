@@ -1,6 +1,6 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
-use scheduler::Instant;
-use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
+use open_gpui_scheduler::Instant;
+use open_gpui_scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
     sync::{
         Arc,

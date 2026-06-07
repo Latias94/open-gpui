@@ -41,7 +41,7 @@ impl BenchAppContext {
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
-        let http_client = http_client::FakeHttpClient::with_404_response();
+        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
         let app = App::new_app(platform, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 

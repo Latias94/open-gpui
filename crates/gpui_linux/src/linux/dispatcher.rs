@@ -3,11 +3,11 @@ use calloop::{
     channel::{self, Sender},
     timer::TimeoutAction,
 };
-use util::ResultExt;
+use open_gpui_util::ResultExt;
 
 use std::{mem::MaybeUninit, thread, time::Duration};
 
-use gpui::{
+use open_gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
     profiler,
 };
@@ -165,7 +165,7 @@ impl<T> PriorityQueueCalloopSender<T> {
         Self { sender: tx, ping }
     }
 
-    fn send(&self, priority: Priority, item: T) -> Result<(), gpui::queue::SendError<T>> {
+    fn send(&self, priority: Priority, item: T) -> Result<(), open_gpui::queue::SendError<T>> {
         let res = self.sender.send(priority, item);
         if res.is_ok() {
             self.ping.ping();

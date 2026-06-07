@@ -28,11 +28,11 @@
 //!     - "2. Run tests"
 //!     - "3. Ship it"
 
-use gpui::{
+use open_gpui::{
     AccessibleAction, App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled,
     Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size, text,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 actions!(a11y_example, [Tab, TabPrev]);
 
@@ -78,7 +78,7 @@ impl Render for A11yDemo {
                     .aria_level(1)
                     .aria_label("Accessibility Demo")
                     .text_xl()
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .font_weight(open_gpui::FontWeight::BOLD)
                     .child(text!("Accessibility Demo")),
             )
             // Counter — uses a SpinButton role with Increment/Decrement
@@ -177,7 +177,7 @@ impl Render for A11yDemo {
                                 div()
                                     .size(px(20.))
                                     .rounded_full()
-                                    .bg(gpui::white())
+                                    .bg(open_gpui::white())
                                     .mt(px(2.))
                                     .when(self.enabled, |el| el.ml(px(22.)))
                                     .when(!self.enabled, |el| el.ml(px(2.))),
@@ -233,7 +233,7 @@ fn run_example() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(gpui::TitlebarOptions {
+                titlebar: Some(open_gpui::TitlebarOptions {
                     title: Some("GPUI Accessibility Demo".into()),
                     ..Default::default()
                 }),
@@ -259,6 +259,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

@@ -1,9 +1,15 @@
 [package]
-name = "gpui_windows"
-version = "0.1.0"
+name = "open-gpui-windows"
+version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 publish.workspace = true
-license = "Apache-2.0"
+description = "Windows platform backend for Open GPUI."
 
 [lints]
 workspace = true
@@ -12,18 +18,18 @@ workspace = true
 path = "src/gpui_windows.rs"
 
 [features]
-default = ["gpui/default"]
-test-support = ["gpui/test-support"]
-screen-capture = ["gpui/screen-capture", "scap"]
+default = ["open_gpui/default"]
+test-support = ["open_gpui/test-support"]
+screen-capture = ["open_gpui/screen-capture", "scap"]
 
 [dependencies]
-gpui.workspace = true
+open_gpui.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit.workspace = true
 accesskit_windows.workspace = true
 anyhow.workspace = true
-collections.workspace = true
+open_gpui_collections.workspace = true
 etagere = "0.2"
 futures.workspace = true
 image.workspace = true
@@ -33,7 +39,7 @@ parking_lot.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 smallvec.workspace = true
-util.workspace = true
+open_gpui_util.workspace = true
 uuid.workspace = true
 windows.workspace = true
 windows-core.workspace = true

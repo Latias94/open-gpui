@@ -1,7 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{App, Context, Entity, EventEmitter, prelude::*};
-use gpui_platform::application;
+use open_gpui::{App, Context, Entity, EventEmitter, prelude::*};
+use open_gpui_platform::application;
 
 struct Counter {
     count: usize,
@@ -45,6 +45,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

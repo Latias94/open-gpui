@@ -1,10 +1,15 @@
 [package]
-name = "http_client"
-version = "0.1.0"
+name = "open-gpui-http-client"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "A HTTP client library for Zed and GPUI"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "HTTP client abstractions used by Open GPUI."
 
 [lints]
 workspace = true
@@ -32,7 +37,7 @@ serde_urlencoded.workspace = true
 url.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-util.workspace = true
+open_gpui_util.workspace = true
 async-fs.workspace = true
 async-tar.workspace = true
 sha2.workspace = true

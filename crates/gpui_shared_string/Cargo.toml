@@ -1,8 +1,15 @@
 [package]
-name = "gpui_shared_string"
-version = "0.1.0"
-publish.workspace = true
+name = "open-gpui-shared-string"
+version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Shared string type used by Open GPUI."
 
 [lib]
 path = "gpui_shared_string.rs"

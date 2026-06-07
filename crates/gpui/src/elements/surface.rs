@@ -4,7 +4,7 @@ use crate::{
 };
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
-use refineable::Refineable;
+use open_gpui_refineable::Refineable;
 
 /// A source of a surface's content.
 #[derive(Clone, Debug, PartialEq, Eq)]

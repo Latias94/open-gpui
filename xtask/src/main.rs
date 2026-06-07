@@ -71,7 +71,7 @@ fn renderer_smoke(root: &Path) -> Result<(), ()> {
             "nextest",
             "run",
             "-p",
-            "gpui_wgpu",
+            "open-gpui-wgpu",
             "--features",
             "font-kit",
             "renderer_smoke_creates_core_pipelines",

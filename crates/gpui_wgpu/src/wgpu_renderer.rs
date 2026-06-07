@@ -1,11 +1,11 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
-use gpui::{
+use log::warn;
+use open_gpui::{
     AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
     Underline, get_gamma_correction_ratios,
 };
-use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::cell::RefCell;
@@ -1819,9 +1819,9 @@ impl WgpuRenderer {
         };
 
         let config = WgpuSurfaceConfig {
-            size: gpui::Size {
-                width: gpui::DevicePixels(self.surface_config.width as i32),
-                height: gpui::DevicePixels(self.surface_config.height as i32),
+            size: open_gpui::Size {
+                width: open_gpui::DevicePixels(self.surface_config.width as i32),
+                height: open_gpui::DevicePixels(self.surface_config.height as i32),
             },
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
             preferred_present_mode: Some(self.surface_config.present_mode),
@@ -1913,7 +1913,7 @@ mod tests {
     use super::*;
 
     fn smoke_device() -> anyhow::Result<(wgpu::Adapter, wgpu::Device)> {
-        gpui::block_on(async {
+        open_gpui::block_on(async {
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::all(),
                 flags: wgpu::InstanceFlags::default(),

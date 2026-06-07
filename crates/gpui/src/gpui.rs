@@ -4,7 +4,7 @@
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
-extern crate self as gpui;
+extern crate self as open_gpui;
 #[doc(hidden)]
 pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
@@ -61,7 +61,7 @@ pub mod _accessibility;
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
-/// Do not touch, here be dragons for use by gpui_macros and such.
+/// Do not touch, here be dragons for use by Open GPUI macros and such.
 #[doc(hidden)]
 pub mod private {
     pub use anyhow;
@@ -93,16 +93,16 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{
+pub use open_gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, bench, property_test, register_action, test,
 };
 
-/// Defines a Criterion benchmark group for benchmarks annotated with [`gpui::bench`].
+/// Defines a Criterion benchmark group for benchmarks annotated with [`open_gpui::bench`].
 ///
 /// This mirrors `criterion::criterion_group!` so GPUI benchmark files can keep the
 /// same shape as ordinary Criterion benchmarks.
 ///
-/// [`gpui::bench`]: crate::bench
+/// [`open_gpui::bench`]: crate::bench
 #[macro_export]
 macro_rules! bench_group {
     ($($tokens:tt)*) => {
@@ -120,20 +120,20 @@ macro_rules! bench_main {
         criterion::criterion_main!($($tokens)*);
     };
 }
-pub use gpui_shared_string::*;
-pub use gpui_util::arc_cow::ArcCow;
-pub use http_client;
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;
 use key_dispatch::*;
 pub use keymap::*;
+pub use open_gpui_core_util::arc_cow::ArcCow;
+pub use open_gpui_http_client as http_client;
+pub use open_gpui_refineable::*;
+pub use open_gpui_shared_string::*;
 pub use path_builder::*;
 pub use platform::*;
 pub use profiler::*;
 #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
-pub use refineable::*;
 pub use scene::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};

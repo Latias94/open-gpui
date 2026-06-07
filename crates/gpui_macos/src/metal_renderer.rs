@@ -6,13 +6,13 @@ use cocoa::{
     foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
-use gpui::{
+#[cfg(any(test, feature = "test-support"))]
+use image::RgbaImage;
+use open_gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Surface, Underline, point, size,
 };
-#[cfg(any(test, feature = "test-support"))]
-use image::RgbaImage;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -30,7 +30,7 @@ use parking_lot::Mutex;
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
 
 // Exported to metal
-pub(crate) type PointF = gpui::Point<f32>;
+pub(crate) type PointF = open_gpui::Point<f32>;
 
 #[cfg(not(feature = "runtime_shaders"))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
@@ -47,7 +47,7 @@ pub(crate) unsafe fn new_renderer(
     context: self::Context,
     _native_window: *mut c_void,
     _native_view: *mut c_void,
-    _bounds: gpui::Size<f32>,
+    _bounds: open_gpui::Size<f32>,
     transparent: bool,
 ) -> Renderer {
     MetalRenderer::new(context, transparent)
@@ -1694,7 +1694,7 @@ impl MetalHeadlessRenderer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
+impl open_gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
     fn render_scene_to_image(
         &mut self,
         scene: &Scene,
@@ -1703,7 +1703,7 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
         self.renderer.render_scene_to_image(scene, size)
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
+    fn sprite_atlas(&self) -> Arc<dyn open_gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
     }
 }

@@ -2,10 +2,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use calloop::{EventLoop, LoopHandle};
-use util::ResultExt;
+use open_gpui_util::ResultExt;
 
 use crate::linux::{LinuxClient, LinuxCommon, LinuxKeyboardLayout};
-use gpui::{
+use open_gpui::{
     AnyWindowHandle, CursorStyle, DisplayId, PlatformDisplay, PlatformKeyboardLayout,
     PlatformWindow, WindowParams,
 };
@@ -67,8 +67,9 @@ impl LinuxClient for HeadlessClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> futures::channel::oneshot::Receiver<anyhow::Result<Vec<Rc<dyn gpui::ScreenCaptureSource>>>>
-    {
+    ) -> futures::channel::oneshot::Receiver<
+        anyhow::Result<Vec<Rc<dyn open_gpui::ScreenCaptureSource>>>,
+    > {
         let (tx, rx) = futures::channel::oneshot::channel();
         tx.send(Err(anyhow::anyhow!(
             "Headless mode does not support screen capture."
@@ -103,15 +104,15 @@ impl LinuxClient for HeadlessClient {
 
     fn reveal_path(&self, _path: std::path::PathBuf) {}
 
-    fn write_to_primary(&self, _item: gpui::ClipboardItem) {}
+    fn write_to_primary(&self, _item: open_gpui::ClipboardItem) {}
 
-    fn write_to_clipboard(&self, _item: gpui::ClipboardItem) {}
+    fn write_to_clipboard(&self, _item: open_gpui::ClipboardItem) {}
 
-    fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
+    fn read_from_primary(&self) -> Option<open_gpui::ClipboardItem> {
         None
     }
 
-    fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
+    fn read_from_clipboard(&self) -> Option<open_gpui::ClipboardItem> {
         None
     }
 

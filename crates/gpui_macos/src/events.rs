@@ -1,4 +1,4 @@
-use gpui::{
+use open_gpui::{
     Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
     NavigationDirection, PinchEvent, Pixels, PlatformInput, PressureStage, ScrollDelta,

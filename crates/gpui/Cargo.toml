@@ -1,14 +1,15 @@
 [package]
-name = "gpui"
-version = "0.2.2"
+name = "open-gpui"
+version.workspace = true
 edition.workspace = true
-authors = ["Nathan Sobo <nathan@zed.dev>"]
-description = "Zed's GPU-accelerated UI framework"
-repository = "https://github.com/zed-industries/zed"
-publish = true
-license = "Apache-2.0"
-homepage = "https://gpui.rs"
+authors.workspace = true
+description = "Open GPUI's GPU-accelerated UI framework forked from Zed GPUI."
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 readme = "README.md"
+publish.workspace = true
+license.workspace = true
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
 
@@ -20,13 +21,13 @@ workspace = true
 default = ["font-kit", "wayland", "x11", "windows-manifest"]
 test-support = [
     "leak-detection",
-    "collections/test-support",
-    "http_client/test-support",
+    "open_gpui_collections/test-support",
+    "open_gpui_http_client/test-support",
     "wayland",
     "x11",
     "proptest",
 ]
-inspector = ["gpui_macros/inspector"]
+inspector = ["open_gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = [
     "bitflags",
@@ -51,15 +52,15 @@ async-task = "4.7"
 backtrace = { workspace = true, optional = true }
 bitflags = { workspace = true, optional = true }
 
-collections.workspace = true
+open_gpui_collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
 futures-concurrency.workspace = true
-gpui_macros.workspace = true
-gpui_shared_string.workspace = true
-http_client.workspace = true
+open_gpui_macros.workspace = true
+open_gpui_shared_string.workspace = true
+open_gpui_http_client.workspace = true
 image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
@@ -74,8 +75,8 @@ profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
 regex.workspace = true
-refineable.workspace = true
-scheduler.workspace = true
+open_gpui_refineable.workspace = true
+open_gpui_scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
@@ -84,7 +85,7 @@ resvg = { version = "0.45.0", default-features = false, features = [
 ] }
 usvg = { version = "0.45.0", default-features = false }
 ttf-parser = "0.25"
-util_macros.workspace = true
+open_gpui_util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
 serde.workspace = true
@@ -94,10 +95,10 @@ smallvec.workspace = true
 async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
-sum_tree.workspace = true
+open_gpui_sum_tree.workspace = true
 taffy = "=0.10.1"
 thiserror.workspace = true
-gpui_util.workspace = true
+open_gpui_core_util.workspace = true
 hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
 lyon = "1.0"
@@ -123,10 +124,10 @@ core-foundation-sys.workspace = true
 core-graphics = "0.24"
 core-video.workspace = true
 core-text = "21"
-font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", optional = true }
+font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", version = "0.14.3", optional = true }
 foreign-types = "0.5"
 log.workspace = true
-media.workspace = true
+open_gpui_media.workspace = true
 objc.workspace = true
 objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
@@ -148,23 +149,23 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [dev-dependencies]
 backtrace.workspace = true
-collections = { workspace = true, features = ["test-support"] }
+open_gpui_collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
-gpui_util = { workspace = true }
+open_gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+open_gpui_core_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 proptest = { workspace = true }
 rand.workspace = true
-scheduler = { workspace = true, features = ["test-support"] }
+open_gpui_scheduler = { workspace = true, features = ["test-support"] }
 unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
-http_client = { workspace = true, features = ["test-support"] }
-reqwest_client = { workspace = true, features = ["test-support"] }
+open_gpui_http_client = { workspace = true, features = ["test-support"] }
+open_gpui_reqwest_client = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
-gpui_web.workspace = true
+open_gpui_web.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }

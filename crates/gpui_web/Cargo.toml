@@ -1,9 +1,15 @@
 [package]
-name = "gpui_web"
-version = "0.1.0"
-publish.workspace = true
+name = "open-gpui-web"
+version.workspace = true
 edition.workspace = true
-license = "Apache-2.0"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "WebAssembly platform backend for Open GPUI."
 autoexamples = false
 
 [lints]
@@ -17,10 +23,10 @@ multithreaded = ["dep:wasm_thread"]
 path = "src/gpui_web.rs"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-gpui.workspace = true
+open_gpui.workspace = true
 parking_lot = { workspace = true, features = ["nightly"] }
-gpui_wgpu.workspace = true
-http_client.workspace = true
+open_gpui_wgpu.workspace = true
+open_gpui_http_client.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 log.workspace = true

@@ -11,6 +11,6 @@ name = "hello_web"
 path = "main.rs"
 
 [dependencies]
-gpui = { path = "../../../gpui" }
-gpui_platform = { path = "../../../gpui_platform" }
+open_gpui = { path = "../../../gpui" }
+open_gpui_platform = { path = "../../../gpui_platform" }
 web-time = "1"

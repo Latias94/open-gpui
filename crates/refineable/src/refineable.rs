@@ -1,4 +1,4 @@
-pub use derive_refineable::Refineable;
+pub use open_gpui_refineable_derive::Refineable;
 
 /// A trait for types that can be refined with partial updates.
 ///

@@ -1,11 +1,11 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     Anchor, AnchoredPositionMode, App, Axis, Bounds, Context, Half as _, InteractiveElement,
     ParentElement, Pixels, Point, Render, SharedString, Size, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, point, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct AnchorDemo {
     hovered_button: Option<usize>,
@@ -89,7 +89,7 @@ impl Render for AnchorDemo {
             .size_full()
             .items_center()
             .justify_center()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .gap_4()
             .p_10()
             .child("Popover with Anchor")
@@ -113,13 +113,15 @@ impl Render for AnchorDemo {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .bg(gpui::white())
+                                    .bg(open_gpui::white())
                                     .when(is_hoverable, |this| {
                                         this.border_1()
                                             .rounded_lg()
-                                            .border_color(gpui::black())
+                                            .border_color(open_gpui::black())
                                             .hover(|style| {
-                                                style.bg(gpui::black()).text_color(gpui::white())
+                                                style
+                                                    .bg(open_gpui::black())
+                                                    .text_color(open_gpui::white())
                                             })
                                             .on_hover(cx.listener(
                                                 move |this, hovered, _window, cx| {
@@ -151,7 +153,7 @@ impl Render for AnchorDemo {
                                             div()
                                                 .py_0p5()
                                                 .px_2()
-                                                .bg(gpui::black().opacity(0.75))
+                                                .bg(open_gpui::black().opacity(0.75))
                                                 .text_color(rgb(0xffffff))
                                                 .rounded_sm()
                                                 .shadow_sm()
@@ -196,6 +198,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

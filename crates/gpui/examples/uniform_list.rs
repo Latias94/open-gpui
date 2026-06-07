@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
     uniform_list,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct UniformListExample {}
 
@@ -60,6 +60,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

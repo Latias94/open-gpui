@@ -1,9 +1,15 @@
 [package]
-name = "reqwest_client"
-version = "0.1.0"
+name = "open-gpui-reqwest-client"
+version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 publish.workspace = true
-license = "Apache-2.0"
+description = "Reqwest-backed HTTP client for Open GPUI."
 
 [lints]
 workspace = true
@@ -19,15 +25,15 @@ doctest = true
 anyhow.workspace = true
 bytes.workspace = true
 futures.workspace = true
-http_client.workspace = true
+open_gpui_http_client.workspace = true
 serde.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 regex.workspace = true
 reqwest.workspace = true
-gpui_util.workspace = true
+open_gpui_core_util.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-http_client_tls.workspace = true
+open_gpui_http_client_tls.workspace = true
 
 [dev-dependencies]

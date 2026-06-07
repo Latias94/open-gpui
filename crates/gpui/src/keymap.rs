@@ -5,7 +5,7 @@ pub use binding::*;
 pub use context::*;
 
 use crate::{Action, AsKeystroke, Keystroke, Unbind, is_no_action, is_unbind};
-use collections::{HashSet, TypeIdHashMap};
+use open_gpui_collections::{HashSet, TypeIdHashMap};
 use smallvec::SmallVec;
 
 /// An opaque identifier of which version of the keymap is currently active.
@@ -293,7 +293,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{NoAction, Unbind};
+    use open_gpui::{NoAction, Unbind};
 
     actions!(
         test_only,

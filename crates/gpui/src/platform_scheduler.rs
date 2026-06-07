@@ -2,8 +2,8 @@ use crate::{PlatformDispatcher, RunnableMeta};
 use async_task::Runnable;
 use chrono::{DateTime, Utc};
 use futures::channel::oneshot;
-use scheduler::Instant;
-use scheduler::{
+use open_gpui_scheduler::Instant;
+use open_gpui_scheduler::{
     Clock, LocalExecutor, Priority, Scheduler, SessionId, Task, TestScheduler, Timer,
     spawn_dedicated_thread,
 };
@@ -131,7 +131,7 @@ impl Scheduler for PlatformScheduler {
         let (runnable, _task) = async_task::Builder::new()
             .metadata(RunnableMeta {
                 location,
-                spawned: scheduler::SpawnTime(Instant::now()),
+                spawned: open_gpui_scheduler::SpawnTime(Instant::now()),
             })
             .spawn(
                 move |_| async move {
@@ -189,7 +189,7 @@ impl Clock for PlatformClock {
 mod tests {
     use super::*;
     use crate::RunnableVariant;
-    use scheduler::BackgroundExecutor;
+    use open_gpui_scheduler::BackgroundExecutor;
     use std::time::Instant as StdInstant;
 
     // `spawn_dedicated` shouldn't touch the platform dispatcher at all;

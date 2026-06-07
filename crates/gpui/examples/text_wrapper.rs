@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, TextOverflow, Window, WindowBounds, WindowOptions, div, prelude::*, px,
     size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct HelloWorld {}
 
@@ -22,7 +22,7 @@ impl Render for HelloWorld {
             .flex_col()
             .p_2()
             .gap_2()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .child(
                 div()
                     .flex()
@@ -33,7 +33,7 @@ impl Render for HelloWorld {
                         div()
                             .flex()
                             .border_1()
-                            .border_color(gpui::red())
+                            .border_color(open_gpui::red())
                             .text_ellipsis()
                             .child("longer text in flex 1"),
                     )
@@ -41,7 +41,7 @@ impl Render for HelloWorld {
                         div()
                             .flex()
                             .border_1()
-                            .border_color(gpui::red())
+                            .border_color(open_gpui::red())
                             .text_ellipsis()
                             .child("short flex"),
                     )
@@ -49,7 +49,7 @@ impl Render for HelloWorld {
                         div()
                             .overflow_hidden()
                             .border_1()
-                            .border_color(gpui::red())
+                            .border_color(open_gpui::red())
                             .text_ellipsis()
                             .w_full()
                             .child("A short text in normal div"),
@@ -61,7 +61,7 @@ impl Render for HelloWorld {
                     .text_xl()
                     .truncate()
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(open_gpui::blue())
                     .child("ELLIPSIS: ".to_owned() + text),
             )
             .child(
@@ -72,7 +72,7 @@ impl Render for HelloWorld {
                     .text_ellipsis()
                     .line_clamp(2)
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(open_gpui::blue())
                     .child("ELLIPSIS 2 lines: ".to_owned() + text),
             )
             .child(
@@ -82,7 +82,7 @@ impl Render for HelloWorld {
                     .overflow_hidden()
                     .text_overflow(TextOverflow::Truncate("".into()))
                     .border_1()
-                    .border_color(gpui::green())
+                    .border_color(open_gpui::green())
                     .child("TRUNCATE: ".to_owned() + text),
             )
             .child(
@@ -93,7 +93,7 @@ impl Render for HelloWorld {
                     .text_overflow(TextOverflow::Truncate("".into()))
                     .line_clamp(3)
                     .border_1()
-                    .border_color(gpui::green())
+                    .border_color(open_gpui::green())
                     .child("TRUNCATE 3 lines: ".to_owned() + text),
             )
             .child(
@@ -103,7 +103,7 @@ impl Render for HelloWorld {
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .border_1()
-                    .border_color(gpui::black())
+                    .border_color(open_gpui::black())
                     .child("NOWRAP: ".to_owned() + text),
             )
             .child(div().text_xl().w_full().child(text))
@@ -133,6 +133,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

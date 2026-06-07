@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(round_half_toward_zero_f64(2.5001), 3.0);
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     async fn test_with_timeout(cx: &mut TestAppContext) {
         Task::ready(())
             .with_timeout(Duration::from_secs(1), &cx.executor())

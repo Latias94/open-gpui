@@ -2,7 +2,12 @@
 name = "open-gpui-smoke-native"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
 publish = false
 description = "Native smoke example for Open GPUI."
 
@@ -11,8 +16,8 @@ name = "open-gpui-smoke-native"
 path = "src/main.rs"
 
 [dependencies]
-gpui.workspace = true
-gpui_platform.workspace = true
+open_gpui.workspace = true
+open_gpui_platform.workspace = true
 
 [lints]
 workspace = true

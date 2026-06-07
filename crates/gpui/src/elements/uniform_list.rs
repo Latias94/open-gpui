@@ -721,7 +721,7 @@ impl InteractiveElement for UniformList {
 mod test {
     use crate::TestAppContext;
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_scroll_strategy_nearest(cx: &mut TestAppContext) {
         use crate::{
             Context, FocusHandle, ScrollStrategy, UniformListScrollHandle, Window, div, prelude::*,

@@ -11,8 +11,8 @@ mod window;
 
 pub use dispatcher::WebDispatcher;
 pub use display::WebDisplay;
-pub use http_client::FetchHttpClient;
 pub use keyboard::WebKeyboardLayout;
 pub use logging::init_logging;
+pub use open_gpui_http_client::FetchHttpClient;
 pub use platform::WebPlatform;
 pub use window::WebWindow;

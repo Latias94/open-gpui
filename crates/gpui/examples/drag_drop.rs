@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, Half, Hsla, Pixels, Point, Window, WindowBounds, WindowOptions, div,
     prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 #[derive(Clone, Copy)]
 struct DragInfo {
@@ -30,7 +30,7 @@ impl DragInfo {
 
 impl Render for DragInfo {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        let size = gpui::size(px(120.), px(50.));
+        let size = open_gpui::size(px(120.), px(50.));
 
         div()
             .pl(self.position.x - size.width.half())
@@ -43,7 +43,7 @@ impl Render for DragInfo {
                     .w(size.width)
                     .h(size.height)
                     .bg(self.color.opacity(0.5))
-                    .text_color(gpui::white())
+                    .text_color(open_gpui::white())
                     .text_xs()
                     .shadow_md()
                     .child(format!("Item {}", self.ix)),
@@ -63,14 +63,14 @@ impl DragDrop {
 
 impl Render for DragDrop {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = [gpui::blue(), gpui::red(), gpui::green()];
+        let items = [open_gpui::blue(), open_gpui::red(), open_gpui::green()];
 
         div()
             .size_full()
             .flex()
             .flex_col()
             .gap_5()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .justify_center()
             .items_center()
             .text_color(rgb(0x333333))
@@ -113,7 +113,11 @@ impl Render for DragDrop {
                     .justify_center()
                     .items_center()
                     .border_3()
-                    .border_color(self.drop_on.map(|info| info.color).unwrap_or(gpui::black()))
+                    .border_color(
+                        self.drop_on
+                            .map(|info| info.color)
+                            .unwrap_or(open_gpui::black()),
+                    )
                     .when_some(self.drop_on, |this, info| this.bg(info.color.opacity(0.5)))
                     .on_drop(cx.listener(|this, info: &DragInfo, _, _| {
                         this.drop_on = Some(*info);
@@ -147,6 +151,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

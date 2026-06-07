@@ -740,7 +740,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use open_gpui_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -771,7 +771,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use open_gpui_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -1662,7 +1662,7 @@ mod tests {
     use crate::rel_path::rel_path;
 
     use super::*;
-    use util_macros::perf;
+    use open_gpui_util_macros::perf;
 
     #[test]
     fn test_join_path_uses_path_style_separator() {

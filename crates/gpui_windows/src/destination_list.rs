@@ -20,7 +20,7 @@ use windows::{
     core::{GUID, HSTRING, Interface},
 };
 
-use gpui::{Action, MenuItem, SharedString};
+use open_gpui::{Action, MenuItem, SharedString};
 
 pub(crate) struct JumpList {
     pub(crate) dock_menus: Vec<DockMenuItem>,

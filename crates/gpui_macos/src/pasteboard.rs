@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
 use crate::ns_string;
-use gpui::{
+use open_gpui::{
     ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
 
@@ -344,7 +344,7 @@ mod tests {
     };
     use std::ffi::c_void;
 
-    use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
+    use open_gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
 
     use super::*;
 

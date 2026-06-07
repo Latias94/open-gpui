@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use futures::AsyncReadExt as _;
-use http_client::{AsyncBody, HttpClient, RedirectPolicy};
+use open_gpui_http_client::{AsyncBody, HttpClient, RedirectPolicy};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::Poll;
@@ -14,7 +14,7 @@ extern "C" {
 }
 
 pub struct FetchHttpClient {
-    user_agent: Option<http_client::http::header::HeaderValue>,
+    user_agent: Option<open_gpui_http_client::http::header::HeaderValue>,
 }
 
 impl Default for FetchHttpClient {
@@ -37,7 +37,7 @@ impl FetchHttpClient {
     /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
     pub unsafe fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
+            user_agent: Some(open_gpui_http_client::http::header::HeaderValue::from_str(
                 user_agent,
             )?),
         })
@@ -52,7 +52,7 @@ impl FetchHttpClient {
 
     pub fn with_user_agent(user_agent: &str) -> anyhow::Result<Self> {
         Ok(Self {
-            user_agent: Some(http_client::http::header::HeaderValue::from_str(
+            user_agent: Some(open_gpui_http_client::http::header::HeaderValue::from_str(
                 user_agent,
             )?),
         })
@@ -80,19 +80,21 @@ impl<F: Future> Future for AssertSend<F> {
 }
 
 impl HttpClient for FetchHttpClient {
-    fn user_agent(&self) -> Option<&http_client::http::header::HeaderValue> {
+    fn user_agent(&self) -> Option<&open_gpui_http_client::http::header::HeaderValue> {
         self.user_agent.as_ref()
     }
 
-    fn proxy(&self) -> Option<&http_client::Url> {
+    fn proxy(&self) -> Option<&open_gpui_http_client::Url> {
         None
     }
 
     fn send(
         &self,
-        req: http_client::http::Request<AsyncBody>,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<http_client::http::Response<AsyncBody>>>
-    {
+        req: open_gpui_http_client::http::Request<AsyncBody>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<open_gpui_http_client::http::Response<AsyncBody>>,
+    > {
         let (parts, body) = req.into_parts();
 
         Box::pin(AssertSend(async move {
@@ -142,7 +144,7 @@ impl HttpClient for FetchHttpClient {
                 .map_err(|error| anyhow!("fetch result is not a Response: {error:?}"))?;
 
             let status = web_response.status();
-            let mut builder = http_client::http::Response::builder().status(status);
+            let mut builder = open_gpui_http_client::http::Response::builder().status(status);
 
             // `Headers` is a JS iterable yielding `[name, value]` pairs.
             // `js_sys::Array::from` calls `Array.from()` which accepts any iterable.

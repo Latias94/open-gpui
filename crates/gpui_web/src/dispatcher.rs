@@ -1,4 +1,4 @@
-use gpui::{
+use open_gpui::{
     PlatformDispatcher, Priority, PriorityQueueReceiver, PriorityQueueSender, RunnableVariant,
 };
 use std::sync::Arc;

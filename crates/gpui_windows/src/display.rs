@@ -1,7 +1,7 @@
 use itertools::Itertools;
+use open_gpui_util::ResultExt;
 use smallvec::SmallVec;
 use std::rc::Rc;
-use util::ResultExt;
 use uuid::Uuid;
 use windows::{
     Win32::{
@@ -16,7 +16,7 @@ use windows::{
 };
 
 use crate::logical_point;
-use gpui::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
+use open_gpui::{Bounds, DevicePixels, DisplayId, Pixels, PlatformDisplay, point, size};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WindowsDisplay {
@@ -64,7 +64,7 @@ impl WindowsDisplay {
                     (work_area.right - work_area.left) as f32 / scale_factor,
                     (work_area.bottom - work_area.top) as f32 / scale_factor,
                 )
-                .map(gpui::px),
+                .map(open_gpui::px),
             },
             physical_bounds: Bounds {
                 origin: point(monitor_size.left.into(), monitor_size.top.into()),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         GetKeyboardLayoutNameW, MAPVK_VK_TO_CHAR, MAPVK_VK_TO_VSC, MapVirtualKeyW, ToUnicode,
@@ -10,7 +10,7 @@ use windows::Win32::UI::{
     WindowsAndMessaging::KL_NAMELENGTH,
 };
 
-use gpui::{
+use open_gpui::{
     KeybindingKeystroke, Keystroke, Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper,
 };
 
@@ -317,7 +317,7 @@ const CANDIDATE_VKEYS: &[VIRTUAL_KEY] = &[
 #[cfg(test)]
 mod tests {
     use crate::WindowsKeyboardMapper;
-    use gpui::{Keystroke, Modifiers, PlatformKeyboardMapper};
+    use open_gpui::{Keystroke, Modifiers, PlatformKeyboardMapper};
 
     #[test]
     fn test_keyboard_mapper() {

@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     Anchor, App, Context, Div, Hsla, Stateful, Window, WindowOptions, anchored, deferred, div,
     prelude::*, px,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 /// An example show use deferred to create a floating layers.
 struct HelloWorld {
@@ -15,8 +15,8 @@ struct HelloWorld {
 fn button(id: &'static str) -> Stateful<Div> {
     div()
         .id(id)
-        .bg(gpui::black())
-        .text_color(gpui::white())
+        .bg(open_gpui::black())
+        .text_color(open_gpui::white())
         .px_3()
         .py_1()
 }
@@ -30,11 +30,11 @@ fn popover() -> Div {
         .shadow_lg()
         .p_3()
         .rounded_md()
-        .bg(gpui::white())
-        .text_color(gpui::black())
+        .bg(open_gpui::white())
+        .text_color(open_gpui::black())
         .border_1()
         .text_sm()
-        .border_color(gpui::black().opacity(0.1))
+        .border_color(open_gpui::black().opacity(0.1))
 }
 
 fn line(color: Hsla) -> Div {
@@ -64,8 +64,8 @@ impl HelloWorld {
                             .child(
                                 popover()
                                     .child("This is second level Popover with nested deferred!")
-                                    .bg(gpui::white())
-                                    .border_color(gpui::blue())
+                                    .bg(open_gpui::white())
+                                    .border_color(open_gpui::blue())
                                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                         this.secondary_open = false;
                                         cx.notify();
@@ -85,8 +85,8 @@ impl Render for HelloWorld {
             .flex_col()
             .gap_3()
             .size_full()
-            .bg(gpui::white())
-            .text_color(gpui::black())
+            .bg(open_gpui::white())
+            .text_color(open_gpui::black())
             .justify_center()
             .items_center()
             .child(
@@ -157,10 +157,10 @@ impl Render for HelloWorld {
                 to ensure the Popover will float above this contents.",
             )
             .children([
-                line(gpui::red()),
-                line(gpui::yellow()),
-                line(gpui::blue()),
-                line(gpui::green()),
+                line(open_gpui::red()),
+                line(open_gpui::yellow()),
+                line(open_gpui::blue()),
+                line(open_gpui::green()),
             ])
     }
 }
@@ -186,6 +186,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

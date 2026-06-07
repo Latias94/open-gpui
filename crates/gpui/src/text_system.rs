@@ -17,10 +17,10 @@ use crate::{
     StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
-use collections::FxHashMap;
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
+use open_gpui_collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
 use std::{

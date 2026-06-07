@@ -1,10 +1,15 @@
 [package]
-name = "sum_tree"
-version = "0.1.0"
+name = "open-gpui-sum-tree"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "A sum tree data structure, a concurrency-friendly B-tree"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Concurrency-friendly sum tree data structure used by Open GPUI."
 
 [lints]
 workspace = true

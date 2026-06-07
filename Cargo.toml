@@ -15,7 +15,6 @@ members = [
     "crates/http_client",
     "crates/http_client_tls",
     "crates/media",
-    "crates/open-gpui",
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/reqwest_client",
@@ -33,34 +32,36 @@ exclude = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["Mingzhen Zhuang <superfrankie621@gmail.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/open-gpui/open-gpui"
 homepage = "https://github.com/open-gpui/open-gpui"
 documentation = "https://docs.rs/open-gpui"
+readme = "README.md"
 publish = false
 
 [workspace.dependencies]
-collections = { path = "crates/collections" }
-derive_refineable = { path = "crates/refineable/derive_refineable" }
-gpui = { path = "crates/gpui", default-features = false }
-gpui_linux = { path = "crates/gpui_linux", default-features = false }
-gpui_macos = { path = "crates/gpui_macos", default-features = false }
-gpui_macros = { path = "crates/gpui_macros" }
-gpui_platform = { path = "crates/gpui_platform", default-features = false }
-gpui_shared_string = { path = "crates/gpui_shared_string" }
-gpui_util = { path = "crates/gpui_util" }
-gpui_web = { path = "crates/gpui_web" }
-gpui_wgpu = { path = "crates/gpui_wgpu" }
-gpui_windows = { path = "crates/gpui_windows", default-features = false }
-http_client = { path = "crates/http_client" }
-http_client_tls = { path = "crates/http_client_tls" }
-media = { path = "crates/media" }
-refineable = { path = "crates/refineable" }
-reqwest_client = { path = "crates/reqwest_client" }
-scheduler = { path = "crates/scheduler" }
-sum_tree = { path = "crates/sum_tree" }
-util = { path = "crates/util" }
-util_macros = { path = "crates/util_macros" }
+open_gpui = { package = "open-gpui", version = "0.1.0", path = "crates/gpui", default-features = false }
+open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
+open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }
+open_gpui_http_client = { package = "open-gpui-http-client", version = "0.1.0", path = "crates/http_client" }
+open_gpui_http_client_tls = { package = "open-gpui-http-client-tls", version = "0.1.0", path = "crates/http_client_tls" }
+open_gpui_linux = { package = "open-gpui-linux", version = "0.1.0", path = "crates/gpui_linux", default-features = false }
+open_gpui_macos = { package = "open-gpui-macos", version = "0.1.0", path = "crates/gpui_macos", default-features = false }
+open_gpui_macros = { package = "open-gpui-macros", version = "0.1.0", path = "crates/gpui_macros" }
+open_gpui_media = { package = "open-gpui-media", version = "0.1.0", path = "crates/media" }
+open_gpui_platform = { package = "open-gpui-platform", version = "0.1.0", path = "crates/gpui_platform", default-features = false }
+open_gpui_refineable = { package = "open-gpui-refineable", version = "0.1.0", path = "crates/refineable" }
+open_gpui_refineable_derive = { package = "open-gpui-refineable-derive", version = "0.1.0", path = "crates/refineable/derive_refineable" }
+open_gpui_reqwest_client = { package = "open-gpui-reqwest-client", version = "0.1.0", path = "crates/reqwest_client" }
+open_gpui_scheduler = { package = "open-gpui-scheduler", version = "0.1.0", path = "crates/scheduler" }
+open_gpui_shared_string = { package = "open-gpui-shared-string", version = "0.1.0", path = "crates/gpui_shared_string" }
+open_gpui_sum_tree = { package = "open-gpui-sum-tree", version = "0.1.0", path = "crates/sum_tree" }
+open_gpui_util = { package = "open-gpui-util", version = "0.1.0", path = "crates/util" }
+open_gpui_util_macros = { package = "open-gpui-util-macros", version = "0.1.0", path = "crates/util_macros" }
+open_gpui_web = { package = "open-gpui-web", version = "0.1.0", path = "crates/gpui_web" }
+open_gpui_wgpu = { package = "open-gpui-wgpu", version = "0.1.0", path = "crates/gpui_wgpu" }
+open_gpui_windows = { package = "open-gpui-windows", version = "0.1.0", path = "crates/gpui_windows", default-features = false }
 
 accesskit = "0.24.0"
 accesskit_macos = "0.26.0"
@@ -116,7 +117,7 @@ postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
-proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
+proptest = { version = "=1.10.0", features = ["attr-macro"] }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"

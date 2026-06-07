@@ -1,7 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{App, Context, Render, Window, WindowOptions, div, img, prelude::*};
-use gpui_platform::application;
+use open_gpui::{App, Context, Render, Window, WindowOptions, div, img, prelude::*};
+use open_gpui_platform::application;
 use std::path::PathBuf;
 
 struct GifViewer {
@@ -19,7 +19,7 @@ impl Render for GifViewer {
         div().size_full().child(
             img(self.gif_path.clone())
                 .size_full()
-                .object_fit(gpui::ObjectFit::Contain)
+                .object_fit(open_gpui::ObjectFit::Contain)
                 .id("gif"),
         )
     }
@@ -51,6 +51,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

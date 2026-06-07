@@ -1,7 +1,7 @@
 #[cfg(not(target_family = "wasm"))]
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
-use gpui_util::ResultExt;
+use open_gpui_core_util::ResultExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wgpu::TextureFormat;
@@ -63,7 +63,7 @@ impl WgpuContext {
         // Select an adapter by actually testing surface configuration with the real device.
         // This is the only reliable way to determine compatibility on hybrid GPU systems.
         let (adapter, device, queue, dual_source_blending, color_texture_format) =
-            gpui::block_on(Self::select_adapter_and_device(
+            open_gpui::block_on(Self::select_adapter_and_device(
                 &instance,
                 device_id_filter,
                 surface,

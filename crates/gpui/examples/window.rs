@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, KeyBinding, PromptButton, PromptLevel, Window, WindowBounds, WindowKind,
     WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct SubWindow {
     custom_titlebar: bool,
@@ -43,8 +43,8 @@ impl Render for SubWindow {
                         .flex()
                         .h(px(32.))
                         .px_4()
-                        .bg(gpui::blue())
-                        .text_color(gpui::white())
+                        .bg(open_gpui::blue())
+                        .text_color(open_gpui::white())
                         .w_full()
                         .child(
                             div()
@@ -344,6 +344,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

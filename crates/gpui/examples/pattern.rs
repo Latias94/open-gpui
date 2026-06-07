@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, AppContext, Bounds, Context, Window, WindowBounds, WindowOptions, div, linear_color_stop,
     linear_gradient, pattern_slash, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct PatternExample;
 
@@ -27,24 +27,24 @@ impl Render for PatternExample {
                     .flex()
                     .flex_col()
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(open_gpui::blue())
                     .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(
-                        gpui::red(),
+                        open_gpui::red(),
                         18.0 / 4.0,
                         18.0 / 4.0,
                     )))
                     .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(
-                        gpui::red(),
+                        open_gpui::red(),
                         18.0 / 4.0,
                         18.0 / 4.0,
                     )))
                     .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(
-                        gpui::red(),
+                        open_gpui::red(),
                         18.0 / 4.0,
                         18.0 / 4.0,
                     )))
                     .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(
-                        gpui::red(),
+                        open_gpui::red(),
                         18.0 / 4.0,
                         18.0 / 2.0,
                     ))),
@@ -54,26 +54,26 @@ impl Render for PatternExample {
                     .flex()
                     .flex_col()
                     .border_1()
-                    .border_color(gpui::blue())
-                    .bg(gpui::green().opacity(0.16))
+                    .border_color(open_gpui::blue())
+                    .bg(open_gpui::green().opacity(0.16))
                     .child("Elements the same height should align")
                     .child(div().w(px(256.0)).h(px(56.0)).bg(pattern_slash(
-                        gpui::red(),
+                        open_gpui::red(),
                         56.0 / 6.0,
                         56.0 / 6.0,
                     )))
                     .child(div().w(px(256.0)).h(px(56.0)).bg(pattern_slash(
-                        gpui::green(),
+                        open_gpui::green(),
                         56.0 / 6.0,
                         56.0 / 6.0,
                     )))
                     .child(div().w(px(256.0)).h(px(56.0)).bg(pattern_slash(
-                        gpui::blue(),
+                        open_gpui::blue(),
                         56.0 / 6.0,
                         56.0 / 6.0,
                     )))
                     .child(div().w(px(256.0)).h(px(26.0)).bg(pattern_slash(
-                        gpui::yellow(),
+                        open_gpui::yellow(),
                         56.0 / 6.0,
                         56.0 / 6.0,
                     ))),
@@ -81,21 +81,21 @@ impl Render for PatternExample {
             .child(
                 div()
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(open_gpui::blue())
                     .w(px(240.0))
                     .h(px(40.0))
-                    .bg(gpui::red()),
+                    .bg(open_gpui::red()),
             )
             .child(
                 div()
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(open_gpui::blue())
                     .w(px(240.0))
                     .h(px(40.0))
                     .bg(linear_gradient(
                         45.,
-                        linear_color_stop(gpui::red(), 0.),
-                        linear_color_stop(gpui::blue(), 1.),
+                        linear_color_stop(open_gpui::red(), 0.),
+                        linear_color_stop(open_gpui::blue(), 1.),
                     )),
             )
     }
@@ -125,6 +125,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

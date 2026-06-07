@@ -109,7 +109,7 @@ pub async fn download_server_raw_binary(
             );
         }
 
-        util::fs::make_file_executable(&binary_path)
+        open_gpui_util::fs::make_file_executable(&binary_path)
             .await
             .with_context(|| format!("marking {binary_path:?} as executable"))?;
         finalize_download(&staging_path, destination_path).await
@@ -233,7 +233,7 @@ async fn stream_response_archive(
         AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
         AssetKind::Gz => extract_gz(destination_path, url, response).await?,
         AssetKind::Zip => {
-            util::archive::extract_zip(destination_path, response).await?;
+            open_gpui_util::archive::extract_zip(destination_path, response).await?;
         }
     };
     Ok(())
@@ -251,11 +251,11 @@ async fn stream_file_archive(
         AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
         #[cfg(not(windows))]
         AssetKind::Zip => {
-            util::archive::extract_seekable_zip(destination_path, file_archive).await?;
+            open_gpui_util::archive::extract_seekable_zip(destination_path, file_archive).await?;
         }
         #[cfg(windows)]
         AssetKind::Zip => {
-            util::archive::extract_zip(destination_path, file_archive).await?;
+            open_gpui_util::archive::extract_zip(destination_path, file_archive).await?;
         }
     };
     Ok(())

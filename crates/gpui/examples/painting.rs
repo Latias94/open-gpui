@@ -1,11 +1,11 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
     Point, Render, StrokeOptions, Window, WindowOptions, canvas, div, linear_color_stop,
     linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
@@ -27,35 +27,35 @@ impl PaintingViewer {
                     origin: point(px(70.), px(70.)),
                     size: size(px(40.), px(40.)),
                 },
-                gpui::black().into(),
+                open_gpui::black().into(),
             ),
             (
                 Bounds {
                     origin: point(px(170.), px(70.)),
                     size: size(px(40.), px(40.)),
                 },
-                gpui::black().into(),
+                open_gpui::black().into(),
             ),
             (
                 Bounds {
                     origin: point(px(270.), px(70.)),
                     size: size(px(40.), px(40.)),
                 },
-                gpui::black().into(),
+                open_gpui::black().into(),
             ),
             (
                 Bounds {
                     origin: point(px(370.), px(70.)),
                     size: size(px(40.), px(40.)),
                 },
-                gpui::black().into(),
+                open_gpui::black().into(),
             ),
             (
                 Bounds {
                     origin: point(px(450.), px(50.)),
                     size: size(px(80.), px(80.)),
                 },
-                gpui::black().into(),
+                open_gpui::black().into(),
             ),
         ];
 
@@ -164,7 +164,7 @@ impl PaintingViewer {
         builder.translate(point(px(10.), px(200.)));
         builder.scale(0.9);
         let path = builder.build().unwrap();
-        lines.push((path, gpui::black().into()));
+        lines.push((path, open_gpui::black().into()));
 
         // draw a lightening bolt ⚡
         let mut builder = PathBuilder::fill();
@@ -229,8 +229,8 @@ impl PaintingViewer {
             path,
             linear_gradient(
                 180.,
-                linear_color_stop(gpui::blue(), 0.4),
-                linear_color_stop(gpui::red(), 1.),
+                linear_color_stop(open_gpui::blue(), 0.4),
+                linear_color_stop(open_gpui::red(), 1.),
             ),
         ));
 
@@ -288,7 +288,7 @@ impl PaintingViewer {
             ));
         }
         let path = builder.build().unwrap();
-        lines.push((path, gpui::green().into()));
+        lines.push((path, open_gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
@@ -314,8 +314,8 @@ fn button(
     div()
         .id(text.to_string())
         .child(text.to_string())
-        .bg(gpui::black())
-        .text_color(gpui::white())
+        .bg(open_gpui::black())
+        .text_color(open_gpui::white())
         .active(|this| this.opacity(0.8))
         .flex()
         .px_3()
@@ -331,7 +331,7 @@ impl Render for PaintingViewer {
         let dashed = self.dashed;
 
         div()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .size_full()
             .p_4()
             .flex()
@@ -369,7 +369,7 @@ impl Render for PaintingViewer {
                                         px(0.),
                                         *color,
                                         px(0.),
-                                        gpui::transparent_black(),
+                                        open_gpui::transparent_black(),
                                         Default::default(),
                                     ));
                                 }
@@ -397,7 +397,7 @@ impl Render for PaintingViewer {
                                     }
 
                                     if let Ok(path) = builder.build() {
-                                        window.paint_path(path, gpui::black());
+                                        window.paint_path(path, open_gpui::black());
                                     }
                                 }
                             },
@@ -405,7 +405,7 @@ impl Render for PaintingViewer {
                         .size_full(),
                     )
                     .on_mouse_down(
-                        gpui::MouseButton::Left,
+                        open_gpui::MouseButton::Left,
                         cx.listener(|this, ev: &MouseDownEvent, _, _| {
                             this._painting = true;
                             this.start = ev.position;
@@ -413,7 +413,7 @@ impl Render for PaintingViewer {
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &open_gpui::MouseMoveEvent, _, cx| {
                         if !this._painting {
                             return;
                         }
@@ -438,7 +438,7 @@ impl Render for PaintingViewer {
                         cx.notify();
                     }))
                     .on_mouse_up(
-                        gpui::MouseButton::Left,
+                        open_gpui::MouseButton::Left,
                         cx.listener(|this, _, _, _| {
                             this._painting = false;
                         }),
@@ -473,6 +473,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

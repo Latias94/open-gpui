@@ -3,11 +3,11 @@
 //! To illustrate, consider the trivial app below. We start the app by calling `run` with a callback, which is passed a reference to the `App` that owns all the state for the application. This `App` is our gateway to all application-level services, such as opening windows, presenting dialogs, etc. It also has an `insert_entity` method, which is called below to create an entity and give ownership of it to the application.
 //!
 //! ```no_run
-//! # use gpui::{App, AppContext, Application, Entity};
+//! # use open_gpui::{App, AppContext, Application, Entity};
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! gpui_platform::application().run(|cx: &mut App| {
+//! open_gpui_platform::application().run(|cx: &mut App| {
 //!     let _counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     // ...
 //! });
@@ -18,11 +18,11 @@
 //! Much like an `Rc` from the Rust standard library, this reference count is incremented when the handle is cloned and decremented when it is dropped to enable shared ownership over the underlying model, but unlike an `Rc` it only provides access to the model's state when a reference to an `App` is available. The handle doesn't truly _own_ the state, but it can be used to access the state from its true owner, the `App`. Stripping away some of the setup code for brevity:
 //!
 //! ```no_run
-//! # use gpui::{App, AppContext, Application, Context, Entity};
+//! # use open_gpui::{App, AppContext, Application, Context, Entity};
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! gpui_platform::application().run(|cx: &mut App| {
+//! open_gpui_platform::application().run(|cx: &mut App| {
 //!     let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     // Call `update` to access the model's state.
 //!     counter.update(cx, |counter: &mut Counter, _cx: &mut Context<Counter>| {
@@ -38,11 +38,11 @@
 //! In addition to the application-level services provided by `App`, a `Context` provides access to entity-level services. For example, it can be used it to inform observers of this entity that its state has changed. Let's add that to our example, by calling `cx.notify()`.
 //!
 //! ```no_run
-//! # use gpui::{App, AppContext, Application, Entity};
+//! # use open_gpui::{App, AppContext, Application, Entity};
 //! # struct Counter {
 //! #     count: usize,
 //! # }
-//! gpui_platform::application().run(|cx: &mut App| {
+//! open_gpui_platform::application().run(|cx: &mut App| {
 //!     let counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!     counter.update(cx, |counter, cx| {
 //!         counter.count += 1;
@@ -56,11 +56,11 @@
 //! The `observe` callback is passed a mutable reference to the observer and a _handle_ to the observed counter, whose state we access with the `read` method.
 //!
 //! ```no_run
-//!  # use gpui::{App, AppContext, Application, Entity, prelude::*};
+//!  # use open_gpui::{App, AppContext, Application, Entity, prelude::*};
 //!  # struct Counter {
 //!  #     count: usize,
 //!  # }
-//!  gpui_platform::application().run(|cx: &mut App| {
+//!  open_gpui_platform::application().run(|cx: &mut App| {
 //!      let first_counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!
 //!      let second_counter = cx.new(|cx: &mut Context<Counter>| {
@@ -92,7 +92,7 @@
 //! Let's introduce a new event type called `CounterChangeEvent`, then indicate that `Counter` can emit this type of event:
 //!
 //! ```no_run
-//! use gpui::EventEmitter;
+//! use open_gpui::EventEmitter;
 //! # struct Counter {
 //! #     count: usize,
 //! # }
@@ -106,7 +106,7 @@
 //! Next, the example should be updated, replacing the observation with a subscription. Whenever the counter is incremented, a `Change` event is emitted to indicate the magnitude of the increase.
 //!
 //! ```no_run
-//! # use gpui::{App, AppContext, Application, Context, Entity, EventEmitter};
+//! # use open_gpui::{App, AppContext, Application, Context, Entity, EventEmitter};
 //! # struct Counter {
 //! #     count: usize,
 //! # }
@@ -114,7 +114,7 @@
 //! #     increment: usize,
 //! # }
 //! # impl EventEmitter<CounterChangeEvent> for Counter {}
-//! gpui_platform::application().run(|cx: &mut App| {
+//! open_gpui_platform::application().run(|cx: &mut App| {
 //!     let first_counter: Entity<Counter> = cx.new(|_cx| Counter { count: 0 });
 //!
 //!     let second_counter = cx.new(|cx: &mut Context<Counter>| {

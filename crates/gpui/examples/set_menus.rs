@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window, WindowOptions,
     actions, div, prelude::*,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct SetMenus;
 
@@ -12,12 +12,12 @@ impl Render for SetMenus {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
-            .bg(gpui::white())
+            .bg(open_gpui::white())
             .size_full()
             .justify_center()
             .items_center()
             .text_xl()
-            .text_color(gpui::black())
+            .text_color(open_gpui::black())
             .child("Set Menus Example")
     }
 }
@@ -47,7 +47,7 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }
 
@@ -95,7 +95,7 @@ fn set_app_menus(cx: &mut App) {
     cx.set_menus([Menu::new("set_menus").items([
         MenuItem::os_submenu("Services", SystemMenuType::Services),
         MenuItem::separator(),
-        MenuItem::action("Disabled Item", gpui::NoAction).disabled(true),
+        MenuItem::action("Disabled Item", open_gpui::NoAction).disabled(true),
         MenuItem::submenu(Menu::new("Disabled Submenu").disabled(true)),
         MenuItem::separator(),
         MenuItem::action("List Mode", ToggleCheck).checked(app_state.view_mode == ViewMode::List),

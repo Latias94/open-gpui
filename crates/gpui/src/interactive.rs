@@ -744,7 +744,7 @@ mod test {
         }
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {

@@ -1,4 +1,4 @@
-use refineable::Refineable as _;
+use open_gpui_refineable::Refineable as _;
 
 use crate::{
     App, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Pixels,

@@ -1,8 +1,8 @@
 use std::sync::LazyLock;
 
 use anyhow::Result;
-use collections::FxHashMap;
 use itertools::Itertools;
+use open_gpui_collections::FxHashMap;
 use windows::Win32::{
     Foundation::{HANDLE, HGLOBAL},
     System::{
@@ -18,7 +18,7 @@ use windows::Win32::{
 };
 use windows::core::{Owned, PCWSTR};
 
-use gpui::{
+use open_gpui::{
     ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
 

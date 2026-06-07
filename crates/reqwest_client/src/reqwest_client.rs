@@ -4,12 +4,12 @@ use std::{
     borrow::Cow, collections::HashMap, mem, pin::Pin, sync::Mutex, task::Poll, time::Duration,
 };
 
-use gpui_util::defer;
+use open_gpui_core_util::defer;
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
-use http_client::{RedirectPolicy, Url, http};
+use open_gpui_http_client::{RedirectPolicy, Url, http};
 use regex::Regex;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -80,7 +80,7 @@ impl ReqwestClient {
         };
 
         let client = client
-            .use_preconfigured_tls(http_client_tls::tls_config())
+            .use_preconfigured_tls(open_gpui_http_client_tls::tls_config())
             .build()?;
         let mut client: ReqwestClient = client.into();
         client.proxy = client_has_proxy.then_some(proxy).flatten();
@@ -121,7 +121,7 @@ impl ReqwestClient {
         }
 
         if self.use_platform_tls {
-            builder = builder.use_preconfigured_tls(http_client_tls::tls_config());
+            builder = builder.use_preconfigured_tls(open_gpui_http_client_tls::tls_config());
         }
 
         let client = builder.build()?;
@@ -276,7 +276,7 @@ fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
     error
 }
 
-impl http_client::HttpClient for ReqwestClient {
+impl open_gpui_http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
     }
@@ -287,10 +287,10 @@ impl http_client::HttpClient for ReqwestClient {
 
     fn send(
         &self,
-        req: http::Request<http_client::AsyncBody>,
+        req: http::Request<open_gpui_http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
-        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
+        anyhow::Result<open_gpui_http_client::Response<open_gpui_http_client::AsyncBody>>,
     > {
         let (parts, body) = req.into_parts();
 
@@ -303,9 +303,9 @@ impl http_client::HttpClient for ReqwestClient {
         let mut request = client.request(parts.method, parts.uri.to_string());
         request = request.headers(parts.headers);
         let request = request.body(match body.0 {
-            http_client::Inner::Empty => reqwest::Body::default(),
-            http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
-            http_client::Inner::AsyncReader(stream) => {
+            open_gpui_http_client::Inner::Empty => reqwest::Body::default(),
+            open_gpui_http_client::Inner::Bytes(cursor) => cursor.into_inner().into(),
+            open_gpui_http_client::Inner::AsyncReader(stream) => {
                 reqwest::Body::wrap_stream(StreamReader::new(stream))
             }
         });
@@ -328,7 +328,7 @@ impl http_client::HttpClient for ReqwestClient {
                 .bytes_stream()
                 .map_err(futures::io::Error::other)
                 .into_async_read();
-            let body = http_client::AsyncBody::from_reader(bytes);
+            let body = open_gpui_http_client::AsyncBody::from_reader(bytes);
 
             builder.body(body).map_err(|e| anyhow!(e))
         }
@@ -338,7 +338,7 @@ impl http_client::HttpClient for ReqwestClient {
 
 #[cfg(test)]
 mod tests {
-    use http_client::{HttpClient, RedirectPolicy, Url};
+    use open_gpui_http_client::{HttpClient, RedirectPolicy, Url};
 
     use crate::{ReqwestClient, reqwest_redirect_policy};
 

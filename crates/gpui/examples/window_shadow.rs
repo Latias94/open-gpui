@@ -1,12 +1,12 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton, Pixels,
     Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
     WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
     white,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct WindowShadow {}
 
@@ -31,7 +31,7 @@ impl Render for WindowShadow {
             .map(|div| match decorations {
                 Decorations::Server => div,
                 Decorations::Client { tiling, .. } => div
-                    .bg(gpui::transparent_black())
+                    .bg(open_gpui::transparent_black())
                     .child(
                         canvas(
                             |_bounds, window, _cx| {
@@ -107,7 +107,7 @@ impl Render for WindowShadow {
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
                             .when(!tiling.is_tiled(), |div| {
-                                div.shadow(vec![gpui::BoxShadow {
+                                div.shadow(vec![open_gpui::BoxShadow {
                                     color: Hsla {
                                         h: 0.,
                                         s: 0.,
@@ -124,7 +124,7 @@ impl Render for WindowShadow {
                     .on_mouse_move(|_e, _, cx| {
                         cx.stop_propagation();
                     })
-                    .bg(gpui::rgb(0xCCCCFF))
+                    .bg(open_gpui::rgb(0xCCCCFF))
                     .size_full()
                     .flex()
                     .flex_col()
@@ -148,7 +148,7 @@ impl Render for WindowShadow {
                                         .w(px(200.0))
                                         .h(px(100.0))
                                         .bg(green())
-                                        .shadow(vec![gpui::BoxShadow {
+                                        .shadow(vec![open_gpui::BoxShadow {
                                             color: Hsla {
                                                 h: 0.,
                                                 s: 0.,
@@ -239,6 +239,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

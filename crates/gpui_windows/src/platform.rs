@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
+use ::open_gpui_util::{ResultExt, paths::SanitizedPath};
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -28,7 +28,7 @@ use windows::{
 };
 
 use crate::*;
-use gpui::*;
+use open_gpui::*;
 
 pub struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
@@ -115,7 +115,7 @@ impl WindowsPlatform {
         } else {
             (
                 None,
-                Arc::new(gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
+                Arc::new(open_gpui::NoopTextSystem::new()) as Arc<dyn PlatformTextSystem>,
                 None,
             )
         };
@@ -467,11 +467,12 @@ impl Platform for WindowsPlatform {
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process =
-                    ::util::command::new_std_command(::util::shell::get_windows_system_shell())
-                        .arg("-command")
-                        .arg(script)
-                        .spawn();
+                let restart_process = ::open_gpui_util::command::new_std_command(
+                    ::open_gpui_util::shell::get_windows_system_shell(),
+                )
+                .arg("-command")
+                .arg(script)
+                .spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -512,7 +513,7 @@ impl Platform for WindowsPlatform {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
-        gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
+        open_gpui::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -1391,7 +1392,7 @@ unsafe extern "system" fn window_procedure(
 #[cfg(test)]
 mod tests {
     use crate::{read_from_clipboard, write_to_clipboard};
-    use gpui::ClipboardItem;
+    use open_gpui::ClipboardItem;
 
     #[test]
     fn test_clipboard() {

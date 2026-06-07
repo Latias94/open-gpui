@@ -1,10 +1,10 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px,
     rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct HelloWorld {
     text: SharedString,
@@ -33,57 +33,57 @@ impl Render for HelloWorld {
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::red())
+                            .bg(open_gpui::red())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
-                            .border_color(gpui::white()),
+                            .border_color(open_gpui::white()),
                     )
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::green())
+                            .bg(open_gpui::green())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
-                            .border_color(gpui::white()),
+                            .border_color(open_gpui::white()),
                     )
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::blue())
+                            .bg(open_gpui::blue())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
-                            .border_color(gpui::white()),
+                            .border_color(open_gpui::white()),
                     )
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::yellow())
+                            .bg(open_gpui::yellow())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
-                            .border_color(gpui::white()),
+                            .border_color(open_gpui::white()),
                     )
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::black())
+                            .bg(open_gpui::black())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
                             .rounded_md()
-                            .border_color(gpui::white()),
+                            .border_color(open_gpui::white()),
                     )
                     .child(
                         div()
                             .size_8()
-                            .bg(gpui::white())
+                            .bg(open_gpui::white())
                             .border_1()
                             .border_dashed()
                             .rounded_md()
-                            .border_color(gpui::black()),
+                            .border_color(open_gpui::black()),
                     ),
             )
     }
@@ -116,6 +116,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

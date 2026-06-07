@@ -1,10 +1,15 @@
 [package]
-name = "util_macros"
-version = "0.1.0"
+name = "open-gpui-util-macros"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "Utility macros for Zed"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Utility macros used by Open GPUI."
 
 [lints]
 workspace = true

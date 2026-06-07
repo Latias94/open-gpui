@@ -17,11 +17,11 @@ CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, 
 dispatches:
 
 - Windows runs the same local gate, `cargo nextest run -p xtask`, and
-  `cargo check -p gpui_windows --all-features --locked`.
-- Linux runs `cargo check -p gpui_linux --all-features --locked` after installing the system
+  `cargo check -p open-gpui-windows --all-features --locked`.
+- Linux runs `cargo check -p open-gpui-linux --all-features --locked` after installing the system
   headers needed for Wayland, X11, fontconfig, freetype, and pkg-config.
-- macOS runs `cargo check -p gpui_macos --features font-kit --locked`.
-- All three platforms run `cargo check -p gpui_wgpu --features font-kit --locked`.
+- macOS runs `cargo check -p open-gpui-macos --features font-kit --locked`.
+- All three platforms run `cargo check -p open-gpui-wgpu --features font-kit --locked`.
 
 Run the native renderer smoke explicitly with:
 
@@ -29,9 +29,19 @@ Run the native renderer smoke explicitly with:
 cargo run -p xtask -- renderer-smoke
 ```
 
-That command runs the focused `gpui_wgpu` smoke test that requests a real native `wgpu` adapter and
+That command runs the focused `open-gpui-wgpu` smoke test that requests a real native `wgpu` adapter and
 device, creates the renderer bind group layouts, and builds the core render pipelines. It is not
 part of the default `verify` gate because it depends on local GPU, driver, and session availability.
+
+Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
+
+```sh
+cargo package -p open-gpui --list --allow-dirty
+```
+
+Every published Open GPUI crate should include `README.md`, `LICENSE-APACHE`, and `NOTICE`. Cargo
+does not package files outside a crate root through `include`, so each publishable crate root keeps
+its own `NOTICE` copy.
 
 The import-boundary scan rejects dependency files that reintroduce Zed's GPL tracing stack
 (`ztracing`, `ztracing_macro`, `zlog`), the old `zed-sum-tree` dependency, the Zed monorepo as a

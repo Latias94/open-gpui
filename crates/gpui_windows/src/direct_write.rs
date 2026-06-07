@@ -4,9 +4,9 @@ use std::{
     mem::ManuallyDrop,
 };
 
-use ::util::{ResultExt, maybe};
+use ::open_gpui_util::{ResultExt, maybe};
 use anyhow::{Context, Result};
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use windows::{
     Win32::{
@@ -24,7 +24,7 @@ use windows::{
 use windows_numerics::Vector2;
 
 use crate::*;
-use gpui::*;
+use open_gpui::*;
 
 #[derive(Debug)]
 struct FontInfo {
@@ -469,7 +469,7 @@ impl DirectWriteState {
         let family = if family == SYSTEM_UI_FONT_NAME {
             system_ui_font_name
         } else {
-            gpui::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
+            open_gpui::font_name_with_fallbacks_shared(&family, &system_ui_font_name)
         };
         let fontset = unsafe { collection.GetFontSet().log_err()? };
         let font_family_h = HSTRING::from(family.as_str());
@@ -693,7 +693,7 @@ impl DirectWriteState {
         let baseline_origin_x =
             params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor;
         let baseline_origin_y = params.subpixel_variant.y as f32
-            / gpui::SUBPIXEL_VARIANTS_Y as f32
+            / open_gpui::SUBPIXEL_VARIANTS_Y as f32
             / params.scale_factor;
 
         let mut rendering_mode = DWRITE_RENDERING_MODE1::default();

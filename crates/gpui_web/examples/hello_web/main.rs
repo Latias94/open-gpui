@@ -1,5 +1,5 @@
-use gpui::prelude::*;
-use gpui::{
+use open_gpui::prelude::*;
+use open_gpui::{
     App, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds, WindowOptions, div,
     px, rgb, size,
 };
@@ -301,7 +301,7 @@ impl Render for HelloWeb {
                                 .h_full()
                                 .rounded_sm()
                                 .bg(rgb(bar_color))
-                                .w(gpui::relative(progress_fraction)),
+                                .w(open_gpui::relative(progress_fraction)),
                         ),
                 )
                 .child(chunk_dots)
@@ -406,8 +406,8 @@ impl Render for HelloWeb {
 // ---------------------------------------------------------------------------
 
 fn main() {
-    gpui_platform::web_init();
-    gpui_platform::application().run(|cx: &mut App| {
+    open_gpui_platform::web_init();
+    open_gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
         cx.open_window(
             WindowOptions {

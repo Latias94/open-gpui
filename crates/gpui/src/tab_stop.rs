@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
-use ::sum_tree::SumTree;
-use collections::FxHashMap;
-use sum_tree::Bias;
+use ::open_gpui_sum_tree::SumTree;
+use open_gpui_collections::FxHashMap;
+use open_gpui_sum_tree::Bias;
 
 use crate::{FocusHandle, FocusId};
 
@@ -214,7 +214,7 @@ impl TabStopMap {
 }
 
 mod sum_tree_impl {
-    use sum_tree::SeekTarget;
+    use open_gpui_sum_tree::SeekTarget;
 
     use crate::tab_stop::{TabStopNode, TabStopPath};
 
@@ -227,7 +227,7 @@ mod sum_tree_impl {
 
     pub type TabStopCount = usize;
 
-    impl sum_tree::ContextLessSummary for TabStopOrderNodeSummary {
+    impl open_gpui_sum_tree::ContextLessSummary for TabStopOrderNodeSummary {
         fn zero() -> Self {
             TabStopOrderNodeSummary {
                 max_index: 0,
@@ -243,7 +243,7 @@ mod sum_tree_impl {
         }
     }
 
-    impl sum_tree::KeyedItem for TabStopNode {
+    impl open_gpui_sum_tree::KeyedItem for TabStopNode {
         type Key = Self;
 
         fn key(&self) -> Self::Key {
@@ -251,10 +251,13 @@ mod sum_tree_impl {
         }
     }
 
-    impl sum_tree::Item for TabStopNode {
+    impl open_gpui_sum_tree::Item for TabStopNode {
         type Summary = TabStopOrderNodeSummary;
 
-        fn summary(&self, _cx: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
+        fn summary(
+            &self,
+            _cx: <Self::Summary as open_gpui_sum_tree::Summary>::Context<'_>,
+        ) -> Self::Summary {
             TabStopOrderNodeSummary {
                 max_index: self.node_insertion_index,
                 max_path: self.path.clone(),
@@ -263,29 +266,29 @@ mod sum_tree_impl {
         }
     }
 
-    impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopCount {
-        fn zero(_: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>) -> Self {
+    impl<'a> open_gpui_sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopCount {
+        fn zero(_: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>) -> Self {
             0
         }
 
         fn add_summary(
             &mut self,
             summary: &'a TabStopOrderNodeSummary,
-            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
+            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
         ) {
             *self += summary.tab_stops;
         }
     }
 
-    impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopNode {
-        fn zero(_: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>) -> Self {
+    impl<'a> open_gpui_sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopNode {
+        fn zero(_: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>) -> Self {
             TabStopNode::default()
         }
 
         fn add_summary(
             &mut self,
             summary: &'a TabStopOrderNodeSummary,
-            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
+            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
         ) {
             self.node_insertion_index = summary.max_index;
             self.path = summary.max_path.clone();
@@ -296,7 +299,7 @@ mod sum_tree_impl {
         fn cmp(
             &self,
             cursor_location: &TabStopNode,
-            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
+            _: <TabStopOrderNodeSummary as open_gpui_sum_tree::Summary>::Context<'_>,
         ) -> std::cmp::Ordering {
             Iterator::cmp(self.path.0.iter(), cursor_location.path.0.iter()).then(
                 <usize as Ord>::cmp(

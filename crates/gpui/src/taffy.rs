@@ -6,7 +6,7 @@ use crate::{
         round_to_device_pixel,
     },
 };
-use collections::{FxHashMap, FxHashSet};
+use open_gpui_collections::{FxHashMap, FxHashSet};
 use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
@@ -669,7 +669,7 @@ impl AvailableSpace {
     /// # Examples
     ///
     /// ```
-    /// use gpui::AvailableSpace;
+    /// use open_gpui::AvailableSpace;
     /// let min_content_size = AvailableSpace::min_size();
     /// assert_eq!(min_content_size.width, AvailableSpace::MinContent);
     /// assert_eq!(min_content_size.height, AvailableSpace::MinContent);

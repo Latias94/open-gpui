@@ -7,12 +7,12 @@ use crate::{
 use anyhow::Result;
 
 use futures::Future;
-use gpui_util::ResultExt;
 use image::{
     AnimationDecoder, DynamicImage, Frame, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
-use scheduler::Instant;
+use open_gpui_core_util::ResultExt;
+use open_gpui_scheduler::Instant;
 use smallvec::SmallVec;
 use std::{
     fs,
@@ -763,7 +763,7 @@ pub enum ImageCacheError {
         /// The URI of the image.
         uri: SharedUri,
         /// The HTTP status code.
-        status: http_client::StatusCode,
+        status: open_gpui_http_client::StatusCode,
         /// The HTTP response body.
         body: String,
     },
@@ -833,7 +833,7 @@ mod tests {
         )
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn zero_frame_image_does_not_panic_on_paint(cx: &mut TestAppContext) {
         cx.add_empty_window()
             .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
@@ -841,7 +841,7 @@ mod tests {
             });
     }
 
-    #[gpui::test]
+    #[open_gpui::test]
     fn stale_frame_index_is_clamped_when_image_changes(cx: &mut TestAppContext) {
         let window = cx.add_empty_window();
 

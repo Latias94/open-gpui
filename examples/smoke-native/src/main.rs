@@ -1,8 +1,8 @@
-use gpui::{
+use open_gpui::{
     App, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div, prelude::*, px,
     rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct SmokeView {
     message: SharedString,

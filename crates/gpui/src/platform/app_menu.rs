@@ -366,7 +366,7 @@ mod tests {
     fn test_menu() {
         let menu = Menu::new("App")
             .items(vec![
-                crate::MenuItem::action("Action 1", gpui::NoAction),
+                crate::MenuItem::action("Action 1", open_gpui::NoAction),
                 crate::MenuItem::separator(),
             ])
             .disabled(true);
@@ -380,7 +380,7 @@ mod tests {
     fn test_menu_item_builder() {
         use super::MenuItem;
 
-        let item = MenuItem::action("Test Action", gpui::NoAction);
+        let item = MenuItem::action("Test Action", open_gpui::NoAction);
         assert_eq!(
             match &item {
                 MenuItem::Action { name, .. } => name.as_ref(),
@@ -398,12 +398,12 @@ mod tests {
         ));
 
         assert!(
-            MenuItem::action("Test Action", gpui::NoAction)
+            MenuItem::action("Test Action", open_gpui::NoAction)
                 .checked(true)
                 .is_checked()
         );
         assert!(
-            MenuItem::action("Test Action", gpui::NoAction)
+            MenuItem::action("Test Action", open_gpui::NoAction)
                 .disabled(true)
                 .is_disabled()
         );

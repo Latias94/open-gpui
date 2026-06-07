@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use uuid::Uuid;
 use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
-use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Size, px};
+use open_gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, Size, px};
 
 #[derive(Debug)]
 pub(crate) struct X11Display {

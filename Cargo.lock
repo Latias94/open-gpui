@@ -1250,15 +1250,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "collections"
-version = "0.1.0"
-dependencies = [
- "gpui_util",
- "indexmap",
- "rustc-hash 2.1.2",
-]
-
-[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1713,15 +1704,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_refineable"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1756,7 +1738,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2569,311 +2551,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui"
-version = "0.2.2"
-dependencies = [
- "accesskit",
- "anyhow",
- "async-channel 2.5.0",
- "async-task",
- "backtrace",
- "bindgen 0.71.1",
- "bitflags 2.13.0",
- "block",
- "cbindgen",
- "chrono",
- "cocoa 0.26.0",
- "cocoa-foundation 0.2.0",
- "collections",
- "core-foundation 0.10.0",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "core-text",
- "core-video",
- "ctor",
- "derive_more",
- "embed-resource",
- "env_logger",
- "etagere",
- "font-kit",
- "foreign-types",
- "futures",
- "futures-concurrency",
- "getrandom 0.3.4",
- "gpui_macros",
- "gpui_platform",
- "gpui_shared_string",
- "gpui_util",
- "gpui_web",
- "hdrhistogram",
- "heapless",
- "http_client",
- "image",
- "inventory",
- "itertools 0.14.0",
- "log",
- "lyon",
- "mach2",
- "media",
- "metal",
- "num_cpus",
- "objc",
- "objc2 0.6.4",
- "objc2-metal 0.3.2",
- "open-gpui-scap",
- "parking",
- "parking_lot",
- "pathfinder_geometry",
- "pin-project",
- "pollster 0.4.0",
- "postage",
- "profiling",
- "proptest",
- "rand 0.9.4",
- "raw-window-handle",
- "refineable",
- "regex",
- "reqwest_client",
- "resvg",
- "scheduler",
- "schemars",
- "seahash",
- "serde",
- "serde_json",
- "slotmap",
- "smallvec",
- "spin 0.10.0",
- "stacksafe",
- "strum",
- "sum_tree",
- "taffy",
- "thiserror 2.0.18",
- "ttf-parser",
- "unicode-segmentation",
- "url",
- "usvg",
- "util_macros",
- "uuid",
- "waker-fn",
- "wasm-bindgen",
- "web-time",
- "windows 0.61.3",
-]
-
-[[package]]
-name = "gpui_linux"
-version = "0.1.0"
-dependencies = [
- "accesskit",
- "accesskit_unix",
- "anyhow",
- "as-raw-xcb-connection",
- "ashpd",
- "bitflags 2.13.0",
- "bytemuck",
- "calloop",
- "calloop-wayland-source",
- "collections",
- "filedescriptor",
- "futures",
- "gpui",
- "gpui_wgpu",
- "http_client",
- "image",
- "itertools 0.14.0",
- "libc",
- "log",
- "oo7",
- "open",
- "open-gpui-scap",
- "parking_lot",
- "pathfinder_geometry",
- "pollster 0.4.0",
- "profiling",
- "raw-window-handle",
- "smallvec",
- "smol",
- "strum",
- "swash",
- "url",
- "util",
- "uuid",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "wayland-protocols-wlr",
- "x11-clipboard",
- "x11rb",
- "xim",
- "xkbcommon",
-]
-
-[[package]]
-name = "gpui_macos"
-version = "0.1.0"
-dependencies = [
- "accesskit",
- "accesskit_macos",
- "anyhow",
- "async-task",
- "block",
- "cbindgen",
- "cocoa 0.26.0",
- "collections",
- "core-foundation 0.10.0",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "core-text",
- "core-video",
- "ctor",
- "derive_more",
- "dispatch2",
- "etagere",
- "font-kit",
- "foreign-types",
- "futures",
- "gpui",
- "image",
- "itertools 0.14.0",
- "libc",
- "log",
- "mach2",
- "media",
- "metal",
- "objc",
- "objc2-app-kit 0.3.2",
- "parking_lot",
- "pathfinder_geometry",
- "raw-window-handle",
- "semver",
- "smallvec",
- "strum",
- "util",
- "uuid",
-]
-
-[[package]]
-name = "gpui_macros"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "gpui_platform"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "gpui",
- "gpui_linux",
- "gpui_macos",
- "gpui_web",
- "gpui_windows",
-]
-
-[[package]]
-name = "gpui_shared_string"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "smol_str",
-]
-
-[[package]]
-name = "gpui_util"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "log",
-]
-
-[[package]]
-name = "gpui_web"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "console_error_panic_hook",
- "futures",
- "gpui",
- "gpui_wgpu",
- "http_client",
- "js-sys",
- "log",
- "parking_lot",
- "raw-window-handle",
- "smallvec",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm_thread",
- "web-sys",
- "web-time",
-]
-
-[[package]]
-name = "gpui_wgpu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytemuck",
- "collections",
- "cosmic-text",
- "criterion",
- "etagere",
- "font-kit",
- "gpui",
- "gpui_util",
- "itertools 0.14.0",
- "js-sys",
- "log",
- "parking_lot",
- "pollster 0.4.0",
- "profiling",
- "raw-window-handle",
- "smallvec",
- "swash",
- "unicode-segmentation",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
-name = "gpui_windows"
-version = "0.1.0"
-dependencies = [
- "accesskit",
- "accesskit_windows",
- "anyhow",
- "collections",
- "etagere",
- "futures",
- "gpui",
- "image",
- "itertools 0.14.0",
- "log",
- "open-gpui-scap",
- "parking_lot",
- "rand 0.9.4",
- "raw-window-handle",
- "smallvec",
- "util",
- "uuid",
- "windows 0.61.3",
- "windows-core 0.61.2",
- "windows-numerics 0.2.0",
- "windows-registry 0.5.3",
-]
-
-[[package]]
 name = "grid"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3070,38 +2747,6 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
-]
-
-[[package]]
-name = "http_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-compression",
- "async-fs",
- "async-tar",
- "bytes",
- "derive_more",
- "futures",
- "http",
- "http-body",
- "log",
- "parking_lot",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sha2",
- "tempfile",
- "url",
- "util",
-]
-
-[[package]]
-name = "http_client_tls"
-version = "0.1.0"
-dependencies = [
- "rustls",
- "rustls-platform-verifier",
 ]
 
 [[package]]
@@ -3930,20 +3575,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "media"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bindgen 0.71.1",
- "core-foundation 0.10.0",
- "core-video",
- "ctor",
- "foreign-types",
- "metal",
- "objc",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4527,6 +4158,307 @@ dependencies = [
 [[package]]
 name = "open-gpui"
 version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "anyhow",
+ "async-channel 2.5.0",
+ "async-task",
+ "backtrace",
+ "bindgen 0.71.1",
+ "bitflags 2.13.0",
+ "block",
+ "cbindgen",
+ "chrono",
+ "cocoa 0.26.0",
+ "cocoa-foundation 0.2.0",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "core-video",
+ "ctor",
+ "derive_more",
+ "embed-resource",
+ "env_logger",
+ "etagere",
+ "font-kit",
+ "foreign-types",
+ "futures",
+ "futures-concurrency",
+ "getrandom 0.3.4",
+ "hdrhistogram",
+ "heapless",
+ "image",
+ "inventory",
+ "itertools 0.14.0",
+ "log",
+ "lyon",
+ "mach2",
+ "metal",
+ "num_cpus",
+ "objc",
+ "objc2 0.6.4",
+ "objc2-metal 0.3.2",
+ "open-gpui-collections",
+ "open-gpui-core-util",
+ "open-gpui-http-client",
+ "open-gpui-macros",
+ "open-gpui-media",
+ "open-gpui-platform",
+ "open-gpui-refineable",
+ "open-gpui-reqwest-client",
+ "open-gpui-scap",
+ "open-gpui-scheduler",
+ "open-gpui-shared-string",
+ "open-gpui-sum-tree",
+ "open-gpui-util-macros",
+ "open-gpui-web",
+ "parking",
+ "parking_lot",
+ "pathfinder_geometry",
+ "pin-project",
+ "pollster 0.4.0",
+ "postage",
+ "profiling",
+ "proptest",
+ "rand 0.9.4",
+ "raw-window-handle",
+ "regex",
+ "resvg",
+ "schemars",
+ "seahash",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "smallvec",
+ "spin 0.10.0",
+ "stacksafe",
+ "strum",
+ "taffy",
+ "thiserror 2.0.18",
+ "ttf-parser",
+ "unicode-segmentation",
+ "url",
+ "usvg",
+ "uuid",
+ "waker-fn",
+ "wasm-bindgen",
+ "web-time",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "open-gpui-collections"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "open-gpui-core-util",
+ "rustc-hash 2.1.2",
+]
+
+[[package]]
+name = "open-gpui-core-util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+]
+
+[[package]]
+name = "open-gpui-http-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
+ "bytes",
+ "derive_more",
+ "futures",
+ "http",
+ "http-body",
+ "log",
+ "open-gpui-util",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2",
+ "tempfile",
+ "url",
+]
+
+[[package]]
+name = "open-gpui-http-client-tls"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "rustls-platform-verifier",
+]
+
+[[package]]
+name = "open-gpui-linux"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_unix",
+ "anyhow",
+ "as-raw-xcb-connection",
+ "ashpd",
+ "bitflags 2.13.0",
+ "bytemuck",
+ "calloop",
+ "calloop-wayland-source",
+ "filedescriptor",
+ "futures",
+ "image",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "oo7",
+ "open",
+ "open-gpui",
+ "open-gpui-collections",
+ "open-gpui-http-client",
+ "open-gpui-scap",
+ "open-gpui-util",
+ "open-gpui-wgpu",
+ "parking_lot",
+ "pathfinder_geometry",
+ "pollster 0.4.0",
+ "profiling",
+ "raw-window-handle",
+ "smallvec",
+ "smol",
+ "strum",
+ "swash",
+ "url",
+ "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-cursor",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
+ "x11-clipboard",
+ "x11rb",
+ "xim",
+ "xkbcommon",
+]
+
+[[package]]
+name = "open-gpui-macos"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_macos",
+ "anyhow",
+ "async-task",
+ "block",
+ "cbindgen",
+ "cocoa 0.26.0",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "core-video",
+ "ctor",
+ "derive_more",
+ "dispatch2",
+ "etagere",
+ "font-kit",
+ "foreign-types",
+ "futures",
+ "image",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "mach2",
+ "metal",
+ "objc",
+ "objc2-app-kit 0.3.2",
+ "open-gpui",
+ "open-gpui-collections",
+ "open-gpui-media",
+ "open-gpui-util",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "semver",
+ "smallvec",
+ "strum",
+ "uuid",
+]
+
+[[package]]
+name = "open-gpui-macros"
+version = "0.1.0"
+dependencies = [
+ "heck 0.5.0",
+ "open-gpui",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "open-gpui-media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen 0.71.1",
+ "core-foundation 0.10.0",
+ "core-video",
+ "ctor",
+ "foreign-types",
+ "metal",
+ "objc",
+]
+
+[[package]]
+name = "open-gpui-platform"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "open-gpui",
+ "open-gpui-linux",
+ "open-gpui-macos",
+ "open-gpui-web",
+ "open-gpui-windows",
+]
+
+[[package]]
+name = "open-gpui-refineable"
+version = "0.1.0"
+dependencies = [
+ "open-gpui-refineable-derive",
+]
+
+[[package]]
+name = "open-gpui-refineable-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "open-gpui-reqwest-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "log",
+ "open-gpui-core-util",
+ "open-gpui-http-client",
+ "open-gpui-http-client-tls",
+ "regex",
+ "reqwest",
+ "serde",
+ "tokio",
+]
 
 [[package]]
 name = "open-gpui-scap"
@@ -4549,11 +4481,175 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-task",
+ "backtrace",
+ "chrono",
+ "flume",
+ "futures",
+ "parking_lot",
+ "rand 0.9.4",
+ "web-time",
+]
+
+[[package]]
+name = "open-gpui-shared-string"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "smol_str",
+]
+
+[[package]]
 name = "open-gpui-smoke-native"
 version = "0.1.0"
 dependencies = [
- "gpui",
- "gpui_platform",
+ "open-gpui",
+ "open-gpui-platform",
+]
+
+[[package]]
+name = "open-gpui-sum-tree"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "heapless",
+ "log",
+ "proptest",
+ "rand 0.9.4",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "open-gpui-util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-fs",
+ "async_zip",
+ "command-fds",
+ "dirs",
+ "dunce",
+ "futures",
+ "futures-lite 1.13.0",
+ "globset",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "mach2",
+ "nix 0.29.0",
+ "open-gpui-collections",
+ "open-gpui-core-util",
+ "open-gpui-util-macros",
+ "percent-encoding",
+ "pretty_assertions",
+ "rand 0.9.4",
+ "regex",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "shlex 1.3.0",
+ "smol",
+ "take-until",
+ "tempfile",
+ "tendril",
+ "unicase",
+ "url",
+ "walkdir",
+ "which",
+]
+
+[[package]]
+name = "open-gpui-util-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "open-gpui-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "console_error_panic_hook",
+ "futures",
+ "js-sys",
+ "log",
+ "open-gpui",
+ "open-gpui-http-client",
+ "open-gpui-wgpu",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm_thread",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "open-gpui-wgpu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "cosmic-text",
+ "criterion",
+ "etagere",
+ "font-kit",
+ "itertools 0.14.0",
+ "js-sys",
+ "log",
+ "open-gpui",
+ "open-gpui-collections",
+ "open-gpui-core-util",
+ "parking_lot",
+ "pollster 0.4.0",
+ "profiling",
+ "raw-window-handle",
+ "smallvec",
+ "swash",
+ "unicode-segmentation",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
+]
+
+[[package]]
+name = "open-gpui-windows"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_windows",
+ "anyhow",
+ "etagere",
+ "futures",
+ "image",
+ "itertools 0.14.0",
+ "log",
+ "open-gpui",
+ "open-gpui-collections",
+ "open-gpui-scap",
+ "open-gpui-util",
+ "parking_lot",
+ "rand 0.9.4",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+ "windows-numerics 0.2.0",
+ "windows-registry 0.5.3",
 ]
 
 [[package]]
@@ -5013,7 +5109,8 @@ dependencies = [
 [[package]]
 name = "proptest"
 version = "1.10.0"
-source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37566cb3fdacef14c0737f9546df7cfeadbfbc9fef10991038bf5015d0c80532"
 dependencies = [
  "bit-set 0.8.0",
  "bit-vec 0.8.0",
@@ -5032,7 +5129,8 @@ dependencies = [
 [[package]]
 name = "proptest-macro"
 version = "0.5.0"
-source = "git+https://github.com/proptest-rs/proptest?rev=3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b#3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efaa288b896cb2b345da7b7f2110ab19e51565b83495b56fcec98a62f8b1f33e"
 dependencies = [
  "convert_case 0.11.0",
  "proc-macro2",
@@ -5139,7 +5237,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5392,13 +5490,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "refineable"
-version = "0.1.0"
-dependencies = [
- "derive_refineable",
-]
-
-[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5481,23 +5572,6 @@ dependencies = [
  "wasm-streams",
  "web-sys",
  "windows-registry 0.4.0",
-]
-
-[[package]]
-name = "reqwest_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "gpui_util",
- "http_client",
- "http_client_tls",
- "log",
- "regex",
- "reqwest",
- "serde",
- "tokio",
 ]
 
 [[package]]
@@ -5618,7 +5692,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5699,7 +5773,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 0.26.11",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5778,20 +5852,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "scheduler"
-version = "0.1.0"
-dependencies = [
- "async-task",
- "backtrace",
- "chrono",
- "flume",
- "futures",
- "parking_lot",
- "rand 0.9.4",
- "web-time",
 ]
 
 [[package]]
@@ -6250,19 +6310,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "sum_tree"
-version = "0.1.0"
-dependencies = [
- "ctor",
- "heapless",
- "log",
- "proptest",
- "rand 0.9.4",
- "rayon",
- "tracing",
-]
 
 [[package]]
 name = "sval"
@@ -7023,55 +7070,6 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
-
-[[package]]
-name = "util"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-fs",
- "async_zip",
- "collections",
- "command-fds",
- "dirs",
- "dunce",
- "futures",
- "futures-lite 1.13.0",
- "globset",
- "gpui_util",
- "itertools 0.14.0",
- "libc",
- "log",
- "mach2",
- "nix 0.29.0",
- "percent-encoding",
- "pretty_assertions",
- "rand 0.9.4",
- "regex",
- "rust-embed",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "shlex 1.3.0",
- "smol",
- "take-until",
- "tempfile",
- "tendril",
- "unicase",
- "url",
- "util_macros",
- "walkdir",
- "which",
-]
-
-[[package]]
-name = "util_macros"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn",
-]
 
 [[package]]
 name = "uuid"

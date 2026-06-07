@@ -1,1 +1,1 @@
-pub(crate) use gpui_wgpu::CosmicTextSystem;
+pub(crate) use open_gpui_wgpu::CosmicTextSystem;

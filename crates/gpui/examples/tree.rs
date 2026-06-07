@@ -3,8 +3,10 @@
 //! handle deep hierarchies (even though it cannot just yet!).
 use std::sync::LazyLock;
 
-use gpui::{App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size};
-use gpui_platform::application;
+use open_gpui::{
+    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, size,
+};
+use open_gpui_platform::application;
 
 struct Tree {}
 
@@ -18,7 +20,12 @@ static DEPTH: LazyLock<u64> = LazyLock::new(|| {
 impl Render for Tree {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let mut depth = *DEPTH;
-        static COLORS: [gpui::Hsla; 4] = [gpui::red(), gpui::blue(), gpui::green(), gpui::yellow()];
+        static COLORS: [open_gpui::Hsla; 4] = [
+            open_gpui::red(),
+            open_gpui::blue(),
+            open_gpui::green(),
+            open_gpui::yellow(),
+        ];
         let mut colors = COLORS.iter().cycle().copied();
         let mut next_div = || div().p_0p5().bg(colors.next().unwrap());
         let mut innermost_node = next_div();
@@ -52,6 +59,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

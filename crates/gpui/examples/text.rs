@@ -6,12 +6,12 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{
+use open_gpui::{
     AbsoluteLength, App, Context, DefiniteLength, ElementId, Global, Hsla, Menu, SharedString,
     TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds, colors::DefaultColors,
     div, point, prelude::*, px, relative, rgb, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 use std::iter;
 
 #[derive(Clone, Debug)]
@@ -75,8 +75,8 @@ pub struct SpecimenTheme {
 impl Default for SpecimenTheme {
     fn default() -> Self {
         Self {
-            bg: gpui::white(),
-            fg: gpui::black(),
+            bg: open_gpui::white(),
+            fg: open_gpui::black(),
         }
     }
 }
@@ -257,8 +257,8 @@ impl TextExample {
             .id(text.to_string())
             .flex_none()
             .child(text.to_string())
-            .bg(gpui::black())
-            .text_color(gpui::white())
+            .bg(open_gpui::black())
+            .text_color(open_gpui::white())
             .active(|this| this.opacity(0.8))
             .px_3()
             .py_1()
@@ -296,9 +296,9 @@ impl Render for TextExample {
             .size_full()
             .child(
                 div()
-                    .bg(gpui::white())
+                    .bg(open_gpui::white())
                     .border_b_1()
-                    .border_color(gpui::black())
+                    .border_color(open_gpui::black())
                     .p_3()
                     .flex()
                     .child(Self::button(&self.font_family, cx, |this, cx| {
@@ -404,6 +404,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

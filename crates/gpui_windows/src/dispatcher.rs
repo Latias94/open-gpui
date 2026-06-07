@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
-use util::ResultExt;
+use open_gpui_util::ResultExt;
 use windows::{
     System::Threading::{
         ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemPriority,
@@ -19,7 +19,7 @@ use windows::{
 };
 
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
-use gpui::{
+use open_gpui::{
     PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant, TimerResolutionGuard,
 };
 
@@ -78,9 +78,9 @@ impl WindowsDispatcher {
     pub(crate) fn execute_runnable(runnable: RunnableVariant) {
         let location = runnable.metadata().location;
         let spawned = runnable.metadata().spawned;
-        gpui::profiler::update_running_task(spawned, location);
+        open_gpui::profiler::update_running_task(spawned, location);
         runnable.run();
-        gpui::profiler::save_task_timing();
+        open_gpui::profiler::save_task_timing();
     }
 }
 
@@ -152,7 +152,7 @@ impl PlatformDispatcher for WindowsDispatcher {
         unsafe {
             timeBeginPeriod(1);
         }
-        util::defer(Box::new(|| unsafe {
+        open_gpui_util::defer(Box::new(|| unsafe {
             timeEndPeriod(1);
         }))
     }

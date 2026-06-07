@@ -1,4 +1,4 @@
-use collections::HashMap;
+use open_gpui_collections::HashMap;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) enum SerialKind {

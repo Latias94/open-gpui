@@ -28,11 +28,11 @@ use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 /// # Usage
 ///
 /// ```ignore
-/// let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new("fallback"));
+/// let text_system = Arc::new(open_gpui_wgpu::CosmicTextSystem::new("fallback"));
 /// let mut cx = HeadlessAppContext::with_platform(
 ///     text_system,
 ///     Arc::new(Assets),
-///     || gpui_platform::current_headless_renderer(),
+///     || open_gpui_platform::current_headless_renderer(),
 /// );
 /// ```
 pub struct HeadlessAppContext {
@@ -87,7 +87,7 @@ impl HeadlessAppContext {
         );
 
         let text_system = Arc::new(TextSystem::new(platform_text_system));
-        let http_client = http_client::FakeHttpClient::with_404_response();
+        let http_client = open_gpui_http_client::FakeHttpClient::with_404_response();
         let app = App::new_app(platform, asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 

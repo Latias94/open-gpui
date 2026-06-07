@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
-use collections::{HashMap, TypeIdHashMap};
-pub use gpui_macros::Action;
 pub use no_action::{NoAction, Unbind, is_no_action, is_unbind};
+use open_gpui_collections::{HashMap, TypeIdHashMap};
+pub use open_gpui_macros::Action;
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -13,7 +13,7 @@ use std::{
 /// For example:
 ///
 /// ```
-/// use gpui::actions;
+/// use open_gpui::actions;
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
 ///
@@ -24,7 +24,7 @@ use std::{
 macro_rules! actions {
     ($namespace:path, [ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
         $(
-            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, open_gpui::Action)]
             #[action(namespace = $namespace)]
             $(#[$attr])*
             pub struct $name;
@@ -32,7 +32,7 @@ macro_rules! actions {
     };
     ([ $( $(#[$attr:meta])* $name:ident),* $(,)? ]) => {
         $(
-            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, gpui::Action)]
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug, open_gpui::Action)]
             $(#[$attr])*
             pub struct $name;
         )*
@@ -46,7 +46,7 @@ macro_rules! actions {
 /// struct action for each listed action name in the given namespace.
 ///
 /// ```
-/// use gpui::actions;
+/// use open_gpui::actions;
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
 ///
@@ -57,7 +57,7 @@ macro_rules! actions {
 /// More complex data types can also be actions, by using the derive macro for `Action`:
 ///
 /// ```
-/// use gpui::Action;
+/// use open_gpui::Action;
 /// #[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, Action)]
 /// #[action(namespace = editor)]
 /// pub struct SelectNext {
@@ -96,18 +96,18 @@ macro_rules! actions {
 /// `main`.
 ///
 /// ```
-/// use gpui::{SharedString, register_action};
+/// use open_gpui::{SharedString, register_action};
 /// #[derive(Clone, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
 ///
-/// impl gpui::Action for Paste {
-///     # fn boxed_clone(&self) -> Box<dyn gpui::Action> { unimplemented!()}
-///     # fn partial_eq(&self, other: &dyn gpui::Action) -> bool { unimplemented!() }
+/// impl open_gpui::Action for Paste {
+///     # fn boxed_clone(&self) -> Box<dyn open_gpui::Action> { unimplemented!()}
+///     # fn partial_eq(&self, other: &dyn open_gpui::Action) -> bool { unimplemented!() }
 ///     # fn name(&self) -> &'static str { "Paste" }
 ///     # fn name_for_type() -> &'static str { "Paste" }
-///     # fn build(value: serde_json::Value) -> anyhow::Result<Box<dyn gpui::Action>> {
+///     # fn build(value: serde_json::Value) -> anyhow::Result<Box<dyn open_gpui::Action>> {
 ///     #     unimplemented!()
 ///     # }
 /// }
@@ -422,7 +422,6 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
 }
 
 mod no_action {
-    use crate as gpui;
     use schemars::JsonSchema;
     use serde::Deserialize;
 
@@ -441,17 +440,17 @@ mod no_action {
     /// In keymap JSON this is written as:
     ///
     /// `["zed::Unbind", "editor::NewLine"]`
-    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, gpui::Action)]
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema, open_gpui::Action)]
     #[action(namespace = zed)]
-    pub struct Unbind(pub gpui::SharedString);
+    pub struct Unbind(pub open_gpui::SharedString);
 
     /// Returns whether or not this action represents a removed key binding.
-    pub fn is_no_action(action: &dyn gpui::Action) -> bool {
+    pub fn is_no_action(action: &dyn open_gpui::Action) -> bool {
         action.as_any().is::<NoAction>()
     }
 
     /// Returns whether or not this action represents an unbind marker.
-    pub fn is_unbind(action: &dyn gpui::Action) -> bool {
+    pub fn is_unbind(action: &dyn open_gpui::Action) -> bool {
         action.as_any().is::<Unbind>()
     }
 }

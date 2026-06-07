@@ -1,5 +1,5 @@
 // FluentBuilder
-// pub use gpui_util::{FutureExt, Timeout, arc_cow::ArcCow};
+// pub use open_gpui_core_util::{FutureExt, Timeout, arc_cow::ArcCow};
 
 use std::{
     env,

@@ -2,13 +2,13 @@
 
 use std::{path::Path, sync::Arc, time::Duration};
 
-use gpui::{
+use open_gpui::{
     Animation, AnimationExt, App, Asset, AssetLogger, AssetSource, Bounds, Context, Hsla,
     ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, RenderImage,
     Resource, SharedString, Window, WindowBounds, WindowOptions, black, div, img, prelude::*,
     pulsating_between, px, red, size,
 };
-use gpui_platform::application;
+use open_gpui_platform::application;
 
 struct Assets {}
 
@@ -107,7 +107,7 @@ impl Render for ImageLoadingExample {
             div().flex().flex_row().w_full().justify_around().child(
                 div()
                     .flex()
-                    .bg(gpui::white())
+                    .bg(open_gpui::white())
                     .size(Length::Definite(px(300.0).into()))
                     .justify_center()
                     .items_center()
@@ -221,6 +221,6 @@ fn main() {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    gpui_platform::web_init();
+    open_gpui_platform::web_init();
     run_example();
 }

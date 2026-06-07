@@ -1,10 +1,15 @@
 [package]
-name = "gpui_macros"
-version = "0.1.0"
+name = "open-gpui-macros"
+version.workspace = true
 edition.workspace = true
-publish = false
-license = "Apache-2.0"
-description = "Macros used by gpui"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish.workspace = true
+description = "Macros used by Open GPUI."
 
 [lints]
 workspace = true
@@ -24,4 +29,4 @@ quote.workspace = true
 syn.workspace = true
 
 [dev-dependencies]
-gpui = { workspace = true, features = ["inspector"] }
+open_gpui = { workspace = true, features = ["inspector"] }

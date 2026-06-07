@@ -30,11 +30,11 @@ use std::{
 };
 use unicase::UniCase;
 
-pub use gpui_util::*;
+pub use open_gpui_core_util::*;
 
-pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{line_endings, path, uri};
+pub use open_gpui_util_macros::{line_endings, path, uri};
+pub use take_until::*;
 
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
