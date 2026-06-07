@@ -8,7 +8,6 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
-publish.workspace = true
 description = "macOS platform backend for Open GPUI."
 
 [lints]
@@ -44,7 +43,7 @@ ctor.workspace = true
 derive_more.workspace = true
 dispatch2 = "0.3.1"
 etagere = "0.2"
-font-kit = { git = "https://github.com/Latias94/font-kit", branch = "main", version = "0.14.3", optional = true }
+font-kit = { package = "open-gpui-font-kit", version = "0.14.3", optional = true }
 foreign-types = "0.5"
 futures.workspace = true
 image.workspace = true

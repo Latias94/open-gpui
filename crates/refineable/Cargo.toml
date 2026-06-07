@@ -8,7 +8,6 @@ repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
-publish.workspace = true
 description = "Refinement types used by Open GPUI."
 
 [lints]

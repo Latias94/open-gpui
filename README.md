@@ -6,16 +6,16 @@ The project keeps the GPUI framework lineage while separating it from the Zed ed
 
 ## Status
 
-Open GPUI is pre-1.0 and in active fork cleanup. The workspace package names have been prepared for crates.io as `open-gpui-*`, and Rust crate names use the corresponding underscore form such as `open_gpui`, `open_gpui_platform`, and `open_gpui_wgpu`.
+Open GPUI is pre-1.0 and in active fork cleanup. The workspace package names are prepared for crates.io as `open-gpui-*`, and Rust crate names use the corresponding underscore form such as `open_gpui`, `open_gpui_platform`, and `open_gpui_wgpu`.
 
-Publishing is intentionally still disabled at the workspace level until the internal crate graph can be published leaf-first and the required fork dependencies are ready for registry consumption. In particular, Open GPUI currently depends on Open GPUI-maintained forks for screen capture and font handling:
+Open GPUI depends on Open GPUI-maintained forks for screen capture and font handling:
 
-- `open-gpui-scap`, from `https://github.com/Latias94/scap`, licensed under MIT.
-- `font-kit`, from `https://github.com/Latias94/font-kit`, licensed under `MIT OR Apache-2.0`.
+- `open-gpui-scap`, published as `open-gpui-scap`, from `https://github.com/Latias94/scap`, licensed under MIT.
+- `open-gpui-font-kit`, published as `open-gpui-font-kit`, from `https://github.com/Latias94/font-kit`, licensed under `MIT OR Apache-2.0`.
 
-Those fork dependencies need a stable publishing plan before the Open GPUI crate graph can be published to crates.io. Their upstream copyright notices and license terms must be preserved separately from Open GPUI's own license.
+Their upstream copyright notices and license terms are preserved separately from Open GPUI's own license.
 
-The current workspace is therefore publishable only in dependency order: leaf crates such as `open-gpui-core-util` can be packaged first, while crates like `open-gpui-collections` and `open-gpui` still depend on unpublished internal packages.
+The workspace is published in dependency order: leaf crates such as `open-gpui-core-util` must be published before crates that depend on them, such as `open-gpui-collections` and `open-gpui`.
 
 ## Usage
 
@@ -77,7 +77,7 @@ Open GPUI builds on the work of several open-source projects and communities:
 
 - [Zed GPUI](https://github.com/zed-industries/zed), developed by Zed Industries, is the upstream Apache-2.0 GPUI framework lineage that Open GPUI was forked from.
 - [scap](https://github.com/CapSoftware/scap) provides the screen capture library lineage used by the Open GPUI-maintained `open-gpui-scap` fork.
-- [font-kit](https://github.com/servo/font-kit) provides the cross-platform font loading library lineage used by the Open GPUI-maintained `font-kit` fork.
+- [font-kit](https://github.com/servo/font-kit) provides the cross-platform font loading library lineage used by the Open GPUI-maintained `open-gpui-font-kit` fork.
 - The Rust and crates.io ecosystem provides the third-party crates listed by Cargo metadata and the lockfile.
 
 ## License and Attribution

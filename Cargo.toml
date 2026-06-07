@@ -127,7 +127,7 @@ rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = "0.23.26"
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/Latias94/scap", branch = "main", default-features = false, package = "open-gpui-scap", version = "0.1.0-beta.1" }
+scap = { package = "open-gpui-scap", version = "0.1.0-beta.1", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
