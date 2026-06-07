@@ -5,13 +5,14 @@ on:
   push:
     branches:
       - master
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: verify-${{ github.ref }}
+  group: verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -19,28 +20,70 @@ env:
 
 jobs:
   verify:
-    name: Local verification gate
-    runs-on: windows-latest
+    name: verify (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+          - name: macos
+            os: macos-15
+          - name: windows
+            os: windows-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install Rust
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup component add rustfmt
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            pkg-config
+
       - name: Run verification gate
+        if: matrix.name == 'windows'
         shell: pwsh
         run: cargo run -p xtask -- verify
 
       - name: Run xtask tests
+        if: matrix.name == 'windows'
         shell: pwsh
         run: cargo nextest run -p xtask
+
+      - name: Check Linux platform surface
+        if: matrix.name == 'linux'
+        run: cargo check -p gpui_linux --all-features --locked
+
+      - name: Check macOS font surface
+        if: matrix.name == 'macos'
+        run: cargo check -p gpui_macos --features font-kit --locked
+
+      - name: Check Windows platform surface
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo check -p gpui_windows --all-features --locked
+
+      - name: Check native WGPU font-kit path
+        run: cargo check -p gpui_wgpu --features font-kit --locked

@@ -13,8 +13,15 @@ The gate runs:
 - `cargo check -p open-gpui-smoke-native`
 - `cargo run -p xtask -- scan-import-boundary`
 
-CI runs the same gate on Windows for pushes to `master`, pull requests, and manual workflow
-dispatches. It also runs the `xtask` unit tests with nextest.
+CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
+dispatches:
+
+- Windows runs the same local gate, `cargo nextest run -p xtask`, and
+  `cargo check -p gpui_windows --all-features --locked`.
+- Linux runs `cargo check -p gpui_linux --all-features --locked` after installing the system
+  headers needed for Wayland, X11, fontconfig, freetype, and pkg-config.
+- macOS runs `cargo check -p gpui_macos --features font-kit --locked`.
+- All three platforms run `cargo check -p gpui_wgpu --features font-kit --locked`.
 
 Run the native renderer smoke explicitly with:
 
