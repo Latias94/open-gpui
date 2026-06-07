@@ -4225,6 +4225,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-canvas"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "open-gpui",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "open-gpui-collections"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,26 @@
+[package]
+name = "open-gpui-canvas"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+description = "Extensible infinite canvas model and interaction primitives for Open GPUI."
+keywords = ["canvas", "graph", "gui", "whiteboard"]
+categories = ["gui", "data-structures"]
+
+[features]
+default = []
+
+[dependencies]
+indexmap.workspace = true
+open_gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
