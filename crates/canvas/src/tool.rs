@@ -1,7 +1,8 @@
 use crate::{
     CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasViewport, DocumentCommand, DocumentError,
-    EdgeId, HitOptions, HitTarget, NodeId, SpatialIndex,
+    EdgeId, HitOptions, HitTarget, NodeId, ShapeId, SpatialIndex,
 };
+use indexmap::IndexSet;
 use open_gpui::{Pixels, Point};
 use serde::{Deserialize, Serialize};
 
@@ -59,12 +60,51 @@ pub enum ToolState {
     },
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanvasSelection {
+    pub nodes: IndexSet<NodeId>,
+    pub edges: IndexSet<EdgeId>,
+    pub shapes: IndexSet<ShapeId>,
+}
+
+impl CanvasSelection {
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.edges.clear();
+        self.shapes.clear();
+    }
+
+    pub fn replace_with(&mut self, target: HitTarget) {
+        self.clear();
+        match target {
+            HitTarget::Node(id) => {
+                self.nodes.insert(id);
+            }
+            HitTarget::Edge(id) => {
+                self.edges.insert(id);
+            }
+            HitTarget::Shape(id) => {
+                self.shapes.insert(id);
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.edges.is_empty() && self.shapes.is_empty()
+    }
+
+    pub fn selected_nodes(&self) -> impl Iterator<Item = &NodeId> {
+        self.nodes.iter()
+    }
+}
+
 pub struct CanvasEditor {
     pub document: CanvasDocument,
     pub viewport: CanvasViewport,
     pub tool: CanvasTool,
     pub state: ToolState,
     pub index: SpatialIndex,
+    pub selection: CanvasSelection,
 }
 
 impl Default for CanvasEditor {
@@ -82,11 +122,23 @@ impl CanvasEditor {
             tool: CanvasTool::Select,
             state: ToolState::Idle,
             index,
+            selection: CanvasSelection::default(),
         }
     }
 
     pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
         self.document.apply(command)?;
+        self.rebuild_index();
+        Ok(())
+    }
+
+    pub fn apply_all(
+        &mut self,
+        commands: impl IntoIterator<Item = DocumentCommand>,
+    ) -> Result<(), DocumentError> {
+        for command in commands {
+            self.document.apply(command)?;
+        }
         self.rebuild_index();
         Ok(())
     }
@@ -118,25 +170,34 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
-                let node_ids = self
+                let hit = self
                     .index
                     .hit_test(document_position, HitOptions::default())
-                    .find_map(|record| match &record.target {
-                        HitTarget::Node(id) => Some(vec![id.clone()]),
-                        _ => None,
-                    });
+                    .map(|record| record.target.clone())
+                    .next();
 
-                self.state = if let Some(node_ids) = node_ids {
-                    ToolState::Translating {
-                        origin: document_position,
-                        last: document_position,
-                        node_ids,
+                match hit {
+                    Some(HitTarget::Node(id)) => {
+                        self.selection.replace_with(HitTarget::Node(id.clone()));
+                        self.state = ToolState::Translating {
+                            origin: document_position,
+                            last: document_position,
+                            node_ids: vec![id],
+                        };
                     }
-                } else {
-                    ToolState::Pointing {
-                        origin: document_position,
+                    Some(target) => {
+                        self.selection.replace_with(target);
+                        self.state = ToolState::Pointing {
+                            origin: document_position,
+                        };
                     }
-                };
+                    None => {
+                        self.selection.clear();
+                        self.state = ToolState::Pointing {
+                            origin: document_position,
+                        };
+                    }
+                }
             }
             (
                 ToolState::Translating { last, node_ids, .. },
@@ -144,17 +205,18 @@ impl CanvasEditor {
             ) => {
                 let document_position = self.viewport.view_to_document(position);
                 let delta = document_position - *last;
-                for id in node_ids.clone() {
+                let mut commands = Vec::new();
+                for id in node_ids {
                     let mut node = self
                         .document
                         .nodes
-                        .get(&id)
+                        .get(id)
                         .ok_or_else(|| DocumentError::MissingNode(id.clone()))?
                         .clone();
                     node.position += delta;
-                    self.document.update_node(node)?;
+                    commands.push(DocumentCommand::UpdateNode(node));
                 }
-                self.rebuild_index();
+                self.apply_all(commands)?;
 
                 if let ToolState::Translating { last, .. } = &mut self.state {
                     *last = document_position;
@@ -313,7 +375,47 @@ mod tests {
 
         let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("n1")]
+        );
         assert_eq!(editor.state, ToolState::Idle);
+    }
+
+    #[test]
+    fn select_tool_clears_selection_when_canvas_is_pressed() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "n1",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        assert!(!editor.selection.is_empty());
+
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(300.0), px(300.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert!(editor.selection.is_empty());
     }
 
     #[test]
