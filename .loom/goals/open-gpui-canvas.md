@@ -114,12 +114,14 @@ stop_conditions:
 | Persistence adapter feature boundary | Done | `redb-store`, `loro-crdt`, and `rkyv-snapshot` features plus adapter capability statuses reserve future adapter names without pulling optional dependencies into the default core build. |
 | Tool registry ergonomics | Done | `CanvasToolRegistry` maps custom tool IDs to reducers and lets applications dispatch registered tools while keeping builtin tools on the same editor event entrypoint. |
 | Example custom tools | Done | `open-gpui-smoke-native` registers a custom stamp tool through `CanvasToolRegistry` and dispatches right-click pointer events through the same editor effect path as builtin tools. |
+| Crate README/API examples | Done | `crates/canvas/README.md` documents the model, graph queries, GPUI rendering path, custom tools, JSON Canvas, and persistence boundaries with copyable API snippets. |
+| Package README verification | Done | `cargo package -p open-gpui-canvas --locked --allow-dirty` verifies the crate README is packaged with the future publish artifact. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Example documentation | Add README/API examples for custom tools, persistence boundaries, and JSON Canvas interchange so application authors can copy a working pattern without reading the smoke example first. | doc review, `cargo check -p open-gpui-canvas` |
+| High | Canvas editor persistence hook | Add a small helper around `CanvasEditor` transactions that can append successful recorded transactions to a `CanvasPersistenceStore` without binding the editor to a concrete database. | focused unit tests |
 | Medium | Cached graph indexes | Add an optional incremental adjacency index if real examples show `CanvasGraph` scan-based queries becoming hot. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 
