@@ -1,8 +1,11 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRouteKind, CanvasEditor, CanvasViewport, HitOptions,
-    HitTarget, SpatialIndex,
+    CanvasDocument, CanvasEdge, CanvasEdgeRouteKind, CanvasEditor, CanvasEvent, CanvasViewport,
+    HitOptions, HitTarget, PointerButton, SpatialIndex,
 };
-use open_gpui::{Bounds, Canvas, Hsla, PathBuilder, Pixels, Point, Window, canvas, px, quad, rgb};
+use open_gpui::{
+    Bounds, Canvas, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
+    Pixels, Point, ScrollWheelEvent, Window, canvas, px, quad, rgb,
+};
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
@@ -114,6 +117,62 @@ pub struct CanvasPaintRecord {
     pub view_bounds: Bounds<Pixels>,
     pub z_index: i32,
     pub hidden: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasInputMapper {
+    pub bounds: Bounds<Pixels>,
+    pub line_height: Pixels,
+}
+
+impl CanvasInputMapper {
+    pub fn new(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            bounds,
+            line_height: px(16.0),
+        }
+    }
+
+    pub fn with_line_height(mut self, line_height: Pixels) -> Self {
+        self.line_height = line_height;
+        self
+    }
+
+    pub fn mouse_down(&self, event: &MouseDownEvent) -> Option<CanvasEvent> {
+        Some(CanvasEvent::PointerDown {
+            position: self.local_position(event.position)?,
+            button: pointer_button(event.button)?,
+        })
+    }
+
+    pub fn mouse_move(&self, event: &MouseMoveEvent) -> Option<CanvasEvent> {
+        Some(CanvasEvent::PointerMove {
+            position: self.local_position(event.position)?,
+        })
+    }
+
+    pub fn mouse_up(&self, event: &MouseUpEvent) -> Option<CanvasEvent> {
+        Some(CanvasEvent::PointerUp {
+            position: self.local_position(event.position)?,
+            button: pointer_button(event.button)?,
+        })
+    }
+
+    pub fn scroll_wheel(&self, event: &ScrollWheelEvent) -> Option<CanvasEvent> {
+        if self.local_position(event.position).is_none() {
+            return None;
+        }
+
+        Some(CanvasEvent::Wheel {
+            delta: event.delta.pixel_delta(self.line_height),
+        })
+    }
+
+    pub fn local_position(&self, position: Point<Pixels>) -> Option<Point<Pixels>> {
+        self.bounds
+            .contains(&position)
+            .then(|| position - self.bounds.origin)
+    }
 }
 
 pub fn canvas_view(
@@ -323,11 +382,20 @@ fn style_color(value: &Option<String>) -> Option<Hsla> {
         .map(Hsla::from)
 }
 
+fn pointer_button(button: MouseButton) -> Option<PointerButton> {
+    match button {
+        MouseButton::Left => Some(PointerButton::Primary),
+        MouseButton::Right => Some(PointerButton::Secondary),
+        MouseButton::Middle => Some(PointerButton::Middle),
+        MouseButton::Navigate(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{CanvasHandle, CanvasNode};
-    use open_gpui::{Bounds, point, px, size};
+    use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
     #[test]
     fn collect_visible_records_culls_and_transforms_bounds() {
@@ -406,5 +474,98 @@ mod tests {
             Some(Hsla::from(rgb(0x0969da)))
         );
         assert_eq!(style_color(&Some("not-a-color".to_string())), None);
+    }
+
+    #[test]
+    fn input_mapper_localizes_pointer_events() {
+        let mapper = CanvasInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ));
+
+        assert_eq!(
+            mapper.mouse_down(&MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(120.0), px(80.0)),
+                ..MouseDownEvent::default()
+            }),
+            Some(CanvasEvent::PointerDown {
+                position: point(px(20.0), px(30.0)),
+                button: PointerButton::Primary,
+            })
+        );
+        assert_eq!(
+            mapper.mouse_up(&MouseUpEvent {
+                button: MouseButton::Right,
+                position: point(px(140.0), px(90.0)),
+                ..MouseUpEvent::default()
+            }),
+            Some(CanvasEvent::PointerUp {
+                position: point(px(40.0), px(40.0)),
+                button: PointerButton::Secondary,
+            })
+        );
+        assert_eq!(
+            mapper.mouse_move(&MouseMoveEvent {
+                position: point(px(150.0), px(95.0)),
+                ..MouseMoveEvent::default()
+            }),
+            Some(CanvasEvent::PointerMove {
+                position: point(px(50.0), px(45.0)),
+            })
+        );
+    }
+
+    #[test]
+    fn input_mapper_filters_outside_or_unsupported_pointer_events() {
+        let mapper = CanvasInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ));
+
+        assert_eq!(
+            mapper.mouse_down(&MouseDownEvent {
+                button: MouseButton::Left,
+                position: point(px(20.0), px(80.0)),
+                ..MouseDownEvent::default()
+            }),
+            None
+        );
+        assert_eq!(
+            mapper.mouse_down(&MouseDownEvent {
+                button: MouseButton::Navigate(open_gpui::NavigationDirection::Back),
+                position: point(px(120.0), px(80.0)),
+                ..MouseDownEvent::default()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn input_mapper_converts_scroll_delta_to_canvas_wheel() {
+        let mapper = CanvasInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ))
+        .with_line_height(px(20.0));
+
+        assert_eq!(
+            mapper.scroll_wheel(&ScrollWheelEvent {
+                position: point(px(120.0), px(80.0)),
+                delta: ScrollDelta::Lines(point(1.0, -2.0)),
+                ..ScrollWheelEvent::default()
+            }),
+            Some(CanvasEvent::Wheel {
+                delta: point(px(20.0), px(-40.0)),
+            })
+        );
+        assert_eq!(
+            mapper.scroll_wheel(&ScrollWheelEvent {
+                position: point(px(20.0), px(80.0)),
+                delta: ScrollDelta::Pixels(point(px(1.0), px(2.0))),
+                ..ScrollWheelEvent::default()
+            }),
+            None
+        );
     }
 }

@@ -104,12 +104,13 @@ stop_conditions:
 | Randomized invariant tests | Done | Deterministic stress tests cover transaction inverse/diff replay and incremental spatial-index equivalence against full rebuilds. |
 | GPUI adapter prototype | Done | `canvas_view` renders a model snapshot through GPUI's low-level canvas callback using spatial culling and batched paint commands. |
 | Smoke example | Done | `open-gpui-smoke-native` renders nodes, handles, shapes, routed edges, and the default GPUI canvas paint adapter. |
+| Adapter interaction bridge | Done | `CanvasInputMapper` converts GPUI pointer and wheel events into canvas-local `CanvasEvent` values without coupling paint to editor mutation. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Adapter interaction bridge | Map GPUI pointer/wheel input into `CanvasEvent` while keeping document/model mutation separate from paint. | focused tool and adapter tests |
+| High | Interactive smoke example | Wire the smoke example through `CanvasEditor` and `CanvasInputMapper` so adapter input is exercised by a runnable app. | `cargo check -p open-gpui-smoke-native` |
 | Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait boundary has survived real document workflows. | adapter-specific integration tests |
 
 ## Deferred Work
