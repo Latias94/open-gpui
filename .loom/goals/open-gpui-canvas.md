@@ -82,6 +82,33 @@ stop_conditions:
 6. Add built-in tool states for select, pan, and connect as a testable reducer.
 7. Add unit tests for endpoints, hit order, viewport transforms, and basic tool transitions.
 
+## Implemented Foundation
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Workspace package | Done | `crates/canvas` builds as `open-gpui-canvas` and imports as `open_gpui_canvas`. |
+| Record model | Done | Nodes, edges, shapes, handles, strong IDs, JSON payloads, and styles are implemented. |
+| Snapshot model | Done | `CanvasSnapshot` serializes records as arrays and validates format version on restore. |
+| Command boundary | Done | `DocumentCommand` and `CanvasTransaction` provide atomic document mutation and inverse generation. |
+| Integrity checks | Done | Duplicate handles, missing handles, non-connectable handles, handle roles, and edge endpoint breakage are rejected. |
+| Tool state machine | Done | Select, pan, and connect tools are event-driven and testable. |
+| Undo/redo | Done | `CanvasHistory` tracks inverse transactions and clears redo on new edits. |
+| Selection hygiene | Done | Selection is pruned after transactions, undo, redo, and unrecorded drag updates. |
+| Document diff | Done | `CanvasDocumentDiff` reports inserted, updated, removed, and metadata-changed records. |
+| Spatial index | Done | Hit testing and culling support nodes, handles, shapes, and edges. Indexes can apply document diffs incrementally. |
+| Viewport | Done | View/document transforms, anchored zoom, zoom factor validation, and visible document bounds are implemented. |
+
+## Next Implementation Slices
+
+| Priority | Slice | Rationale | Candidate Verification |
+| --- | --- | --- | --- |
+| High | Selection rectangle and multi-select | Required for Figma/draw.io/xyflow-style editing ergonomics. | `cargo test -p open-gpui-canvas select` |
+| High | Edge routing metadata | Keep straight-line edges simple while allowing later orthogonal, bezier, or custom routers. | document and index tests |
+| High | Import/export adapters | Obsidian Canvas JSON is the lowest-friction interchange format to validate the model. | round-trip tests |
+| Medium | Persistent storage traits | Define redb/Loro/rkyv adapter boundaries without depending on them in core. | trait compile tests |
+| Medium | GPUI adapter prototype | Use batched canvas paint and spatial culling, not one GPUI element per record. | `cargo check -p open-gpui-canvas` plus example check |
+| Medium | Property tests | Stress command inverse, diff compaction, and index equivalence against full rebuild. | proptest or focused randomized tests |
+
 ## Deferred Work
 
 - Loro CRDT adapter.
