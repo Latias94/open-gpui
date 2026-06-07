@@ -50,8 +50,8 @@ pub use persistence::{
     MemoryCanvasPersistenceStore, apply_persistent_tool_effect, apply_persistent_tool_effects,
     apply_persistent_transaction, canvas_persistence_adapter_statuses, handle_persistent_event,
     handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
-    load_canvas_document, load_canvas_persistence_cursor, replay_canvas_log,
-    save_canvas_checkpoint,
+    load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
+    replay_canvas_log, save_canvas_checkpoint, undo_persistent_transaction,
 };
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,

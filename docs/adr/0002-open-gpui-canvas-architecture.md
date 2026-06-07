@@ -189,6 +189,13 @@ through the persistence runner, so applications can choose either explicit effec
 single event-dispatch entrypoint. The editor still does not own the store or cursor; this keeps
 redb, Loro, `rkyv`, and application retry policy outside the core editor state.
 
+`undo_persistent_transaction` and `redo_persistent_transaction` close the same loop for editor
+history. They peek the next undo or redo transaction, validate it against the current document,
+append it to the monotonic log, then call the editor's in-memory undo or redo operation. A store
+append failure therefore leaves the editor, history, and cursor unchanged, while successful replay
+reconstructs the final document state even though the replay path does not rebuild interactive undo
+stacks.
+
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
 Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the

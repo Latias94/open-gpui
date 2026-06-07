@@ -355,6 +355,14 @@ impl CanvasHistory {
         self.redo_stack.clear();
     }
 
+    pub fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
+        self.undo_stack.last()
+    }
+
+    pub fn next_redo_transaction(&self) -> Option<&CanvasTransaction> {
+        self.redo_stack.last()
+    }
+
     fn push_undo(&mut self, transaction: CanvasTransaction) {
         if !transaction.is_empty() {
             self.undo_stack.push(transaction);

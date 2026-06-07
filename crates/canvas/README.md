@@ -214,7 +214,8 @@ use open_gpui_canvas::{
     CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
     CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
     apply_persistent_tool_effect, apply_persistent_transaction, handle_persistent_event,
-    load_canvas_document, save_canvas_checkpoint,
+    load_canvas_document, redo_persistent_transaction, save_canvas_checkpoint,
+    undo_persistent_transaction,
 };
 
 let document = CanvasDocument::default();
@@ -240,6 +241,11 @@ apply_persistent_transaction(
 
 save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
 ```
+
+When an editor is attached to a store, call `undo_persistent_transaction` and
+`redo_persistent_transaction` instead of `CanvasEditor::undo` / `CanvasEditor::redo`. Those helpers
+append the document-changing transaction before mutating the editor, so store failures do not leave
+the in-memory document ahead of the replay log.
 
 For byte-oriented stores, wrap a `CanvasPersistenceByteStore` with
 `CanvasPersistenceByteStoreAdapter`. The default `CanvasJsonPersistenceCodec` writes an explicit
