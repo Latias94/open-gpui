@@ -11,6 +11,7 @@ readme = "README.md"
 license.workspace = true
 keywords = ["desktop", "gui", "immediate"]
 categories = ["gui"]
+autoexamples = false
 
 
 [lints]
@@ -150,7 +151,6 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 open_gpui_collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-open_gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
 open_gpui_core_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
 proptest = { workspace = true }
@@ -160,11 +160,6 @@ unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 open_gpui_http_client = { workspace = true, features = ["test-support"] }
-open_gpui_reqwest_client = { workspace = true, features = ["test-support"] }
-
-[target.'cfg(target_family = "wasm")'.dev-dependencies]
-wasm-bindgen = { workspace = true }
-open_gpui_web.workspace = true
 
 [build-dependencies]
 embed-resource = { version = "3.0", optional = true }
@@ -172,88 +167,3 @@ embed-resource = { version = "3.0", optional = true }
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
-
-
-
-
-
-
-[[example]]
-name = "hello_world"
-path = "examples/hello_world.rs"
-
-[[example]]
-name = "move_entity_between_windows"
-path = "examples/move_entity_between_windows.rs"
-
-[[example]]
-name = "image"
-path = "examples/image/image.rs"
-
-[[example]]
-name = "input"
-path = "examples/input.rs"
-
-[[example]]
-name = "on_window_close_quit"
-path = "examples/on_window_close_quit.rs"
-
-[[example]]
-name = "opacity"
-path = "examples/opacity.rs"
-
-[[example]]
-name = "pattern"
-path = "examples/pattern.rs"
-
-[[example]]
-name = "set_menus"
-path = "examples/set_menus.rs"
-
-[[example]]
-name = "shadow"
-path = "examples/shadow.rs"
-
-[[example]]
-name = "svg"
-path = "examples/svg/svg.rs"
-
-[[example]]
-name = "tab_stop"
-path = "examples/tab_stop.rs"
-
-[[example]]
-name = "text"
-path = "examples/text.rs"
-
-[[example]]
-name = "text_wrapper"
-path = "examples/text_wrapper.rs"
-
-[[example]]
-name = "tree"
-path = "examples/tree.rs"
-
-[[example]]
-name = "uniform_list"
-path = "examples/uniform_list.rs"
-
-[[example]]
-name = "window_shadow"
-path = "examples/window_shadow.rs"
-
-[[example]]
-name = "grid_layout"
-path = "examples/grid_layout.rs"
-
-[[example]]
-name = "list_example"
-path = "examples/list_example.rs"
-
-[[example]]
-name = "mouse_pressure"
-path = "examples/mouse_pressure.rs"
-
-[[example]]
-name = "a11y"
-path = "examples/a11y.rs"
