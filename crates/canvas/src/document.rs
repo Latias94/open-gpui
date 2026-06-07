@@ -7,6 +7,8 @@ use thiserror::Error;
 
 pub type CanvasValue = Map<String, Value>;
 
+pub const CANVAS_DOCUMENT_FORMAT_VERSION: u32 = 1;
+
 macro_rules! canvas_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -279,8 +281,10 @@ pub enum DocumentCommand {
     RemoveShape(ShapeId),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasDocument {
+    #[serde(default = "default_document_format_version")]
+    pub format_version: u32,
     #[serde(default)]
     pub nodes: IndexMap<NodeId, CanvasNode>,
     #[serde(default)]
@@ -291,7 +295,23 @@ pub struct CanvasDocument {
     pub metadata: CanvasValue,
 }
 
+impl Default for CanvasDocument {
+    fn default() -> Self {
+        Self {
+            format_version: CANVAS_DOCUMENT_FORMAT_VERSION,
+            nodes: IndexMap::new(),
+            edges: IndexMap::new(),
+            shapes: IndexMap::new(),
+            metadata: CanvasValue::new(),
+        }
+    }
+}
+
 impl CanvasDocument {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
         match command {
             DocumentCommand::InsertNode(node) => self.insert_node(node),
@@ -445,6 +465,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_document_format_version() -> u32 {
+    CANVAS_DOCUMENT_FORMAT_VERSION
+}
+
 fn default_kind() -> String {
     "default".to_string()
 }
@@ -457,6 +481,28 @@ fn default_handle_size() -> Size<Pixels> {
 mod tests {
     use super::*;
     use open_gpui::{point, px, size};
+
+    #[test]
+    fn defaults_to_current_format_version() {
+        let document = CanvasDocument::default();
+
+        assert_eq!(document.format_version, CANVAS_DOCUMENT_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn deserializes_missing_format_version_to_current_version() {
+        let document: CanvasDocument = serde_json::from_str(
+            r#"{
+                "nodes": {},
+                "edges": {},
+                "shapes": {},
+                "metadata": {}
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(document.format_version, CANVAS_DOCUMENT_FORMAT_VERSION);
+    }
 
     #[test]
     fn removes_edges_when_node_is_removed() {
