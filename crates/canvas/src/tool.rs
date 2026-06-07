@@ -3,10 +3,10 @@ use crate::{
     CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
     HitTarget, NodeId, ShapeId, SpatialIndex,
 };
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{error::Error, fmt};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PointerButton {
@@ -239,6 +239,91 @@ where
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         self(context, event)
+    }
+}
+
+#[derive(Default)]
+pub struct CanvasToolRegistry {
+    reducers: IndexMap<CanvasToolId, Box<dyn CanvasToolReducer>>,
+}
+
+impl CanvasToolRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert<T>(
+        &mut self,
+        id: impl Into<CanvasToolId>,
+        reducer: T,
+    ) -> Option<Box<dyn CanvasToolReducer>>
+    where
+        T: CanvasToolReducer + 'static,
+    {
+        self.reducers.insert(id.into(), Box::new(reducer))
+    }
+
+    pub fn insert_boxed(
+        &mut self,
+        id: impl Into<CanvasToolId>,
+        reducer: Box<dyn CanvasToolReducer>,
+    ) -> Option<Box<dyn CanvasToolReducer>> {
+        self.reducers.insert(id.into(), reducer)
+    }
+
+    pub fn remove(&mut self, id: &CanvasToolId) -> Option<Box<dyn CanvasToolReducer>> {
+        self.reducers.shift_remove(id)
+    }
+
+    pub fn contains(&self, id: &CanvasToolId) -> bool {
+        self.reducers.contains_key(id)
+    }
+
+    pub fn reducer_mut(&mut self, id: &CanvasToolId) -> Option<&mut (dyn CanvasToolReducer + '_)> {
+        let reducer = self.reducers.get_mut(id)?;
+        Some(reducer.as_mut())
+    }
+
+    pub fn ids(&self) -> impl Iterator<Item = &CanvasToolId> {
+        self.reducers.keys()
+    }
+
+    pub fn len(&self) -> usize {
+        self.reducers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.reducers.is_empty()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum CanvasToolRegistryError {
+    MissingTool(CanvasToolId),
+    Document(DocumentError),
+}
+
+impl From<DocumentError> for CanvasToolRegistryError {
+    fn from(value: DocumentError) -> Self {
+        Self::Document(value)
+    }
+}
+
+impl fmt::Display for CanvasToolRegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingTool(id) => write!(f, "canvas custom tool `{id}` is not registered"),
+            Self::Document(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl Error for CanvasToolRegistryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::MissingTool(_) => None,
+            Self::Document(error) => Some(error),
+        }
     }
 }
 
@@ -478,6 +563,23 @@ impl CanvasEditor {
             CanvasTool::Custom(_) => custom_tool.handle_event(self.tool_context(), event)?,
         };
         self.apply_tool_effects(effects)
+    }
+
+    pub fn handle_event_with_tool_registry(
+        &mut self,
+        event: CanvasEvent,
+        registry: &mut CanvasToolRegistry,
+    ) -> Result<(), CanvasToolRegistryError> {
+        let Some(tool_id) = self.tool.custom_id().cloned() else {
+            self.handle_event(event)?;
+            return Ok(());
+        };
+
+        let reducer = registry
+            .reducer_mut(&tool_id)
+            .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
+        self.handle_event_with_custom_tool(event, reducer)?;
+        Ok(())
     }
 
     fn select_effects(&self, event: CanvasEvent) -> Result<Vec<CanvasToolEffect>, DocumentError> {
@@ -1213,6 +1315,105 @@ mod tests {
             .unwrap();
 
         assert_eq!(tool.calls, 0);
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("n1")]
+        );
+    }
+
+    #[test]
+    fn tool_registry_dispatches_registered_custom_tool() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "anchor",
+                point(px(100.0), px(50.0)),
+                size(px(80.0), px(80.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        editor.set_tool(CanvasTool::custom("stamp"));
+        let mut registry = CanvasToolRegistry::new();
+
+        assert!(registry.is_empty());
+        assert!(registry.insert("stamp", StampTool::default()).is_none());
+        assert!(registry.contains(&CanvasToolId::from("stamp")));
+        assert_eq!(
+            registry.ids().cloned().collect::<Vec<_>>(),
+            vec![CanvasToolId::from("stamp")]
+        );
+
+        editor
+            .handle_event_with_tool_registry(
+                CanvasEvent::PointerDown {
+                    position: point(px(20.0), px(10.0)),
+                    button: PointerButton::Primary,
+                },
+                &mut registry,
+            )
+            .unwrap();
+
+        let stamped = editor.document.nodes.get(&NodeId::from("stamp-1")).unwrap();
+        assert_eq!(stamped.position, point(px(110.0), px(55.0)));
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(registry.remove(&CanvasToolId::from("stamp")).is_some());
+        assert!(!registry.contains(&CanvasToolId::from("stamp")));
+    }
+
+    #[test]
+    fn tool_registry_accepts_boxed_reducers() {
+        let mut registry = CanvasToolRegistry::new();
+
+        assert!(
+            registry
+                .insert_boxed("stamp", Box::new(StampTool::default()))
+                .is_none()
+        );
+
+        assert_eq!(registry.len(), 1);
+        assert!(registry.reducer_mut(&CanvasToolId::from("stamp")).is_some());
+    }
+
+    #[test]
+    fn tool_registry_reports_missing_custom_tool() {
+        let mut editor = CanvasEditor::default();
+        editor.set_tool(CanvasTool::custom("missing"));
+        let mut registry = CanvasToolRegistry::new();
+
+        let err = editor
+            .handle_event_with_tool_registry(CanvasEvent::Cancel, &mut registry)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasToolRegistryError::MissingTool(CanvasToolId::from("missing"))
+        );
+    }
+
+    #[test]
+    fn tool_registry_entry_uses_builtin_tools_without_registered_reducer() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "n1",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let mut registry = CanvasToolRegistry::new();
+
+        editor
+            .handle_event_with_tool_registry(
+                CanvasEvent::PointerDown {
+                    position: point(px(10.0), px(10.0)),
+                    button: PointerButton::Primary,
+                },
+                &mut registry,
+            )
+            .unwrap();
+
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("n1")]

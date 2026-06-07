@@ -169,9 +169,11 @@ editor to apply. This avoids giving extensions mutable access to `CanvasEditor`,
 retention, spatial-index refresh, persistence logging, and future CRDT translation still pass
 through the same effect vocabulary.
 
-A larger tool registry can be added after real applications need multiple custom reducers active in
-one editor. The core should keep that registry as an ergonomic adapter over `CanvasToolReducer`, not
-as a second mutation path.
+`CanvasToolRegistry` is an ergonomic adapter over the same reducer contract. It maps
+`CanvasToolId` values to boxed reducers, dispatches the active custom tool, and reports a
+`MissingTool` error when an application selects a custom tool that was not registered. Built-in
+tools still use the same editor event path, so the registry remains a lookup layer rather than a
+second mutation path.
 
 ## Alternatives Considered
 

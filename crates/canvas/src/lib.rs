@@ -42,5 +42,6 @@ pub use persistence::{
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,
-    CanvasToolEffect, CanvasToolId, CanvasToolReducer, PointerButton, ToolState,
+    CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
+    PointerButton, ToolState,
 };
