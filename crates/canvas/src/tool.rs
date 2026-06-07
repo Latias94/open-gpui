@@ -123,6 +123,19 @@ impl CanvasSelection {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CanvasToolEffect {
+    ApplyTransaction(CanvasTransaction),
+    ApplyUnrecorded(CanvasTransaction),
+    PushUndo(CanvasTransaction),
+    SetSelection(CanvasSelection),
+    ReplaceSelection(HitTarget),
+    ClearSelection,
+    SetState(ToolState),
+    PanViewport(Point<Pixels>),
+    SetViewport(CanvasViewport),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CanvasHistory {
     undo_stack: Vec<CanvasTransaction>,
@@ -237,6 +250,53 @@ impl CanvasEditor {
         Ok(diff)
     }
 
+    pub fn apply_tool_effect(&mut self, effect: CanvasToolEffect) -> Result<(), DocumentError> {
+        match effect {
+            CanvasToolEffect::ApplyTransaction(transaction) => {
+                self.apply_transaction(transaction)?;
+            }
+            CanvasToolEffect::ApplyUnrecorded(transaction) => {
+                self.apply_unrecorded(transaction)?;
+            }
+            CanvasToolEffect::PushUndo(transaction) => {
+                self.history.push_undo(transaction);
+            }
+            CanvasToolEffect::SetSelection(mut selection) => {
+                selection.retain_document(&self.document);
+                self.selection = selection;
+            }
+            CanvasToolEffect::ReplaceSelection(target) => {
+                self.selection.replace_with(target);
+                self.selection.retain_document(&self.document);
+            }
+            CanvasToolEffect::ClearSelection => {
+                self.selection.clear();
+            }
+            CanvasToolEffect::SetState(state) => {
+                self.state = state;
+            }
+            CanvasToolEffect::PanViewport(delta) => {
+                self.viewport.pan_by(delta);
+            }
+            CanvasToolEffect::SetViewport(viewport) => {
+                self.viewport = viewport;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn apply_tool_effects(
+        &mut self,
+        effects: impl IntoIterator<Item = CanvasToolEffect>,
+    ) -> Result<(), DocumentError> {
+        for effect in effects {
+            self.apply_tool_effect(effect)?;
+        }
+
+        Ok(())
+    }
+
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
         let Some(transaction) = self.history.pop_undo() else {
             return Ok(false);
@@ -273,15 +333,16 @@ impl CanvasEditor {
     }
 
     pub fn handle_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
-        match self.tool {
-            CanvasTool::Select => self.handle_select_event(event),
-            CanvasTool::Pan => self.handle_pan_event(event),
-            CanvasTool::Connect => self.handle_connect_event(event),
-        }
+        let effects = match self.tool {
+            CanvasTool::Select => self.select_effects(event)?,
+            CanvasTool::Pan => self.pan_effects(event),
+            CanvasTool::Connect => self.connect_effects(event),
+        };
+        self.apply_tool_effects(effects)
     }
 
-    fn handle_select_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
-        match (&self.state, event) {
+    fn select_effects(&self, event: CanvasEvent) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        let effects = match (&self.state, event) {
             (
                 ToolState::Idle,
                 CanvasEvent::PointerDown {
@@ -298,37 +359,48 @@ impl CanvasEditor {
 
                 match hit {
                     Some(HitTarget::Node(id)) => {
-                        if !self.selection.nodes.contains(&id) {
-                            self.selection.replace_with(HitTarget::Node(id.clone()));
+                        let mut selection = self.selection.clone();
+                        if !selection.nodes.contains(&id) {
+                            selection.replace_with(HitTarget::Node(id.clone()));
                         }
-                        let original_nodes = self
-                            .selection
-                            .selected_nodes()
-                            .filter_map(|id| self.document.nodes.get(id).cloned())
-                            .collect();
-                        self.state = ToolState::Translating {
-                            origin: document_position,
-                            last: document_position,
-                            node_ids: self.selection.selected_nodes().cloned().collect(),
-                            original_nodes,
-                        };
+                        let original_nodes =
+                            self.document_nodes_for_selection(&selection).collect();
+                        let node_ids = selection.selected_nodes().cloned().collect();
+                        vec![
+                            CanvasToolEffect::SetSelection(selection),
+                            CanvasToolEffect::SetState(ToolState::Translating {
+                                origin: document_position,
+                                last: document_position,
+                                node_ids,
+                                original_nodes,
+                            }),
+                        ]
                     }
                     Some(target) => {
-                        self.selection.replace_with(target);
-                        self.state = ToolState::Pointing {
-                            origin: document_position,
-                        };
+                        vec![
+                            CanvasToolEffect::ReplaceSelection(target),
+                            CanvasToolEffect::SetState(ToolState::Pointing {
+                                origin: document_position,
+                            }),
+                        ]
                     }
                     None => {
-                        self.selection.clear();
-                        self.state = ToolState::Pointing {
-                            origin: document_position,
-                        };
+                        vec![
+                            CanvasToolEffect::ClearSelection,
+                            CanvasToolEffect::SetState(ToolState::Pointing {
+                                origin: document_position,
+                            }),
+                        ]
                     }
                 }
             }
             (
-                ToolState::Translating { last, node_ids, .. },
+                ToolState::Translating {
+                    last,
+                    node_ids,
+                    origin,
+                    original_nodes,
+                },
                 CanvasEvent::PointerMove { position },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
@@ -344,33 +416,54 @@ impl CanvasEditor {
                     node.position += delta;
                     commands.push(DocumentCommand::UpdateNode(node));
                 }
-                self.apply_unrecorded(CanvasTransaction::new(commands))?;
 
-                if let ToolState::Translating { last, .. } = &mut self.state {
-                    *last = document_position;
-                }
+                vec![
+                    CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::new(commands)),
+                    CanvasToolEffect::SetState(ToolState::Translating {
+                        origin: *origin,
+                        last: document_position,
+                        node_ids: node_ids.clone(),
+                        original_nodes: original_nodes.clone(),
+                    }),
+                ]
             }
             (ToolState::Pointing { origin }, CanvasEvent::PointerMove { position }) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
-                self.select_intersecting(selection_bounds(origin, document_position));
-                self.state = ToolState::Selecting {
-                    origin,
-                    current: document_position,
-                };
+                vec![
+                    CanvasToolEffect::SetSelection(
+                        self.selection_for_intersections(selection_bounds(
+                            origin,
+                            document_position,
+                        )),
+                    ),
+                    CanvasToolEffect::SetState(ToolState::Selecting {
+                        origin,
+                        current: document_position,
+                    }),
+                ]
             }
             (ToolState::Selecting { origin, .. }, CanvasEvent::PointerMove { position }) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
-                self.select_intersecting(selection_bounds(origin, document_position));
-                if let ToolState::Selecting { current, .. } = &mut self.state {
-                    *current = document_position;
-                }
+                vec![
+                    CanvasToolEffect::SetSelection(
+                        self.selection_for_intersections(selection_bounds(
+                            origin,
+                            document_position,
+                        )),
+                    ),
+                    CanvasToolEffect::SetState(ToolState::Selecting {
+                        origin,
+                        current: document_position,
+                    }),
+                ]
             }
             (ToolState::Translating { original_nodes, .. }, CanvasEvent::PointerUp { .. }) => {
-                let inverse = self.inverse_for_changed_nodes(original_nodes);
-                self.history.push_undo(inverse);
-                self.state = ToolState::Idle;
+                vec![
+                    CanvasToolEffect::PushUndo(self.inverse_for_changed_nodes(original_nodes)),
+                    CanvasToolEffect::SetState(ToolState::Idle),
+                ]
             }
             (ToolState::Translating { original_nodes, .. }, CanvasEvent::Cancel) => {
                 let inverse = CanvasTransaction::new(
@@ -379,25 +472,27 @@ impl CanvasEditor {
                         .cloned()
                         .map(DocumentCommand::UpdateNode),
                 );
-                self.apply_unrecorded(inverse)?;
-                self.state = ToolState::Idle;
+                vec![
+                    CanvasToolEffect::ApplyUnrecorded(inverse),
+                    CanvasToolEffect::SetState(ToolState::Idle),
+                ]
             }
             (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
-                self.state = ToolState::Idle;
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
             (ToolState::Selecting { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
-                self.state = ToolState::Idle;
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
             (_, CanvasEvent::Wheel { delta }) => {
-                self.viewport.pan_by(delta);
+                vec![CanvasToolEffect::PanViewport(delta)]
             }
-            _ => {}
-        }
+            _ => Vec::new(),
+        };
 
-        Ok(())
+        Ok(effects)
     }
 
-    fn handle_pan_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
+    fn pan_effects(&self, event: CanvasEvent) -> Vec<CanvasToolEffect> {
         match (&self.state, event) {
             (
                 ToolState::Idle,
@@ -406,28 +501,29 @@ impl CanvasEditor {
                     button: PointerButton::Primary,
                 },
             ) => {
-                self.state = ToolState::Panning {
+                vec![CanvasToolEffect::SetState(ToolState::Panning {
                     origin: position,
                     last: position,
-                };
+                })]
             }
-            (ToolState::Panning { last, .. }, CanvasEvent::PointerMove { position }) => {
+            (ToolState::Panning { last, origin }, CanvasEvent::PointerMove { position }) => {
                 let delta = position - *last;
-                self.viewport.pan_by(delta * -1.0);
-                if let ToolState::Panning { last, .. } = &mut self.state {
-                    *last = position;
-                }
+                vec![
+                    CanvasToolEffect::PanViewport(delta * -1.0),
+                    CanvasToolEffect::SetState(ToolState::Panning {
+                        origin: *origin,
+                        last: position,
+                    }),
+                ]
             }
             (ToolState::Panning { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
-                self.state = ToolState::Idle;
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
-            _ => {}
+            _ => Vec::new(),
         }
-
-        Ok(())
     }
 
-    fn handle_connect_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
+    fn connect_effects(&self, event: CanvasEvent) -> Vec<CanvasToolEffect> {
         match (&self.state, event) {
             (
                 ToolState::Idle,
@@ -437,18 +533,21 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
-                if let Some(source) = self.node_endpoint_at(document_position) {
-                    self.state = ToolState::Connecting {
-                        source,
-                        current: document_position,
-                    };
-                }
+                self.node_endpoint_at(document_position)
+                    .map(|source| {
+                        vec![CanvasToolEffect::SetState(ToolState::Connecting {
+                            source,
+                            current: document_position,
+                        })]
+                    })
+                    .unwrap_or_default()
             }
-            (ToolState::Connecting { .. }, CanvasEvent::PointerMove { position }) => {
+            (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position }) => {
                 let document_position = self.viewport.view_to_document(position);
-                if let ToolState::Connecting { current, .. } = &mut self.state {
-                    *current = document_position;
-                }
+                vec![CanvasToolEffect::SetState(ToolState::Connecting {
+                    source: source.clone(),
+                    current: document_position,
+                })]
             }
             (
                 ToolState::Connecting { source, .. },
@@ -458,30 +557,41 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
-                if let Some(target) = self.node_endpoint_at(document_position) {
-                    if source.node_id != target.node_id || source.handle_id != target.handle_id {
-                        let edge_id = EdgeId::new(format!(
-                            "{}->{}:{}",
-                            source.node_id,
-                            target.node_id,
-                            self.document.edges.len()
-                        ));
-                        self.apply(DocumentCommand::InsertEdge(CanvasEdge::new(
+                let mut effects = Vec::new();
+                if let Some(target) = self.node_endpoint_at(document_position)
+                    && (source.node_id != target.node_id || source.handle_id != target.handle_id)
+                {
+                    let edge_id = EdgeId::new(format!(
+                        "{}->{}:{}",
+                        source.node_id,
+                        target.node_id,
+                        self.document.edges.len()
+                    ));
+                    effects.push(CanvasToolEffect::ApplyTransaction(
+                        CanvasTransaction::single(DocumentCommand::InsertEdge(CanvasEdge::new(
                             edge_id,
                             source.clone(),
                             target,
-                        )))?;
-                    }
+                        ))),
+                    ));
                 }
-                self.state = ToolState::Idle;
+                effects.push(CanvasToolEffect::SetState(ToolState::Idle));
+                effects
             }
             (ToolState::Connecting { .. }, CanvasEvent::Cancel) => {
-                self.state = ToolState::Idle;
+                vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
-            _ => {}
+            _ => Vec::new(),
         }
+    }
 
-        Ok(())
+    fn document_nodes_for_selection<'a>(
+        &'a self,
+        selection: &'a CanvasSelection,
+    ) -> impl Iterator<Item = CanvasNode> + 'a {
+        selection
+            .selected_nodes()
+            .filter_map(|id| self.document.nodes.get(id).cloned())
     }
 
     fn node_endpoint_at(&self, point: Point<Pixels>) -> Option<CanvasEndpoint> {
@@ -523,22 +633,23 @@ impl CanvasEditor {
         )
     }
 
-    fn select_intersecting(&mut self, bounds: Bounds<Pixels>) {
-        self.selection.clear();
+    fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
+        let mut selection = CanvasSelection::default();
         for record in self.index.query(bounds) {
             match &record.target {
                 HitTarget::Node(id) => {
-                    self.selection.nodes.insert(id.clone());
+                    selection.nodes.insert(id.clone());
                 }
                 HitTarget::Edge(id) => {
-                    self.selection.edges.insert(id.clone());
+                    selection.edges.insert(id.clone());
                 }
                 HitTarget::Shape(id) => {
-                    self.selection.shapes.insert(id.clone());
+                    selection.shapes.insert(id.clone());
                 }
                 HitTarget::Handle { .. } => {}
             }
         }
+        selection
     }
 }
 
@@ -879,6 +990,94 @@ mod tests {
             vec![crate::CanvasRecordId::Node(NodeId::from("a"))]
         );
         assert!(editor.history.can_undo());
+    }
+
+    #[test]
+    fn tool_effect_applies_recorded_transaction() {
+        let mut editor = CanvasEditor::default();
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::ApplyTransaction(
+                CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+                    "a",
+                    point(px(0.0), px(0.0)),
+                    size(px(100.0), px(100.0)),
+                ))),
+            ))
+            .unwrap();
+
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(
+            editor
+                .index
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn tool_effect_applies_unrecorded_transaction_without_history() {
+        let mut editor = CanvasEditor::default();
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::ApplyUnrecorded(
+                CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+                    "a",
+                    point(px(0.0), px(0.0)),
+                    size(px(100.0), px(100.0)),
+                ))),
+            ))
+            .unwrap();
+
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(
+            editor
+                .index
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn tool_effects_update_transient_editor_state() {
+        let mut editor = CanvasEditor::default();
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            )))
+            .unwrap();
+
+        let mut selection = CanvasSelection::default();
+        selection.nodes.insert(NodeId::from("a"));
+        selection.nodes.insert(NodeId::from("missing"));
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::SetSelection(selection),
+                CanvasToolEffect::SetState(ToolState::Pointing {
+                    origin: point(px(10.0), px(20.0)),
+                }),
+                CanvasToolEffect::PanViewport(point(px(5.0), px(-3.0))),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+        assert_eq!(
+            editor.state,
+            ToolState::Pointing {
+                origin: point(px(10.0), px(20.0))
+            }
+        );
+        assert_eq!(editor.viewport.origin, point(px(5.0), px(-3.0)));
     }
 
     #[test]

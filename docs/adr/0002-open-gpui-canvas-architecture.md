@@ -71,6 +71,12 @@ selection rectangles or connection previews, and the batched painter draws those
 base records. This keeps visual affordances visible in native examples without moving mutable
 editor state into the renderer or rendering every record as a GPUI element.
 
+The first tool extensibility boundary is an effect layer rather than a trait plugin system.
+Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
+one path for recorded transactions, unrecorded gesture updates, undo commits, selection changes,
+viewport changes, and tool-state changes. This keeps the enum-based MVP simple while giving custom
+tools and future CRDT adapters a stable mutation vocabulary.
+
 ## Architecture
 
 ```mermaid
@@ -136,9 +142,9 @@ Tools should be local, explicit, and easy to test:
 - `CanvasTool` owns the active mode.
 - `CanvasEvent` carries normalized pointer, keyboard, wheel, tick, and cancel events.
 - `CanvasEditor::handle_event` dispatches the event to the active tool.
-- Tools emit `CanvasCommand` values instead of mutating random state directly.
-- Commands are applied through one mutation path, which later enables undo, persistence, and CRDT
-  translation.
+- Tools emit `CanvasToolEffect` values instead of mutating editor state directly.
+- Effects are applied through one mutation path, which later enables undo, persistence, and CRDT
+  translation without binding the core to a trait-object plugin model too early.
 
 The first implementation can use an enum-based reducer. A trait-based plugin API can be added once
 the built-in state transitions are stable.

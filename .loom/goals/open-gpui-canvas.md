@@ -107,12 +107,13 @@ stop_conditions:
 | Adapter interaction bridge | Done | `CanvasInputMapper` converts GPUI pointer and wheel events into canvas-local `CanvasEvent` values without coupling paint to editor mutation. |
 | Interactive smoke example | Done | The smoke example owns a `CanvasEditor`, snapshots it for paint, registers GPUI pointer/wheel listeners during canvas paint, and exercises select-tool dragging plus viewport wheel panning. |
 | Interaction paint feedback | Done | `CanvasPaintModel` carries selection and tool-state snapshots; paint frames mark selected records and expose selection rectangle plus connection preview overlays without per-record GPUI elements. |
+| Tool effect boundary | Done | `CanvasToolEffect` centralizes recorded transactions, unrecorded transactions, selection, viewport, and tool-state updates so built-in and future custom tools share one editor mutation path. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Tool extensibility boundary | Hard-coded built-in tools are fine for the MVP, but plugin applications need a stable command/event boundary before custom tools or CRDT translation are added. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
+| High | Schema evolution and migrations | The public record format is already useful enough that future changes need explicit migration boundaries before Loro/rkyv/redb adapters hard-code snapshots. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
 | Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait boundary has survived real document workflows. | adapter-specific integration tests |
 
 ## Deferred Work
