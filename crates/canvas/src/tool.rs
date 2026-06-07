@@ -109,6 +109,14 @@ impl CanvasSelection {
     pub fn selected_nodes(&self) -> impl Iterator<Item = &NodeId> {
         self.nodes.iter()
     }
+
+    pub fn retain_document(&mut self, document: &CanvasDocument) {
+        self.nodes.retain(|id| document.nodes.contains_key(id));
+        self.edges.retain(|id| document.edges.contains_key(id));
+        self.shapes.retain(|id| document.shapes.contains_key(id));
+        self.handles
+            .retain(|endpoint| document.validate_endpoint(endpoint).is_ok());
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -220,6 +228,7 @@ impl CanvasEditor {
         let inverse = self.document.invert_transaction(&transaction)?;
         let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.history.push_undo(inverse);
+        self.selection.retain_document(&self.document);
         self.rebuild_index();
         Ok(diff)
     }
@@ -232,6 +241,7 @@ impl CanvasEditor {
         let redo = self.document.invert_transaction(&transaction)?;
         self.document.apply_transaction(transaction)?;
         self.history.push_redo(redo);
+        self.selection.retain_document(&self.document);
         self.rebuild_index();
         Ok(true)
     }
@@ -244,6 +254,7 @@ impl CanvasEditor {
         let undo = self.document.invert_transaction(&transaction)?;
         self.document.apply_transaction(transaction)?;
         self.history.push_undo(undo);
+        self.selection.retain_document(&self.document);
         self.rebuild_index();
         Ok(true)
     }
@@ -471,6 +482,7 @@ impl CanvasEditor {
 
     fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
         self.document.apply_transaction(transaction)?;
+        self.selection.retain_document(&self.document);
         self.rebuild_index();
         Ok(())
     }
@@ -722,5 +734,24 @@ mod tests {
             vec![crate::CanvasRecordId::Node(NodeId::from("a"))]
         );
         assert!(editor.history.can_undo());
+    }
+
+    #[test]
+    fn selection_discards_removed_records_after_transaction() {
+        let mut editor = CanvasEditor::default();
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            )))
+            .unwrap();
+        editor.selection.nodes.insert(NodeId::from("a"));
+
+        editor
+            .apply(DocumentCommand::RemoveNode(NodeId::from("a")))
+            .unwrap();
+
+        assert!(editor.selection.is_empty());
     }
 }
