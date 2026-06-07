@@ -50,6 +50,49 @@ canvas_id!(EdgeId);
 canvas_id!(ShapeId);
 canvas_id!(HandleId);
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanvasEdgeRouteKind(String);
+
+impl CanvasEdgeRouteKind {
+    pub const STRAIGHT: &'static str = "straight";
+    pub const POLYLINE: &'static str = "polyline";
+    pub const ORTHOGONAL: &'static str = "orthogonal";
+    pub const CUBIC_BEZIER: &'static str = "cubic-bezier";
+
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self(kind.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for CanvasEdgeRouteKind {
+    fn default() -> Self {
+        Self::new(Self::STRAIGHT)
+    }
+}
+
+impl From<&str> for CanvasEdgeRouteKind {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for CanvasEdgeRouteKind {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for CanvasEdgeRouteKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum CanvasRecordId {
     Node(NodeId),
@@ -205,6 +248,53 @@ impl CanvasEndpoint {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasEdgeRoute {
+    #[serde(default)]
+    pub kind: CanvasEdgeRouteKind,
+    #[serde(default)]
+    pub waypoints: Vec<Point<Pixels>>,
+    #[serde(default)]
+    pub control_points: Vec<Point<Pixels>>,
+    #[serde(default = "default_edge_interaction_width")]
+    pub interaction_width: Pixels,
+    #[serde(default)]
+    pub options: CanvasValue,
+}
+
+impl CanvasEdgeRoute {
+    pub fn new(kind: impl Into<CanvasEdgeRouteKind>) -> Self {
+        Self {
+            kind: kind.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn straight() -> Self {
+        Self::new(CanvasEdgeRouteKind::STRAIGHT)
+    }
+
+    pub fn polyline(waypoints: impl IntoIterator<Item = Point<Pixels>>) -> Self {
+        Self {
+            kind: CanvasEdgeRouteKind::new(CanvasEdgeRouteKind::POLYLINE),
+            waypoints: waypoints.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for CanvasEdgeRoute {
+    fn default() -> Self {
+        Self {
+            kind: CanvasEdgeRouteKind::default(),
+            waypoints: Vec::new(),
+            control_points: Vec::new(),
+            interaction_width: default_edge_interaction_width(),
+            options: CanvasValue::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasEdge {
     pub id: EdgeId,
     #[serde(default = "default_kind")]
@@ -221,6 +311,8 @@ pub struct CanvasEdge {
     pub data: CanvasValue,
     #[serde(default)]
     pub style: CanvasStyle,
+    #[serde(default)]
+    pub route: CanvasEdgeRoute,
 }
 
 impl CanvasEdge {
@@ -235,6 +327,7 @@ impl CanvasEdge {
             locked: false,
             data: CanvasValue::new(),
             style: CanvasStyle::default(),
+            route: CanvasEdgeRoute::default(),
         }
     }
 }
@@ -313,6 +406,12 @@ pub enum DocumentError {
         node_id: NodeId,
         handle_id: HandleId,
     },
+    #[error("edge `{0}` has an empty route kind")]
+    EmptyEdgeRouteKind(EdgeId),
+    #[error("edge `{0}` has an invalid route interaction width")]
+    InvalidEdgeInteractionWidth(EdgeId),
+    #[error("edge `{0}` has an invalid route point")]
+    InvalidEdgeRoutePoint(EdgeId),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -648,6 +747,7 @@ impl CanvasDocument {
     }
 
     pub fn validate_edge(&self, edge: &CanvasEdge) -> Result<(), DocumentError> {
+        Self::validate_edge_route(edge)?;
         self.validate_source_endpoint(&edge.source)?;
         self.validate_target_endpoint(&edge.target)?;
         Ok(())
@@ -690,15 +790,55 @@ impl CanvasDocument {
     pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
         let source = self.endpoint_position(&edge.source)?;
         let target = self.endpoint_position(&edge.target)?;
-        let min_x = source.x.min(target.x);
-        let min_y = source.y.min(target.y);
-        let max_x = source.x.max(target.x);
-        let max_y = source.y.max(target.y);
+        let route_points = edge
+            .route
+            .waypoints
+            .iter()
+            .chain(edge.route.control_points.iter());
+        let (min_x, min_y, max_x, max_y) = route_points.fold(
+            (
+                source.x.min(target.x),
+                source.y.min(target.y),
+                source.x.max(target.x),
+                source.y.max(target.y),
+            ),
+            |(min_x, min_y, max_x, max_y), point| {
+                (
+                    min_x.min(point.x),
+                    min_y.min(point.y),
+                    max_x.max(point.x),
+                    max_y.max(point.y),
+                )
+            },
+        );
+        let bounds = Bounds::from_corners(Point::new(min_x, min_y), Point::new(max_x, max_y));
+        let stroke_width = if edge.style.stroke_width.as_f32().is_finite()
+            && edge.style.stroke_width > Pixels::ZERO
+        {
+            edge.style.stroke_width
+        } else {
+            Pixels::ZERO
+        };
+        let interaction_width = if edge.route.interaction_width > stroke_width {
+            edge.route.interaction_width
+        } else {
+            stroke_width
+        };
 
-        Ok(Bounds::from_corners(
-            Point::new(min_x, min_y),
-            Point::new(max_x, max_y),
-        ))
+        Ok(bounds.dilate(interaction_width * 0.5))
+    }
+
+    pub fn edge_route_points(
+        &self,
+        edge: &CanvasEdge,
+    ) -> Result<Vec<Point<Pixels>>, DocumentError> {
+        let source = self.endpoint_position(&edge.source)?;
+        let target = self.endpoint_position(&edge.target)?;
+        let mut points = Vec::with_capacity(edge.route.waypoints.len() + 2);
+        points.push(source);
+        points.extend(edge.route.waypoints.iter().copied());
+        points.push(target);
+        Ok(points)
     }
 
     pub fn diff_against(&self, previous: &CanvasDocument) -> CanvasDocumentDiff {
@@ -758,6 +898,31 @@ impl CanvasDocument {
                     node_id: node.id.clone(),
                     handle_id: handle.id.clone(),
                 });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_edge_route(edge: &CanvasEdge) -> Result<(), DocumentError> {
+        if edge.route.kind.as_str().trim().is_empty() {
+            return Err(DocumentError::EmptyEdgeRouteKind(edge.id.clone()));
+        }
+
+        if !edge.route.interaction_width.as_f32().is_finite()
+            || edge.route.interaction_width < Pixels::ZERO
+        {
+            return Err(DocumentError::InvalidEdgeInteractionWidth(edge.id.clone()));
+        }
+
+        for point in edge
+            .route
+            .waypoints
+            .iter()
+            .chain(edge.route.control_points.iter())
+        {
+            if !point.x.as_f32().is_finite() || !point.y.as_f32().is_finite() {
+                return Err(DocumentError::InvalidEdgeRoutePoint(edge.id.clone()));
             }
         }
 
@@ -937,6 +1102,10 @@ fn default_kind() -> String {
 
 fn default_handle_size() -> Size<Pixels> {
     Size::new(Pixels::from(12.0), Pixels::from(12.0))
+}
+
+fn default_edge_interaction_width() -> Pixels {
+    Pixels::from(12.0)
 }
 
 #[cfg(test)]
@@ -1161,6 +1330,150 @@ mod tests {
                 node_id: NodeId::from("a"),
                 handle_id: HandleId::from("out")
             }
+        );
+    }
+
+    #[test]
+    fn edge_route_defaults_keep_legacy_edges_readable() {
+        let edge: CanvasEdge = serde_json::from_str(
+            r#"{
+                "id": "a-b",
+                "source": { "node_id": "a" },
+                "target": { "node_id": "b" }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            edge.route.kind,
+            CanvasEdgeRouteKind::from(CanvasEdgeRouteKind::STRAIGHT)
+        );
+        assert!(edge.route.waypoints.is_empty());
+        assert!(edge.route.control_points.is_empty());
+        assert_eq!(edge.route.interaction_width, px(12.0));
+    }
+
+    #[test]
+    fn edge_route_points_include_waypoints_between_endpoints() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route =
+            CanvasEdgeRoute::polyline([point(px(40.0), px(50.0)), point(px(80.0), px(50.0))]);
+
+        let route_points = document.edge_route_points(&edge).unwrap();
+
+        assert_eq!(
+            route_points,
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(40.0), px(50.0)),
+                point(px(80.0), px(50.0)),
+                point(px(105.0), px(5.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn edge_bounds_include_route_points_and_interaction_width() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = CanvasEdgeRoute::polyline([point(px(40.0), px(50.0))]);
+        edge.route.interaction_width = px(20.0);
+
+        let bounds = document.edge_bounds(&edge).unwrap();
+
+        assert_eq!(bounds.origin, point(px(-5.0), px(-5.0)));
+        assert_eq!(bounds.size, size(px(120.0), px(65.0)));
+    }
+
+    #[test]
+    fn rejects_invalid_edge_route_metadata() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let mut empty_kind = CanvasEdge::new(
+            "empty-kind",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        empty_kind.route.kind = CanvasEdgeRouteKind::new("");
+        assert_eq!(
+            document.insert_edge(empty_kind).unwrap_err(),
+            DocumentError::EmptyEdgeRouteKind(EdgeId::from("empty-kind"))
+        );
+
+        let mut negative_width = CanvasEdge::new(
+            "negative-width",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        negative_width.route.interaction_width = px(-1.0);
+        assert_eq!(
+            document.insert_edge(negative_width).unwrap_err(),
+            DocumentError::InvalidEdgeInteractionWidth(EdgeId::from("negative-width"))
+        );
+
+        let mut invalid_point = CanvasEdge::new(
+            "invalid-point",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        invalid_point
+            .route
+            .waypoints
+            .push(point(px(f32::NAN), px(0.0)));
+        assert_eq!(
+            document.insert_edge(invalid_point).unwrap_err(),
+            DocumentError::InvalidEdgeRoutePoint(EdgeId::from("invalid-point"))
         );
     }
 

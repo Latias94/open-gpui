@@ -97,13 +97,13 @@ stop_conditions:
 | Document diff | Done | `CanvasDocumentDiff` reports inserted, updated, removed, and metadata-changed records. |
 | Spatial index | Done | Hit testing and culling support nodes, handles, shapes, and edges. Indexes can apply document diffs incrementally. |
 | Viewport | Done | View/document transforms, anchored zoom, zoom factor validation, and visible document bounds are implemented. |
+| Selection rectangle and multi-select | Done | Select tool supports box selection and multi-node drag for selected nodes. |
+| Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Selection rectangle and multi-select | Required for Figma/draw.io/xyflow-style editing ergonomics. | `cargo test -p open-gpui-canvas select` |
-| High | Edge routing metadata | Keep straight-line edges simple while allowing later orthogonal, bezier, or custom routers. | document and index tests |
 | High | Import/export adapters | Obsidian Canvas JSON is the lowest-friction interchange format to validate the model. | round-trip tests |
 | Medium | Persistent storage traits | Define redb/Loro/rkyv adapter boundaries without depending on them in core. | trait compile tests |
 | Medium | GPUI adapter prototype | Use batched canvas paint and spatial culling, not one GPUI element per record. | `cargo check -p open-gpui-canvas` plus example check |

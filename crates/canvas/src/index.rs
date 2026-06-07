@@ -324,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_bounds_are_indexed_from_endpoints() {
+    fn edge_bounds_are_indexed_from_route_hit_area() {
         use crate::{CanvasEdge, CanvasEndpoint};
 
         let mut document = CanvasDocument::default();
@@ -353,9 +353,9 @@ mod tests {
         let index = SpatialIndex::rebuild(&document);
         assert!(index.records().iter().any(|record| {
             record.target == HitTarget::Edge(EdgeId::from("a-b"))
-                && record.bounds.origin == point(px(10.0), px(10.0))
-                && record.bounds.size.width == px(100.0)
-                && record.bounds.size.height == px(0.0)
+                && record.bounds.origin == point(px(4.0), px(4.0))
+                && record.bounds.size.width == px(112.0)
+                && record.bounds.size.height == px(12.0)
         }));
     }
 
@@ -461,8 +461,53 @@ mod tests {
 
         assert!(index.records().iter().any(|record| {
             record.target == HitTarget::Edge(EdgeId::from("a-b"))
-                && record.bounds.origin == point(px(50.0), px(10.0))
-                && record.bounds.size.width == px(60.0)
+                && record.bounds.origin == point(px(44.0), px(4.0))
+                && record.bounds.size.width == px(72.0)
+                && record.bounds.size.height == px(12.0)
+        }));
+    }
+
+    #[test]
+    fn applies_diff_for_updated_edge_route() {
+        use crate::{CanvasEdge, CanvasEdgeRoute, CanvasEndpoint};
+
+        let mut previous = CanvasDocument::default();
+        previous
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        previous
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        previous
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let mut document = previous.clone();
+        let mut edge = document.edges.get(&EdgeId::from("a-b")).unwrap().clone();
+        edge.route = CanvasEdgeRoute::polyline([point(px(60.0), px(80.0))]);
+        edge.route.interaction_width = px(20.0);
+        document.update_edge(edge).unwrap();
+
+        let mut index = SpatialIndex::rebuild(&previous);
+        let diff = document.diff_against(&previous);
+        index.apply_diff(&document, &diff);
+
+        assert!(index.records().iter().any(|record| {
+            record.target == HitTarget::Edge(EdgeId::from("a-b"))
+                && record.bounds.origin == point(px(0.0), px(0.0))
+                && record.bounds.size == size(px(120.0), px(90.0))
         }));
     }
 }

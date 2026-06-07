@@ -36,6 +36,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
   `Bounds<Pixels>`.
 - Handles as invisible, serializable connection points on nodes.
 - Edges that reference node handles instead of rendered elements.
+- Edge route metadata for straight, polyline, orthogonal, cubic-bezier, and custom routers,
+  including manual waypoints, bezier control points, route options, and interaction width.
 - A viewport/camera model that is separate from document data.
 - A spatial index and hit-test API that can be rebuilt or incrementally updated without changing
   document serialization.
@@ -77,7 +79,8 @@ The canonical document is made of records:
 - `CanvasDocument`: metadata plus `IndexMap` collections for nodes, edges, and shapes.
 - `CanvasNode`: id, kind, position, size, z-index, flags, arbitrary serializable payload, and
   handles.
-- `CanvasEdge`: id, kind, source endpoint, target endpoint, z-index, flags, style, and payload.
+- `CanvasEdge`: id, kind, source endpoint, target endpoint, z-index, flags, style, route
+  metadata, and payload.
 - `CanvasShape`: id, kind, bounds, z-index, flags, style, and payload.
 - `CanvasHandle`: id, side or local position, role, visibility, and connection permissions.
 - `CanvasEndpoint`: node id plus optional handle id.
@@ -86,6 +89,11 @@ The distinction between nodes and shapes is intentional. Nodes are semantic grap
 handles and optional application payload. Shapes are drawable records with bounds and no required
 graph semantics. Applications may build mind-map topics as nodes, freehand strokes as shapes, and
 links as edges in the same document.
+
+Route metadata is stored as intent, not as a renderer contract. The core model records route kind,
+manual waypoints, optional control points, route-specific options, and interaction width so that
+hit testing and persistence remain stable. Actual path generation, obstacle avoidance, arrowhead
+rendering, and router plugins remain outside the core document model.
 
 ## Tool Model
 
