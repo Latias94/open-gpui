@@ -1,36 +1,132 @@
 use open_gpui::{
-    App, Bounds, Context, Hsla, Window, WindowBounds, WindowOptions, div, point, prelude::*, px,
-    rgb, size,
+    App, Bounds, Context, DispatchPhase, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ScrollWheelEvent, Window, WindowBounds, WindowOptions, canvas, div, point,
+    prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasShape, CanvasStyle,
-    CanvasViewport, HandleRole, canvas_view,
+    CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor, CanvasEndpoint, CanvasEvent,
+    CanvasHandle, CanvasInputMapper, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
+    CanvasPaintTheme, CanvasShape, CanvasStyle, HandleRole, PointerButton, ToolState,
+    collect_visible_records, paint_canvas_frame,
 };
 use open_gpui_platform::application;
 
 struct SmokeView {
-    model: CanvasPaintModel,
+    editor: CanvasEditor,
 }
 
 impl Render for SmokeView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity();
+        let model = CanvasPaintModel::from(&self.editor);
+        let prepaint_model = model.clone();
+        let paint_model = model;
+        let options = CanvasPaintOptions {
+            include_handles: true,
+            ..CanvasPaintOptions::default()
+        };
         let theme = CanvasPaintTheme {
             background: Some(Hsla::from(rgb(0xf8fafc))),
             ..CanvasPaintTheme::default()
         };
 
         div().size_full().bg(rgb(0xf8fafc)).child(
-            canvas_view(
-                self.model.clone(),
-                CanvasPaintOptions {
-                    include_handles: true,
-                    ..CanvasPaintOptions::default()
+            canvas(
+                move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
+                move |bounds, frame, window, _cx| {
+                    let mapper = CanvasInputMapper::new(bounds);
+
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &MouseDownEvent, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+
+                            entity.update(cx, |this, cx| {
+                                this.handle_canvas_event(mapper.mouse_down(event), cx);
+                            });
+                        }
+                    });
+
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &MouseMoveEvent, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+
+                            entity.update(cx, |this, cx| {
+                                let event = if this.is_pointer_interacting() {
+                                    Some(CanvasEvent::PointerMove {
+                                        position: event.position - mapper.bounds.origin,
+                                    })
+                                } else {
+                                    mapper.mouse_move(event)
+                                };
+                                this.handle_canvas_event(event, cx);
+                            });
+                        }
+                    });
+
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+
+                            entity.update(cx, |this, cx| {
+                                let event = if this.is_pointer_interacting() {
+                                    pointer_button(event.button).map(|button| {
+                                        CanvasEvent::PointerUp {
+                                            position: event.position - mapper.bounds.origin,
+                                            button,
+                                        }
+                                    })
+                                } else {
+                                    mapper.mouse_up(event)
+                                };
+                                this.handle_canvas_event(event, cx);
+                            });
+                        }
+                    });
+
+                    window.on_mouse_event({
+                        let entity = entity.clone();
+                        move |event: &ScrollWheelEvent, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+
+                            entity.update(cx, |this, cx| {
+                                this.handle_canvas_event(mapper.scroll_wheel(event), cx);
+                            });
+                        }
+                    });
+
+                    paint_canvas_frame(bounds, &paint_model, &frame, theme, window);
                 },
-                theme,
             )
             .size_full(),
         )
+    }
+}
+
+impl SmokeView {
+    fn handle_canvas_event(&mut self, event: Option<CanvasEvent>, cx: &mut Context<Self>) {
+        let Some(event) = event else {
+            return;
+        };
+
+        if let Err(error) = self.editor.handle_event(event) {
+            eprintln!("canvas event failed: {error}");
+        }
+        cx.notify();
+    }
+
+    fn is_pointer_interacting(&self) -> bool {
+        !matches!(self.editor.state, ToolState::Idle)
     }
 }
 
@@ -121,6 +217,15 @@ fn style(fill: Option<&str>, stroke: Option<&str>, stroke_width: open_gpui::Pixe
     }
 }
 
+fn pointer_button(button: MouseButton) -> Option<PointerButton> {
+    match button {
+        MouseButton::Left => Some(PointerButton::Primary),
+        MouseButton::Right => Some(PointerButton::Secondary),
+        MouseButton::Middle => Some(PointerButton::Middle),
+        MouseButton::Navigate(_) => None,
+    }
+}
+
 fn main() {
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(760.0), px(520.0)), cx);
@@ -132,7 +237,7 @@ fn main() {
             },
             |_, cx| {
                 cx.new(|_| SmokeView {
-                    model: CanvasPaintModel::new(demo_document(), CanvasViewport::default()),
+                    editor: CanvasEditor::new(demo_document()),
                 })
             },
         )

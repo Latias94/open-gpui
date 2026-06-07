@@ -59,6 +59,12 @@ spatial index, and viewport. Its prepaint step queries the visible document boun
 callback. It intentionally does not own application state or turn every record into an element;
 future overlays can layer selected node widgets on top of this batched base renderer.
 
+The native smoke example exercises the interaction boundary without expanding the public adapter
+surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
+render, and registers GPUI pointer and wheel listeners from the canvas paint callback where the
+actual canvas bounds are known. `CanvasInputMapper` converts window-space GPUI events into
+canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor.
+
 ## Architecture
 
 ```mermaid
