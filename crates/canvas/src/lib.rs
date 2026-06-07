@@ -11,8 +11,8 @@ mod tool;
 
 pub use document::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle,
-    CanvasNode, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasValue, DocumentCommand,
-    DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    CanvasNode, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue,
+    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};

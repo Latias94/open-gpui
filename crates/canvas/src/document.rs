@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Bounds, Pixels, Point, Size};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -268,6 +268,26 @@ pub enum DocumentError {
         node_id: NodeId,
         handle_id: HandleId,
     },
+    #[error("handle `{handle_id}` already exists on node `{node_id}`")]
+    DuplicateHandle {
+        node_id: NodeId,
+        handle_id: HandleId,
+    },
+    #[error("handle `{handle_id}` on node `{node_id}` is not connectable")]
+    NonConnectableHandle {
+        node_id: NodeId,
+        handle_id: HandleId,
+    },
+    #[error("handle `{handle_id}` on node `{node_id}` cannot be used as an edge source")]
+    InvalidSourceHandle {
+        node_id: NodeId,
+        handle_id: HandleId,
+    },
+    #[error("handle `{handle_id}` on node `{node_id}` cannot be used as an edge target")]
+    InvalidTargetHandle {
+        node_id: NodeId,
+        handle_id: HandleId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -281,6 +301,41 @@ pub enum DocumentCommand {
     InsertShape(CanvasShape),
     UpdateShape(CanvasShape),
     RemoveShape(ShapeId),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CanvasTransaction {
+    #[serde(default)]
+    pub commands: Vec<DocumentCommand>,
+    #[serde(default)]
+    pub metadata: CanvasValue,
+}
+
+impl CanvasTransaction {
+    pub fn new(commands: impl IntoIterator<Item = DocumentCommand>) -> Self {
+        Self {
+            commands: commands.into_iter().collect(),
+            metadata: CanvasValue::new(),
+        }
+    }
+
+    pub fn single(command: DocumentCommand) -> Self {
+        Self::new([command])
+    }
+
+    pub fn push(&mut self, command: DocumentCommand) {
+        self.commands.push(command);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+}
+
+impl From<DocumentCommand> for CanvasTransaction {
+    fn from(value: DocumentCommand) -> Self {
+        Self::single(value)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -393,10 +448,41 @@ impl CanvasDocument {
         }
     }
 
+    pub fn apply_transaction(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<(), DocumentError> {
+        let mut draft = self.clone();
+        for command in transaction.commands {
+            draft.apply(command)?;
+        }
+        *self = draft;
+        Ok(())
+    }
+
+    pub fn invert_transaction(
+        &self,
+        transaction: &CanvasTransaction,
+    ) -> Result<CanvasTransaction, DocumentError> {
+        let mut draft = self.clone();
+        let mut inverse_segments = Vec::new();
+
+        for command in &transaction.commands {
+            inverse_segments.push(draft.inverse_for(command)?);
+            draft.apply(command.clone())?;
+        }
+
+        Ok(CanvasTransaction {
+            commands: inverse_segments.into_iter().rev().flatten().collect(),
+            metadata: CanvasValue::new(),
+        })
+    }
+
     pub fn insert_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
         if self.nodes.contains_key(&node.id) {
             return Err(DocumentError::DuplicateNode(node.id));
         }
+        Self::validate_node(&node)?;
 
         self.nodes.insert(node.id.clone(), node);
         Ok(())
@@ -406,8 +492,12 @@ impl CanvasDocument {
         if !self.nodes.contains_key(&node.id) {
             return Err(DocumentError::MissingNode(node.id));
         }
+        Self::validate_node(&node)?;
 
-        self.nodes.insert(node.id.clone(), node);
+        let mut draft = self.clone();
+        draft.nodes.insert(node.id.clone(), node);
+        draft.validate_integrity()?;
+        *self = draft;
         Ok(())
     }
 
@@ -425,8 +515,7 @@ impl CanvasDocument {
         if self.edges.contains_key(&edge.id) {
             return Err(DocumentError::DuplicateEdge(edge.id));
         }
-        self.validate_endpoint(&edge.source)?;
-        self.validate_endpoint(&edge.target)?;
+        self.validate_edge(&edge)?;
 
         self.edges.insert(edge.id.clone(), edge);
         Ok(())
@@ -436,8 +525,7 @@ impl CanvasDocument {
         if !self.edges.contains_key(&edge.id) {
             return Err(DocumentError::MissingEdge(edge.id));
         }
-        self.validate_endpoint(&edge.source)?;
-        self.validate_endpoint(&edge.target)?;
+        self.validate_edge(&edge)?;
 
         self.edges.insert(edge.id.clone(), edge);
         Ok(())
@@ -474,18 +562,23 @@ impl CanvasDocument {
     }
 
     pub fn validate_endpoint(&self, endpoint: &CanvasEndpoint) -> Result<(), DocumentError> {
-        let node = self
-            .nodes
-            .get(&endpoint.node_id)
-            .ok_or_else(|| DocumentError::MissingNode(endpoint.node_id.clone()))?;
+        self.endpoint_parts(endpoint)?;
+        Ok(())
+    }
 
-        if let Some(handle_id) = &endpoint.handle_id {
-            if node.handle(Some(handle_id)).is_none() {
-                return Err(DocumentError::MissingHandle {
-                    node_id: endpoint.node_id.clone(),
-                    handle_id: handle_id.clone(),
-                });
-            }
+    pub fn validate_edge(&self, edge: &CanvasEdge) -> Result<(), DocumentError> {
+        self.validate_source_endpoint(&edge.source)?;
+        self.validate_target_endpoint(&edge.target)?;
+        Ok(())
+    }
+
+    pub fn validate_integrity(&self) -> Result<(), DocumentError> {
+        for node in self.nodes.values() {
+            Self::validate_node(node)?;
+        }
+
+        for edge in self.edges.values() {
+            self.validate_edge(edge)?;
         }
 
         Ok(())
@@ -525,6 +618,164 @@ impl CanvasDocument {
             Point::new(min_x, min_y),
             Point::new(max_x, max_y),
         ))
+    }
+
+    fn validate_node(node: &CanvasNode) -> Result<(), DocumentError> {
+        let mut handle_ids = IndexSet::new();
+        for handle in &node.handles {
+            if !handle_ids.insert(handle.id.clone()) {
+                return Err(DocumentError::DuplicateHandle {
+                    node_id: node.id.clone(),
+                    handle_id: handle.id.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_source_endpoint(&self, endpoint: &CanvasEndpoint) -> Result<(), DocumentError> {
+        let Some(handle) = self.endpoint_parts(endpoint)?.1 else {
+            return Ok(());
+        };
+        self.validate_connectable_handle(endpoint, handle)?;
+
+        if handle.role == HandleRole::Target {
+            return Err(DocumentError::InvalidSourceHandle {
+                node_id: endpoint.node_id.clone(),
+                handle_id: handle.id.clone(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_target_endpoint(&self, endpoint: &CanvasEndpoint) -> Result<(), DocumentError> {
+        let Some(handle) = self.endpoint_parts(endpoint)?.1 else {
+            return Ok(());
+        };
+        self.validate_connectable_handle(endpoint, handle)?;
+
+        if handle.role == HandleRole::Source {
+            return Err(DocumentError::InvalidTargetHandle {
+                node_id: endpoint.node_id.clone(),
+                handle_id: handle.id.clone(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_connectable_handle(
+        &self,
+        endpoint: &CanvasEndpoint,
+        handle: &CanvasHandle,
+    ) -> Result<(), DocumentError> {
+        if !handle.connectable {
+            return Err(DocumentError::NonConnectableHandle {
+                node_id: endpoint.node_id.clone(),
+                handle_id: handle.id.clone(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn endpoint_parts(
+        &self,
+        endpoint: &CanvasEndpoint,
+    ) -> Result<(&CanvasNode, Option<&CanvasHandle>), DocumentError> {
+        let node = self
+            .nodes
+            .get(&endpoint.node_id)
+            .ok_or_else(|| DocumentError::MissingNode(endpoint.node_id.clone()))?;
+
+        let Some(handle_id) = &endpoint.handle_id else {
+            return Ok((node, None));
+        };
+
+        let handle = node
+            .handle(Some(handle_id))
+            .ok_or_else(|| DocumentError::MissingHandle {
+                node_id: endpoint.node_id.clone(),
+                handle_id: handle_id.clone(),
+            })?;
+
+        Ok((node, Some(handle)))
+    }
+
+    fn inverse_for(
+        &self,
+        command: &DocumentCommand,
+    ) -> Result<Vec<DocumentCommand>, DocumentError> {
+        match command {
+            DocumentCommand::InsertNode(node) => {
+                if self.nodes.contains_key(&node.id) {
+                    return Err(DocumentError::DuplicateNode(node.id.clone()));
+                }
+                Self::validate_node(node)?;
+                Ok(vec![DocumentCommand::RemoveNode(node.id.clone())])
+            }
+            DocumentCommand::UpdateNode(node) => Ok(vec![DocumentCommand::UpdateNode(
+                self.nodes
+                    .get(&node.id)
+                    .ok_or_else(|| DocumentError::MissingNode(node.id.clone()))?
+                    .clone(),
+            )]),
+            DocumentCommand::RemoveNode(id) => {
+                let node = self
+                    .nodes
+                    .get(id)
+                    .ok_or_else(|| DocumentError::MissingNode(id.clone()))?
+                    .clone();
+                let mut inverse = vec![DocumentCommand::InsertNode(node)];
+                inverse.extend(
+                    self.edges
+                        .values()
+                        .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
+                        .cloned()
+                        .map(DocumentCommand::InsertEdge),
+                );
+                Ok(inverse)
+            }
+            DocumentCommand::InsertEdge(edge) => {
+                if self.edges.contains_key(&edge.id) {
+                    return Err(DocumentError::DuplicateEdge(edge.id.clone()));
+                }
+                self.validate_edge(edge)?;
+                Ok(vec![DocumentCommand::RemoveEdge(edge.id.clone())])
+            }
+            DocumentCommand::UpdateEdge(edge) => Ok(vec![DocumentCommand::UpdateEdge(
+                self.edges
+                    .get(&edge.id)
+                    .ok_or_else(|| DocumentError::MissingEdge(edge.id.clone()))?
+                    .clone(),
+            )]),
+            DocumentCommand::RemoveEdge(id) => Ok(vec![DocumentCommand::InsertEdge(
+                self.edges
+                    .get(id)
+                    .ok_or_else(|| DocumentError::MissingEdge(id.clone()))?
+                    .clone(),
+            )]),
+            DocumentCommand::InsertShape(shape) => {
+                if self.shapes.contains_key(&shape.id) {
+                    return Err(DocumentError::DuplicateShape(shape.id.clone()));
+                }
+                Ok(vec![DocumentCommand::RemoveShape(shape.id.clone())])
+            }
+            DocumentCommand::UpdateShape(shape) => Ok(vec![DocumentCommand::UpdateShape(
+                self.shapes
+                    .get(&shape.id)
+                    .ok_or_else(|| DocumentError::MissingShape(shape.id.clone()))?
+                    .clone(),
+            )]),
+            DocumentCommand::RemoveShape(id) => Ok(vec![DocumentCommand::InsertShape(
+                self.shapes
+                    .get(id)
+                    .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
+                    .clone(),
+            )]),
+        }
     }
 }
 
@@ -695,5 +946,187 @@ mod tests {
                 handle_id: HandleId::from("missing")
             }
         );
+    }
+
+    #[test]
+    fn rejects_duplicate_handles_on_node_insert() {
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.handles
+            .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
+        node.handles
+            .push(CanvasHandle::new("out", point(px(0.0), px(5.0))));
+
+        let err = CanvasDocument::default().insert_node(node).unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::DuplicateHandle {
+                node_id: NodeId::from("a"),
+                handle_id: HandleId::from("out")
+            }
+        );
+    }
+
+    #[test]
+    fn validates_handle_roles_for_edges() {
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        let mut target_only = CanvasHandle::new("in", point(px(10.0), px(5.0)));
+        target_only.role = HandleRole::Target;
+        source.handles.push(target_only);
+
+        let mut target = CanvasNode::new("b", point(px(20.0), px(0.0)), size(px(10.0), px(10.0)));
+        let mut source_only = CanvasHandle::new("out", point(px(0.0), px(5.0)));
+        source_only.role = HandleRole::Source;
+        target.handles.push(source_only);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+
+        let err = document
+            .insert_edge(CanvasEdge::new(
+                "bad",
+                CanvasEndpoint::new("a", Some("in")),
+                CanvasEndpoint::new("b", Some("out")),
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::InvalidSourceHandle {
+                node_id: NodeId::from("a"),
+                handle_id: HandleId::from("in")
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_non_connectable_edge_handles() {
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        let mut handle = CanvasHandle::new("out", point(px(10.0), px(5.0)));
+        handle.connectable = false;
+        source.handles.push(handle);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let err = document
+            .insert_edge(CanvasEdge::new(
+                "bad",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::NonConnectableHandle {
+                node_id: NodeId::from("a"),
+                handle_id: HandleId::from("out")
+            }
+        );
+    }
+
+    #[test]
+    fn node_update_cannot_break_existing_edge_endpoints() {
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.handles
+            .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(node.clone()).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        node.handles.clear();
+        let err = document.update_node(node).unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::MissingHandle {
+                node_id: NodeId::from("a"),
+                handle_id: HandleId::from("out")
+            }
+        );
+        assert!(
+            document.nodes[&NodeId::from("a")]
+                .handle(Some(&HandleId::from("out")))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn applies_transaction_atomically() {
+        let mut document = CanvasDocument::default();
+        let transaction = CanvasTransaction::new([
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+            DocumentCommand::InsertEdge(CanvasEdge::new(
+                "bad",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("missing", None::<&str>),
+            )),
+        ]);
+
+        let err = document.apply_transaction(transaction).unwrap_err();
+
+        assert_eq!(err, DocumentError::MissingNode(NodeId::from("missing")));
+        assert!(document.nodes.is_empty());
+        assert!(document.edges.is_empty());
+    }
+
+    #[test]
+    fn transaction_inverse_restores_document() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let before = document.clone();
+        let transaction = CanvasTransaction::new([
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+            DocumentCommand::InsertEdge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            )),
+        ]);
+        let inverse = document.invert_transaction(&transaction).unwrap();
+
+        document.apply_transaction(transaction).unwrap();
+        assert_ne!(document, before);
+
+        document.apply_transaction(inverse).unwrap();
+        assert_eq!(document, before);
     }
 }
