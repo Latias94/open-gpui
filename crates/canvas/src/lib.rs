@@ -10,8 +10,9 @@ mod index;
 mod tool;
 
 pub use document::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle,
-    CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    CANVAS_DOCUMENT_FORMAT_VERSION, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle,
+    CanvasNode, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasValue, DocumentCommand,
+    DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};

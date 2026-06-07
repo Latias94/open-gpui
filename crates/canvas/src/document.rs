@@ -249,6 +249,8 @@ impl CanvasShape {
 
 #[derive(Debug, Error, Eq, PartialEq)]
 pub enum DocumentError {
+    #[error("unsupported canvas document format version `{found}`, expected `{expected}`")]
+    UnsupportedFormatVersion { expected: u32, found: u32 },
     #[error("node `{0}` already exists")]
     DuplicateNode(NodeId),
     #[error("edge `{0}` already exists")]
@@ -282,6 +284,32 @@ pub enum DocumentCommand {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasSnapshot {
+    #[serde(default = "default_document_format_version")]
+    pub format_version: u32,
+    #[serde(default)]
+    pub nodes: Vec<CanvasNode>,
+    #[serde(default)]
+    pub edges: Vec<CanvasEdge>,
+    #[serde(default)]
+    pub shapes: Vec<CanvasShape>,
+    #[serde(default)]
+    pub metadata: CanvasValue,
+}
+
+impl Default for CanvasSnapshot {
+    fn default() -> Self {
+        Self {
+            format_version: CANVAS_DOCUMENT_FORMAT_VERSION,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            shapes: Vec::new(),
+            metadata: CanvasValue::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasDocument {
     #[serde(default = "default_document_format_version")]
     pub format_version: u32,
@@ -310,6 +338,45 @@ impl Default for CanvasDocument {
 impl CanvasDocument {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_snapshot(snapshot: CanvasSnapshot) -> Result<Self, DocumentError> {
+        if snapshot.format_version != CANVAS_DOCUMENT_FORMAT_VERSION {
+            return Err(DocumentError::UnsupportedFormatVersion {
+                expected: CANVAS_DOCUMENT_FORMAT_VERSION,
+                found: snapshot.format_version,
+            });
+        }
+
+        let mut document = Self {
+            format_version: snapshot.format_version,
+            metadata: snapshot.metadata,
+            ..Self::default()
+        };
+
+        for node in snapshot.nodes {
+            document.insert_node(node)?;
+        }
+
+        for shape in snapshot.shapes {
+            document.insert_shape(shape)?;
+        }
+
+        for edge in snapshot.edges {
+            document.insert_edge(edge)?;
+        }
+
+        Ok(document)
+    }
+
+    pub fn to_snapshot(&self) -> CanvasSnapshot {
+        CanvasSnapshot {
+            format_version: self.format_version,
+            nodes: self.nodes.values().cloned().collect(),
+            edges: self.edges.values().cloned().collect(),
+            shapes: self.shapes.values().cloned().collect(),
+            metadata: self.metadata.clone(),
+        }
     }
 
     pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
@@ -461,6 +528,20 @@ impl CanvasDocument {
     }
 }
 
+impl TryFrom<CanvasSnapshot> for CanvasDocument {
+    type Error = DocumentError;
+
+    fn try_from(value: CanvasSnapshot) -> Result<Self, Self::Error> {
+        Self::from_snapshot(value)
+    }
+}
+
+impl From<&CanvasDocument> for CanvasSnapshot {
+    fn from(value: &CanvasDocument) -> Self {
+        value.to_snapshot()
+    }
+}
+
 fn default_true() -> bool {
     true
 }
@@ -502,6 +583,56 @@ mod tests {
         .unwrap();
 
         assert_eq!(document.format_version, CANVAS_DOCUMENT_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn snapshot_round_trips_array_records() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let snapshot = document.to_snapshot();
+        assert_eq!(snapshot.nodes.len(), 2);
+        assert_eq!(snapshot.edges.len(), 1);
+
+        let restored = CanvasDocument::from_snapshot(snapshot).unwrap();
+        assert_eq!(restored.nodes.len(), 2);
+        assert_eq!(restored.edges.len(), 1);
+    }
+
+    #[test]
+    fn rejects_unsupported_snapshot_version() {
+        let snapshot = CanvasSnapshot {
+            format_version: CANVAS_DOCUMENT_FORMAT_VERSION + 1,
+            ..CanvasSnapshot::default()
+        };
+
+        assert_eq!(
+            CanvasDocument::from_snapshot(snapshot).unwrap_err(),
+            DocumentError::UnsupportedFormatVersion {
+                expected: CANVAS_DOCUMENT_FORMAT_VERSION,
+                found: CANVAS_DOCUMENT_FORMAT_VERSION + 1,
+            }
+        );
     }
 
     #[test]
