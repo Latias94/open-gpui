@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasSnapshot, CanvasTransaction,
-    DocumentError,
+    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasSnapshot, CanvasToolEffect,
+    CanvasTransaction, DocumentError,
 };
 use std::{convert::Infallible, error::Error, fmt};
 
@@ -253,6 +253,46 @@ where
     Ok(diff)
 }
 
+pub fn apply_persistent_tool_effect<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    effect: CanvasToolEffect,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    match effect {
+        CanvasToolEffect::ApplyTransaction(transaction) => {
+            apply_persistent_transaction(editor, store, cursor, transaction)?;
+        }
+        CanvasToolEffect::PushUndo(inverse) => {
+            apply_persistent_undo_commit(editor, store, cursor, inverse)?;
+        }
+        effect => {
+            editor.apply_tool_effect(effect)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn apply_persistent_tool_effects<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    effects: impl IntoIterator<Item = CanvasToolEffect>,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    for effect in effects {
+        apply_persistent_tool_effect(editor, store, cursor, effect)?;
+    }
+
+    Ok(())
+}
+
 pub fn save_canvas_checkpoint<S>(
     editor: &CanvasEditor,
     store: &mut S,
@@ -269,6 +309,27 @@ where
         .compact_log_entries(checkpoint.sequence)
         .map_err(CanvasPersistenceError::Store)?;
     Ok(checkpoint)
+}
+
+fn apply_persistent_undo_commit<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    inverse: CanvasTransaction,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    if !inverse.is_empty() {
+        let committed = editor.document.invert_transaction(&inverse)?;
+        store
+            .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), committed))
+            .map_err(CanvasPersistenceError::Store)?;
+        cursor.advance();
+    }
+
+    editor.apply_tool_effect(CanvasToolEffect::PushUndo(inverse))?;
+    Ok(())
 }
 
 fn replay_checkpoint_and_log<E>(
@@ -350,7 +411,9 @@ impl CanvasPersistenceStore for MemoryCanvasPersistenceStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEditor, CanvasNode, CanvasRecordId, DocumentCommand, NodeId};
+    use crate::{
+        CanvasEditor, CanvasNode, CanvasRecordId, CanvasSelection, DocumentCommand, NodeId,
+    };
     use open_gpui::{point, px, size};
 
     #[test]
@@ -756,5 +819,114 @@ mod tests {
         let err = save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap_err();
 
         assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
+    }
+
+    #[test]
+    fn persistent_tool_effects_log_recorded_transactions() {
+        let mut editor = CanvasEditor::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        apply_persistent_tool_effects(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            [
+                CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+                    DocumentCommand::InsertNode(CanvasNode::new(
+                        "a",
+                        point(px(0.0), px(0.0)),
+                        size(px(10.0), px(10.0)),
+                    )),
+                )),
+                CanvasToolEffect::SetSelection({
+                    let mut selection = CanvasSelection::default();
+                    selection.nodes.insert(NodeId::from("a"));
+                    selection
+                }),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert!(editor.selection.nodes.contains(&NodeId::from("a")));
+        let restored = load_canvas_document(&store).unwrap();
+        assert!(restored.nodes.contains_key(&NodeId::from("a")));
+    }
+
+    #[test]
+    fn persistent_tool_effects_commit_unrecorded_gesture_on_push_undo() {
+        let mut document = CanvasDocument::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        document.insert_node(original.clone()).unwrap();
+
+        let mut editor = CanvasEditor::new(document.clone());
+        let mut store = MemoryCanvasPersistenceStore::default();
+        store
+            .save_checkpoint(CanvasCheckpoint::new(0, &document))
+            .unwrap();
+        let mut cursor = CanvasPersistenceCursor::default();
+
+        let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
+        let inverse = CanvasTransaction::single(DocumentCommand::UpdateNode(original));
+
+        apply_persistent_tool_effects(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            [
+                CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(moved.clone()),
+                )),
+                CanvasToolEffect::PushUndo(inverse),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.document.nodes[&NodeId::from("a")], moved);
+
+        let restored = load_canvas_document(&store).unwrap();
+        assert_eq!(
+            restored.nodes[&NodeId::from("a")].position,
+            point(px(40.0), px(0.0))
+        );
+    }
+
+    #[test]
+    fn persistent_tool_effects_keep_unrecorded_effects_out_of_log() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let mut editor = CanvasEditor::new(document);
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::new(9);
+        let moved = CanvasNode::new("a", point(px(12.0), px(0.0)), size(px(10.0), px(10.0)));
+
+        apply_persistent_tool_effect(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(moved),
+            )),
+        )
+        .unwrap();
+
+        assert_eq!(cursor.sequence(), 9);
+        assert!(store.log_entries().is_empty());
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("a")].position,
+            point(px(12.0), px(0.0))
+        );
     }
 }

@@ -163,6 +163,11 @@ transactions.
 sequence and compacting log entries through that sequence. Checkpointing is explicit rather than
 automatic so applications can choose their own durability cadence and retry policy.
 
+`apply_persistent_tool_effects` bridges the tool reducer model to the same persistence boundary.
+Recorded tool transactions are appended to the log before they are applied, transient
+`ApplyUnrecorded` gesture updates remain in-memory, and the final `PushUndo` effect commits the
+completed gesture as one forward transaction derived from the editor's current document state.
+
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
 Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the

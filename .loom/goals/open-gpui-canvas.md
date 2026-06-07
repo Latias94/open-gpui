@@ -118,12 +118,13 @@ stop_conditions:
 | Package README verification | Done | `cargo package -p open-gpui-canvas --locked --allow-dirty` verifies the crate README is packaged with the future publish artifact. |
 | Editor persistence hook | Done | `CanvasPersistenceCursor` and `apply_persistent_transaction` connect successful recorded editor transactions to monotonic store log entries without binding `CanvasEditor` to a concrete backend. |
 | Persistence checkpoint helper | Done | `save_canvas_checkpoint` persists an editor snapshot at the current cursor sequence and compacts older log entries through the same store abstraction. |
+| Persistent tool effect runner | Done | `apply_persistent_tool_effects` logs recorded tool transactions and commits finished unrecorded gestures through `PushUndo` while leaving transient updates out of the log. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Persistent tool effect runner | Add an optional helper that applies `CanvasToolEffect::ApplyTransaction` through the persistence hook while keeping unrecorded gesture effects out of the log. | focused unit tests |
+| High | Persistent event dispatch helper | Add optional event dispatch helpers that combine built-in/custom tool reducers with persistent effect application for applications that want a single entrypoint. | focused unit tests |
 | Medium | Cached graph indexes | Add an optional incremental adjacency index if real examples show `CanvasGraph` scan-based queries becoming hot. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 
