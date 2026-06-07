@@ -110,13 +110,14 @@ stop_conditions:
 | Tool effect boundary | Done | `CanvasToolEffect` centralizes recorded transactions, unrecorded transactions, selection, viewport, and tool-state updates so built-in and future custom tools share one editor mutation path. |
 | Schema evolution boundary | Done | `migrate_canvas_snapshot`, minimum supported format version, and migration table exports make future snapshot changes explicit before storage and CRDT adapters depend on them. |
 | Custom tool reducer boundary | Done | `CanvasTool::custom`, `CanvasToolContext`, and `CanvasToolReducer` let applications build custom tools that read editor state and emit effects without mutating `CanvasEditor` directly. |
+| Persistence adapter feature boundary | Done | `redb-store`, `loro-crdt`, and `rkyv-snapshot` features plus adapter capability statuses reserve future adapter names without pulling optional dependencies into the default core build. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Persistence adapter feature boundaries | Add redb/Loro/rkyv adapter scaffolding only after feature boundaries keep optional dependencies out of the core default build. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
-| Medium | Tool registry ergonomics | Wrap multiple custom reducers in a registry once the single-reducer boundary has enough application pressure. | focused reducer tests |
+| High | Tool registry ergonomics | Wrap multiple custom reducers in a registry once the single-reducer boundary has enough application pressure. | focused reducer tests |
+| Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 
 ## Deferred Work
 

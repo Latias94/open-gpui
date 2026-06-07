@@ -137,6 +137,13 @@ contract. `redb`, Loro, and `rkyv` remain adapter choices: `redb` can back a loc
 store, Loro can translate transactions or diffs into collaborative operations, and `rkyv` can
 optimize snapshots once the public record format stabilizes.
 
+Optional persistence and collaboration adapters have explicit feature boundaries before concrete
+dependencies are introduced. `redb-store`, `loro-crdt`, and `rkyv-snapshot` are reserved feature
+names, and `CanvasPersistenceAdapterStatus` reports both whether a feature is enabled and whether
+the adapter is actually implemented. The default build only implements the in-memory store; enabling
+an adapter feature is not treated as proof that a concrete backend exists. This keeps the core crate
+honest while leaving a stable place to attach optional dependencies later.
+
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
 Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the

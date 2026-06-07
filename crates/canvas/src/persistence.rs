@@ -1,6 +1,75 @@
 use crate::{CanvasDocument, CanvasSnapshot, CanvasTransaction, DocumentError};
 use std::{convert::Infallible, error::Error, fmt};
 
+pub const CANVAS_REDB_STORE_FEATURE: &str = "redb-store";
+pub const CANVAS_LORO_CRDT_FEATURE: &str = "loro-crdt";
+pub const CANVAS_RKYV_SNAPSHOT_FEATURE: &str = "rkyv-snapshot";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasPersistenceAdapter {
+    MemoryStore,
+    RedbStore,
+    LoroCrdt,
+    RkyvSnapshot,
+}
+
+impl CanvasPersistenceAdapter {
+    pub fn feature_name(self) -> Option<&'static str> {
+        match self {
+            Self::MemoryStore => None,
+            Self::RedbStore => Some(CANVAS_REDB_STORE_FEATURE),
+            Self::LoroCrdt => Some(CANVAS_LORO_CRDT_FEATURE),
+            Self::RkyvSnapshot => Some(CANVAS_RKYV_SNAPSHOT_FEATURE),
+        }
+    }
+
+    pub fn feature_enabled(self) -> bool {
+        match self {
+            Self::MemoryStore => true,
+            Self::RedbStore => cfg!(feature = "redb-store"),
+            Self::LoroCrdt => cfg!(feature = "loro-crdt"),
+            Self::RkyvSnapshot => cfg!(feature = "rkyv-snapshot"),
+        }
+    }
+
+    pub fn implemented(self) -> bool {
+        matches!(self, Self::MemoryStore)
+    }
+
+    pub fn status(self) -> CanvasPersistenceAdapterStatus {
+        CanvasPersistenceAdapterStatus {
+            adapter: self,
+            feature_name: self.feature_name(),
+            feature_enabled: self.feature_enabled(),
+            implemented: self.implemented(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanvasPersistenceAdapterStatus {
+    pub adapter: CanvasPersistenceAdapter,
+    pub feature_name: Option<&'static str>,
+    pub feature_enabled: bool,
+    pub implemented: bool,
+}
+
+pub const CANVAS_PERSISTENCE_ADAPTERS: &[CanvasPersistenceAdapter] = &[
+    CanvasPersistenceAdapter::MemoryStore,
+    CanvasPersistenceAdapter::RedbStore,
+    CanvasPersistenceAdapter::LoroCrdt,
+    CanvasPersistenceAdapter::RkyvSnapshot,
+];
+
+pub fn canvas_persistence_adapter_statuses() -> [CanvasPersistenceAdapterStatus; 4] {
+    [
+        CanvasPersistenceAdapter::MemoryStore.status(),
+        CanvasPersistenceAdapter::RedbStore.status(),
+        CanvasPersistenceAdapter::LoroCrdt.status(),
+        CanvasPersistenceAdapter::RkyvSnapshot.status(),
+    ]
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanvasCheckpoint {
     pub sequence: u64,
@@ -185,6 +254,57 @@ mod tests {
     use super::*;
     use crate::{CanvasNode, DocumentCommand, NodeId};
     use open_gpui::{point, px, size};
+
+    #[test]
+    fn persistence_adapter_statuses_describe_default_and_future_adapters() {
+        assert_eq!(
+            CANVAS_PERSISTENCE_ADAPTERS,
+            [
+                CanvasPersistenceAdapter::MemoryStore,
+                CanvasPersistenceAdapter::RedbStore,
+                CanvasPersistenceAdapter::LoroCrdt,
+                CanvasPersistenceAdapter::RkyvSnapshot,
+            ]
+        );
+
+        let statuses = canvas_persistence_adapter_statuses();
+        assert_eq!(
+            statuses[0],
+            CanvasPersistenceAdapterStatus {
+                adapter: CanvasPersistenceAdapter::MemoryStore,
+                feature_name: None,
+                feature_enabled: true,
+                implemented: true,
+            }
+        );
+        assert_eq!(
+            statuses[1],
+            CanvasPersistenceAdapterStatus {
+                adapter: CanvasPersistenceAdapter::RedbStore,
+                feature_name: Some(CANVAS_REDB_STORE_FEATURE),
+                feature_enabled: cfg!(feature = "redb-store"),
+                implemented: false,
+            }
+        );
+        assert_eq!(
+            statuses[2],
+            CanvasPersistenceAdapterStatus {
+                adapter: CanvasPersistenceAdapter::LoroCrdt,
+                feature_name: Some(CANVAS_LORO_CRDT_FEATURE),
+                feature_enabled: cfg!(feature = "loro-crdt"),
+                implemented: false,
+            }
+        );
+        assert_eq!(
+            statuses[3],
+            CanvasPersistenceAdapterStatus {
+                adapter: CanvasPersistenceAdapter::RkyvSnapshot,
+                feature_name: Some(CANVAS_RKYV_SNAPSHOT_FEATURE),
+                feature_enabled: cfg!(feature = "rkyv-snapshot"),
+                implemented: false,
+            }
+        );
+    }
 
     #[test]
     fn replays_checkpoint_and_transaction_log() {

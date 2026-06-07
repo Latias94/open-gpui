@@ -34,8 +34,11 @@ pub use json_canvas::{
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
 pub use persistence::{
-    CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceError, CanvasPersistenceStore,
-    CanvasReplayError, MemoryCanvasPersistenceStore, load_canvas_document, replay_canvas_log,
+    CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_REDB_STORE_FEATURE,
+    CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceAdapter,
+    CanvasPersistenceAdapterStatus, CanvasPersistenceError, CanvasPersistenceStore,
+    CanvasReplayError, MemoryCanvasPersistenceStore, canvas_persistence_adapter_statuses,
+    load_canvas_document, replay_canvas_log,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,
