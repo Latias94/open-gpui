@@ -2087,7 +2087,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 [[package]]
 name = "font-kit"
 version = "0.14.3"
-source = "git+https://github.com/Latias94/font-kit?branch=main#7c6bb817b6878a3e6b44e4fa0902cd48c4905107"
+source = "git+https://github.com/Latias94/font-kit?branch=main#710b1244a9d6fa69c6ba8510cb725d069682b427"
 dependencies = [
  "bitflags 2.13.0",
  "byteorder",

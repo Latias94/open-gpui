@@ -742,8 +742,204 @@ mod lenient_font_attributes {
 
 #[cfg(test)]
 mod tests {
-    use crate::MacTextSystem;
-    use gpui::{FontRun, GlyphId, PlatformTextSystem, font, px};
+    use super::*;
+    use core_text::font::CTFont;
+    use font_kit::{font::Font as FontKitFont, handle::Handle, source::SystemSource};
+    use gpui::{FontFallbacks, FontRun, GlyphId, PlatformTextSystem, font, px};
+    use std::borrow::Cow;
+
+    const TEST_POSTSCRIPT_NAMES: &[&str] = &[
+        "Helvetica",
+        "ArialMT",
+        "Times-Roman",
+        "Menlo-Regular",
+        "CourierNewPSMT",
+    ];
+
+    const LATIN_FONT_FAMILIES: &[&str] = &["Helvetica", "Arial", "Times", "Menlo", "Courier New"];
+
+    const CJK_FONT_FAMILIES: &[&str] = &[
+        "PingFang SC",
+        "Hiragino Sans GB",
+        "Hiragino Sans",
+        "Songti SC",
+        "Heiti SC",
+        "STHeiti",
+    ];
+
+    fn load_test_system_font() -> FontKitFont {
+        let source = SystemSource::new();
+        for postscript_name in TEST_POSTSCRIPT_NAMES {
+            let Ok(handle) = source.select_by_postscript_name(postscript_name) else {
+                continue;
+            };
+            let Ok(font) = handle.load() else {
+                continue;
+            };
+            if font.glyph_for_char('m').is_some() && font.copy_font_data().is_some() {
+                return font;
+            }
+        }
+
+        panic!(
+            "could not load a test system font with file data from any of: {}",
+            TEST_POSTSCRIPT_NAMES.join(", ")
+        );
+    }
+
+    fn test_system_font_data() -> (String, Vec<u8>) {
+        let font = load_test_system_font();
+        let family_name = font.family_name();
+        let data = font
+            .copy_font_data()
+            .expect("selected test font should expose font data");
+
+        (family_name, (*data).clone())
+    }
+
+    fn family_covers_char(family: &str, ch: char) -> Option<bool> {
+        let source = SystemSource::new();
+        let family = source.select_family_by_name(family).ok()?;
+        let mut has_measurement_glyph = false;
+        let mut covers_char = false;
+
+        for handle in family.fonts() {
+            let Ok(font) = handle.load() else {
+                continue;
+            };
+            has_measurement_glyph |= font.glyph_for_char('m').is_some();
+            covers_char |= font.glyph_for_char(ch).is_some();
+        }
+
+        has_measurement_glyph.then_some(covers_char)
+    }
+
+    fn first_family_matching(candidates: &[&str], ch: char, covers_char: bool) -> Option<String> {
+        candidates
+            .iter()
+            .copied()
+            .find(|family| family_covers_char(family, ch) == Some(covers_char))
+            .map(String::from)
+    }
+
+    fn assert_memory_source_contains(fonts: &MacTextSystem, family: &str) {
+        let families = fonts
+            .0
+            .read()
+            .memory_source
+            .all_families()
+            .expect("memory source should list families");
+
+        assert!(
+            families.iter().any(|loaded| loaded == family),
+            "memory source did not contain loaded font family '{family}'"
+        );
+    }
+
+    fn assert_can_shape_family(fonts: &MacTextSystem, family: &str) -> FontId {
+        let font_id = fonts.font_id(&font(family)).unwrap_or_else(|error| {
+            panic!("failed to resolve loaded font family {family}: {error}")
+        });
+        let glyph_id = fonts
+            .glyph_for_char(font_id, 'm')
+            .unwrap_or_else(|| panic!("loaded font family {family} did not expose an 'm' glyph"));
+        let layout = fonts.layout_line("m", px(16.), &[FontRun { font_id, len: 1 }]);
+
+        assert_eq!(layout.len, 1);
+        assert_eq!(layout.runs.len(), 1);
+        assert_eq!(layout.runs[0].glyphs.len(), 1);
+        assert_eq!(layout.runs[0].glyphs[0].id, glyph_id);
+
+        font_id
+    }
+
+    #[test]
+    fn test_native_font_handle_round_trips_borrowed_ctfont() {
+        let font = load_test_system_font();
+        let postscript_name = font
+            .postscript_name()
+            .expect("test font should have a PostScript name");
+        let native_font = font.native_font();
+
+        let handle = Handle::from_native(&font);
+        assert!(
+            handle.native_as::<CTFont>().is_some(),
+            "native font handle should retain a CTFont payload"
+        );
+
+        let round_tripped = handle.load().expect("native handle should load");
+        assert_eq!(
+            round_tripped.postscript_name().as_deref(),
+            Some(postscript_name.as_str())
+        );
+
+        let borrowed = unsafe { FontKitFont::from_native_font(&native_font) };
+        assert_eq!(
+            borrowed.postscript_name().as_deref(),
+            Some(postscript_name.as_str())
+        );
+        assert!(borrowed.glyph_for_char('m').is_some());
+    }
+
+    #[test]
+    fn test_add_fonts_accepts_owned_and_borrowed_font_data() {
+        let (family_name, font_data) = test_system_font_data();
+
+        let owned_fonts = MacTextSystem::new();
+        owned_fonts
+            .add_fonts(vec![Cow::Owned(font_data.clone())])
+            .expect("owned font data should load");
+        assert_memory_source_contains(&owned_fonts, &family_name);
+        assert_can_shape_family(&owned_fonts, &family_name);
+
+        let borrowed_data: &'static [u8] = Box::leak(font_data.into_boxed_slice());
+        let borrowed_fonts = MacTextSystem::new();
+        borrowed_fonts
+            .add_fonts(vec![Cow::Borrowed(borrowed_data)])
+            .expect("borrowed embedded font data should load");
+        assert_memory_source_contains(&borrowed_fonts, &family_name);
+        assert_can_shape_family(&borrowed_fonts, &family_name);
+    }
+
+    #[test]
+    fn test_font_fallbacks_shape_missing_glyphs_with_native_core_text() {
+        let cjk_char = '你';
+        let primary_family = first_family_matching(LATIN_FONT_FAMILIES, cjk_char, false)
+            .expect("expected a Latin macOS font family without CJK coverage");
+        let fallback_family = first_family_matching(CJK_FONT_FAMILIES, cjk_char, true)
+            .expect("expected a CJK macOS font family with CJK coverage");
+
+        let fonts = MacTextSystem::new();
+        let mut primary_font = font(primary_family.clone());
+        primary_font.fallbacks = Some(FontFallbacks::from_fonts(vec![fallback_family.clone()]));
+        let primary_id = fonts.font_id(&primary_font).unwrap_or_else(|error| {
+            panic!("failed to resolve primary font {primary_family}: {error}")
+        });
+
+        let text = "m你m";
+        let layout = fonts.layout_line(
+            text,
+            px(16.),
+            &[FontRun {
+                font_id: primary_id,
+                len: text.len(),
+            }],
+        );
+
+        let cjk_byte_index = "m".len();
+        let cjk_run_ids = layout
+            .runs
+            .iter()
+            .filter(|run| run.glyphs.iter().any(|glyph| glyph.index == cjk_byte_index))
+            .map(|run| run.font_id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(layout.len, text.len());
+        assert!(
+            cjk_run_ids.iter().any(|font_id| *font_id != primary_id),
+            "expected CoreText to shape the CJK glyph with a fallback font; primary={primary_family}, fallback={fallback_family}"
+        );
+    }
 
     #[test]
     fn test_layout_line_bom_char() {
