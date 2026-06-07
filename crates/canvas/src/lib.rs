@@ -7,6 +7,7 @@
 mod document;
 mod geometry;
 mod index;
+mod json_canvas;
 mod tool;
 
 pub use document::{
@@ -17,6 +18,10 @@ pub use document::{
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
+pub use json_canvas::{
+    JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
+    JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
+};
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, PointerButton, ToolState,
 };

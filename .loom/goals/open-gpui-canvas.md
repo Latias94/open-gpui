@@ -99,13 +99,13 @@ stop_conditions:
 | Viewport | Done | View/document transforms, anchored zoom, zoom factor validation, and visible document bounds are implemented. |
 | Selection rectangle and multi-select | Done | Select tool supports box selection and multi-node drag for selected nodes. |
 | Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
+| JSON Canvas import/export | Done | `JsonCanvas` converts text/file/link/group nodes and side-based edges to and from `CanvasDocument`. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Import/export adapters | Obsidian Canvas JSON is the lowest-friction interchange format to validate the model. | round-trip tests |
-| Medium | Persistent storage traits | Define redb/Loro/rkyv adapter boundaries without depending on them in core. | trait compile tests |
+| High | Persistent storage traits | Define redb/Loro/rkyv adapter boundaries without depending on them in core. | trait compile tests |
 | Medium | GPUI adapter prototype | Use batched canvas paint and spatial culling, not one GPUI element per record. | `cargo check -p open-gpui-canvas` plus example check |
 | Medium | Property tests | Stress command inverse, diff compaction, and index equivalence against full rebuild. | proptest or focused randomized tests |
 
@@ -116,5 +116,4 @@ stop_conditions:
 - `redb` local cache.
 - Rich text editing inside nodes.
 - GPU-specialized rendering paths.
-- Obsidian Canvas import/export.
 - Figma-like constraints/components.

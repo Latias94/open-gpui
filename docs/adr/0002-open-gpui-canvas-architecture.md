@@ -16,8 +16,8 @@ The reference inputs are intentionally split by concern:
   typed node data, endpoint handles, and graph utilities.
 - `repo-ref/tldraw`: use the tool state machine, shape-with-bounds model, document records,
   migrations, and local-first mindset.
-- Obsidian Canvas: use the simple JSON mental model of canvas nodes and edges as an interchange
-  inspiration, not as the only storage model.
+- JSON Canvas / Obsidian Canvas: use the simple JSON mental model of canvas nodes and edges as an
+  interchange format, not as the only storage model.
 
 Open GPUI must not copy xyflow's DOM rendering model. React Flow and Svelte Flow position DOM
 nodes absolutely, which is productive for web UI but becomes a performance ceiling for tens of
@@ -41,6 +41,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - A viewport/camera model that is separate from document data.
 - A spatial index and hit-test API that can be rebuilt or incrementally updated without changing
   document serialization.
+- A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
+  edge sides into deterministic node handles.
 - A small tool state machine inspired by tldraw states such as idle, pointing, translating,
   panning, pinching, connecting, and editing text.
 - Optional future adapters for Loro, `rkyv`, and `redb`, kept outside the core MVP unless they are
@@ -94,6 +96,11 @@ Route metadata is stored as intent, not as a renderer contract. The core model r
 manual waypoints, optional control points, route-specific options, and interaction width so that
 hit testing and persistence remain stable. Actual path generation, obstacle avoidance, arrowhead
 rendering, and router plugins remain outside the core document model.
+
+JSON Canvas import/export is implemented as an adapter around the core records. It preserves
+`text`, `file`, `link`, and `group` node payload fields in `CanvasNode::data`, maps node and edge
+colors into `CanvasStyle`, and maps `fromSide` / `toSide` into deterministic side handles. This
+keeps Obsidian-style interchange useful without making JSON Canvas the canonical storage format.
 
 ## Tool Model
 
