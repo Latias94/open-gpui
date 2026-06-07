@@ -43,8 +43,8 @@ The first import copied the Apache-2.0 GPUI framework closure from Zed into this
 
 ## Known Follow-Ups
 
-- Replace or justify Zed-maintained external forks such as `zed-scap`, `zed-font-kit`, `zed-xim`,
-  and Zed's `wgpu` fork.
+- Replace or justify Zed-maintained external forks such as `zed-scap`, `zed-font-kit`, and Zed's
+  `wgpu` fork.
 - Clean up Zed product naming in comments, examples, window class names, and README content.
 - Decide whether platform backend crates should be published as-is or renamed under the Open GPUI
   package strategy.

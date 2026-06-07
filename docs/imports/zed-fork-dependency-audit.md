@@ -24,7 +24,6 @@ flowchart TD
     FontKit[zed-font-kit] --> GpuiFont[gpui font-kit feature]
     FontKit --> GpuiMacos[gpui_macos]
     FontKit --> GpuiWgpu[gpui_wgpu font matching]
-    Xim[zed-xim] --> LinuxX11[gpui_linux X11 input method]
     Wgpu[Zed wgpu fork] --> GpuiWgpu
 ```
 
@@ -34,6 +33,7 @@ flowchart TD
 | --- | --- | --- | --- |
 | `zed-reqwest` | Replaced with crates.io `reqwest = "=0.12.15"`. | Zed's fork added per-request `RequestBuilder::redirect_policy`; `reqwest_client` now caches same-config clients with the requested upstream client-level redirect policy when a request carries `RedirectPolicy`. | `cargo check -p reqwest_client`; `cargo nextest run -p reqwest_client` |
 | `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
+| `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
 
 ## Inventory
 
@@ -41,7 +41,6 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
 | `zed-font-kit` | `zed-industries/font-kit`, package `zed-font-kit`, version `0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io search | High | Defer until text/font rendering has stronger coverage; this touches font matching and platform font behavior. |
-| `zed-xim` | `zed-industries/xim-rs.git`, package `zed-xim`, version `0.4.0-zed` | `gpui_linux` X11 input method path | `xim = 0.5.0` from crates.io search | Medium-high | Migrate after Linux/X11-focused checks exist; input-method regressions are hard to catch from Windows CI. |
 | Zed `wgpu` fork | `zed-industries/wgpu.git`, version `29.0.3` | `gpui_wgpu` | `wgpu = 29.0.3` from crates.io search | High | Defer. The version line matches crates.io, but the fork may carry unpublished patches in rendering internals. Compare lockfile and API behavior before replacing. |
 
 ## Evidence Commands
@@ -90,6 +89,24 @@ Follow-up lockfile check:
 - `windows-capture = 1.3.6` is too old for the fork because it lacks `capture::Context` and exposes
   `FrameBuffer::as_raw_nopadding_buffer()` instead of `as_nopadding_buffer()`.
 - `windows-capture = 1.4.0` matches the fork and restores `cargo check -p gpui_windows --all-features`.
+
+Additional `zed-xim` migration probe on 2026-06-07:
+
+```sh
+cargo info xim
+cargo update -p zed-xim --precise 0.5.0
+cargo tree --workspace --all-features --target all --edges normal --invert xim
+wsl -d Ubuntu -- bash -lc 'cd /mnt/f/SourceCodes/Rust/open-gpui; export CARGO_TARGET_DIR=/tmp/open-gpui-target-linux; cargo check -p gpui_linux --all-features'
+```
+
+Result:
+
+- `xim = 0.5.0` is the current crates.io release and preserves the `x11rb-client` / `x11rb-xcb`
+  feature split used by `gpui_linux`.
+- The only compile break was the fork-only `Client::reset_ic` helper. Sending
+  `Request::ResetIc` through `ClientCore::send_req` preserves the same protocol request.
+- WSL Ubuntu verifies the Linux all-features build. It still emits two pre-existing
+  `nightly_coverage` `unexpected_cfgs` warnings from `gpui_linux/src/linux/dispatcher.rs`.
 
 ## Alternatives Considered
 
@@ -143,18 +160,16 @@ Decision: rejected as a long-term strategy.
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
    the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
    Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-2. **`zed-xim`**: replace only with Linux/X11-focused build evidence. Add a Linux CI lane first if
-   practical.
-3. **`zed-font-kit`**: defer until text/font tests are stronger because it affects font matching and
+2. **`zed-font-kit`**: defer until text/font tests are stronger because it affects font matching and
    renderer behavior.
-4. **Zed `wgpu` fork**: defer until a dedicated renderer compatibility lane can compare behavior
+3. **Zed `wgpu` fork**: defer until a dedicated renderer compatibility lane can compare behavior
    against crates.io `wgpu = 29.0.3`.
 
 ## Success Metrics
 
 | Metric | Target | Measurement |
 | --- | --- | --- |
-| Zed fork count | Reduced one fork at a time | `rg 'zed-scap|zed-font-kit|zed-xim|zed-industries/wgpu' Cargo.toml Cargo.lock` |
+| Zed fork count | Reduced one fork at a time | `rg 'zed-scap|zed-font-kit|zed-industries/wgpu' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
 | Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks or documented limitation |
@@ -172,5 +187,5 @@ Decision: rejected as a long-term strategy.
 
 - Should Open GPUI publish temporary internal forks under its own organization when upstream crates
   are not compatible yet?
-- Which runtime checks should be added before touching `font-kit`, `xim`, or `wgpu`?
-- Should Linux all-features CI be added before the `scap` and `xim` migrations?
+- Which runtime checks should be added before touching `font-kit` or `wgpu`?
+- Should Linux all-features CI be added as a permanent gate for future Linux dependency changes?

@@ -36,7 +36,7 @@ use x11rb::{
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
 };
-use xim::{AttributeName, Client, InputStyle, x11rb::X11rbClient};
+use xim::{AttributeName, Client, ClientCore, InputStyle, x11rb::X11rbClient};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
 use xkbcommon::xkb::{self as xkbc, STATE_LAYOUT_EFFECTIVE};
 
@@ -756,7 +756,11 @@ impl X11Client {
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
             if let Some(xim_handler) = state.xim_handler.as_ref() {
-                ximc.reset_ic(xim_handler.im_id, xim_handler.ic_id).ok();
+                ximc.send_req(xim::Request::ResetIc {
+                    input_method_id: xim_handler.im_id,
+                    input_context_id: xim_handler.ic_id,
+                })
+                .ok();
             } else {
                 log::error!("bug: xim handler not set in reset_ime");
             }

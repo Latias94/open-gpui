@@ -21,4 +21,4 @@ The import-boundary scan rejects dependency files that reintroduce Zed's GPL tra
 Cargo git dependency, or the removed Zed `perf` crate dependency.
 
 The scan intentionally does not reject the current external Zed-maintained forks that are still
-tracked as follow-up debt: `zed-scap`, `zed-font-kit`, `zed-xim`, and Zed's `wgpu` fork.
+tracked as follow-up debt: `zed-scap`, `zed-font-kit`, and Zed's `wgpu` fork.
