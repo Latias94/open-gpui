@@ -9,6 +9,8 @@ mod geometry;
 mod index;
 mod json_canvas;
 mod persistence;
+#[cfg(test)]
+mod test_support;
 mod tool;
 
 pub use document::{

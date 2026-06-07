@@ -234,8 +234,12 @@ impl SpatialIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasDocument, CanvasNode, CanvasShape};
+    use crate::{
+        CanvasDocument, CanvasNode, CanvasShape, CanvasTransaction,
+        test_support::{CanvasCommandGenerator, TestRng},
+    };
     use open_gpui::{Bounds, point, px, size};
+    use std::cmp::Ordering;
 
     #[test]
     fn hit_test_returns_topmost_first() {
@@ -509,5 +513,48 @@ mod tests {
                 && record.bounds.origin == point(px(0.0), px(0.0))
                 && record.bounds.size == size(px(120.0), px(90.0))
         }));
+    }
+
+    #[test]
+    fn incremental_index_matches_rebuild_after_random_diffs() {
+        let mut rng = TestRng::new(0x4b65_9072_e9c1_fab3);
+        let mut generator = CanvasCommandGenerator::default();
+        let mut document = CanvasDocument::default();
+        let mut index = SpatialIndex::rebuild(&document);
+
+        for _ in 0..192 {
+            let command = generator.next_command(&document, &mut rng);
+            let diff = document
+                .apply_transaction_with_diff(CanvasTransaction::single(command))
+                .unwrap();
+            index.apply_diff(&document, &diff);
+
+            let rebuilt = SpatialIndex::rebuild(&document);
+            assert_eq!(sorted_records(&index), sorted_records(&rebuilt));
+        }
+    }
+
+    fn sorted_records(index: &SpatialIndex) -> Vec<HitRecord> {
+        let mut records = index.records().to_vec();
+        records.sort_by(compare_hit_records);
+        records
+    }
+
+    fn compare_hit_records(left: &HitRecord, right: &HitRecord) -> Ordering {
+        target_key(&left.target)
+            .cmp(&target_key(&right.target))
+            .then_with(|| left.z_index.cmp(&right.z_index))
+            .then_with(|| left.hidden.cmp(&right.hidden))
+    }
+
+    fn target_key(target: &HitTarget) -> (u8, String, String) {
+        match target {
+            HitTarget::Node(id) => (0, id.to_string(), String::new()),
+            HitTarget::Handle { node_id, handle_id } => {
+                (1, node_id.to_string(), handle_id.to_string())
+            }
+            HitTarget::Shape(id) => (2, id.to_string(), String::new()),
+            HitTarget::Edge(id) => (3, id.to_string(), String::new()),
+        }
     }
 }

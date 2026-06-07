@@ -101,13 +101,13 @@ stop_conditions:
 | Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
 | JSON Canvas import/export | Done | `JsonCanvas` converts text/file/link/group nodes and side-based edges to and from `CanvasDocument`. |
 | Persistent storage traits | Done | `CanvasPersistenceStore` defines checkpoint plus monotonic transaction-log replay without introducing redb/Loro/rkyv core dependencies. |
+| Randomized invariant tests | Done | Deterministic stress tests cover transaction inverse/diff replay and incremental spatial-index equivalence against full rebuilds. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Property tests | Stress command inverse, diff compaction, and index equivalence against full rebuild before renderer work depends on them. | proptest or focused randomized tests |
-| Medium | GPUI adapter prototype | Use batched canvas paint and spatial culling, not one GPUI element per record. | `cargo check -p open-gpui-canvas` plus example check |
+| High | GPUI adapter prototype | Use batched canvas paint and spatial culling, not one GPUI element per record. | `cargo check -p open-gpui-canvas` plus example check |
 | Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait boundary has survived real document workflows. | adapter-specific integration tests |
 
 ## Deferred Work

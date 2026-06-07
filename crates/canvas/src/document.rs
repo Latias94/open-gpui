@@ -1111,6 +1111,7 @@ fn default_edge_interaction_width() -> Pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{CanvasCommandGenerator, TestRng};
     use open_gpui::{point, px, size};
 
     #[test]
@@ -1686,5 +1687,40 @@ mod tests {
 
         assert!(diff.metadata_changed);
         assert!(!diff.is_empty());
+    }
+
+    #[test]
+    fn randomized_transaction_batches_match_final_diff_and_inverse() {
+        let mut rng = TestRng::new(0x7a99_21c8_5f01_4d3b);
+        let mut generator = CanvasCommandGenerator::default();
+        let mut document = CanvasDocument::default();
+
+        for _ in 0..96 {
+            let before = document.clone();
+            let mut draft = before.clone();
+            let mut commands = Vec::new();
+
+            for _ in 0..(1 + rng.usize(6)) {
+                let command = generator.next_command(&draft, &mut rng);
+                draft.apply(command.clone()).unwrap();
+                commands.push(command);
+            }
+
+            let transaction = CanvasTransaction::new(commands);
+            let inverse = before.invert_transaction(&transaction).unwrap();
+            let diff = document
+                .apply_transaction_with_diff(transaction.clone())
+                .unwrap();
+
+            assert_eq!(document, draft);
+            assert_eq!(diff, document.diff_against(&before));
+            document.validate_integrity().unwrap();
+
+            document.apply_transaction(inverse).unwrap();
+            assert_eq!(document, before);
+
+            document.apply_transaction(transaction).unwrap();
+            assert_eq!(document, draft);
+        }
     }
 }
