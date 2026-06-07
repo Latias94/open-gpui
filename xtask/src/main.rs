@@ -6,6 +6,12 @@ use std::{
 
 const DISALLOWED_DEPENDENCY_NAMES: &[&str] =
     &["ztracing", "ztracing_macro", "zlog", "zed-sum-tree", "perf"];
+const DISALLOWED_ZED_GIT_SOURCES: &[&str] = &[
+    "zed-industries/font-kit",
+    "zed-industries/reqwest",
+    "zed-industries/wgpu",
+    "zed-industries/xim",
+];
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -17,6 +23,7 @@ fn main() -> ExitCode {
     let root = workspace_root();
     let result = match command.as_str() {
         "verify" => verify(&root),
+        "renderer-smoke" => renderer_smoke(&root),
         "scan-import-boundary" => scan_import_boundary(&root),
         _ => {
             eprintln!("unknown command: {command}");
@@ -36,6 +43,7 @@ fn print_usage() {
     eprintln!();
     eprintln!("commands:");
     eprintln!("  verify                run the local Open GPUI gate");
+    eprintln!("  renderer-smoke        run the native wgpu renderer smoke test");
     eprintln!("  scan-import-boundary  scan for disallowed import residue");
 }
 
@@ -45,6 +53,22 @@ fn verify(root: &Path) -> Result<(), ()> {
     run(root, "cargo", &["check", "-p", "open-gpui-smoke-native"])?;
     scan_import_boundary(root)?;
     Ok(())
+}
+
+fn renderer_smoke(root: &Path) -> Result<(), ()> {
+    run(
+        root,
+        "cargo",
+        &[
+            "nextest",
+            "run",
+            "-p",
+            "gpui_wgpu",
+            "--features",
+            "font-kit",
+            "renderer_smoke_creates_core_pipelines",
+        ],
+    )
 }
 
 fn run(root: &Path, program: &str, args: &[&str]) -> Result<(), ()> {
@@ -189,6 +213,10 @@ fn scan_manifest_dependency_table(
                 failures.push(format!(
                     "{relative}:{section}.{alias}: disallowed Zed monorepo git source `{git_source}`"
                 ));
+            } else if is_disallowed_zed_git_source(git_source) {
+                failures.push(format!(
+                    "{relative}:{section}.{alias}: disallowed retired Zed fork git source `{git_source}`"
+                ));
             }
         }
     }
@@ -227,6 +255,10 @@ fn scan_lock_dependencies(relative: &str, contents: &str, failures: &mut Vec<Str
                 failures.push(format!(
                     "{relative}: package `{name}` uses disallowed Zed monorepo source `{source}`"
                 ));
+            } else if is_disallowed_zed_git_source(source) {
+                failures.push(format!(
+                    "{relative}: package `{name}` uses disallowed retired Zed fork source `{source}`"
+                ));
             }
         }
     }
@@ -255,6 +287,12 @@ fn is_zed_monorepo_source(source: &str) -> bool {
     normalized_github_path(source)
         .as_deref()
         .is_some_and(|path| path == "zed-industries/zed")
+}
+
+fn is_disallowed_zed_git_source(source: &str) -> bool {
+    normalized_github_path(source)
+        .as_deref()
+        .is_some_and(|path| DISALLOWED_ZED_GIT_SOURCES.contains(&path))
 }
 
 fn normalized_github_path(source: &str) -> Option<String> {
@@ -460,18 +498,35 @@ zlog = { version = '0.1' }
     }
 
     #[test]
-    fn manifest_scan_allows_current_zed_forks() {
+    fn manifest_scan_rejects_retired_zed_git_forks() {
         let failures = manifest_failures(
             r#"
 [dependencies]
 reqwest = { git = 'https://github.com/zed-industries/reqwest.git', package = 'zed-reqwest', version = '0.12.15-zed' }
 wgpu = { git = 'https://github.com/zed-industries/wgpu.git' }
+font-kit = { git = 'https://github.com/zed-industries/font-kit.git', package = 'zed-font-kit' }
+xim = { git = 'https://github.com/zed-industries/xim.git', package = 'zed-xim' }
+"#,
+        );
+
+        assert!(has_failure(&failures, "zed-industries/reqwest.git"));
+        assert!(has_failure(&failures, "zed-industries/wgpu.git"));
+        assert!(has_failure(&failures, "zed-industries/font-kit.git"));
+        assert!(has_failure(&failures, "zed-industries/xim.git"));
+    }
+
+    #[test]
+    fn manifest_scan_allows_current_zed_scap_fork() {
+        let failures = manifest_failures(
+            r#"
+[dependencies]
+scap = { git = 'https://github.com/zed-industries/scap.git', package = 'zed-scap', version = '0.0.8-zed' }
 "#,
         );
 
         assert!(
             failures.is_empty(),
-            "expected current Zed-maintained forks to be allowed, got: {failures:?}"
+            "expected current zed-scap fork to be allowed, got: {failures:?}"
         );
     }
 
@@ -492,5 +547,19 @@ source = "git+https://github.com/zed-industries/zed.git?rev=abc#123"
 
         assert!(has_failure(&failures, "perf"));
         assert!(has_failure(&failures, "zed-industries/zed.git"));
+    }
+
+    #[test]
+    fn lock_scan_rejects_retired_zed_git_forks() {
+        let failures = lock_failures(
+            r#"
+[[package]]
+name = "wgpu"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=abc#123"
+"#,
+        );
+
+        assert!(has_failure(&failures, "zed-industries/wgpu.git"));
     }
 }

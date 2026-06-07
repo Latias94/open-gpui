@@ -1907,3 +1907,104 @@ impl RenderingParameters {
         }
     }
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+
+    fn smoke_device() -> anyhow::Result<(wgpu::Adapter, wgpu::Device)> {
+        gpui::block_on(async {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: None,
+            });
+
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to request adapter: {error}"))?;
+
+            let required_features = if adapter
+                .features()
+                .contains(wgpu::Features::DUAL_SOURCE_BLENDING)
+            {
+                wgpu::Features::DUAL_SOURCE_BLENDING
+            } else {
+                wgpu::Features::empty()
+            };
+
+            let (device, _) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("gpui_wgpu_renderer_smoke_device"),
+                    required_features,
+                    required_limits: wgpu::Limits::downlevel_defaults()
+                        .using_resolution(adapter.limits())
+                        .using_alignment(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to request device: {error}"))?;
+
+            Ok((adapter, device))
+        })
+    }
+
+    fn supported_render_target_format(
+        adapter: &wgpu::Adapter,
+    ) -> anyhow::Result<wgpu::TextureFormat> {
+        let required_usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+
+        [
+            wgpu::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ]
+        .into_iter()
+        .find(|format| {
+            adapter
+                .get_texture_format_features(*format)
+                .allowed_usages
+                .contains(required_usage)
+        })
+        .ok_or_else(|| {
+            let info = adapter.get_info();
+            anyhow::anyhow!(
+                "adapter {} ({:?}) does not support a smoke-test render target format",
+                info.name,
+                info.backend
+            )
+        })
+    }
+
+    #[test]
+    fn renderer_smoke_creates_core_pipelines() -> anyhow::Result<()> {
+        let (adapter, device) = smoke_device()?;
+        let surface_format = supported_render_target_format(&adapter)?;
+        let layouts = WgpuRenderer::create_bind_group_layouts(&device);
+        let rendering_params = RenderingParameters::new(&adapter, surface_format);
+        let dual_source_blending = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+
+        let pipelines = WgpuRenderer::create_pipelines(
+            &device,
+            &layouts,
+            surface_format,
+            wgpu::CompositeAlphaMode::Opaque,
+            rendering_params.path_sample_count,
+            dual_source_blending,
+        );
+
+        assert_eq!(pipelines.subpixel_sprites.is_some(), dual_source_blending);
+
+        Ok(())
+    }
+}

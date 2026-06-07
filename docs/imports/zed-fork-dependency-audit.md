@@ -34,7 +34,7 @@ flowchart TD
 | `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
 | `zed-font-kit` Git source | Replaced the Git dependency with crates.io `zed-font-kit = "0.14.1-zed"` while keeping the Zed API surface. | This removes `github.com/zed-industries/font-kit` from manifests and lockfile, but it is not an upstream `font-kit` replacement. The published crate uses `dirs = "5.0"` while the previously locked Git rev had `dirs = "6.0"`. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert zed-font-kit`; `rg 'zed-industries/font-kit|git\+https://github.com/zed-industries/font-kit' Cargo.toml Cargo.lock crates` |
-| Zed `wgpu` fork | Replaced with crates.io `wgpu = "=29.0.3"`. | The public `wgpu`, `naga`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`, and `wgpu-types` packages are the same version line and are compile-compatible with `gpui_wgpu` and Linux all-features checks. | `cargo check -p gpui_wgpu --locked`; `cargo check -p gpui_wgpu --features font-kit --locked`; WSL Ubuntu: `cargo check -p gpui_linux --all-features --locked`; `cargo run -p xtask -- scan-import-boundary` |
+| Zed `wgpu` fork | Replaced with crates.io `wgpu = "=29.0.3"`. | The public `wgpu`, `naga`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`, and `wgpu-types` packages are the same version line and are compile-compatible with `gpui_wgpu` and Linux all-features checks. A focused native smoke now requests a real adapter/device and creates the core renderer pipelines. | `cargo check -p gpui_wgpu --locked`; `cargo check -p gpui_wgpu --features font-kit --locked`; WSL Ubuntu: `cargo check -p gpui_linux --all-features --locked`; `cargo run -p xtask -- renderer-smoke`; `cargo run -p xtask -- scan-import-boundary` |
 
 ## Inventory
 
@@ -186,6 +186,7 @@ cargo check -p gpui_wgpu --features font-kit --locked
 cargo check -p gpui_wgpu --lib --features font-kit --locked
 wsl -d Ubuntu -- bash -lc 'cd /mnt/c/Users/Frankorz/AppData/Local/Temp/open-gpui-wgpu-probe && export CARGO_TARGET_DIR=/tmp/open-gpui-wgpu-probe-linux && cargo check -p gpui_linux --all-features --locked'
 cargo run -p xtask -- scan-import-boundary
+cargo run -p xtask -- renderer-smoke
 ```
 
 Result:
@@ -197,6 +198,9 @@ Result:
 - WSL Ubuntu verifies the Linux all-features path through `gpui_linux`; it still emits the
   pre-existing `nightly_coverage` `unexpected_cfgs` warnings from
   `gpui_linux/src/linux/dispatcher.rs`.
+- The native renderer smoke requests a local `wgpu` adapter and device, creates the GPUI renderer
+  bind group layouts, and creates the core render pipelines. It also checks that the subpixel sprite
+  pipeline is present only when the device exposes `DUAL_SOURCE_BLENDING`.
 - `cargo check -p gpui_wgpu --all-targets --features font-kit` is not a valid migration gate yet
   because `crates/gpui_wgpu/benches/layout_line.rs` includes font assets that are not present in
   this extracted workspace. That failure is unrelated to the `wgpu` API.
@@ -204,8 +208,8 @@ Result:
 Decision:
 
 - Replace the Zed `wgpu` Git fork with crates.io `wgpu = "=29.0.3"`.
-- Keep a runtime renderer smoke gate as follow-up debt; this migration establishes compile-level
-  compatibility on Windows and Linux, not pixel-output equivalence.
+- Add a focused runtime renderer smoke gate for pipeline creation. This still does not claim
+  pixel-output equivalence with the Zed fork.
 
 ## Alternatives Considered
 
@@ -279,8 +283,8 @@ crate preserves the required API surface.
 2. **`zed-font-kit` upstream replacement**: defer until a dedicated text/font compatibility lane can
    replace or own Zed-only APIs such as `Handle::from_native`, reference-taking
    `from_native_font`, and public `matching::find_best_match`.
-3. **Renderer runtime smoke**: add a focused native renderer smoke before claiming pixel-output
-   equivalence for the crates.io `wgpu` migration.
+3. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
+   offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
 ## Success Metrics
 
@@ -290,7 +294,7 @@ crate preserves the required API surface.
 | Zed package dependency count | Reduced only after upstream replacement, not source-only migration | `rg 'zed-scap|zed-font-kit' Cargo.toml Cargo.lock` |
 | Verification gate | Still passes after each migration | `cargo run -p xtask -- verify` |
 | Focused package checks | Targeted crate builds after migration | `cargo check -p <crate>` |
-| Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks or documented limitation |
+| Runtime risk | No migration without relevant platform/runtime evidence | feature-specific smoke checks, such as `cargo run -p xtask -- renderer-smoke`, or documented limitation |
 
 ## Risks and Mitigations
 
@@ -308,5 +312,6 @@ crate preserves the required API surface.
 - Should Open GPUI create its own font-kit fork namespace before upstream replacement work, given
   that crates.io `zed-font-kit = 0.14.1-zed` is still Zed-published?
 - Which runtime checks should be added before replacing `zed-font-kit` with upstream `font-kit`?
-- What should the minimum native renderer smoke assert beyond successful `wgpu` compilation?
+- Should the renderer smoke grow into an offscreen pixel comparison before claiming pixel-output
+  equivalence for the `wgpu` migration?
 - Should Linux all-features CI be added as a permanent gate for future Linux dependency changes?
