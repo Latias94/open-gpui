@@ -1,4 +1,6 @@
-use crate::{CanvasDocument, EdgeId, HandleId, NodeId, ShapeId};
+use crate::{
+    CanvasDocument, CanvasDocumentDiff, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+};
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
 
@@ -92,6 +94,22 @@ impl SpatialIndex {
         Self { records }
     }
 
+    pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
+        if diff.is_empty() {
+            return;
+        }
+
+        for record_id in &diff.removed {
+            self.remove_record(record_id);
+        }
+
+        for record_id in diff.updated.iter().chain(&diff.inserted) {
+            self.refresh_record(document, record_id);
+        }
+
+        self.records.sort_by(|a, b| a.z_index.cmp(&b.z_index));
+    }
+
     pub fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
         self.query_with_options(viewport, HitOptions::default())
     }
@@ -132,6 +150,84 @@ impl SpatialIndex {
 
     pub fn records(&self) -> &[HitRecord] {
         &self.records
+    }
+
+    fn refresh_record(&mut self, document: &CanvasDocument, record_id: &CanvasRecordId) {
+        self.remove_record(record_id);
+
+        match record_id {
+            CanvasRecordId::Node(id) => {
+                let Some(node) = document.nodes.get(id) else {
+                    return;
+                };
+
+                self.records.push(HitRecord {
+                    target: HitTarget::Node(node.id.clone()),
+                    bounds: node.bounds(),
+                    z_index: node.z_index,
+                    hidden: node.hidden,
+                });
+
+                for handle in &node.handles {
+                    self.records.push(HitRecord {
+                        target: HitTarget::Handle {
+                            node_id: node.id.clone(),
+                            handle_id: handle.id.clone(),
+                        },
+                        bounds: handle.bounds_in_document(node),
+                        z_index: node.z_index,
+                        hidden: node.hidden || !handle.connectable,
+                    });
+                }
+
+                for edge in document
+                    .edges
+                    .values()
+                    .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
+                {
+                    self.refresh_record(document, &CanvasRecordId::Edge(edge.id.clone()));
+                }
+            }
+            CanvasRecordId::Edge(id) => {
+                let Some(edge) = document.edges.get(id) else {
+                    return;
+                };
+
+                if let Ok(bounds) = document.edge_bounds(edge) {
+                    self.records.push(HitRecord {
+                        target: HitTarget::Edge(edge.id.clone()),
+                        bounds,
+                        z_index: edge.z_index,
+                        hidden: edge.hidden,
+                    });
+                }
+            }
+            CanvasRecordId::Shape(id) => {
+                let Some(shape) = document.shapes.get(id) else {
+                    return;
+                };
+
+                self.records.push(HitRecord {
+                    target: HitTarget::Shape(shape.id.clone()),
+                    bounds: shape.bounds,
+                    z_index: shape.z_index,
+                    hidden: shape.hidden,
+                });
+            }
+        }
+    }
+
+    fn remove_record(&mut self, record_id: &CanvasRecordId) {
+        self.records
+            .retain(|record| match (record_id, &record.target) {
+                (CanvasRecordId::Node(id), HitTarget::Node(target_id)) => target_id != id,
+                (CanvasRecordId::Node(id), HitTarget::Handle { node_id, .. }) => node_id != id,
+                (CanvasRecordId::Node(_), _) => true,
+                (CanvasRecordId::Edge(id), HitTarget::Edge(target_id)) => target_id != id,
+                (CanvasRecordId::Edge(_), _) => true,
+                (CanvasRecordId::Shape(id), HitTarget::Shape(target_id)) => target_id != id,
+                (CanvasRecordId::Shape(_), _) => true,
+            });
     }
 }
 
@@ -300,5 +396,73 @@ mod tests {
                 HitTarget::Node(NodeId::from("a")),
             ]
         );
+    }
+
+    #[test]
+    fn applies_diff_for_inserted_records() {
+        let previous = CanvasDocument::default();
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let mut index = SpatialIndex::rebuild(&previous);
+        let diff = document.diff_against(&previous);
+        index.apply_diff(&document, &diff);
+
+        assert_eq!(
+            index
+                .hit_test(point(px(5.0), px(5.0)), HitOptions::default())
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("a"))]
+        );
+    }
+
+    #[test]
+    fn applies_diff_for_moved_node_and_incident_edge() {
+        use crate::{CanvasEdge, CanvasEndpoint};
+
+        let mut previous = CanvasDocument::default();
+        previous
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        previous
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        previous
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let mut document = previous.clone();
+        let mut node = document.nodes.get(&NodeId::from("a")).unwrap().clone();
+        node.position = point(px(40.0), px(0.0));
+        document.update_node(node).unwrap();
+
+        let mut index = SpatialIndex::rebuild(&previous);
+        let diff = document.diff_against(&previous);
+        index.apply_diff(&document, &diff);
+
+        assert!(index.records().iter().any(|record| {
+            record.target == HitTarget::Edge(EdgeId::from("a-b"))
+                && record.bounds.origin == point(px(50.0), px(10.0))
+                && record.bounds.size.width == px(60.0)
+        }));
     }
 }
