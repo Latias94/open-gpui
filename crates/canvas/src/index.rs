@@ -14,6 +14,7 @@ pub struct HitRecord {
     pub target: HitTarget,
     pub bounds: Bounds<Pixels>,
     pub z_index: i32,
+    pub hidden: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -41,21 +42,30 @@ impl SpatialIndex {
         let mut records = Vec::new();
 
         for node in document.nodes.values() {
-            if !node.hidden {
-                records.push(HitRecord {
-                    target: HitTarget::Node(node.id.clone()),
-                    bounds: node.bounds(),
-                    z_index: node.z_index,
-                });
-            }
+            records.push(HitRecord {
+                target: HitTarget::Node(node.id.clone()),
+                bounds: node.bounds(),
+                z_index: node.z_index,
+                hidden: node.hidden,
+            });
         }
 
         for shape in document.shapes.values() {
-            if !shape.hidden {
+            records.push(HitRecord {
+                target: HitTarget::Shape(shape.id.clone()),
+                bounds: shape.bounds,
+                z_index: shape.z_index,
+                hidden: shape.hidden,
+            });
+        }
+
+        for edge in document.edges.values() {
+            if let Ok(bounds) = document.edge_bounds(edge) {
                 records.push(HitRecord {
-                    target: HitTarget::Shape(shape.id.clone()),
-                    bounds: shape.bounds,
-                    z_index: shape.z_index,
+                    target: HitTarget::Edge(edge.id.clone()),
+                    bounds,
+                    z_index: edge.z_index,
+                    hidden: edge.hidden,
                 });
             }
         }
@@ -65,9 +75,17 @@ impl SpatialIndex {
     }
 
     pub fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
-        self.records
-            .iter()
-            .filter(move |record| record.bounds.intersects(&viewport))
+        self.query_with_options(viewport, HitOptions::default())
+    }
+
+    pub fn query_with_options(
+        &self,
+        viewport: Bounds<Pixels>,
+        options: HitOptions,
+    ) -> impl Iterator<Item = &HitRecord> {
+        self.records.iter().filter(move |record| {
+            (options.include_hidden || !record.hidden) && record.bounds.intersects(&viewport)
+        })
     }
 
     pub fn hit_test(
@@ -75,14 +93,18 @@ impl SpatialIndex {
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.records.iter().rev().filter(move |record| {
-            let bounds = if options.margin == Pixels::ZERO {
-                record.bounds
-            } else {
-                record.bounds.dilate(options.margin)
-            };
-            bounds.contains(&point)
-        })
+        self.records
+            .iter()
+            .rev()
+            .filter(move |record| options.include_hidden || !record.hidden)
+            .filter(move |record| {
+                let bounds = if options.margin == Pixels::ZERO {
+                    record.bounds
+                } else {
+                    record.bounds.dilate(options.margin)
+                };
+                bounds.contains(&point)
+            })
     }
 
     pub fn records(&self) -> &[HitRecord] {
@@ -152,5 +174,69 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(visible, vec![HitTarget::Node(NodeId::from("inside"))]);
+    }
+
+    #[test]
+    fn hidden_records_are_only_returned_when_requested() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("hidden", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.hidden = true;
+        document.insert_node(node).unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        assert!(
+            index
+                .hit_test(point(px(5.0), px(5.0)), HitOptions::default())
+                .next()
+                .is_none()
+        );
+
+        let options = HitOptions {
+            include_hidden: true,
+            ..HitOptions::default()
+        };
+        assert_eq!(
+            index
+                .hit_test(point(px(5.0), px(5.0)), options)
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("hidden"))]
+        );
+    }
+
+    #[test]
+    fn edge_bounds_are_indexed_from_endpoints() {
+        use crate::{CanvasEdge, CanvasEndpoint};
+
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        assert!(index.records().iter().any(|record| {
+            record.target == HitTarget::Edge(EdgeId::from("a-b"))
+                && record.bounds.origin == point(px(10.0), px(10.0))
+                && record.bounds.size.width == px(100.0)
+                && record.bounds.size.height == px(0.0)
+        }));
     }
 }

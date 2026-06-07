@@ -403,6 +403,42 @@ impl CanvasDocument {
 
         Ok(())
     }
+
+    pub fn endpoint_position(
+        &self,
+        endpoint: &CanvasEndpoint,
+    ) -> Result<Point<Pixels>, DocumentError> {
+        let node = self
+            .nodes
+            .get(&endpoint.node_id)
+            .ok_or_else(|| DocumentError::MissingNode(endpoint.node_id.clone()))?;
+
+        if let Some(handle_id) = &endpoint.handle_id {
+            let handle =
+                node.handle(Some(handle_id))
+                    .ok_or_else(|| DocumentError::MissingHandle {
+                        node_id: endpoint.node_id.clone(),
+                        handle_id: handle_id.clone(),
+                    })?;
+            return Ok(node.position + handle.position);
+        }
+
+        Ok(node.bounds().center())
+    }
+
+    pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
+        let source = self.endpoint_position(&edge.source)?;
+        let target = self.endpoint_position(&edge.target)?;
+        let min_x = source.x.min(target.x);
+        let min_y = source.y.min(target.y);
+        let max_x = source.x.max(target.x);
+        let max_y = source.y.max(target.y);
+
+        Ok(Bounds::from_corners(
+            Point::new(min_x, min_y),
+            Point::new(max_x, max_y),
+        ))
+    }
 }
 
 fn default_true() -> bool {
