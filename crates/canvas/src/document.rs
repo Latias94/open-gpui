@@ -50,6 +50,31 @@ canvas_id!(EdgeId);
 canvas_id!(ShapeId);
 canvas_id!(HandleId);
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum CanvasRecordId {
+    Node(NodeId),
+    Edge(EdgeId),
+    Shape(ShapeId),
+}
+
+impl From<NodeId> for CanvasRecordId {
+    fn from(value: NodeId) -> Self {
+        Self::Node(value)
+    }
+}
+
+impl From<EdgeId> for CanvasRecordId {
+    fn from(value: EdgeId) -> Self {
+        Self::Edge(value)
+    }
+}
+
+impl From<ShapeId> for CanvasRecordId {
+    fn from(value: ShapeId) -> Self {
+        Self::Shape(value)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum HandleRole {
     #[default]
@@ -303,6 +328,48 @@ pub enum DocumentCommand {
     RemoveShape(ShapeId),
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanvasDocumentDiff {
+    #[serde(default)]
+    pub inserted: IndexSet<CanvasRecordId>,
+    #[serde(default)]
+    pub updated: IndexSet<CanvasRecordId>,
+    #[serde(default)]
+    pub removed: IndexSet<CanvasRecordId>,
+}
+
+impl CanvasDocumentDiff {
+    pub fn is_empty(&self) -> bool {
+        self.inserted.is_empty() && self.updated.is_empty() && self.removed.is_empty()
+    }
+
+    pub fn record_insert(&mut self, id: impl Into<CanvasRecordId>) {
+        let id = id.into();
+        if self.removed.shift_remove(&id) {
+            self.updated.insert(id);
+        } else {
+            self.inserted.insert(id);
+        }
+    }
+
+    pub fn record_update(&mut self, id: impl Into<CanvasRecordId>) {
+        let id = id.into();
+        if !self.inserted.contains(&id) && !self.removed.contains(&id) {
+            self.updated.insert(id);
+        }
+    }
+
+    pub fn record_remove(&mut self, id: impl Into<CanvasRecordId>) {
+        let id = id.into();
+        if self.inserted.shift_remove(&id) {
+            self.updated.shift_remove(&id);
+        } else {
+            self.updated.shift_remove(&id);
+            self.removed.insert(id);
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CanvasTransaction {
     #[serde(default)]
@@ -452,12 +519,21 @@ impl CanvasDocument {
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<(), DocumentError> {
+        self.apply_transaction_with_diff(transaction).map(drop)
+    }
+
+    pub fn apply_transaction_with_diff(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasDocumentDiff, DocumentError> {
         let mut draft = self.clone();
+        let mut diff = CanvasDocumentDiff::default();
         for command in transaction.commands {
+            diff.record_command(&command, &draft);
             draft.apply(command)?;
         }
         *self = draft;
-        Ok(())
+        Ok(diff)
     }
 
     pub fn invert_transaction(
@@ -775,6 +851,29 @@ impl CanvasDocument {
                     .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
                     .clone(),
             )]),
+        }
+    }
+}
+
+impl CanvasDocumentDiff {
+    fn record_command(&mut self, command: &DocumentCommand, document: &CanvasDocument) {
+        match command {
+            DocumentCommand::InsertNode(node) => self.record_insert(node.id.clone()),
+            DocumentCommand::UpdateNode(node) => self.record_update(node.id.clone()),
+            DocumentCommand::RemoveNode(id) => {
+                self.record_remove(id.clone());
+                for edge in document.edges.values() {
+                    if edge.source.node_id == *id || edge.target.node_id == *id {
+                        self.record_remove(edge.id.clone());
+                    }
+                }
+            }
+            DocumentCommand::InsertEdge(edge) => self.record_insert(edge.id.clone()),
+            DocumentCommand::UpdateEdge(edge) => self.record_update(edge.id.clone()),
+            DocumentCommand::RemoveEdge(id) => self.record_remove(id.clone()),
+            DocumentCommand::InsertShape(shape) => self.record_insert(shape.id.clone()),
+            DocumentCommand::UpdateShape(shape) => self.record_update(shape.id.clone()),
+            DocumentCommand::RemoveShape(id) => self.record_remove(id.clone()),
         }
     }
 }
@@ -1128,5 +1227,106 @@ mod tests {
 
         document.apply_transaction(inverse).unwrap();
         assert_eq!(document, before);
+    }
+
+    #[test]
+    fn transaction_diff_tracks_record_changes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let moved_a = CanvasNode::new("a", point(px(5.0), px(0.0)), size(px(10.0), px(10.0)));
+        let transaction = CanvasTransaction::new([
+            DocumentCommand::UpdateNode(moved_a),
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+            DocumentCommand::InsertEdge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            )),
+        ]);
+
+        let diff = document.apply_transaction_with_diff(transaction).unwrap();
+
+        assert_eq!(
+            diff.updated.iter().cloned().collect::<Vec<_>>(),
+            vec![CanvasRecordId::Node(NodeId::from("a"))]
+        );
+        assert_eq!(
+            diff.inserted.iter().cloned().collect::<Vec<_>>(),
+            vec![
+                CanvasRecordId::Node(NodeId::from("b")),
+                CanvasRecordId::Edge(EdgeId::from("a-b")),
+            ]
+        );
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn transaction_diff_compacts_insert_then_remove() {
+        let mut document = CanvasDocument::default();
+        let transaction = CanvasTransaction::new([
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "temp",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+            DocumentCommand::RemoveNode(NodeId::from("temp")),
+        ]);
+
+        let diff = document.apply_transaction_with_diff(transaction).unwrap();
+
+        assert!(diff.is_empty());
+        assert!(document.nodes.is_empty());
+    }
+
+    #[test]
+    fn transaction_diff_includes_edges_removed_with_node() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::RemoveNode(
+                NodeId::from("a"),
+            )))
+            .unwrap();
+
+        assert_eq!(
+            diff.removed.iter().cloned().collect::<Vec<_>>(),
+            vec![
+                CanvasRecordId::Node(NodeId::from("a")),
+                CanvasRecordId::Edge(EdgeId::from("a-b")),
+            ]
+        );
+        assert!(document.edges.is_empty());
     }
 }

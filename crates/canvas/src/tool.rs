@@ -1,6 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasTransaction, CanvasViewport,
-    DocumentCommand, DocumentError, EdgeId, HitOptions, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasTransaction,
+    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitTarget, NodeId, ShapeId,
+    SpatialIndex,
 };
 use indexmap::IndexSet;
 use open_gpui::{Pixels, Point};
@@ -205,15 +206,22 @@ impl CanvasEditor {
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<(), DocumentError> {
+        self.apply_transaction_with_diff(transaction).map(drop)
+    }
+
+    pub fn apply_transaction_with_diff(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasDocumentDiff, DocumentError> {
         if transaction.is_empty() {
-            return Ok(());
+            return Ok(CanvasDocumentDiff::default());
         }
 
         let inverse = self.document.invert_transaction(&transaction)?;
-        self.document.apply_transaction(transaction)?;
+        let diff = self.document.apply_transaction_with_diff(transaction)?;
         self.history.push_undo(inverse);
         self.rebuild_index();
-        Ok(())
+        Ok(diff)
     }
 
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
@@ -697,5 +705,22 @@ mod tests {
         assert_eq!(editor.history.redo_depth(), 0);
         assert!(editor.document.nodes.contains_key(&NodeId::from("b")));
         assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
+    }
+
+    #[test]
+    fn editor_transactions_return_document_diff() {
+        let mut editor = CanvasEditor::default();
+
+        let diff = editor
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::InsertNode(
+                CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            )))
+            .unwrap();
+
+        assert_eq!(
+            diff.inserted.iter().cloned().collect::<Vec<_>>(),
+            vec![crate::CanvasRecordId::Node(NodeId::from("a"))]
+        );
+        assert!(editor.history.can_undo());
     }
 }
