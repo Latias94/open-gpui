@@ -6,13 +6,61 @@ use open_gpui::{
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor, CanvasEndpoint, CanvasEvent,
     CanvasHandle, CanvasInputMapper, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
-    CanvasPaintTheme, CanvasShape, CanvasStyle, HandleRole, PointerButton, ToolState,
-    collect_visible_records, paint_canvas_frame,
+    CanvasPaintTheme, CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext,
+    CanvasToolEffect, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
+    DocumentError, HandleRole, NodeId, PointerButton, ToolState, collect_visible_records,
+    paint_canvas_frame,
 };
 use open_gpui_platform::application;
 
+const STAMP_TOOL_ID: &str = "stamp-node";
+
 struct SmokeView {
     editor: CanvasEditor,
+    tools: CanvasToolRegistry,
+}
+
+#[derive(Default)]
+struct StampNodeTool {
+    sequence: u64,
+}
+
+impl CanvasToolReducer for StampNodeTool {
+    fn handle_event(
+        &mut self,
+        context: CanvasToolContext<'_>,
+        event: CanvasEvent,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        let CanvasEvent::PointerDown {
+            position,
+            button: PointerButton::Secondary,
+        } = event
+        else {
+            return Ok(vec![CanvasToolEffect::SetTool(CanvasTool::Select)]);
+        };
+
+        self.sequence += 1;
+        let id = NodeId::new(format!("stamp-{}", self.sequence));
+        let mut node = CanvasNode::new(
+            id.clone(),
+            context.document_position(position),
+            size(px(112.0), px(56.0)),
+        );
+        node.kind = "stamp".to_string();
+        node.z_index = 4;
+        node.style = style(Some("#ecfeff"), Some("#0891b2"), px(2.0));
+
+        let mut selection = CanvasSelection::default();
+        selection.nodes.insert(id);
+
+        Ok(vec![
+            CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+                DocumentCommand::InsertNode(node),
+            )),
+            CanvasToolEffect::SetSelection(selection),
+            CanvasToolEffect::SetTool(CanvasTool::Select),
+        ])
+    }
 }
 
 impl Render for SmokeView {
@@ -119,7 +167,20 @@ impl SmokeView {
             return;
         };
 
-        if let Err(error) = self.editor.handle_event(event) {
+        if matches!(
+            event,
+            CanvasEvent::PointerDown {
+                button: PointerButton::Secondary,
+                ..
+            }
+        ) {
+            self.editor.set_tool(CanvasTool::custom(STAMP_TOOL_ID));
+        }
+
+        if let Err(error) = self
+            .editor
+            .handle_event_with_tool_registry(event, &mut self.tools)
+        {
             eprintln!("canvas event failed: {error}");
         }
         cx.notify();
@@ -128,6 +189,12 @@ impl SmokeView {
     fn is_pointer_interacting(&self) -> bool {
         !matches!(self.editor.state, ToolState::Idle)
     }
+}
+
+fn demo_tools() -> CanvasToolRegistry {
+    let mut registry = CanvasToolRegistry::new();
+    registry.insert(STAMP_TOOL_ID, StampNodeTool::default());
+    registry
 }
 
 fn demo_document() -> CanvasDocument {
@@ -238,6 +305,7 @@ fn main() {
             |_, cx| {
                 cx.new(|_| SmokeView {
                     editor: CanvasEditor::new(demo_document()),
+                    tools: demo_tools(),
                 })
             },
         )

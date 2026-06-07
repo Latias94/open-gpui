@@ -175,6 +175,10 @@ through the same effect vocabulary.
 tools still use the same editor event path, so the registry remains a lookup layer rather than a
 second mutation path.
 
+The native smoke example now covers this registry path with an application-defined stamp tool. A
+right-click selects `CanvasTool::custom`, dispatches through `CanvasToolRegistry`, inserts a node by
+returning `CanvasToolEffect` values, and then returns to the built-in select tool.
+
 ## Alternatives Considered
 
 ### Option A: Pure data model crate first

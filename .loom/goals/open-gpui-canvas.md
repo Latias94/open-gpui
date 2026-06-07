@@ -112,12 +112,13 @@ stop_conditions:
 | Custom tool reducer boundary | Done | `CanvasTool::custom`, `CanvasToolContext`, and `CanvasToolReducer` let applications build custom tools that read editor state and emit effects without mutating `CanvasEditor` directly. |
 | Persistence adapter feature boundary | Done | `redb-store`, `loro-crdt`, and `rkyv-snapshot` features plus adapter capability statuses reserve future adapter names without pulling optional dependencies into the default core build. |
 | Tool registry ergonomics | Done | `CanvasToolRegistry` maps custom tool IDs to reducers and lets applications dispatch registered tools while keeping builtin tools on the same editor event entrypoint. |
+| Example custom tools | Done | `open-gpui-smoke-native` registers a custom stamp tool through `CanvasToolRegistry` and dispatches right-click pointer events through the same editor effect path as builtin tools. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Example custom tools | Add smoke/example coverage for custom tool registry usage so application authors can copy a working pattern. | `cargo check -p open-gpui-smoke-native` |
+| High | Example documentation | Add README/API examples for custom tools, persistence boundaries, and JSON Canvas interchange so application authors can copy a working pattern without reading the smoke example first. | doc review, `cargo check -p open-gpui-canvas` |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 
 ## Deferred Work
