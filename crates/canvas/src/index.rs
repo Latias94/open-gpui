@@ -1,10 +1,14 @@
-use crate::{CanvasDocument, EdgeId, NodeId, ShapeId};
+use crate::{CanvasDocument, EdgeId, HandleId, NodeId, ShapeId};
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum HitTarget {
     Node(NodeId),
+    Handle {
+        node_id: NodeId,
+        handle_id: HandleId,
+    },
     Shape(ShapeId),
     Edge(EdgeId),
 }
@@ -20,6 +24,7 @@ pub struct HitRecord {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HitOptions {
     pub include_hidden: bool,
+    pub include_handles: bool,
     pub margin: Pixels,
 }
 
@@ -27,6 +32,7 @@ impl Default for HitOptions {
     fn default() -> Self {
         Self {
             include_hidden: false,
+            include_handles: false,
             margin: Pixels::ZERO,
         }
     }
@@ -48,6 +54,18 @@ impl SpatialIndex {
                 z_index: node.z_index,
                 hidden: node.hidden,
             });
+
+            for handle in &node.handles {
+                records.push(HitRecord {
+                    target: HitTarget::Handle {
+                        node_id: node.id.clone(),
+                        handle_id: handle.id.clone(),
+                    },
+                    bounds: handle.bounds_in_document(node),
+                    z_index: node.z_index,
+                    hidden: node.hidden || !handle.connectable,
+                });
+            }
         }
 
         for shape in document.shapes.values() {
@@ -84,7 +102,9 @@ impl SpatialIndex {
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
         self.records.iter().filter(move |record| {
-            (options.include_hidden || !record.hidden) && record.bounds.intersects(&viewport)
+            (options.include_hidden || !record.hidden)
+                && (options.include_handles || !matches!(record.target, HitTarget::Handle { .. }))
+                && record.bounds.intersects(&viewport)
         })
     }
 
@@ -97,6 +117,9 @@ impl SpatialIndex {
             .iter()
             .rev()
             .filter(move |record| options.include_hidden || !record.hidden)
+            .filter(move |record| {
+                options.include_handles || !matches!(record.target, HitTarget::Handle { .. })
+            })
             .filter(move |record| {
                 let bounds = if options.margin == Pixels::ZERO {
                     record.bounds
@@ -238,5 +261,44 @@ mod tests {
                 && record.bounds.size.width == px(100.0)
                 && record.bounds.size.height == px(0.0)
         }));
+    }
+
+    #[test]
+    fn handles_are_hit_only_when_requested() {
+        use crate::CanvasHandle;
+
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.handles
+            .push(CanvasHandle::new("out", point(px(95.0), px(50.0))));
+        document.insert_node(node).unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        let point = point(px(95.0), px(50.0));
+        assert_eq!(
+            index
+                .hit_test(point, HitOptions::default())
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("a"))]
+        );
+
+        let options = HitOptions {
+            include_handles: true,
+            ..HitOptions::default()
+        };
+        assert_eq!(
+            index
+                .hit_test(point, options)
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                HitTarget::Handle {
+                    node_id: NodeId::from("a"),
+                    handle_id: HandleId::from("out"),
+                },
+                HitTarget::Node(NodeId::from("a")),
+            ]
+        );
     }
 }

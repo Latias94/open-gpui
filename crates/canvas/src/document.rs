@@ -163,7 +163,7 @@ impl CanvasNode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct CanvasEndpoint {
     pub node_id: NodeId,
     #[serde(default)]

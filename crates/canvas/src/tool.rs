@@ -65,6 +65,7 @@ pub struct CanvasSelection {
     pub nodes: IndexSet<NodeId>,
     pub edges: IndexSet<EdgeId>,
     pub shapes: IndexSet<ShapeId>,
+    pub handles: IndexSet<CanvasEndpoint>,
 }
 
 impl CanvasSelection {
@@ -72,6 +73,7 @@ impl CanvasSelection {
         self.nodes.clear();
         self.edges.clear();
         self.shapes.clear();
+        self.handles.clear();
     }
 
     pub fn replace_with(&mut self, target: HitTarget) {
@@ -79,6 +81,12 @@ impl CanvasSelection {
         match target {
             HitTarget::Node(id) => {
                 self.nodes.insert(id);
+            }
+            HitTarget::Handle { node_id, handle_id } => {
+                self.handles.insert(CanvasEndpoint {
+                    node_id,
+                    handle_id: Some(handle_id),
+                });
             }
             HitTarget::Edge(id) => {
                 self.edges.insert(id);
@@ -90,7 +98,10 @@ impl CanvasSelection {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty() && self.edges.is_empty() && self.shapes.is_empty()
+        self.nodes.is_empty()
+            && self.edges.is_empty()
+            && self.shapes.is_empty()
+            && self.handles.is_empty()
     }
 
     pub fn selected_nodes(&self) -> impl Iterator<Item = &NodeId> {
@@ -326,8 +337,18 @@ impl CanvasEditor {
 
     fn node_endpoint_at(&self, point: Point<Pixels>) -> Option<CanvasEndpoint> {
         self.index
-            .hit_test(point, HitOptions::default())
+            .hit_test(
+                point,
+                HitOptions {
+                    include_handles: true,
+                    ..HitOptions::default()
+                },
+            )
             .find_map(|record| match &record.target {
+                HitTarget::Handle { node_id, handle_id } => Some(CanvasEndpoint {
+                    node_id: node_id.clone(),
+                    handle_id: Some(handle_id.clone()),
+                }),
                 HitTarget::Node(node_id) => Some(CanvasEndpoint {
                     node_id: node_id.clone(),
                     handle_id: None,
@@ -472,5 +493,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(editor.document.edges.len(), 1);
+    }
+
+    #[test]
+    fn connect_tool_uses_handles_when_available() {
+        use crate::{CanvasHandle, HandleId};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        source
+            .handles
+            .push(CanvasHandle::new("out", point(px(100.0), px(50.0))));
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        target
+            .handles
+            .push(CanvasHandle::new("in", point(px(0.0), px(50.0))));
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        let edge = editor.document.edges.values().next().unwrap();
+        assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
+        assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
     }
 }
