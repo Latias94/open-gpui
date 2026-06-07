@@ -4463,7 +4463,7 @@ dependencies = [
 [[package]]
 name = "open-gpui-scap"
 version = "0.1.0-beta.1"
-source = "git+https://github.com/Latias94/scap?branch=main#f7e2a2cebb767f012bcc967be7b9dd02b09dd3a8"
+source = "git+https://github.com/Latias94/scap?branch=main#cd433e6aad8233afe1b70889464ec14781b00c06"
 dependencies = [
  "anyhow",
  "cidre",
