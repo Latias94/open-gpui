@@ -42,7 +42,7 @@ flowchart TD
 
 | Fork | Current source | Reverse dependency evidence | Public candidate | Risk | Recommendation |
 | --- | --- | --- | --- | --- | --- |
-| `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
+| `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package lacks the `x11` feature used by Open GPUI's Linux feature wiring and fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
 
 ## Evidence Commands
 
@@ -90,6 +90,43 @@ Follow-up lockfile check:
 - `windows-capture = 1.3.6` is too old for the fork because it lacks `capture::Context` and exposes
   `FrameBuffer::as_raw_nopadding_buffer()` instead of `as_nopadding_buffer()`.
 - `windows-capture = 1.4.0` matches the fork and restores `cargo check -p gpui_windows --all-features`.
+
+Additional `zed-scap` retry probe on 2026-06-07:
+
+```sh
+cargo info scap@0.1.0-beta.1
+cargo info zed-scap@0.0.8-zed
+cargo tree --workspace --all-features --target all --edges normal --invert zed-scap
+cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0
+
+# In a temporary archive copy under %TEMP%:
+# scap = { version = "0.1.0-beta.1", default-features = false }
+cargo update -p zed-scap --precise 0.1.0-beta.1
+cargo check -p gpui_windows --all-features
+cargo check -p gpui --features screen-capture
+
+# Secondary probe only, after temporarily removing `scap?/x11` from gpui and gpui_linux feature wiring:
+cargo check -p gpui_windows --all-features
+cargo check -p gpui --features screen-capture
+```
+
+Result:
+
+- `scap = 0.1.0-beta.1` is still the current crates.io release.
+- Direct replacement fails dependency resolution before compilation because Open GPUI's `x11`
+  features currently forward to `scap?/x11`, and public `scap 0.1.0-beta.1` does not expose an
+  `x11` feature. The Zed fork exposes `default = ["wayland", "x11"]`, with `x11 = ["dep:xcb",
+  "dep:x11"]`.
+- Source inspection confirms public `scap 0.1.0-beta.1` has only a generic
+  `src/capturer/engine/linux` implementation, while the Zed fork keeps separate
+  `linux/wayland` and `linux/x11` engines.
+- After temporarily removing the `scap?/x11` feature forwarding to probe past dependency
+  resolution, Windows still fails inside public `scap` before Open GPUI-specific code is checked:
+  it calls `windows_capture::frame::Frame::timespan()`, which is not present in
+  `windows-capture = 1.5.0`, and its display branch calls `WCSettings::new` with the older argument
+  order.
+- The probe was not applied to the workspace. Keep `zed-scap` until upstream `scap` publishes a
+  compatible feature/API surface, or until Open GPUI owns a focused fork/patch.
 
 Additional `zed-xim` migration probe on 2026-06-07:
 
@@ -352,8 +389,9 @@ behavior remains necessary.
 ## Recommended Work Order
 
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
-   the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
-   Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
+   the Linux feature/API mismatch and the Windows `windows-capture` API mismatch, or after deciding
+   to own a small Open GPUI patch/fork. Any retry should verify all-features builds for `gpui`,
+   `gpui_linux`, and `gpui_windows`.
 2. **Renderer pixel-output equivalence**: defer until a dedicated render fixture can compare
    offscreen output across the crates.io `wgpu` path and the expected GPUI renderer behavior.
 
@@ -380,4 +418,3 @@ behavior remains necessary.
 
 - Should the renderer smoke grow into an offscreen pixel comparison before claiming pixel-output
   equivalence for the `wgpu` migration?
-- Should Linux all-features CI be added as a permanent gate for future Linux dependency changes?
