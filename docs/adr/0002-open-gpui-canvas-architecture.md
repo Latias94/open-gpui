@@ -43,6 +43,7 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
   document serialization.
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
   edge sides into deterministic node handles.
+- A persistence boundary based on checkpoints and monotonic transaction logs.
 - A small tool state machine inspired by tldraw states such as idle, pointing, translating,
   panning, pinching, connecting, and editing text.
 - Optional future adapters for Loro, `rkyv`, and `redb`, kept outside the core MVP unless they are
@@ -101,6 +102,14 @@ JSON Canvas import/export is implemented as an adapter around the core records. 
 `text`, `file`, `link`, and `group` node payload fields in `CanvasNode::data`, maps node and edge
 colors into `CanvasStyle`, and maps `fromSide` / `toSide` into deterministic side handles. This
 keeps Obsidian-style interchange useful without making JSON Canvas the canonical storage format.
+
+Persistence is defined as a small store trait rather than a concrete database choice. The core
+crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
+after a checkpoint sequence, and compact entries once a newer checkpoint is durable. Replay rejects
+non-monotonic sequences so local caches and future collaboration layers share one ordering
+contract. `redb`, Loro, and `rkyv` remain adapter choices: `redb` can back a local checkpoint/log
+store, Loro can translate transactions or diffs into collaborative operations, and `rkyv` can
+optimize snapshots once the public record format stabilizes.
 
 ## Tool Model
 
