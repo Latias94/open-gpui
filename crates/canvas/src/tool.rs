@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasViewport, DocumentCommand, DocumentError,
-    EdgeId, HitOptions, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasTransaction, CanvasViewport,
+    DocumentCommand, DocumentError, EdgeId, HitOptions, HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::IndexSet;
 use open_gpui::{Pixels, Point};
@@ -49,6 +49,7 @@ pub enum ToolState {
         origin: Point<Pixels>,
         last: Point<Pixels>,
         node_ids: Vec<NodeId>,
+        original_nodes: Vec<CanvasNode>,
     },
     Panning {
         origin: Point<Pixels>,
@@ -109,6 +110,56 @@ impl CanvasSelection {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CanvasHistory {
+    undo_stack: Vec<CanvasTransaction>,
+    redo_stack: Vec<CanvasTransaction>,
+}
+
+impl CanvasHistory {
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    pub fn undo_depth(&self) -> usize {
+        self.undo_stack.len()
+    }
+
+    pub fn redo_depth(&self) -> usize {
+        self.redo_stack.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
+    fn push_undo(&mut self, transaction: CanvasTransaction) {
+        if !transaction.is_empty() {
+            self.undo_stack.push(transaction);
+            self.redo_stack.clear();
+        }
+    }
+
+    fn pop_undo(&mut self) -> Option<CanvasTransaction> {
+        self.undo_stack.pop()
+    }
+
+    fn push_redo(&mut self, transaction: CanvasTransaction) {
+        if !transaction.is_empty() {
+            self.redo_stack.push(transaction);
+        }
+    }
+
+    fn pop_redo(&mut self) -> Option<CanvasTransaction> {
+        self.redo_stack.pop()
+    }
+}
+
 pub struct CanvasEditor {
     pub document: CanvasDocument,
     pub viewport: CanvasViewport,
@@ -116,6 +167,7 @@ pub struct CanvasEditor {
     pub state: ToolState,
     pub index: SpatialIndex,
     pub selection: CanvasSelection,
+    pub history: CanvasHistory,
 }
 
 impl Default for CanvasEditor {
@@ -134,24 +186,58 @@ impl CanvasEditor {
             state: ToolState::Idle,
             index,
             selection: CanvasSelection::default(),
+            history: CanvasHistory::default(),
         }
     }
 
     pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
-        self.document.apply(command)?;
-        self.rebuild_index();
-        Ok(())
+        self.apply_transaction(CanvasTransaction::single(command))
     }
 
     pub fn apply_all(
         &mut self,
         commands: impl IntoIterator<Item = DocumentCommand>,
     ) -> Result<(), DocumentError> {
-        for command in commands {
-            self.document.apply(command)?;
+        self.apply_transaction(CanvasTransaction::new(commands))
+    }
+
+    pub fn apply_transaction(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<(), DocumentError> {
+        if transaction.is_empty() {
+            return Ok(());
         }
+
+        let inverse = self.document.invert_transaction(&transaction)?;
+        self.document.apply_transaction(transaction)?;
+        self.history.push_undo(inverse);
         self.rebuild_index();
         Ok(())
+    }
+
+    pub fn undo(&mut self) -> Result<bool, DocumentError> {
+        let Some(transaction) = self.history.pop_undo() else {
+            return Ok(false);
+        };
+
+        let redo = self.document.invert_transaction(&transaction)?;
+        self.document.apply_transaction(transaction)?;
+        self.history.push_redo(redo);
+        self.rebuild_index();
+        Ok(true)
+    }
+
+    pub fn redo(&mut self) -> Result<bool, DocumentError> {
+        let Some(transaction) = self.history.pop_redo() else {
+            return Ok(false);
+        };
+
+        let undo = self.document.invert_transaction(&transaction)?;
+        self.document.apply_transaction(transaction)?;
+        self.history.push_undo(undo);
+        self.rebuild_index();
+        Ok(true)
     }
 
     pub fn rebuild_index(&mut self) {
@@ -190,10 +276,16 @@ impl CanvasEditor {
                 match hit {
                     Some(HitTarget::Node(id)) => {
                         self.selection.replace_with(HitTarget::Node(id.clone()));
+                        let original_nodes = self
+                            .selection
+                            .selected_nodes()
+                            .filter_map(|id| self.document.nodes.get(id).cloned())
+                            .collect();
                         self.state = ToolState::Translating {
                             origin: document_position,
                             last: document_position,
                             node_ids: vec![id],
+                            original_nodes,
                         };
                     }
                     Some(target) => {
@@ -227,16 +319,28 @@ impl CanvasEditor {
                     node.position += delta;
                     commands.push(DocumentCommand::UpdateNode(node));
                 }
-                self.apply_all(commands)?;
+                self.apply_unrecorded(CanvasTransaction::new(commands))?;
 
                 if let ToolState::Translating { last, .. } = &mut self.state {
                     *last = document_position;
                 }
             }
-            (
-                ToolState::Translating { .. } | ToolState::Pointing { .. },
-                CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel,
-            ) => {
+            (ToolState::Translating { original_nodes, .. }, CanvasEvent::PointerUp { .. }) => {
+                let inverse = self.inverse_for_changed_nodes(original_nodes);
+                self.history.push_undo(inverse);
+                self.state = ToolState::Idle;
+            }
+            (ToolState::Translating { original_nodes, .. }, CanvasEvent::Cancel) => {
+                let inverse = CanvasTransaction::new(
+                    original_nodes
+                        .iter()
+                        .cloned()
+                        .map(DocumentCommand::UpdateNode),
+                );
+                self.apply_unrecorded(inverse)?;
+                self.state = ToolState::Idle;
+            }
+            (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
                 self.state = ToolState::Idle;
             }
             (_, CanvasEvent::Wheel { delta }) => {
@@ -356,6 +460,22 @@ impl CanvasEditor {
                 _ => None,
             })
     }
+
+    fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
+        self.document.apply_transaction(transaction)?;
+        self.rebuild_index();
+        Ok(())
+    }
+
+    fn inverse_for_changed_nodes(&self, original_nodes: &[CanvasNode]) -> CanvasTransaction {
+        CanvasTransaction::new(
+            original_nodes
+                .iter()
+                .filter(|node| self.document.nodes.get(&node.id) != Some(*node))
+                .cloned()
+                .map(DocumentCommand::UpdateNode),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -401,6 +521,16 @@ mod tests {
             vec![NodeId::from("n1")]
         );
         assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
+        assert_eq!(node.position, point(px(0.0), px(0.0)));
+        assert_eq!(editor.history.redo_depth(), 1);
+
+        assert!(editor.redo().unwrap());
+        let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
+        assert_eq!(node.position, point(px(10.0), px(15.0)));
     }
 
     #[test]
@@ -493,6 +623,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(editor.document.edges.len(), 1);
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert!(editor.document.edges.is_empty());
+
+        assert!(editor.redo().unwrap());
+        assert_eq!(editor.document.edges.len(), 1);
     }
 
     #[test]
@@ -532,5 +669,33 @@ mod tests {
         let edge = editor.document.edges.values().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+    }
+
+    #[test]
+    fn direct_transactions_clear_redo_history() {
+        let mut editor = CanvasEditor::default();
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            )))
+            .unwrap();
+
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.history.redo_depth(), 1);
+
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            )))
+            .unwrap();
+
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history.redo_depth(), 0);
+        assert!(editor.document.nodes.contains_key(&NodeId::from("b")));
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
     }
 }

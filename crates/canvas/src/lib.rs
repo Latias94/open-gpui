@@ -16,4 +16,6 @@ pub use document::{
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
-pub use tool::{CanvasEditor, CanvasEvent, CanvasSelection, CanvasTool, PointerButton, ToolState};
+pub use tool::{
+    CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, PointerButton, ToolState,
+};
