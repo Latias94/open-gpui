@@ -121,8 +121,12 @@ links as edges in the same document.
 
 Route metadata is stored as intent, not as a renderer contract. The core model records route kind,
 manual waypoints, optional control points, route-specific options, and interaction width so that
-hit testing and persistence remain stable. Actual path generation, obstacle avoidance, arrowhead
-rendering, and router plugins remain outside the core document model.
+hit testing and persistence remain stable. `CanvasEdgeRouter` turns that intent into
+renderer-neutral `CanvasRoutePath` / `CanvasRouteSegment` values. The default router preserves the
+current straight/polyline/cubic-bezier behavior, while `edge_route_path_with_router` and
+`edge_bounds_with_router` let applications supply orthogonal, obstacle-aware, or preview routers
+without changing document serialization. Arrowhead rendering and full obstacle avoidance remain
+outside the core document model.
 
 JSON Canvas import/export is implemented as an adapter around the core records. It preserves
 `text`, `file`, `link`, and `group` node payload fields in `CanvasNode::data`, maps node and edge

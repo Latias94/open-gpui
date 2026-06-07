@@ -5,6 +5,10 @@ use serde_json::{Map, Value};
 use std::fmt;
 use thiserror::Error;
 
+use crate::routing::{
+    CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
+};
+
 pub type CanvasValue = Map<String, Value>;
 
 pub const CANVAS_DOCUMENT_FORMAT_VERSION: u32 = 1;
@@ -824,31 +828,51 @@ impl CanvasDocument {
         Ok(node.bounds().center())
     }
 
-    pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
+    pub fn edge_route_path(&self, edge: &CanvasEdge) -> Result<CanvasRoutePath, DocumentError> {
+        self.edge_route_path_with_router(edge, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn edge_route_path_with_router<R>(
+        &self,
+        edge: &CanvasEdge,
+        router: &R,
+    ) -> Result<CanvasRoutePath, DocumentError>
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
         let source = self.endpoint_position(&edge.source)?;
         let target = self.endpoint_position(&edge.target)?;
-        let route_points = edge
-            .route
-            .waypoints
-            .iter()
-            .chain(edge.route.control_points.iter());
-        let (min_x, min_y, max_x, max_y) = route_points.fold(
-            (
-                source.x.min(target.x),
-                source.y.min(target.y),
-                source.x.max(target.x),
-                source.y.max(target.y),
-            ),
-            |(min_x, min_y, max_x, max_y), point| {
-                (
-                    min_x.min(point.x),
-                    min_y.min(point.y),
-                    max_x.max(point.x),
-                    max_y.max(point.y),
+        Ok(router.route_edge(CanvasRouteRequest {
+            edge,
+            source,
+            target,
+        }))
+    }
+
+    pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
+        self.edge_bounds_with_router(edge, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn edge_bounds_with_router<R>(
+        &self,
+        edge: &CanvasEdge,
+        router: &R,
+    ) -> Result<Bounds<Pixels>, DocumentError>
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let path = self.edge_route_path_with_router(edge, router)?;
+        let bounds = match path.bounds() {
+            Some(bounds) => bounds,
+            None => {
+                let source = self.endpoint_position(&edge.source)?;
+                let target = self.endpoint_position(&edge.target)?;
+                Bounds::from_corners(
+                    Point::new(source.x.min(target.x), source.y.min(target.y)),
+                    Point::new(source.x.max(target.x), source.y.max(target.y)),
                 )
-            },
-        );
-        let bounds = Bounds::from_corners(Point::new(min_x, min_y), Point::new(max_x, max_y));
+            }
+        };
         let stroke_width = if edge.style.stroke_width.as_f32().is_finite()
             && edge.style.stroke_width > Pixels::ZERO
         {
@@ -869,13 +893,7 @@ impl CanvasDocument {
         &self,
         edge: &CanvasEdge,
     ) -> Result<Vec<Point<Pixels>>, DocumentError> {
-        let source = self.endpoint_position(&edge.source)?;
-        let target = self.endpoint_position(&edge.target)?;
-        let mut points = Vec::with_capacity(edge.route.waypoints.len() + 2);
-        points.push(source);
-        points.extend(edge.route.waypoints.iter().copied());
-        points.push(target);
-        Ok(points)
+        Ok(self.edge_route_path(edge)?.document_points())
     }
 
     pub fn diff_against(&self, previous: &CanvasDocument) -> CanvasDocumentDiff {
@@ -1518,6 +1536,61 @@ mod tests {
 
         assert_eq!(bounds.origin, point(px(-5.0), px(-5.0)));
         assert_eq!(bounds.size, size(px(120.0), px(65.0)));
+    }
+
+    #[test]
+    fn edge_bounds_can_use_custom_router_path() {
+        struct OffsetRouter;
+
+        impl crate::CanvasEdgeRouter for OffsetRouter {
+            fn route_edge(&self, request: crate::CanvasRouteRequest<'_>) -> crate::CanvasRoutePath {
+                crate::CanvasRoutePath::polyline([
+                    request.source,
+                    point(px(50.0), px(120.0)),
+                    request.target,
+                ])
+            }
+        }
+
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route.interaction_width = px(10.0);
+
+        let path = document
+            .edge_route_path_with_router(&edge, &OffsetRouter)
+            .unwrap();
+        let bounds = document
+            .edge_bounds_with_router(&edge, &OffsetRouter)
+            .unwrap();
+
+        assert_eq!(
+            path.document_points(),
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(50.0), px(120.0)),
+                point(px(105.0), px(5.0)),
+            ]
+        );
+        assert_eq!(bounds.origin, point(px(0.0), px(0.0)));
+        assert_eq!(bounds.size, size(px(110.0), px(125.0)));
     }
 
     #[test]

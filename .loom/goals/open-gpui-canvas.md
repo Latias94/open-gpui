@@ -99,6 +99,7 @@ stop_conditions:
 | Viewport | Done | View/document transforms, anchored zoom, zoom factor validation, and visible document bounds are implemented. |
 | Selection rectangle and multi-select | Done | Select tool supports box selection and multi-node drag for selected nodes. |
 | Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
+| Router strategy boundary | Done | `CanvasEdgeRouter` resolves route metadata into renderer-neutral `CanvasRoutePath` / `CanvasRouteSegment` values so hit testing and GPUI painting share the same route interpretation while applications can supply custom routers. |
 | JSON Canvas import/export | Done | `JsonCanvas` converts text/file/link/group nodes and side-based edges to and from `CanvasDocument`. |
 | Graph query view | Done | `CanvasGraph` provides zero-copy node, edge, endpoint, incoming/outgoing edge, neighbor, and directed edge-between queries for xyflow-style graph applications. |
 | Cached graph index | Done | `CanvasGraphIndex` provides an explicit adjacency cache with diff application, document-order query results, and an indexed graph view for hot traversal without hiding cache state in `CanvasDocument`. |
@@ -126,7 +127,6 @@ stop_conditions:
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Router strategy boundary | Add route generation traits for orthogonal/polyline/bezier preview paths without making route metadata renderer-specific. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 
 ## Deferred Work

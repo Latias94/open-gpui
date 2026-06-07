@@ -1,5 +1,5 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRouteKind, CanvasEditor, CanvasEndpoint, CanvasEvent,
+    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasRouteSegment,
     CanvasSelection, CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
 };
 use open_gpui::{
@@ -531,31 +531,39 @@ fn paint_edge(
     stroke_width: Pixels,
 ) {
     let mut builder = PathBuilder::stroke(stroke_width);
-    if edge.route.kind.as_str() == CanvasEdgeRouteKind::CUBIC_BEZIER
-        && edge.route.control_points.len() >= 2
-    {
-        let Ok(source) = model.document.endpoint_position(&edge.source) else {
-            return;
-        };
-        let Ok(target) = model.document.endpoint_position(&edge.target) else {
-            return;
-        };
-        builder.move_to(document_to_window_point(model, canvas_bounds, source));
-        builder.cubic_bezier_to(
-            document_to_window_point(model, canvas_bounds, target),
-            document_to_window_point(model, canvas_bounds, edge.route.control_points[0]),
-            document_to_window_point(model, canvas_bounds, edge.route.control_points[1]),
-        );
-    } else {
-        let Ok(points) = model.document.edge_route_points(edge) else {
-            return;
-        };
-        for (index, point) in points.into_iter().enumerate() {
-            let point = document_to_window_point(model, canvas_bounds, point);
-            if index == 0 {
-                builder.move_to(point);
-            } else {
-                builder.line_to(point);
+    let Ok(path) = model.document.edge_route_path(edge) else {
+        return;
+    };
+
+    let mut current = None;
+    for segment in path.segments {
+        match segment {
+            CanvasRouteSegment::Line { from, to } => {
+                let from = document_to_window_point(model, canvas_bounds, from);
+                if current != Some(from) {
+                    builder.move_to(from);
+                }
+                let to = document_to_window_point(model, canvas_bounds, to);
+                builder.line_to(to);
+                current = Some(to);
+            }
+            CanvasRouteSegment::CubicBezier {
+                from,
+                control_1,
+                control_2,
+                to,
+            } => {
+                let from = document_to_window_point(model, canvas_bounds, from);
+                if current != Some(from) {
+                    builder.move_to(from);
+                }
+                let to = document_to_window_point(model, canvas_bounds, to);
+                builder.cubic_bezier_to(
+                    to,
+                    document_to_window_point(model, canvas_bounds, control_1),
+                    document_to_window_point(model, canvas_bounds, control_2),
+                );
+                current = Some(to);
             }
         }
     }

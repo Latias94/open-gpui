@@ -104,6 +104,23 @@ fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
 The index is an application-owned cache. It preserves document edge order, deduplicates self-loop
 incident edges, and can apply diffs without changing document serialization.
 
+## Route Edges
+
+`CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns that intent into
+renderer-neutral `CanvasRouteSegment` values that hit testing and GPUI painting can share.
+
+```rust
+use open_gpui_canvas::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
+
+fn route(document: &open_gpui_canvas::CanvasDocument, edge: &open_gpui_canvas::CanvasEdge) {
+    let path = document.edge_route_path_with_router(edge, &CanvasDefaultEdgeRouter).unwrap();
+    assert!(!path.segments.is_empty());
+}
+```
+
+Applications can provide their own `CanvasEdgeRouter` for orthogonal, obstacle-aware, or preview
+routes without changing `CanvasEdgeRoute` serialization.
+
 ## Render Through GPUI
 
 The default adapter snapshots document state into `CanvasPaintModel`, culls visible records through

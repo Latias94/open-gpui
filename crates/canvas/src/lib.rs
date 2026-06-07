@@ -11,6 +11,7 @@ mod graph;
 mod index;
 mod json_canvas;
 mod persistence;
+mod routing;
 #[cfg(test)]
 mod test_support;
 mod tool;
@@ -47,6 +48,10 @@ pub use persistence::{
     handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
     load_canvas_document, load_canvas_persistence_cursor, replay_canvas_log,
     save_canvas_checkpoint,
+};
+pub use routing::{
+    CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
+    CanvasRouteSegment,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,
