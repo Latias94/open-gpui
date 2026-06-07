@@ -1,11 +1,12 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasTransaction,
-    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitTarget, NodeId, ShapeId,
-    SpatialIndex,
+    CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
+    HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PointerButton {
@@ -33,11 +34,57 @@ pub enum CanvasEvent {
     Cancel,
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanvasToolId(String);
+
+impl CanvasToolId {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for CanvasToolId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for CanvasToolId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for CanvasToolId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CanvasTool {
     Select,
     Pan,
     Connect,
+    Custom(CanvasToolId),
+}
+
+impl CanvasTool {
+    pub fn custom(id: impl Into<CanvasToolId>) -> Self {
+        Self::Custom(id.into())
+    }
+
+    pub fn custom_id(&self) -> Option<&CanvasToolId> {
+        match self {
+            Self::Custom(id) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -63,6 +110,10 @@ pub enum ToolState {
     Connecting {
         source: CanvasEndpoint,
         current: Point<Pixels>,
+    },
+    Custom {
+        tool_id: CanvasToolId,
+        payload: CanvasValue,
     },
 }
 
@@ -128,12 +179,67 @@ pub enum CanvasToolEffect {
     ApplyTransaction(CanvasTransaction),
     ApplyUnrecorded(CanvasTransaction),
     PushUndo(CanvasTransaction),
+    SetTool(CanvasTool),
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
     ClearSelection,
     SetState(ToolState),
     PanViewport(Point<Pixels>),
     SetViewport(CanvasViewport),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasToolContext<'a> {
+    pub document: &'a CanvasDocument,
+    pub viewport: &'a CanvasViewport,
+    pub tool: &'a CanvasTool,
+    pub state: &'a ToolState,
+    pub index: &'a SpatialIndex,
+    pub selection: &'a CanvasSelection,
+    pub history: &'a CanvasHistory,
+}
+
+impl CanvasToolContext<'_> {
+    pub fn active_custom_tool_id(&self) -> Option<&CanvasToolId> {
+        self.tool.custom_id()
+    }
+
+    pub fn document_position(&self, view_position: Point<Pixels>) -> Point<Pixels> {
+        self.viewport.view_to_document(view_position)
+    }
+
+    pub fn hit_test_view(
+        &self,
+        view_position: Point<Pixels>,
+        options: HitOptions,
+    ) -> impl Iterator<Item = &HitRecord> {
+        self.index
+            .hit_test(self.document_position(view_position), options)
+    }
+}
+
+pub trait CanvasToolReducer {
+    fn handle_event(
+        &mut self,
+        context: CanvasToolContext<'_>,
+        event: CanvasEvent,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError>;
+}
+
+impl<F> CanvasToolReducer for F
+where
+    F: for<'a> FnMut(
+        CanvasToolContext<'a>,
+        CanvasEvent,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError>,
+{
+    fn handle_event(
+        &mut self,
+        context: CanvasToolContext<'_>,
+        event: CanvasEvent,
+    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        self(context, event)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -261,6 +367,9 @@ impl CanvasEditor {
             CanvasToolEffect::PushUndo(transaction) => {
                 self.history.push_undo(transaction);
             }
+            CanvasToolEffect::SetTool(tool) => {
+                self.set_tool(tool);
+            }
             CanvasToolEffect::SetSelection(mut selection) => {
                 selection.retain_document(&self.document);
                 self.selection = selection;
@@ -332,11 +441,41 @@ impl CanvasEditor {
         self.state = ToolState::Idle;
     }
 
+    pub fn tool_context(&self) -> CanvasToolContext<'_> {
+        CanvasToolContext {
+            document: &self.document,
+            viewport: &self.viewport,
+            tool: &self.tool,
+            state: &self.state,
+            index: &self.index,
+            selection: &self.selection,
+            history: &self.history,
+        }
+    }
+
     pub fn handle_event(&mut self, event: CanvasEvent) -> Result<(), DocumentError> {
-        let effects = match self.tool {
+        let effects = match &self.tool {
             CanvasTool::Select => self.select_effects(event)?,
             CanvasTool::Pan => self.pan_effects(event),
             CanvasTool::Connect => self.connect_effects(event),
+            CanvasTool::Custom(_) => Vec::new(),
+        };
+        self.apply_tool_effects(effects)
+    }
+
+    pub fn handle_event_with_custom_tool<T>(
+        &mut self,
+        event: CanvasEvent,
+        custom_tool: &mut T,
+    ) -> Result<(), DocumentError>
+    where
+        T: CanvasToolReducer + ?Sized,
+    {
+        let effects = match &self.tool {
+            CanvasTool::Select => self.select_effects(event)?,
+            CanvasTool::Pan => self.pan_effects(event),
+            CanvasTool::Connect => self.connect_effects(event),
+            CanvasTool::Custom(_) => custom_tool.handle_event(self.tool_context(), event)?,
         };
         self.apply_tool_effects(effects)
     }
@@ -666,6 +805,61 @@ mod tests {
     use crate::CanvasNode;
     use open_gpui::{point, px, size};
 
+    #[derive(Default)]
+    struct StampTool {
+        calls: usize,
+        last_tool_id: Option<CanvasToolId>,
+        last_hit: Option<HitTarget>,
+    }
+
+    impl CanvasToolReducer for StampTool {
+        fn handle_event(
+            &mut self,
+            context: CanvasToolContext<'_>,
+            event: CanvasEvent,
+        ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+            self.calls += 1;
+            self.last_tool_id = context.active_custom_tool_id().cloned();
+
+            let CanvasEvent::PointerDown {
+                position,
+                button: PointerButton::Primary,
+            } = event
+            else {
+                return Ok(Vec::new());
+            };
+
+            self.last_hit = context
+                .hit_test_view(position, HitOptions::default())
+                .next()
+                .map(|record| record.target.clone());
+
+            let node_id = NodeId::new(format!("stamp-{}", context.document.nodes.len()));
+            let mut selection = CanvasSelection::default();
+            selection.nodes.insert(node_id.clone());
+            let mut payload = CanvasValue::new();
+            payload.insert("phase".into(), serde_json::Value::String("pressed".into()));
+
+            Ok(vec![
+                CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+                    DocumentCommand::InsertNode(CanvasNode::new(
+                        node_id.clone(),
+                        context.document_position(position),
+                        size(px(20.0), px(20.0)),
+                    )),
+                )),
+                CanvasToolEffect::SetSelection(selection),
+                CanvasToolEffect::SetState(ToolState::Custom {
+                    tool_id: self
+                        .last_tool_id
+                        .clone()
+                        .unwrap_or_else(|| CanvasToolId::from("stamp")),
+                    payload,
+                }),
+            ])
+        }
+    }
+
     #[test]
     fn select_tool_translates_node() {
         let mut document = CanvasDocument::default();
@@ -945,6 +1139,99 @@ mod tests {
         let edge = editor.document.edges.values().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+    }
+
+    #[test]
+    fn custom_tool_reducer_applies_effects_through_editor() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "anchor",
+                point(px(100.0), px(50.0)),
+                size(px(80.0), px(80.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        editor.set_tool(CanvasTool::custom("stamp"));
+        let mut tool = StampTool::default();
+
+        editor
+            .handle_event_with_custom_tool(
+                CanvasEvent::PointerDown {
+                    position: point(px(20.0), px(10.0)),
+                    button: PointerButton::Primary,
+                },
+                &mut tool,
+            )
+            .unwrap();
+
+        assert_eq!(tool.calls, 1);
+        assert_eq!(tool.last_tool_id, Some(CanvasToolId::from("stamp")));
+        assert_eq!(tool.last_hit, Some(HitTarget::Node(NodeId::from("anchor"))));
+
+        let stamped = editor.document.nodes.get(&NodeId::from("stamp-1")).unwrap();
+        assert_eq!(stamped.position, point(px(110.0), px(55.0)));
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("stamp-1")]
+        );
+        assert!(matches!(
+            editor.state,
+            ToolState::Custom {
+                ref tool_id,
+                ..
+            } if tool_id == &CanvasToolId::from("stamp")
+        ));
+
+        assert!(editor.undo().unwrap());
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("stamp-1")));
+    }
+
+    #[test]
+    fn custom_tool_entry_uses_builtin_tools_without_calling_custom_reducer() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "n1",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let mut tool = StampTool::default();
+
+        editor
+            .handle_event_with_custom_tool(
+                CanvasEvent::PointerDown {
+                    position: point(px(10.0), px(10.0)),
+                    button: PointerButton::Primary,
+                },
+                &mut tool,
+            )
+            .unwrap();
+
+        assert_eq!(tool.calls, 0);
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("n1")]
+        );
+    }
+
+    #[test]
+    fn set_tool_effect_switches_tool_and_resets_state() {
+        let mut editor = CanvasEditor::default();
+        editor.state = ToolState::Pointing {
+            origin: point(px(10.0), px(20.0)),
+        };
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetTool(CanvasTool::custom("stamp")))
+            .unwrap();
+
+        assert_eq!(editor.tool, CanvasTool::custom("stamp"));
+        assert_eq!(editor.state, ToolState::Idle);
     }
 
     #[test]

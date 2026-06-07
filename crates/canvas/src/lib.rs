@@ -38,6 +38,6 @@ pub use persistence::{
     CanvasReplayError, MemoryCanvasPersistenceStore, load_canvas_document, replay_canvas_log,
 };
 pub use tool::{
-    CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolEffect,
-    PointerButton, ToolState,
+    CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,
+    CanvasToolEffect, CanvasToolId, CanvasToolReducer, PointerButton, ToolState,
 };

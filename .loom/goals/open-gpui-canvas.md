@@ -109,13 +109,14 @@ stop_conditions:
 | Interaction paint feedback | Done | `CanvasPaintModel` carries selection and tool-state snapshots; paint frames mark selected records and expose selection rectangle plus connection preview overlays without per-record GPUI elements. |
 | Tool effect boundary | Done | `CanvasToolEffect` centralizes recorded transactions, unrecorded transactions, selection, viewport, and tool-state updates so built-in and future custom tools share one editor mutation path. |
 | Schema evolution boundary | Done | `migrate_canvas_snapshot`, minimum supported format version, and migration table exports make future snapshot changes explicit before storage and CRDT adapters depend on them. |
+| Custom tool reducer boundary | Done | `CanvasTool::custom`, `CanvasToolContext`, and `CanvasToolReducer` let applications build custom tools that read editor state and emit effects without mutating `CanvasEditor` directly. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Tool plugin boundary | The effect vocabulary is stable enough to wrap custom tools without forcing applications to fork `CanvasEditor`. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
-| Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait and migration boundaries have survived real document workflows. | adapter-specific integration tests |
+| High | Persistence adapter feature boundaries | Add redb/Loro/rkyv adapter scaffolding only after feature boundaries keep optional dependencies out of the core default build. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
+| Medium | Tool registry ergonomics | Wrap multiple custom reducers in a registry once the single-reducer boundary has enough application pressure. | focused reducer tests |
 
 ## Deferred Work
 

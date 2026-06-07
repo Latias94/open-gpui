@@ -155,8 +155,16 @@ Tools should be local, explicit, and easy to test:
 - Effects are applied through one mutation path, which later enables undo, persistence, and CRDT
   translation without binding the core to a trait-object plugin model too early.
 
-The first implementation can use an enum-based reducer. A trait-based plugin API can be added once
-the built-in state transitions are stable.
+The first custom-tool boundary is intentionally reducer-shaped. `CanvasTool::custom` selects an
+application-owned tool, `CanvasToolContext` exposes read-only document, viewport, selection,
+history, and spatial-index state, and `CanvasToolReducer` returns `CanvasToolEffect` values for the
+editor to apply. This avoids giving extensions mutable access to `CanvasEditor`, so undo, selection
+retention, spatial-index refresh, persistence logging, and future CRDT translation still pass
+through the same effect vocabulary.
+
+A larger tool registry can be added after real applications need multiple custom reducers active in
+one editor. The core should keep that registry as an ergonomic adapter over `CanvasToolReducer`, not
+as a second mutation path.
 
 ## Alternatives Considered
 
