@@ -24,7 +24,6 @@ flowchart TD
     FontKit[zed-font-kit] --> GpuiFont[gpui font-kit feature]
     FontKit --> GpuiMacos[gpui_macos]
     FontKit --> GpuiWgpu[gpui_wgpu font matching]
-    Wgpu[Zed wgpu fork] --> GpuiWgpu
 ```
 
 ## Resolved Forks
@@ -35,6 +34,7 @@ flowchart TD
 | `zed-scap` transitive `windows-capture` drift | Kept `zed-scap`, but pinned the lockfile back to `windows-capture = 1.4.0`. | `zed-scap` declares `windows-capture = "1.3.6"`, which allowed Cargo to select `1.5.0`; `1.5.0` changed the Windows capture API and broke `gpui_windows --all-features`. Version `1.4.0` matches the fork's `Context`, cropped-buffer, and five-argument `WCSettings::new` usage. | `cargo check -p gpui_windows --all-features`; `cargo tree --workspace --all-features --target all --edges normal -i windows-capture@1.4.0` |
 | `zed-xim` | Replaced with crates.io `xim = "=0.5.0"`. | Zed's fork exposed a `Client::reset_ic` helper. Upstream `xim 0.5.0` removed that helper but still exposes `ClientCore::send_req` and `Request::ResetIc`, so `gpui_linux` now sends the same XIM reset request directly. | WSL Ubuntu: `cargo check -p gpui_linux --all-features` |
 | `zed-font-kit` Git source | Replaced the Git dependency with crates.io `zed-font-kit = "0.14.1-zed"` while keeping the Zed API surface. | This removes `github.com/zed-industries/font-kit` from manifests and lockfile, but it is not an upstream `font-kit` replacement. The published crate uses `dirs = "5.0"` while the previously locked Git rev had `dirs = "6.0"`. | `cargo check -p gpui_wgpu --features font-kit --locked`; `cargo tree --workspace --all-features --target all --edges normal --invert zed-font-kit`; `rg 'zed-industries/font-kit|git\+https://github.com/zed-industries/font-kit' Cargo.toml Cargo.lock crates` |
+| Zed `wgpu` fork | Replaced with crates.io `wgpu = "=29.0.3"`. | The public `wgpu`, `naga`, `wgpu-core`, `wgpu-hal`, `wgpu-naga-bridge`, and `wgpu-types` packages are the same version line and are compile-compatible with `gpui_wgpu` and Linux all-features checks. | `cargo check -p gpui_wgpu --locked`; `cargo check -p gpui_wgpu --features font-kit --locked`; WSL Ubuntu: `cargo check -p gpui_linux --all-features --locked`; `cargo run -p xtask -- scan-import-boundary` |
 
 ## Inventory
 
@@ -42,7 +42,6 @@ flowchart TD
 | --- | --- | --- | --- | --- | --- |
 | `zed-scap` | `zed-industries/scap`, package `zed-scap`, version `0.0.8-zed` | `gpui`, `gpui_linux`, `gpui_windows` under `screen-capture` / all-features | `scap = 0.1.0-beta.1` from crates.io search | High | Keep the Zed fork for now. The current crates.io package fails to compile on Windows with its own `windows-capture = 1.5.0` dependency. |
 | `zed-font-kit` package | crates.io `zed-font-kit = 0.14.1-zed` | `gpui`, `gpui_macos`, `gpui_wgpu` | `font-kit = 0.14.3` from crates.io | High | The Git source is removed. Defer replacing the Zed package with upstream `font-kit` because current code depends on Zed-only APIs and public/private module behavior. |
-| Zed `wgpu` fork | `zed-industries/wgpu.git`, version `29.0.3` | `gpui_wgpu` | `wgpu = 29.0.3` from crates.io search | High | Defer. The version line matches crates.io, but the fork may carry unpublished patches in rendering internals. Compare lockfile and API behavior before replacing. |
 
 ## Evidence Commands
 
@@ -173,6 +172,41 @@ Decision:
   the Zed-only API usages from Open GPUI or owns a small Open GPUI font-kit fork carrying the needed
   native-handle and public matching behavior.
 
+Additional `wgpu` fork migration probe on 2026-06-07:
+
+```sh
+cargo info wgpu@29.0.3 --registry crates-io
+cargo tree --workspace --all-features --target all --edges normal --invert wgpu
+
+# Temporary probe worktree:
+# In the root workspace manifest:
+# wgpu = "=29.0.3"
+cargo check -p gpui_wgpu --locked
+cargo check -p gpui_wgpu --features font-kit --locked
+cargo check -p gpui_wgpu --lib --features font-kit --locked
+wsl -d Ubuntu -- bash -lc 'cd /mnt/c/Users/Frankorz/AppData/Local/Temp/open-gpui-wgpu-probe && export CARGO_TARGET_DIR=/tmp/open-gpui-wgpu-probe-linux && cargo check -p gpui_linux --all-features --locked'
+cargo run -p xtask -- scan-import-boundary
+```
+
+Result:
+
+- crates.io `wgpu = 29.0.3` is available under the same `MIT OR Apache-2.0` license.
+- The crates.io packages replace the Zed Git source for `naga`, `wgpu`, `wgpu-core`,
+  `wgpu-core-deps-*`, `wgpu-hal`, `wgpu-naga-bridge`, and `wgpu-types`.
+- `gpui_wgpu` compiles on Windows with and without the `font-kit` feature after the switch.
+- WSL Ubuntu verifies the Linux all-features path through `gpui_linux`; it still emits the
+  pre-existing `nightly_coverage` `unexpected_cfgs` warnings from
+  `gpui_linux/src/linux/dispatcher.rs`.
+- `cargo check -p gpui_wgpu --all-targets --features font-kit` is not a valid migration gate yet
+  because `crates/gpui_wgpu/benches/layout_line.rs` includes font assets that are not present in
+  this extracted workspace. That failure is unrelated to the `wgpu` API.
+
+Decision:
+
+- Replace the Zed `wgpu` Git fork with crates.io `wgpu = "=29.0.3"`.
+- Keep a runtime renderer smoke gate as follow-up debt; this migration establishes compile-level
+  compatibility on Windows and Linux, not pixel-output equivalence.
+
 ## Alternatives Considered
 
 ### Option A: Replace all forks immediately
@@ -242,11 +276,11 @@ crate preserves the required API surface.
 1. **`zed-scap`**: blocked on the current public crate. Revisit after an upstream `scap` release fixes
    the Windows `windows-capture` API mismatch, or after deciding to own a small Open GPUI patch/fork.
    Any retry should verify all-features builds for `gpui`, `gpui_linux`, and `gpui_windows`.
-2. **Zed `wgpu` fork**: defer until a dedicated renderer compatibility lane can compare behavior
-   against crates.io `wgpu = 29.0.3`.
-3. **`zed-font-kit` upstream replacement**: defer until a dedicated text/font compatibility lane can
+2. **`zed-font-kit` upstream replacement**: defer until a dedicated text/font compatibility lane can
    replace or own Zed-only APIs such as `Handle::from_native`, reference-taking
    `from_native_font`, and public `matching::find_best_match`.
+3. **Renderer runtime smoke**: add a focused native renderer smoke before claiming pixel-output
+   equivalence for the crates.io `wgpu` migration.
 
 ## Success Metrics
 
@@ -273,6 +307,6 @@ crate preserves the required API surface.
   are not compatible yet?
 - Should Open GPUI create its own font-kit fork namespace before upstream replacement work, given
   that crates.io `zed-font-kit = 0.14.1-zed` is still Zed-published?
-- Which runtime checks should be added before replacing `zed-font-kit` with upstream `font-kit` or
-  before touching `wgpu`?
+- Which runtime checks should be added before replacing `zed-font-kit` with upstream `font-kit`?
+- What should the minimum native renderer smoke assert beyond successful `wgpu` compilation?
 - Should Linux all-features CI be added as a permanent gate for future Linux dependency changes?

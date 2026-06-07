@@ -153,7 +153,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88" }
+wgpu = "=29.0.3"
 which = "6.0.0"
 windows-core = "0.61"
 

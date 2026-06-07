@@ -3927,7 +3927,8 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dd91265cc2454558f659b3b4b9640f0ddb8cc6521277f166b8a8c181c898079"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -7370,7 +7371,8 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb3feacc458f7bee8bc1737149b42b6c731aa461039a4264a67bb6681646b250"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.0",
@@ -7399,7 +7401,8 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02da3ad1b568337f25513b317870960ef87073ea0945502e44b864b67a8c77b7"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -7431,7 +7434,8 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62e51b5447e144b3dbba4feb01f80f4fa21696fa0cd99afb2c3df1affd6fdb28"
 dependencies = [
  "wgpu-hal",
 ]
@@ -7439,7 +7443,8 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3487cd6293a963bc5c0c0396f6a2192043c50003c07f4efdccbad3d90ec9d819"
 dependencies = [
  "wgpu-hal",
 ]
@@ -7447,7 +7452,8 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bfb01076d0aa08b0ba9bd741e178b5cc440f5abe99d9581323a4c8b5d1a1916"
 dependencies = [
  "wgpu-hal",
 ]
@@ -7455,7 +7461,8 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31f8e1a9e7a8512f276f7c62e018c7fa8d60954303fed2e5750114332049193f"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -7508,7 +7515,8 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59c654c483f058800972c3645e95388a7eca31bf9fe1933bc20e036588a0be02"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -7517,7 +7525,8 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9bcc31518a0e9735aefebedb5f7a9ef3ed1c42549c9f4c882fa9060ceaac639"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
