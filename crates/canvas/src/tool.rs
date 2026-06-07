@@ -4,7 +4,7 @@ use crate::{
     SpatialIndex,
 };
 use indexmap::IndexSet;
-use open_gpui::{Pixels, Point};
+use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -45,6 +45,10 @@ pub enum ToolState {
     Idle,
     Pointing {
         origin: Point<Pixels>,
+    },
+    Selecting {
+        origin: Point<Pixels>,
+        current: Point<Pixels>,
     },
     Translating {
         origin: Point<Pixels>,
@@ -294,7 +298,9 @@ impl CanvasEditor {
 
                 match hit {
                     Some(HitTarget::Node(id)) => {
-                        self.selection.replace_with(HitTarget::Node(id.clone()));
+                        if !self.selection.nodes.contains(&id) {
+                            self.selection.replace_with(HitTarget::Node(id.clone()));
+                        }
                         let original_nodes = self
                             .selection
                             .selected_nodes()
@@ -303,7 +309,7 @@ impl CanvasEditor {
                         self.state = ToolState::Translating {
                             origin: document_position,
                             last: document_position,
-                            node_ids: vec![id],
+                            node_ids: self.selection.selected_nodes().cloned().collect(),
                             original_nodes,
                         };
                     }
@@ -344,6 +350,23 @@ impl CanvasEditor {
                     *last = document_position;
                 }
             }
+            (ToolState::Pointing { origin }, CanvasEvent::PointerMove { position }) => {
+                let origin = *origin;
+                let document_position = self.viewport.view_to_document(position);
+                self.select_intersecting(selection_bounds(origin, document_position));
+                self.state = ToolState::Selecting {
+                    origin,
+                    current: document_position,
+                };
+            }
+            (ToolState::Selecting { origin, .. }, CanvasEvent::PointerMove { position }) => {
+                let origin = *origin;
+                let document_position = self.viewport.view_to_document(position);
+                self.select_intersecting(selection_bounds(origin, document_position));
+                if let ToolState::Selecting { current, .. } = &mut self.state {
+                    *current = document_position;
+                }
+            }
             (ToolState::Translating { original_nodes, .. }, CanvasEvent::PointerUp { .. }) => {
                 let inverse = self.inverse_for_changed_nodes(original_nodes);
                 self.history.push_undo(inverse);
@@ -360,6 +383,9 @@ impl CanvasEditor {
                 self.state = ToolState::Idle;
             }
             (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
+                self.state = ToolState::Idle;
+            }
+            (ToolState::Selecting { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
                 self.state = ToolState::Idle;
             }
             (_, CanvasEvent::Wheel { delta }) => {
@@ -496,6 +522,31 @@ impl CanvasEditor {
                 .map(DocumentCommand::UpdateNode),
         )
     }
+
+    fn select_intersecting(&mut self, bounds: Bounds<Pixels>) {
+        self.selection.clear();
+        for record in self.index.query(bounds) {
+            match &record.target {
+                HitTarget::Node(id) => {
+                    self.selection.nodes.insert(id.clone());
+                }
+                HitTarget::Edge(id) => {
+                    self.selection.edges.insert(id.clone());
+                }
+                HitTarget::Shape(id) => {
+                    self.selection.shapes.insert(id.clone());
+                }
+                HitTarget::Handle { .. } => {}
+            }
+        }
+    }
+}
+
+fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pixels> {
+    Bounds::from_corners(
+        Point::new(origin.x.min(current.x), origin.y.min(current.y)),
+        Point::new(origin.x.max(current.x), origin.y.max(current.y)),
+    )
 }
 
 #[cfg(test)]
@@ -587,6 +638,100 @@ mod tests {
             .unwrap();
 
         assert!(editor.selection.is_empty());
+    }
+
+    #[test]
+    fn select_tool_box_selects_intersecting_records() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "inside",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "outside",
+                point(px(200.0), px(200.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(0.0), px(0.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(50.0), px(50.0)),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(50.0), px(50.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("inside")]
+        );
+        assert_eq!(editor.state, ToolState::Idle);
+    }
+
+    #[test]
+    fn translating_selected_node_moves_all_selected_nodes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.selection.nodes.insert(NodeId::from("b"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(20.0), px(30.0)),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(20.0), px(30.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("a")].position,
+            point(px(10.0), px(20.0))
+        );
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("b")].position,
+            point(px(210.0), px(20.0))
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
     }
 
     #[test]
