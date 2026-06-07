@@ -74,16 +74,16 @@ jobs:
 
       - name: Check Linux platform surface
         if: matrix.name == 'linux'
-        run: cargo check -p gpui_linux --all-features --locked
+        run: cargo check -p open-gpui-linux --all-features --locked
 
       - name: Check macOS font surface
         if: matrix.name == 'macos'
-        run: cargo check -p gpui_macos --features font-kit --locked
+        run: cargo check -p open-gpui-macos --features font-kit --locked
 
       - name: Check Windows platform surface
         if: matrix.name == 'windows'
         shell: pwsh
-        run: cargo check -p gpui_windows --all-features --locked
+        run: cargo check -p open-gpui-windows --all-features --locked
 
       - name: Check native WGPU font-kit path
-        run: cargo check -p gpui_wgpu --features font-kit --locked
+        run: cargo check -p open-gpui-wgpu --features font-kit --locked
