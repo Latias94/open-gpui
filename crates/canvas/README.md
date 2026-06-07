@@ -80,9 +80,29 @@ fn inspect(document: &open_gpui_canvas::CanvasDocument) {
 }
 ```
 
-`CanvasGraph` is scan-based today. If graph traversal becomes hot in real applications, an
-incremental adjacency index can be built from `CanvasDocumentDiff` without changing document
-serialization.
+`CanvasGraph` is scan-based and zero-cache. For hot graph traversal, build a
+`CanvasGraphIndex` explicitly and keep it in sync with `CanvasDocumentDiff`.
+
+```rust
+use open_gpui_canvas::{CanvasEdgeDirection, CanvasGraphIndex, NodeId};
+
+fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
+    let index = CanvasGraphIndex::rebuild(document);
+    let graph = index.graph(document);
+    let source = NodeId::from("source");
+
+    let outgoing_count = graph.outgoing_edges(&source).count();
+    let neighbor_ids = graph
+        .neighbor_node_ids(&source, CanvasEdgeDirection::Outgoing)
+        .map(|id| id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(outgoing_count, neighbor_ids.len());
+}
+```
+
+The index is an application-owned cache. It preserves document edge order, deduplicates self-loop
+incident edges, and can apply diffs without changing document serialization.
 
 ## Render Through GPUI
 

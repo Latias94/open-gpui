@@ -101,6 +101,7 @@ stop_conditions:
 | Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
 | JSON Canvas import/export | Done | `JsonCanvas` converts text/file/link/group nodes and side-based edges to and from `CanvasDocument`. |
 | Graph query view | Done | `CanvasGraph` provides zero-copy node, edge, endpoint, incoming/outgoing edge, neighbor, and directed edge-between queries for xyflow-style graph applications. |
+| Cached graph index | Done | `CanvasGraphIndex` provides an explicit adjacency cache with diff application, document-order query results, and an indexed graph view for hot traversal without hiding cache state in `CanvasDocument`. |
 | Persistent storage traits | Done | `CanvasPersistenceStore` defines checkpoint plus monotonic transaction-log replay without introducing redb/Loro/rkyv core dependencies. |
 | Randomized invariant tests | Done | Deterministic stress tests cover transaction inverse/diff replay and incremental spatial-index equivalence against full rebuilds. |
 | GPUI adapter prototype | Done | `canvas_view` renders a model snapshot through GPUI's low-level canvas callback using spatial culling and batched paint commands. |
@@ -125,7 +126,6 @@ stop_conditions:
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Cached graph indexes | Add an optional incremental adjacency index if real examples show `CanvasGraph` scan-based queries becoming hot. | focused unit tests |
 | High | Router strategy boundary | Add route generation traits for orthogonal/polyline/bezier preview paths without making route metadata renderer-specific. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 

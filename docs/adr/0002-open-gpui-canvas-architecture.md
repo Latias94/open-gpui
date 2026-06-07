@@ -129,12 +129,14 @@ JSON Canvas import/export is implemented as an adapter around the core records. 
 colors into `CanvasStyle`, and maps `fromSide` / `toSide` into deterministic side handles. This
 keeps Obsidian-style interchange useful without making JSON Canvas the canonical storage format.
 
-Graph queries are exposed as a zero-copy borrowed view through `CanvasGraph`. The first API keeps
-incoming, outgoing, incident, neighbor, endpoint, and directed edge-between queries scan-based over
-the canonical edge list. That matches the simple `nodes` / `edges` data model while avoiding a
-second mutable adjacency cache before real examples prove it is needed. If graph traversal becomes
-hot, a future incremental adjacency index can be built from `CanvasDocumentDiff` without changing
-the public record model.
+Graph queries are exposed through two explicit paths. `CanvasGraph` is a zero-cache borrowed view
+that scans the canonical edge list for incoming, outgoing, incident, neighbor, endpoint, and
+directed edge-between queries. `CanvasGraphIndex` is an application-owned adjacency cache for hot
+graph traversal. It stores edge endpoints plus outgoing, incoming, and incident edge ID sets,
+preserves document edge order, deduplicates self-loop incident edges, and can apply
+`CanvasDocumentDiff` by rebuilding only affected node adjacency. This keeps the simple `nodes` /
+`edges` data model while giving xyflow-style graph applications a scalable query path without
+putting hidden cache state inside `CanvasDocument`.
 
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
