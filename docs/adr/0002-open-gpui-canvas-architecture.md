@@ -53,6 +53,12 @@ The core crate should not require one GPUI element per canvas object. A GPUI ada
 selected controls, text editors, or node widgets through elements, but the document, hit testing,
 and default rendering path must be able to paint visible canvas records in batches.
 
+The first GPUI adapter follows that rule by building a `CanvasPaintModel` snapshot from a document,
+spatial index, and viewport. Its prepaint step queries the visible document bounds through
+`SpatialIndex`, and its paint step emits GPUI quads and paths through the low-level `canvas`
+callback. It intentionally does not own application state or turn every record into an element;
+future overlays can layer selected node widgets on top of this batched base renderer.
+
 ## Architecture
 
 ```mermaid

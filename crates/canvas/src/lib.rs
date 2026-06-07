@@ -6,6 +6,7 @@
 
 mod document;
 mod geometry;
+mod gpui;
 mod index;
 mod json_canvas;
 mod persistence;
@@ -20,6 +21,10 @@ pub use document::{
     DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
 };
 pub use geometry::{CanvasViewport, TransformError};
+pub use gpui::{
+    CanvasPaintFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord, CanvasPaintTheme,
+    canvas_view, collect_visible_records, paint_canvas_frame,
+};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
