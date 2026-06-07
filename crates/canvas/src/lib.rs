@@ -7,6 +7,7 @@
 mod document;
 mod geometry;
 mod gpui;
+mod graph;
 mod index;
 mod json_canvas;
 mod persistence;
@@ -28,6 +29,7 @@ pub use gpui::{
     CanvasPaintInteractionFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
     CanvasPaintTheme, canvas_view, collect_visible_records, paint_canvas_frame,
 };
+pub use graph::{CanvasEdgeDirection, CanvasGraph};
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
