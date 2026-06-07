@@ -22,7 +22,8 @@ pub use document::{
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use gpui::{
-    CanvasInputMapper, CanvasPaintFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
+    CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintFrame, CanvasPaintInteraction,
+    CanvasPaintInteractionFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
     CanvasPaintTheme, canvas_view, collect_visible_records, paint_canvas_frame,
 };
 pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};

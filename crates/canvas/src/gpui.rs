@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRouteKind, CanvasEditor, CanvasEvent, CanvasViewport,
-    HitOptions, HitTarget, PointerButton, SpatialIndex,
+    CanvasDocument, CanvasEdge, CanvasEdgeRouteKind, CanvasEditor, CanvasEndpoint, CanvasEvent,
+    CanvasSelection, CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
@@ -13,6 +13,7 @@ pub struct CanvasPaintModel {
     pub document: Arc<CanvasDocument>,
     pub index: Arc<SpatialIndex>,
     pub viewport: CanvasViewport,
+    pub interaction: CanvasPaintInteraction,
 }
 
 impl CanvasPaintModel {
@@ -22,6 +23,7 @@ impl CanvasPaintModel {
             document: Arc::new(document),
             index: Arc::new(index),
             viewport,
+            interaction: CanvasPaintInteraction::default(),
         }
     }
 
@@ -34,6 +36,21 @@ impl CanvasPaintModel {
             document,
             index,
             viewport,
+            interaction: CanvasPaintInteraction::default(),
+        }
+    }
+
+    pub fn from_parts_with_interaction(
+        document: Arc<CanvasDocument>,
+        index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        interaction: CanvasPaintInteraction,
+    ) -> Self {
+        Self {
+            document,
+            index,
+            viewport,
+            interaction,
         }
     }
 }
@@ -44,6 +61,25 @@ impl From<&CanvasEditor> for CanvasPaintModel {
             document: Arc::new(editor.document.clone()),
             index: Arc::new(editor.index.clone()),
             viewport: editor.viewport,
+            interaction: CanvasPaintInteraction {
+                selection: editor.selection.clone(),
+                state: editor.state.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintInteraction {
+    pub selection: CanvasSelection,
+    pub state: ToolState,
+}
+
+impl Default for CanvasPaintInteraction {
+    fn default() -> Self {
+        Self {
+            selection: CanvasSelection::default(),
+            state: ToolState::Idle,
         }
     }
 }
@@ -52,6 +88,7 @@ impl From<&CanvasEditor> for CanvasPaintModel {
 pub struct CanvasPaintOptions {
     pub include_hidden: bool,
     pub include_handles: bool,
+    pub include_interaction_feedback: bool,
     pub cull_margin: Pixels,
 }
 
@@ -60,6 +97,7 @@ impl Default for CanvasPaintOptions {
         Self {
             include_hidden: false,
             include_handles: false,
+            include_interaction_feedback: true,
             cull_margin: Pixels::ZERO,
         }
     }
@@ -81,6 +119,15 @@ pub struct CanvasPaintTheme {
     pub handle_stroke: Hsla,
     pub handle_stroke_width: Pixels,
     pub handle_corner_radius: Pixels,
+    pub selection_fill: Hsla,
+    pub selection_stroke: Hsla,
+    pub selection_stroke_width: Pixels,
+    pub selection_corner_radius: Pixels,
+    pub selection_bounds_fill: Hsla,
+    pub selection_bounds_stroke: Hsla,
+    pub selection_bounds_stroke_width: Pixels,
+    pub connection_preview_stroke: Hsla,
+    pub connection_preview_stroke_width: Pixels,
 }
 
 impl Default for CanvasPaintTheme {
@@ -100,6 +147,15 @@ impl Default for CanvasPaintTheme {
             handle_stroke: Hsla::from(rgb(0xffffff)),
             handle_stroke_width: px(1.0),
             handle_corner_radius: px(6.0),
+            selection_fill: Hsla::from(rgb(0x0969da)).alpha(0.08),
+            selection_stroke: Hsla::from(rgb(0x0969da)),
+            selection_stroke_width: px(2.0),
+            selection_corner_radius: px(7.0),
+            selection_bounds_fill: Hsla::from(rgb(0x0969da)).alpha(0.08),
+            selection_bounds_stroke: Hsla::from(rgb(0x0969da)).alpha(0.7),
+            selection_bounds_stroke_width: px(1.0),
+            connection_preview_stroke: Hsla::from(rgb(0x0969da)).alpha(0.7),
+            connection_preview_stroke_width: px(2.0),
         }
     }
 }
@@ -108,6 +164,7 @@ impl Default for CanvasPaintTheme {
 pub struct CanvasPaintFrame {
     pub visible_document_bounds: Bounds<Pixels>,
     pub records: Vec<CanvasPaintRecord>,
+    pub interaction: CanvasPaintInteractionFrame,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +174,19 @@ pub struct CanvasPaintRecord {
     pub view_bounds: Bounds<Pixels>,
     pub z_index: i32,
     pub hidden: bool,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanvasPaintInteractionFrame {
+    pub selection_bounds: Option<Bounds<Pixels>>,
+    pub connection_preview: Option<CanvasPaintConnectionPreview>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintConnectionPreview {
+    pub source_view_position: Point<Pixels>,
+    pub target_view_position: Point<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,12 +285,19 @@ pub fn collect_visible_records(
             view_bounds: model.viewport.document_bounds_to_view(record.bounds),
             z_index: record.z_index,
             hidden: record.hidden,
+            selected: options.include_interaction_feedback
+                && target_is_selected(&record.target, &model.interaction.selection),
         })
         .collect();
 
     CanvasPaintFrame {
         visible_document_bounds,
         records,
+        interaction: if options.include_interaction_feedback {
+            interaction_frame(model)
+        } else {
+            CanvasPaintInteractionFrame::default()
+        },
     }
 }
 
@@ -295,6 +372,119 @@ pub fn paint_canvas_frame(
             }
         }
     }
+
+    for record in &frame.records {
+        if !record.selected {
+            continue;
+        }
+
+        match &record.target {
+            HitTarget::Node(_) | HitTarget::Shape(_) | HitTarget::Handle { .. } => {
+                paint_rect(
+                    window,
+                    canvas_bounds,
+                    record.view_bounds.dilate(px(2.0)),
+                    theme.selection_fill,
+                    theme.selection_stroke,
+                    theme.selection_stroke_width,
+                    selection_corner_radius(record, theme),
+                );
+            }
+            HitTarget::Edge(id) => {
+                let Some(edge) = model.document.edges.get(id) else {
+                    continue;
+                };
+                paint_edge(
+                    window,
+                    canvas_bounds,
+                    model,
+                    edge,
+                    theme.selection_stroke,
+                    theme.selection_stroke_width,
+                );
+            }
+        }
+    }
+
+    if let Some(bounds) = frame.interaction.selection_bounds {
+        paint_rect(
+            window,
+            canvas_bounds,
+            bounds,
+            theme.selection_bounds_fill,
+            theme.selection_bounds_stroke,
+            theme.selection_bounds_stroke_width,
+            px(2.0),
+        );
+    }
+
+    if let Some(preview) = &frame.interaction.connection_preview {
+        paint_line(
+            window,
+            canvas_bounds,
+            preview.source_view_position,
+            preview.target_view_position,
+            theme.connection_preview_stroke,
+            theme.connection_preview_stroke_width,
+        );
+    }
+}
+
+fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
+    match &model.interaction.state {
+        ToolState::Selecting { origin, current } => CanvasPaintInteractionFrame {
+            selection_bounds: Some(
+                model
+                    .viewport
+                    .document_bounds_to_view(bounds_from_points(*origin, *current)),
+            ),
+            connection_preview: None,
+        },
+        ToolState::Connecting { source, current } => CanvasPaintInteractionFrame {
+            selection_bounds: None,
+            connection_preview: connection_preview(model, source, *current),
+        },
+        _ => CanvasPaintInteractionFrame::default(),
+    }
+}
+
+fn connection_preview(
+    model: &CanvasPaintModel,
+    source: &CanvasEndpoint,
+    current: Point<Pixels>,
+) -> Option<CanvasPaintConnectionPreview> {
+    let source = model.document.endpoint_position(source).ok()?;
+    Some(CanvasPaintConnectionPreview {
+        source_view_position: model.viewport.document_to_view(source),
+        target_view_position: model.viewport.document_to_view(current),
+    })
+}
+
+fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
+    match target {
+        HitTarget::Node(id) => selection.nodes.contains(id),
+        HitTarget::Handle { node_id, handle_id } => selection.handles.contains(&CanvasEndpoint {
+            node_id: node_id.clone(),
+            handle_id: Some(handle_id.clone()),
+        }),
+        HitTarget::Edge(id) => selection.edges.contains(id),
+        HitTarget::Shape(id) => selection.shapes.contains(id),
+    }
+}
+
+fn selection_corner_radius(record: &CanvasPaintRecord, theme: CanvasPaintTheme) -> Pixels {
+    match &record.target {
+        HitTarget::Node(_) => theme.selection_corner_radius,
+        HitTarget::Handle { .. } => theme.handle_corner_radius,
+        HitTarget::Shape(_) | HitTarget::Edge(_) => px(0.0),
+    }
+}
+
+fn bounds_from_points(a: Point<Pixels>, b: Point<Pixels>) -> Bounds<Pixels> {
+    Bounds::from_corners(
+        Point::new(a.x.min(b.x), a.y.min(b.y)),
+        Point::new(a.x.max(b.x), a.y.max(b.y)),
+    )
 }
 
 fn paint_rect(
@@ -314,6 +504,22 @@ fn paint_rect(
         stroke,
         Default::default(),
     ));
+}
+
+fn paint_line(
+    window: &mut Window,
+    canvas_bounds: Bounds<Pixels>,
+    start: Point<Pixels>,
+    end: Point<Pixels>,
+    stroke: Hsla,
+    stroke_width: Pixels,
+) {
+    let mut builder = PathBuilder::stroke(stroke_width);
+    builder.move_to(start + canvas_bounds.origin);
+    builder.line_to(end + canvas_bounds.origin);
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, stroke);
+    }
 }
 
 fn paint_edge(
@@ -465,6 +671,137 @@ mod tests {
                     if node_id.as_str() == "node" && handle_id.as_str() == "out"
             )
         }));
+    }
+
+    #[test]
+    fn selected_records_are_marked_in_paint_frame() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "selected",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "plain",
+                point(px(70.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .selection
+            .nodes
+            .insert(crate::NodeId::from("selected"));
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert!(frame.records.iter().any(|record| {
+            record.target == HitTarget::Node(crate::NodeId::from("selected")) && record.selected
+        }));
+        assert!(frame.records.iter().any(|record| {
+            record.target == HitTarget::Node(crate::NodeId::from("plain")) && !record.selected
+        }));
+    }
+
+    #[test]
+    fn interaction_feedback_can_be_disabled() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "selected",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .selection
+            .nodes
+            .insert(crate::NodeId::from("selected"));
+        editor.state = ToolState::Selecting {
+            origin: point(px(10.0), px(10.0)),
+            current: point(px(40.0), px(50.0)),
+        };
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(100.0))),
+            CanvasPaintOptions {
+                include_interaction_feedback: false,
+                ..CanvasPaintOptions::default()
+            },
+        );
+
+        assert!(frame.records.iter().all(|record| !record.selected));
+        assert_eq!(frame.interaction, CanvasPaintInteractionFrame::default());
+    }
+
+    #[test]
+    fn selecting_state_adds_selection_bounds_feedback() {
+        let mut model = CanvasPaintModel::new(
+            CanvasDocument::default(),
+            CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
+        );
+        model.interaction.state = ToolState::Selecting {
+            origin: point(px(40.0), px(80.0)),
+            current: point(px(20.0), px(50.0)),
+        };
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.selection_bounds,
+            Some(Bounds::new(
+                point(px(20.0), px(60.0)),
+                size(px(40.0), px(60.0))
+            ))
+        );
+    }
+
+    #[test]
+    fn connecting_state_adds_connection_preview_feedback() {
+        let mut node = CanvasNode::new(
+            "source",
+            point(px(10.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        node.handles
+            .push(CanvasHandle::new("out", point(px(100.0), px(40.0))));
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.state = ToolState::Connecting {
+            source: CanvasEndpoint::new("source", Some("out")),
+            current: point(px(180.0), px(120.0)),
+        };
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(180.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.connection_preview,
+            Some(CanvasPaintConnectionPreview {
+                source_view_position: point(px(110.0), px(60.0)),
+                target_view_position: point(px(180.0), px(120.0)),
+            })
+        );
     }
 
     #[test]

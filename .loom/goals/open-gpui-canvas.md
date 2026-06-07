@@ -106,12 +106,13 @@ stop_conditions:
 | Smoke example | Done | `open-gpui-smoke-native` renders nodes, handles, shapes, routed edges, and the default GPUI canvas paint adapter. |
 | Adapter interaction bridge | Done | `CanvasInputMapper` converts GPUI pointer and wheel events into canvas-local `CanvasEvent` values without coupling paint to editor mutation. |
 | Interactive smoke example | Done | The smoke example owns a `CanvasEditor`, snapshots it for paint, registers GPUI pointer/wheel listeners during canvas paint, and exercises select-tool dragging plus viewport wheel panning. |
+| Interaction paint feedback | Done | `CanvasPaintModel` carries selection and tool-state snapshots; paint frames mark selected records and expose selection rectangle plus connection preview overlays without per-record GPUI elements. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Selection and interaction paint feedback | Expose selected records, drag state, and optional hover/selection styling in the paint model so tool state is visible without one element per record. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
+| High | Tool extensibility boundary | Hard-coded built-in tools are fine for the MVP, but plugin applications need a stable command/event boundary before custom tools or CRDT translation are added. | `cargo nextest run -p open-gpui-canvas && cargo check -p open-gpui-smoke-native` |
 | Medium | Persistence adapters | Add feature-gated redb/Loro/rkyv adapters only after the trait boundary has survived real document workflows. | adapter-specific integration tests |
 
 ## Deferred Work

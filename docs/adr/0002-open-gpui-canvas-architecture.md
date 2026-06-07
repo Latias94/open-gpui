@@ -65,6 +65,12 @@ render, and registers GPUI pointer and wheel listeners from the canvas paint cal
 actual canvas bounds are known. `CanvasInputMapper` converts window-space GPUI events into
 canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor.
 
+Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
+copy of selection and tool state, `CanvasPaintFrame` marks selected records and computes transient
+selection rectangles or connection previews, and the batched painter draws those overlays after the
+base records. This keeps visual affordances visible in native examples without moving mutable
+editor state into the renderer or rendering every record as a GPUI element.
+
 ## Architecture
 
 ```mermaid
