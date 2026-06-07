@@ -44,6 +44,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
   edge sides into deterministic node handles.
 - A persistence boundary based on checkpoints and monotonic transaction logs.
+- An explicit snapshot migration boundary with a minimum supported format version and monotonic
+  migration table.
 - A small tool state machine inspired by tldraw states such as idle, pointing, translating,
   panning, pinching, connecting, and editing text.
 - Optional future adapters for Loro, `rkyv`, and `redb`, kept outside the core MVP unless they are
@@ -134,6 +136,13 @@ non-monotonic sequences so local caches and future collaboration layers share on
 contract. `redb`, Loro, and `rkyv` remain adapter choices: `redb` can back a local checkpoint/log
 store, Loro can translate transactions or diffs into collaborative operations, and `rkyv` can
 optimize snapshots once the public record format stabilizes.
+
+Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
+`migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
+Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the
+minimum supported format are rejected before validation. The migration table is intentionally empty
+for v1, but tests require future entries to be monotonic and contiguous so redb, Loro, and `rkyv`
+adapters do not need to guess which schema they are reading.
 
 ## Tool Model
 

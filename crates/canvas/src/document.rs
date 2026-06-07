@@ -8,6 +8,14 @@ use thiserror::Error;
 pub type CanvasValue = Map<String, Value>;
 
 pub const CANVAS_DOCUMENT_FORMAT_VERSION: u32 = 1;
+pub const CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION: u32 = 1;
+pub const CANVAS_SNAPSHOT_MIGRATIONS: &[CanvasSnapshotMigration] = &[];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanvasSnapshotMigration {
+    pub from_version: u32,
+    pub to_version: u32,
+}
 
 macro_rules! canvas_id {
     ($name:ident) => {
@@ -535,6 +543,40 @@ impl Default for CanvasSnapshot {
     }
 }
 
+impl CanvasSnapshot {
+    pub fn migrate_to_current(self) -> Result<Self, DocumentError> {
+        migrate_canvas_snapshot(self)
+    }
+}
+
+pub fn migrate_canvas_snapshot(
+    mut snapshot: CanvasSnapshot,
+) -> Result<CanvasSnapshot, DocumentError> {
+    if snapshot.format_version < CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION
+        || snapshot.format_version > CANVAS_DOCUMENT_FORMAT_VERSION
+    {
+        return Err(DocumentError::UnsupportedFormatVersion {
+            expected: CANVAS_DOCUMENT_FORMAT_VERSION,
+            found: snapshot.format_version,
+        });
+    }
+
+    for migration in CANVAS_SNAPSHOT_MIGRATIONS {
+        if snapshot.format_version == migration.from_version {
+            snapshot.format_version = migration.to_version;
+        }
+    }
+
+    if snapshot.format_version != CANVAS_DOCUMENT_FORMAT_VERSION {
+        return Err(DocumentError::UnsupportedFormatVersion {
+            expected: CANVAS_DOCUMENT_FORMAT_VERSION,
+            found: snapshot.format_version,
+        });
+    }
+
+    Ok(snapshot)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasDocument {
     #[serde(default = "default_document_format_version")]
@@ -567,12 +609,7 @@ impl CanvasDocument {
     }
 
     pub fn from_snapshot(snapshot: CanvasSnapshot) -> Result<Self, DocumentError> {
-        if snapshot.format_version != CANVAS_DOCUMENT_FORMAT_VERSION {
-            return Err(DocumentError::UnsupportedFormatVersion {
-                expected: CANVAS_DOCUMENT_FORMAT_VERSION,
-                found: snapshot.format_version,
-            });
-        }
+        let snapshot = migrate_canvas_snapshot(snapshot)?;
 
         let mut document = Self {
             format_version: snapshot.format_version,
@@ -1171,7 +1208,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_snapshot_version() {
+    fn current_snapshot_migration_is_noop() {
+        let mut snapshot = CanvasSnapshot::default();
+        snapshot.nodes.push(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ));
+        snapshot.metadata.insert("title".into(), "Canvas".into());
+
+        let migrated = snapshot.clone().migrate_to_current().unwrap();
+
+        assert_eq!(migrated, snapshot);
+        assert_eq!(migrated.format_version, CANVAS_DOCUMENT_FORMAT_VERSION);
+    }
+
+    #[test]
+    fn from_snapshot_accepts_current_snapshot_through_migration_boundary() {
+        let snapshot = CanvasSnapshot {
+            nodes: vec![CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )],
+            ..CanvasSnapshot::default()
+        };
+
+        let document = CanvasDocument::from_snapshot(snapshot).unwrap();
+
+        assert_eq!(document.format_version, CANVAS_DOCUMENT_FORMAT_VERSION);
+        assert_eq!(document.nodes.len(), 1);
+    }
+
+    #[test]
+    fn rejects_future_snapshot_version() {
         let snapshot = CanvasSnapshot {
             format_version: CANVAS_DOCUMENT_FORMAT_VERSION + 1,
             ..CanvasSnapshot::default()
@@ -1184,6 +1254,33 @@ mod tests {
                 found: CANVAS_DOCUMENT_FORMAT_VERSION + 1,
             }
         );
+    }
+
+    #[test]
+    fn rejects_snapshot_version_below_minimum_supported_version() {
+        let snapshot = CanvasSnapshot {
+            format_version: CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION - 1,
+            ..CanvasSnapshot::default()
+        };
+
+        assert_eq!(
+            migrate_canvas_snapshot(snapshot).unwrap_err(),
+            DocumentError::UnsupportedFormatVersion {
+                expected: CANVAS_DOCUMENT_FORMAT_VERSION,
+                found: CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION - 1,
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_migration_table_is_monotonic() {
+        for migration in CANVAS_SNAPSHOT_MIGRATIONS {
+            assert!(migration.from_version < migration.to_version);
+        }
+
+        for migrations in CANVAS_SNAPSHOT_MIGRATIONS.windows(2) {
+            assert_eq!(migrations[0].to_version, migrations[1].from_version);
+        }
     }
 
     #[test]
