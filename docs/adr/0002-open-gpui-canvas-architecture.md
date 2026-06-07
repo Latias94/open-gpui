@@ -151,6 +151,14 @@ the adapter is actually implemented. The default build only implements the in-me
 an adapter feature is not treated as proof that a concrete backend exists. This keeps the core crate
 honest while leaving a stable place to attach optional dependencies later.
 
+Applications can connect editor mutations to persistence through `CanvasPersistenceCursor` and
+`apply_persistent_transaction`. The helper validates a recorded transaction against the current
+editor document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies the
+same transaction through `CanvasEditor`. This keeps `CanvasEditor` free of concrete storage
+ownership while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry
+point. Unrecorded gesture updates remain outside the persistence log until committed as explicit
+transactions.
+
 Snapshot evolution is explicit. `CanvasSnapshot::migrate_to_current` and
 `migrate_canvas_snapshot` are the only restore path used by `CanvasDocument::from_snapshot`.
 Current v1 snapshots migrate as a no-op, future versions are rejected, and versions below the

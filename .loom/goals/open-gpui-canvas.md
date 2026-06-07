@@ -116,12 +116,13 @@ stop_conditions:
 | Example custom tools | Done | `open-gpui-smoke-native` registers a custom stamp tool through `CanvasToolRegistry` and dispatches right-click pointer events through the same editor effect path as builtin tools. |
 | Crate README/API examples | Done | `crates/canvas/README.md` documents the model, graph queries, GPUI rendering path, custom tools, JSON Canvas, and persistence boundaries with copyable API snippets. |
 | Package README verification | Done | `cargo package -p open-gpui-canvas --locked --allow-dirty` verifies the crate README is packaged with the future publish artifact. |
+| Editor persistence hook | Done | `CanvasPersistenceCursor` and `apply_persistent_transaction` connect successful recorded editor transactions to monotonic store log entries without binding `CanvasEditor` to a concrete backend. |
 
 ## Next Implementation Slices
 
 | Priority | Slice | Rationale | Candidate Verification |
 | --- | --- | --- | --- |
-| High | Canvas editor persistence hook | Add a small helper around `CanvasEditor` transactions that can append successful recorded transactions to a `CanvasPersistenceStore` without binding the editor to a concrete database. | focused unit tests |
+| High | Persistence checkpoint helper | Add an explicit checkpoint/compaction helper around `CanvasEditor` state so applications can bound replay length without knowing store internals. | focused unit tests |
 | Medium | Cached graph indexes | Add an optional incremental adjacency index if real examples show `CanvasGraph` scan-based queries becoming hot. | focused unit tests |
 | Medium | Concrete persistence adapters | Implement feature-gated redb/Loro/rkyv adapters only after each adapter has a focused contract and no default dependency leakage. | adapter-specific integration tests |
 

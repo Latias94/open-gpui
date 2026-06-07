@@ -172,8 +172,9 @@ The default crate ships only the persistence contract and an in-memory store.
 
 ```rust
 use open_gpui_canvas::{
-    CanvasCheckpoint, CanvasDocument, CanvasPersistenceStore, MemoryCanvasPersistenceStore,
-    load_canvas_document,
+    CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
+    CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
+    apply_persistent_transaction, load_canvas_document,
 };
 
 let document = CanvasDocument::default();
@@ -182,6 +183,20 @@ store.save_checkpoint(CanvasCheckpoint::new(1, &document)).unwrap();
 
 let restored = load_canvas_document(&store).unwrap();
 assert_eq!(restored.nodes.len(), 0);
+
+let mut editor = open_gpui_canvas::CanvasEditor::new(restored);
+let mut cursor = CanvasPersistenceCursor::new(1);
+apply_persistent_transaction(
+    &mut editor,
+    &mut store,
+    &mut cursor,
+    CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+        "note",
+        open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+        open_gpui::size(open_gpui::px(120.0), open_gpui::px(64.0)),
+    ))),
+)
+.unwrap();
 ```
 
 Feature names are reserved for future adapters:

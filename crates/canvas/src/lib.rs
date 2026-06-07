@@ -38,9 +38,10 @@ pub use json_canvas::{
 pub use persistence::{
     CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_REDB_STORE_FEATURE,
     CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceAdapter,
-    CanvasPersistenceAdapterStatus, CanvasPersistenceError, CanvasPersistenceStore,
-    CanvasReplayError, MemoryCanvasPersistenceStore, canvas_persistence_adapter_statuses,
-    load_canvas_document, replay_canvas_log,
+    CanvasPersistenceAdapterStatus, CanvasPersistenceCursor, CanvasPersistenceError,
+    CanvasPersistenceStore, CanvasReplayError, MemoryCanvasPersistenceStore,
+    apply_persistent_transaction, canvas_persistence_adapter_statuses, load_canvas_document,
+    load_canvas_persistence_cursor, replay_canvas_log,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasSelection, CanvasTool, CanvasToolContext,

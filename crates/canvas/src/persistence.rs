@@ -1,4 +1,7 @@
-use crate::{CanvasDocument, CanvasSnapshot, CanvasTransaction, DocumentError};
+use crate::{
+    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasSnapshot, CanvasTransaction,
+    DocumentError,
+};
 use std::{convert::Infallible, error::Error, fmt};
 
 pub const CANVAS_REDB_STORE_FEATURE: &str = "redb-store";
@@ -133,6 +136,30 @@ impl<E> From<DocumentError> for CanvasPersistenceError<E> {
 
 pub type CanvasReplayError = CanvasPersistenceError<Infallible>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CanvasPersistenceCursor {
+    sequence: u64,
+}
+
+impl CanvasPersistenceCursor {
+    pub fn new(sequence: u64) -> Self {
+        Self { sequence }
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn next_sequence(&self) -> u64 {
+        self.sequence + 1
+    }
+
+    pub fn advance(&mut self) -> u64 {
+        self.sequence = self.next_sequence();
+        self.sequence
+    }
+}
+
 pub trait CanvasPersistenceStore {
     type Error: fmt::Debug + fmt::Display;
 
@@ -171,6 +198,59 @@ where
         .map_err(CanvasPersistenceError::Store)?;
 
     replay_checkpoint_and_log(checkpoint, log_entries)
+}
+
+pub fn load_canvas_persistence_cursor<S>(
+    store: &S,
+) -> Result<CanvasPersistenceCursor, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let checkpoint = store
+        .load_checkpoint()
+        .map_err(CanvasPersistenceError::Store)?;
+    let mut previous_sequence = checkpoint
+        .as_ref()
+        .map_or(0, |checkpoint| checkpoint.sequence);
+    let log_entries = store
+        .load_log_entries(previous_sequence)
+        .map_err(CanvasPersistenceError::Store)?;
+
+    for entry in log_entries {
+        if entry.sequence <= previous_sequence {
+            return Err(CanvasPersistenceError::NonMonotonicLogSequence {
+                previous: previous_sequence,
+                found: entry.sequence,
+            });
+        }
+
+        previous_sequence = entry.sequence;
+    }
+
+    Ok(CanvasPersistenceCursor::new(previous_sequence))
+}
+
+pub fn apply_persistent_transaction<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    transaction: CanvasTransaction,
+) -> Result<CanvasDocumentDiff, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    if transaction.is_empty() {
+        return Ok(CanvasDocumentDiff::default());
+    }
+
+    editor.document.invert_transaction(&transaction)?;
+    let log_transaction = transaction.clone();
+    store
+        .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), log_transaction))
+        .map_err(CanvasPersistenceError::Store)?;
+    let diff = editor.apply_transaction_with_diff(transaction)?;
+    cursor.advance();
+    Ok(diff)
 }
 
 fn replay_checkpoint_and_log<E>(
@@ -252,7 +332,7 @@ impl CanvasPersistenceStore for MemoryCanvasPersistenceStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, DocumentCommand, NodeId};
+    use crate::{CanvasEditor, CanvasNode, CanvasRecordId, DocumentCommand, NodeId};
     use open_gpui::{point, px, size};
 
     #[test]
@@ -429,5 +509,147 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3]
         );
+    }
+
+    #[test]
+    fn loads_persistence_cursor_from_checkpoint_and_log_tail() {
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let document = CanvasDocument::default();
+        store
+            .save_checkpoint(CanvasCheckpoint::new(3, &document))
+            .unwrap();
+        store
+            .append_log_entry(CanvasLogEntry::new(4, CanvasTransaction::default()))
+            .unwrap();
+        store
+            .append_log_entry(CanvasLogEntry::new(5, CanvasTransaction::default()))
+            .unwrap();
+
+        let cursor = load_canvas_persistence_cursor(&store).unwrap();
+
+        assert_eq!(cursor.sequence(), 5);
+        assert_eq!(cursor.next_sequence(), 6);
+    }
+
+    #[test]
+    fn persistent_transaction_appends_successful_editor_transaction() {
+        let mut editor = CanvasEditor::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+        let transaction = CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        )));
+
+        let diff =
+            apply_persistent_transaction(&mut editor, &mut store, &mut cursor, transaction.clone())
+                .unwrap();
+
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert_eq!(
+            diff.inserted.iter().cloned().collect::<Vec<_>>(),
+            vec![CanvasRecordId::Node(NodeId::from("a"))]
+        );
+        assert_eq!(cursor.sequence(), 1);
+        assert_eq!(store.log_entries().len(), 1);
+        assert_eq!(store.log_entries()[0], CanvasLogEntry::new(1, transaction));
+
+        let restored = load_canvas_document(&store).unwrap();
+        assert!(restored.nodes.contains_key(&NodeId::from("a")));
+    }
+
+    #[test]
+    fn persistent_transaction_skips_empty_transactions() {
+        let mut editor = CanvasEditor::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::new(7);
+
+        let diff = apply_persistent_transaction(
+            &mut editor,
+            &mut store,
+            &mut cursor,
+            CanvasTransaction::default(),
+        )
+        .unwrap();
+
+        assert!(diff.is_empty());
+        assert_eq!(cursor.sequence(), 7);
+        assert!(store.log_entries().is_empty());
+    }
+
+    #[test]
+    fn persistent_transaction_does_not_log_document_failure() {
+        let mut editor = CanvasEditor::default();
+        let mut store = MemoryCanvasPersistenceStore::default();
+        let mut cursor = CanvasPersistenceCursor::default();
+        let transaction =
+            CanvasTransaction::single(DocumentCommand::RemoveNode(NodeId::from("missing")));
+
+        let err = apply_persistent_transaction(&mut editor, &mut store, &mut cursor, transaction)
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            CanvasPersistenceError::Document(DocumentError::MissingNode(NodeId::from("missing")))
+        );
+        assert_eq!(cursor.sequence(), 0);
+        assert!(store.log_entries().is_empty());
+        assert!(editor.document.nodes.is_empty());
+    }
+
+    #[test]
+    fn persistent_transaction_does_not_mutate_editor_when_store_fails() {
+        #[derive(Debug, Eq, PartialEq)]
+        struct StoreFailure;
+
+        impl fmt::Display for StoreFailure {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("store failure")
+            }
+        }
+
+        struct FailingStore;
+
+        impl CanvasPersistenceStore for FailingStore {
+            type Error = StoreFailure;
+
+            fn load_checkpoint(&self) -> Result<Option<CanvasCheckpoint>, Self::Error> {
+                Ok(None)
+            }
+
+            fn save_checkpoint(&mut self, _: CanvasCheckpoint) -> Result<(), Self::Error> {
+                Err(StoreFailure)
+            }
+
+            fn append_log_entry(&mut self, _: CanvasLogEntry) -> Result<(), Self::Error> {
+                Err(StoreFailure)
+            }
+
+            fn load_log_entries(&self, _: u64) -> Result<Vec<CanvasLogEntry>, Self::Error> {
+                Ok(Vec::new())
+            }
+
+            fn compact_log_entries(&mut self, _: u64) -> Result<(), Self::Error> {
+                Err(StoreFailure)
+            }
+        }
+
+        let mut editor = CanvasEditor::default();
+        let mut store = FailingStore;
+        let mut cursor = CanvasPersistenceCursor::default();
+        let transaction = CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        )));
+
+        let err = apply_persistent_transaction(&mut editor, &mut store, &mut cursor, transaction)
+            .unwrap_err();
+
+        assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
+        assert_eq!(cursor.sequence(), 0);
+        assert!(editor.document.nodes.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 }
