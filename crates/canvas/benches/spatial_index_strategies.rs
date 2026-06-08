@@ -79,6 +79,17 @@ fn bench_workload(c: &mut Criterion, workload: &Workload) {
         });
     });
 
+    group.bench_function("query/runtime", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .runtime
+                    .query_with_options(black_box(viewport), black_box(options))
+                    .count(),
+            )
+        });
+    });
+
     group.bench_function("query/rstar", |b| {
         b.iter(|| {
             black_box(
@@ -104,6 +115,17 @@ fn bench_workload(c: &mut Criterion, workload: &Workload) {
             black_box(
                 workload
                     .oracle
+                    .hit_test(black_box(hit_point), black_box(options))
+                    .count(),
+            )
+        });
+    });
+
+    group.bench_function("hit_test/runtime", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .runtime
                     .hit_test(black_box(hit_point), black_box(options))
                     .count(),
             )
@@ -195,6 +217,15 @@ fn bench_drag_workload(c: &mut Criterion, workload: &Workload) {
                 ))
             });
         });
+        group.bench_function(format!("drag_update/runtime/{selected_nodes}"), |b| {
+            b.iter(|| {
+                black_box(simulate_drag_runtime(
+                    black_box(&workload.document),
+                    selected_nodes,
+                    viewport,
+                ))
+            });
+        });
     }
 
     group.finish();
@@ -206,6 +237,7 @@ struct Workload {
     viewport: Bounds<Pixels>,
     hit_point: Point<Pixels>,
     oracle: SpatialIndex,
+    runtime: CanvasRuntime,
     records: Vec<HitRecord>,
     rstar: RStarCandidate,
     static_aabb: StaticAabbCandidate,
@@ -215,6 +247,7 @@ impl Workload {
     fn new(name: &'static str, document: CanvasDocument) -> Self {
         let oracle = SpatialIndex::rebuild(&document);
         let records = oracle.records().to_vec();
+        let runtime = CanvasRuntime::rebuild(&document);
         let viewport = Bounds::new(
             point(px(2_400.0), px(1_400.0)),
             size(px(1_280.0), px(720.0)),
@@ -226,6 +259,7 @@ impl Workload {
             document,
             viewport,
             hit_point,
+            runtime,
             oracle,
             rstar: RStarCandidate::new(&records),
             static_aabb: StaticAabbCandidate::new(records.clone()),
@@ -469,6 +503,32 @@ fn simulate_drag_hybrid_overlay(
         let overlay_records = overlay_records_for_stale_ids(&oracle, &stale_records);
         let hybrid = HybridOverlayCandidate::new(&base, overlay_records, stale_records.clone());
         count += hybrid.query_count(viewport, HitOptions::default());
+    }
+
+    count
+}
+
+fn simulate_drag_runtime(
+    document: &CanvasDocument,
+    selected_nodes: usize,
+    viewport: Bounds<Pixels>,
+) -> usize {
+    let selected = selected_node_ids(document, selected_nodes);
+    let mut document = document.clone();
+    let mut runtime = CanvasRuntime::rebuild(&document);
+    let mut count = 0;
+
+    for frame in 0..DRAG_FRAMES {
+        let previous = document.clone();
+        for id in &selected {
+            let mut node = document.nodes[id].clone();
+            node.position.x += px(1.0 + frame as f32 * 0.01);
+            document.update_node(node).unwrap();
+        }
+
+        let diff = document.diff_against(&previous);
+        runtime.apply_diff(&document, &diff);
+        count += runtime.query(viewport).count();
     }
 
     count

@@ -9,10 +9,10 @@ This spike compared the current sorted-vector `SpatialIndex` with dev-only `rsta
 `static_aabb2d_index`, and a simulated static-base plus dynamic-overlay candidate. The candidates
 were built only in tests and benches, not in the production runtime.
 
-The current index remains the correct 0.1 default because it is simple, deterministic, and already
-owned by `CanvasRuntime`. The benchmark data supports the next implementation direction: keep the
-public API stable, then prototype an internal hybrid runtime cache where a static AABB base serves
-stable paint-frame queries and a dynamic overlay handles active gesture edits.
+The current index remains the correct 0.1 public oracle because it is simple and deterministic.
+The follow-up runtime prototype has now landed behind `CanvasRuntime`: production queries use an
+internal stable-base plus overlay cache, while third-party index crates remain confined to tests and
+benches.
 
 ## Correctness Coverage
 
@@ -26,14 +26,16 @@ Covered semantics:
 - `HitOptions` parity for hidden records, locked records, handles, and margin expansion;
 - custom edge-router bounds;
 - registered kind geometry bounds;
-- hybrid overlay stale-record suppression for dragged nodes, node handles, incident edges, and
-  deleted nodes.
+- bench-only hybrid overlay stale-record suppression for dragged nodes, node handles, incident
+  edges, and deleted nodes;
+- runtime-owned hybrid cache parity for rebuilds, hit tests, custom routers, kind geometry, and
+  diff-fed drag updates.
 
 Verification on this branch:
 
 ```text
 cargo nextest run -p open-gpui-canvas
-192 tests run: 192 passed
+198 tests run: 198 passed
 
 cargo check -p open-gpui-canvas --benches
 passed
@@ -52,6 +54,7 @@ cargo bench -p open-gpui-canvas --bench spatial_index_strategies "spatial_index/
 cargo bench -p open-gpui-canvas --bench spatial_index_strategies "spatial_index/grid/hit_test"
 cargo bench -p open-gpui-canvas --bench spatial_index_strategies "spatial_index/grid/paint_frame_culling"
 cargo bench -p open-gpui-canvas --bench spatial_index_strategies "spatial_index/drag_grid/drag_overlay/hybrid/10"
+cargo bench -p open-gpui-canvas --bench spatial_index_strategies "spatial_index/drag_grid/drag_update/runtime/10"
 ```
 
 Machine-local notes:
@@ -106,20 +109,18 @@ gesture dirty set and refresh only affected node, handle, shape, and incident-ed
 
 ## Decision Recommendation
 
-Do not change the production `SpatialIndex` before the 0.1 release.
+Do not expose public index strategy knobs before the 0.1 release.
 
-For the next implementation phase:
+The implementation phase following this spike landed these pieces:
 
-1. Keep `CanvasRuntime` as the cache owner.
-2. Keep the public index choice private; do not expose concrete crate names.
-3. Add an internal hybrid cache prototype behind runtime internals:
-   - static AABB base for committed stable records;
-   - dynamic overlay for active gesture records and recent diffs;
-   - stale suppression by semantic `CanvasRecordId`;
-   - final filtering and z-order ordering still owned by canvas code.
-4. Reuse `CanvasGeometryResolver` and committed mutation diffs to materialize changed records
-   without a full oracle rebuild.
-5. Run the same parity suite against the runtime prototype before changing defaults.
+1. `CanvasRuntime` owns an internal `CanvasSpatialCache`.
+2. `CanvasRuntime::spatial_index()` and `CanvasEditor::index()` were removed so callers use runtime
+   query methods instead of bypassing cache ownership.
+3. The cache keeps stable base records, overlay records, stale IDs keyed by `CanvasRecordId`, and
+   canvas-owned filtering and z-ordering.
+4. Runtime diffs materialize changed records through `CanvasGeometryResolver`; node updates also
+   refresh current incident edges without rebuilding an oracle index.
+5. The parity suite now checks `CanvasRuntime` directly against `SpatialIndex`.
 
 ## Risks
 
@@ -132,9 +133,9 @@ For the next implementation phase:
 
 ## Follow-Up Work
 
-- Build a runtime-owned hybrid cache prototype over committed diffs instead of bench-only oracle
-  rebuilds.
 - Add benchmark output for clustered, dense-overlap, long-edge, and mixed workloads to this file.
 - Measure memory and overlay size thresholds.
+- Replace the internal stable-base record vector with a packed static AABB base only after runtime
+  benchmark data justifies the dependency and complexity.
 - Decide whether semantic presets such as `Auto`, `Simple`, `Dynamic`, `StaticSnapshot`, and
   `Hybrid` are needed after the internal runtime prototype has real data.

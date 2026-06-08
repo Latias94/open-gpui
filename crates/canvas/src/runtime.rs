@@ -1,14 +1,15 @@
+use crate::spatial_cache::CanvasSpatialCache;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
     CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
-    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, SpatialIndex,
+    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasRuntime {
-    spatial_index: SpatialIndex,
+    spatial_cache: CanvasSpatialCache,
     graph_index: CanvasGraphIndex,
     edge_geometries: IndexMap<EdgeId, CanvasResolvedEdgeGeometry>,
 }
@@ -55,15 +56,17 @@ impl CanvasRuntime {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let spatial_index = match kind_registry {
-            Some(kind_registry) => {
-                SpatialIndex::rebuild_with_router_and_kind_registry(document, router, kind_registry)
-            }
-            None => SpatialIndex::rebuild_with_router(document, router),
+        let spatial_cache = match kind_registry {
+            Some(kind_registry) => CanvasSpatialCache::rebuild_with_router_and_kind_registry(
+                document,
+                router,
+                kind_registry,
+            ),
+            None => CanvasSpatialCache::rebuild_with_router(document, router),
         };
 
         Self {
-            spatial_index,
+            spatial_cache,
             graph_index: CanvasGraphIndex::rebuild(document),
             edge_geometries: resolve_edge_geometries(document, router, kind_registry),
         }
@@ -130,7 +133,7 @@ impl CanvasRuntime {
 
         match kind_registry {
             Some(kind_registry) => {
-                self.spatial_index.apply_diff_with_router_and_kind_registry(
+                self.spatial_cache.apply_diff_with_router_and_kind_registry(
                     document,
                     diff,
                     router,
@@ -138,16 +141,12 @@ impl CanvasRuntime {
                 );
             }
             None => {
-                self.spatial_index
+                self.spatial_cache
                     .apply_diff_with_router(document, diff, router);
             }
         }
         self.graph_index.apply_diff(document, diff);
         self.apply_edge_geometry_diff(document, diff, router, kind_registry);
-    }
-
-    pub fn spatial_index(&self) -> &SpatialIndex {
-        &self.spatial_index
     }
 
     pub fn graph_index(&self) -> &CanvasGraphIndex {
@@ -167,7 +166,7 @@ impl CanvasRuntime {
     }
 
     pub fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_index.query(viewport)
+        self.spatial_cache.query(viewport)
     }
 
     pub fn query_with_options(
@@ -175,7 +174,7 @@ impl CanvasRuntime {
         viewport: Bounds<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_index.query_with_options(viewport, options)
+        self.spatial_cache.query_with_options(viewport, options)
     }
 
     pub fn hit_test(
@@ -183,7 +182,7 @@ impl CanvasRuntime {
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_index.hit_test(point, options)
+        self.spatial_cache.hit_test(point, options)
     }
 
     fn apply_edge_geometry_diff<R>(

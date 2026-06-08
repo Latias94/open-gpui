@@ -1,8 +1,8 @@
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasShape,
-    HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
+    CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasRuntime,
+    CanvasShape, HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -52,6 +52,39 @@ fn candidate_query_results_match_spatial_index() {
 }
 
 #[test]
+fn runtime_query_results_match_spatial_index() {
+    let cases = [
+        ("grid", RuntimeFixture::default_router(grid_document(8, 6))),
+        (
+            "dense_overlap",
+            RuntimeFixture::default_router(dense_overlap_document()),
+        ),
+        (
+            "clustered",
+            RuntimeFixture::default_router(clustered_document()),
+        ),
+        (
+            "long_edges",
+            RuntimeFixture::custom_router(long_edge_document(), &VerticalDetourRouter),
+        ),
+        (
+            "mixed_kind_geometry",
+            RuntimeFixture::kind_registry(mixed_document(), geometry_registry()),
+        ),
+    ];
+    let viewports = [
+        bounds(0.0, 0.0, 320.0, 240.0),
+        bounds(90.0, 70.0, 520.0, 360.0),
+        bounds(900.0, 20.0, 560.0, 420.0),
+        bounds(-40.0, -40.0, 160.0, 160.0),
+    ];
+
+    for (name, fixture) in cases {
+        assert_runtime_query_parity(name, &fixture, &viewports, &hit_options());
+    }
+}
+
+#[test]
 fn candidate_hit_tests_match_spatial_index_ordering() {
     let cases = [
         (
@@ -78,6 +111,35 @@ fn candidate_hit_tests_match_spatial_index_ordering() {
 
     for (name, fixture) in cases {
         assert_hit_test_parity(name, &fixture.index, &fixture.candidates, &points, &options);
+    }
+}
+
+#[test]
+fn runtime_hit_tests_match_spatial_index_ordering() {
+    let cases = [
+        (
+            "dense_overlap",
+            RuntimeFixture::default_router(dense_overlap_document()),
+        ),
+        (
+            "mixed_kind_geometry",
+            RuntimeFixture::kind_registry(mixed_document(), geometry_registry()),
+        ),
+        (
+            "custom_router",
+            RuntimeFixture::custom_router(long_edge_document(), &VerticalDetourRouter),
+        ),
+    ];
+    let points = [
+        point(px(52.0), px(52.0)),
+        point(px(95.0), px(50.0)),
+        point(px(130.0), px(90.0)),
+        point(px(530.0), px(220.0)),
+        point(px(1_220.0), px(240.0)),
+    ];
+
+    for (name, fixture) in cases {
+        assert_runtime_hit_test_parity(name, &fixture, &points, &hit_options());
     }
 }
 
@@ -177,9 +239,80 @@ fn hybrid_overlay_suppresses_deleted_node_and_incident_edges() {
     );
 }
 
+#[test]
+fn runtime_diff_updates_match_oracle_during_drag_frames() {
+    let base_document = grid_document(12, 10);
+    let mut runtime = CanvasRuntime::rebuild(&base_document);
+    let viewports = [
+        bounds(0.0, 0.0, 640.0, 420.0),
+        bounds(420.0, 0.0, 760.0, 500.0),
+        bounds(1_080.0, 360.0, 760.0, 560.0),
+    ];
+    let points = [
+        point(px(56.0), px(32.0)),
+        point(px(510.0), px(124.0)),
+        point(px(1_180.0), px(430.0)),
+    ];
+    let selected_nodes = base_document
+        .nodes
+        .keys()
+        .take(10)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut document = base_document.clone();
+
+    for frame in [1, 60, 120] {
+        let previous = document.clone();
+        move_selected_nodes(&mut document, &selected_nodes, frame as f32);
+        let diff = document.diff_against(&previous);
+        runtime.apply_diff(&document, &diff);
+        let oracle = SpatialIndex::rebuild(&document);
+
+        assert_runtime_against_oracle(
+            &format!("runtime_drag_frame_{frame}"),
+            &oracle,
+            &runtime,
+            &viewports,
+            &points,
+            &hit_options(),
+        );
+    }
+}
+
 struct MaterializedFixture {
     index: SpatialIndex,
     candidates: CandidateIndexes,
+}
+
+struct RuntimeFixture {
+    oracle: SpatialIndex,
+    runtime: CanvasRuntime,
+}
+
+impl RuntimeFixture {
+    fn default_router(document: CanvasDocument) -> Self {
+        Self {
+            oracle: SpatialIndex::rebuild(&document),
+            runtime: CanvasRuntime::rebuild(&document),
+        }
+    }
+
+    fn custom_router<R>(document: CanvasDocument, router: &R) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        Self {
+            oracle: SpatialIndex::rebuild_with_router(&document, router),
+            runtime: CanvasRuntime::rebuild_with_router(&document, router),
+        }
+    }
+
+    fn kind_registry(document: CanvasDocument, kind_registry: CanvasKindRegistry) -> Self {
+        Self {
+            oracle: SpatialIndex::rebuild_with_kind_registry(&document, &kind_registry),
+            runtime: CanvasRuntime::rebuild_with_kind_registry(&document, &kind_registry),
+        }
+    }
 }
 
 impl MaterializedFixture {
@@ -514,6 +647,97 @@ fn assert_hit_test_parity(
                     "{candidate_name} hit-test mismatch in {fixture_name} for {point:?} {options:?}",
                 );
             }
+        }
+    }
+}
+
+fn assert_runtime_query_parity(
+    fixture_name: &str,
+    fixture: &RuntimeFixture,
+    viewports: &[Bounds<Pixels>],
+    option_sets: &[HitOptions],
+) {
+    for viewport in viewports {
+        for options in option_sets {
+            assert_eq!(
+                fixture
+                    .runtime
+                    .query_with_options(*viewport, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                fixture
+                    .oracle
+                    .query_with_options(*viewport, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "runtime query mismatch in {fixture_name} for {viewport:?} {options:?}",
+            );
+        }
+    }
+}
+
+fn assert_runtime_hit_test_parity(
+    fixture_name: &str,
+    fixture: &RuntimeFixture,
+    points: &[Point<Pixels>],
+    option_sets: &[HitOptions],
+) {
+    for point in points {
+        for options in option_sets {
+            assert_eq!(
+                fixture
+                    .runtime
+                    .hit_test(*point, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                fixture
+                    .oracle
+                    .hit_test(*point, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "runtime hit-test mismatch in {fixture_name} for {point:?} {options:?}",
+            );
+        }
+    }
+}
+
+fn assert_runtime_against_oracle(
+    fixture_name: &str,
+    oracle: &SpatialIndex,
+    runtime: &CanvasRuntime,
+    viewports: &[Bounds<Pixels>],
+    points: &[Point<Pixels>],
+    option_sets: &[HitOptions],
+) {
+    for viewport in viewports {
+        for options in option_sets {
+            assert_eq!(
+                runtime
+                    .query_with_options(*viewport, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                oracle
+                    .query_with_options(*viewport, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "runtime query mismatch in {fixture_name} for {viewport:?} {options:?}",
+            );
+        }
+    }
+
+    for point in points {
+        for options in option_sets {
+            assert_eq!(
+                runtime
+                    .hit_test(*point, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                oracle
+                    .hit_test(*point, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "runtime hit-test mismatch in {fixture_name} for {point:?} {options:?}",
+            );
         }
     }
 }

@@ -10,8 +10,10 @@ model. The first release already has the important boundaries:
 
 - `CanvasRuntime` owns runtime caches;
 - `CanvasGeometryResolver` owns geometry semantics;
-- `SpatialIndex` is hidden behind runtime query methods and the object-safe `CanvasSpatialIndex`
-  visitor trait;
+- `SpatialIndex` remains the public correctness oracle and object-safe `CanvasSpatialIndex`
+  visitor implementation;
+- production editor and paint paths query `CanvasRuntime` rather than borrowing a raw
+  `SpatialIndex`;
 - tests prove hidden, locked, handle, margin, z-order, custom-router, and kind-registry behavior.
 
 The open question is which index strategy should become the long-term default for large canvases.
@@ -24,9 +26,9 @@ The candidates are:
 
 ## Decision
 
-Keep the current sorted-vector `SpatialIndex` as the 0.1 production default.
+Keep the current sorted-vector `SpatialIndex` as the 0.1 public oracle and fallback model.
 
-Adopt the following direction for the next internal prototype:
+Adopt an internal runtime cache with this shape:
 
 ```mermaid
 flowchart LR
@@ -40,15 +42,17 @@ flowchart LR
     Order --> Runtime[CanvasRuntime Query API]
 ```
 
-The next production candidate should be a runtime-owned hybrid cache:
+The runtime-owned prototype uses this hybrid shape:
 
-- static AABB base for committed stable records;
-- dynamic overlay for active gesture records and recent diffs;
+- stable base records for committed document state;
+- overlay records for active gesture records and recent diffs;
 - stale suppression by semantic `CanvasRecordId`;
 - final `HitOptions`, half-open GPUI bounds semantics, and z-order ordering in canvas code;
 - no public API that names `rstar`, `static_aabb2d_index`, or another concrete dependency.
 
-Concrete index crates remain dev-only until the runtime prototype proves a default strategy.
+The first landed prototype keeps the base and overlay as internal sorted record sets. Concrete index
+crates remain dev-only until benchmark data justifies replacing the internal base with a packed
+static AABB index or replacing the overlay with a dynamic tree.
 
 ## Alternatives Considered
 
@@ -121,7 +125,7 @@ Decision: chosen as the next internal prototype direction.
 | Grid visible query | 25.64-30.41 us | Static/hybrid path remains under 10 us | Criterion `spatial_index/grid/query/*` |
 | Grid sparse hit test | 37.01-40.43 us | Dynamic/static query remains under 1 us before final ordering | Criterion `spatial_index/grid/hit_test/*` |
 | Grid static rebuild | 5.36-6.13 ms current vector | Static base rebuild under 3 ms | Criterion `spatial_index/grid/rebuild/*` |
-| Correctness parity | 192 passing tests | No parity regression | `cargo nextest run -p open-gpui-canvas` |
+| Correctness parity | 198 passing tests | No parity regression | `cargo nextest run -p open-gpui-canvas` |
 | Public API stability | No concrete index names | Keep dependency names out of public API | API review before release |
 
 ## Risks and Mitigations
@@ -137,9 +141,10 @@ Decision: chosen as the next internal prototype direction.
 ## Consequences
 
 - `rstar` and `static_aabb2d_index` stay as dev-only spike dependencies for now.
-- The production runtime remains stable for the 0.1 release.
-- The next architecture work should deepen `CanvasRuntime` cache ownership rather than add public
-  index selection APIs.
+- The production runtime now owns spatial cache internals directly.
+- Public editor and paint paths no longer expose a raw runtime `SpatialIndex` accessor.
+- The next architecture work should benchmark the internal runtime path before adding public index
+  selection APIs.
 - A future user-facing choice, if needed, should be semantic (`Auto`, `Simple`, `Dynamic`,
   `StaticSnapshot`, `Hybrid`) rather than dependency-specific.
 

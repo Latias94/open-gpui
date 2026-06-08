@@ -1,11 +1,15 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
     CanvasKindRegistry, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+    spatial_cache::{
+        dirty_record_ids, hit_matches, materialize_records, query_matches,
+        refresh_records_with_resolver, remove_record,
+    },
 };
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum HitTarget {
     Node(NodeId),
     Handle {
@@ -106,54 +110,7 @@ impl SpatialIndex {
     where
         R: CanvasEdgeRouter + Copy,
     {
-        let document = resolver.document();
-        let mut records = Vec::new();
-
-        for node in document.nodes.values() {
-            records.push(HitRecord {
-                target: HitTarget::Node(node.id.clone()),
-                bounds: resolver.node_bounds(node),
-                z_index: node.z_index,
-                hidden: node.hidden,
-                locked: node.locked,
-            });
-
-            for handle in &node.handles {
-                records.push(HitRecord {
-                    target: HitTarget::Handle {
-                        node_id: node.id.clone(),
-                        handle_id: handle.id.clone(),
-                    },
-                    bounds: resolver.handle_bounds(node, handle),
-                    z_index: node.z_index,
-                    hidden: node.hidden || handle.hidden || !handle.connectable,
-                    locked: node.locked,
-                });
-            }
-        }
-
-        for shape in document.shapes.values() {
-            records.push(HitRecord {
-                target: HitTarget::Shape(shape.id.clone()),
-                bounds: resolver.shape_bounds(shape),
-                z_index: shape.z_index,
-                hidden: shape.hidden,
-                locked: shape.locked,
-            });
-        }
-
-        for edge in document.edges.values() {
-            if let Ok(bounds) = resolver.edge_bounds(edge) {
-                records.push(HitRecord {
-                    target: HitTarget::Edge(edge.id.clone()),
-                    bounds,
-                    z_index: edge.z_index,
-                    hidden: edge.hidden,
-                    locked: edge.locked,
-                });
-            }
-        }
-
+        let mut records = materialize_records(resolver);
         records.sort_by(|a, b| a.z_index.cmp(&b.z_index));
         Self { records }
     }
@@ -215,11 +172,13 @@ impl SpatialIndex {
             return;
         }
 
-        for record_id in &diff.removed {
-            self.remove_record(record_id);
+        let dirty = dirty_record_ids(resolver.document(), diff);
+
+        for record_id in &dirty {
+            remove_record(&mut self.records, record_id);
         }
 
-        for record_id in diff.updated.iter().chain(&diff.inserted) {
+        for record_id in &dirty {
             self.refresh_record_with_resolver(resolver, record_id);
         }
 
@@ -241,12 +200,9 @@ impl SpatialIndex {
         viewport: Bounds<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.records.iter().filter(move |record| {
-            (options.include_hidden || !record.hidden)
-                && (options.include_locked || !record.locked)
-                && (options.include_handles || !matches!(record.target, HitTarget::Handle { .. }))
-                && record.bounds.intersects(&viewport)
-        })
+        self.records
+            .iter()
+            .filter(move |record| query_matches(record, viewport, options))
     }
 
     pub fn hit_test(
@@ -257,19 +213,7 @@ impl SpatialIndex {
         self.records
             .iter()
             .rev()
-            .filter(move |record| options.include_hidden || !record.hidden)
-            .filter(move |record| options.include_locked || !record.locked)
-            .filter(move |record| {
-                options.include_handles || !matches!(record.target, HitTarget::Handle { .. })
-            })
-            .filter(move |record| {
-                let bounds = if options.margin == Pixels::ZERO {
-                    record.bounds
-                } else {
-                    record.bounds.dilate(options.margin)
-                };
-                bounds.contains(&point)
-            })
+            .filter(move |record| hit_matches(record, point, options))
     }
 
     pub fn records(&self) -> &[HitRecord] {
@@ -283,89 +227,9 @@ impl SpatialIndex {
     ) where
         R: CanvasEdgeRouter + Copy,
     {
-        let document = resolver.document();
-        self.remove_record(record_id);
-
-        match record_id {
-            CanvasRecordId::Node(id) => {
-                let Some(node) = document.nodes.get(id) else {
-                    return;
-                };
-
-                self.records.push(HitRecord {
-                    target: HitTarget::Node(node.id.clone()),
-                    bounds: resolver.node_bounds(node),
-                    z_index: node.z_index,
-                    hidden: node.hidden,
-                    locked: node.locked,
-                });
-
-                for handle in &node.handles {
-                    self.records.push(HitRecord {
-                        target: HitTarget::Handle {
-                            node_id: node.id.clone(),
-                            handle_id: handle.id.clone(),
-                        },
-                        bounds: resolver.handle_bounds(node, handle),
-                        z_index: node.z_index,
-                        hidden: node.hidden || handle.hidden || !handle.connectable,
-                        locked: node.locked,
-                    });
-                }
-
-                for edge in document
-                    .edges
-                    .values()
-                    .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
-                {
-                    self.refresh_record_with_resolver(
-                        resolver,
-                        &CanvasRecordId::Edge(edge.id.clone()),
-                    );
-                }
-            }
-            CanvasRecordId::Edge(id) => {
-                let Some(edge) = document.edges.get(id) else {
-                    return;
-                };
-
-                if let Ok(bounds) = resolver.edge_bounds(edge) {
-                    self.records.push(HitRecord {
-                        target: HitTarget::Edge(edge.id.clone()),
-                        bounds,
-                        z_index: edge.z_index,
-                        hidden: edge.hidden,
-                        locked: edge.locked,
-                    });
-                }
-            }
-            CanvasRecordId::Shape(id) => {
-                let Some(shape) = document.shapes.get(id) else {
-                    return;
-                };
-
-                self.records.push(HitRecord {
-                    target: HitTarget::Shape(shape.id.clone()),
-                    bounds: resolver.shape_bounds(shape),
-                    z_index: shape.z_index,
-                    hidden: shape.hidden,
-                    locked: shape.locked,
-                });
-            }
-        }
-    }
-
-    fn remove_record(&mut self, record_id: &CanvasRecordId) {
+        remove_record(&mut self.records, record_id);
         self.records
-            .retain(|record| match (record_id, &record.target) {
-                (CanvasRecordId::Node(id), HitTarget::Node(target_id)) => target_id != id,
-                (CanvasRecordId::Node(id), HitTarget::Handle { node_id, .. }) => node_id != id,
-                (CanvasRecordId::Node(_), _) => true,
-                (CanvasRecordId::Edge(id), HitTarget::Edge(target_id)) => target_id != id,
-                (CanvasRecordId::Edge(_), _) => true,
-                (CanvasRecordId::Shape(id), HitTarget::Shape(target_id)) => target_id != id,
-                (CanvasRecordId::Shape(_), _) => true,
-            });
+            .extend(refresh_records_with_resolver(resolver, record_id));
     }
 }
 

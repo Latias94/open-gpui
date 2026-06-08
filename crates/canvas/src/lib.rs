@@ -18,6 +18,7 @@ mod resolve;
 mod routing;
 mod runtime;
 mod schema;
+mod spatial_cache;
 #[cfg(test)]
 mod test_support;
 mod tool;

@@ -3,7 +3,7 @@ use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
     CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry,
     CanvasNode, CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
     connection_hit_options,
 };
 use indexmap::{IndexMap, IndexSet};
@@ -637,10 +637,6 @@ impl CanvasEditor {
 
     pub fn state(&self) -> &ToolState {
         &self.state
-    }
-
-    pub fn index(&self) -> &SpatialIndex {
-        self.runtime.spatial_index()
     }
 
     pub fn runtime(&self) -> &CanvasRuntime {
@@ -2936,7 +2932,7 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 1);
         assert!(
             editor
-                .index()
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -2961,7 +2957,7 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 0);
         assert!(
             editor
-                .index()
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -3181,7 +3177,7 @@ mod tests {
 
         assert!(
             editor
-                .index()
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -3190,7 +3186,7 @@ mod tests {
         assert!(editor.undo().unwrap());
         assert!(
             editor
-                .index()
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_none()
