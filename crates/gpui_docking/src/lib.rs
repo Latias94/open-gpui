@@ -72,6 +72,8 @@ mod graph;
 #[cfg(test)]
 mod graph_floating_tests;
 #[cfg(test)]
+mod graph_move_tests;
+#[cfg(test)]
 mod graph_split_tests;
 mod host;
 mod host_debug;
@@ -118,9 +120,6 @@ mod host_viewport_tests;
 mod host_workspace_tests;
 #[cfg(test)]
 mod layout_tests;
-#[cfg(test)]
-mod tests;
-
 pub use action::*;
 pub use builder::*;
 pub use controller::*;
