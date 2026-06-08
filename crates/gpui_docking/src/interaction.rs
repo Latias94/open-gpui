@@ -69,8 +69,8 @@ impl DockInteractionRuntime {
         })
     }
 
-    pub(crate) fn finish_splitter_drag(&mut self) {
-        self.splitter_drag = None;
+    pub(crate) fn finish_splitter_drag(&mut self) -> bool {
+        self.splitter_drag.take().is_some()
     }
 
     pub(crate) fn start_floating_drag(
@@ -106,8 +106,8 @@ impl DockInteractionRuntime {
         })
     }
 
-    pub(crate) fn finish_floating_drag(&mut self) {
-        self.floating_drag = None;
+    pub(crate) fn finish_floating_drag(&mut self) -> bool {
+        self.floating_drag.take().is_some()
     }
 
     pub(crate) fn update_tabs_drop_intent(
@@ -234,6 +234,17 @@ mod tests {
     }
 
     #[test]
+    fn finishing_splitter_drag_reports_only_active_state_changes() {
+        let split = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+
+        assert!(!runtime.finish_splitter_drag());
+        runtime.start_splitter_drag(split, 0, px(100.0), px(400.0), vec![0.5, 0.5]);
+        assert!(runtime.finish_splitter_drag());
+        assert!(!runtime.finish_splitter_drag());
+    }
+
+    #[test]
     fn floating_drag_produces_bounds_action() {
         let floating = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
@@ -252,6 +263,22 @@ mod tests {
                 bounds: bounds(55.0, 65.0, 200.0, 100.0),
             })
         );
+    }
+
+    #[test]
+    fn finishing_floating_drag_reports_only_active_state_changes() {
+        let floating = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+
+        assert!(!runtime.finish_floating_drag());
+        runtime.start_floating_drag(
+            DockSpaceId::from("main"),
+            floating,
+            point(px(10.0), px(20.0)),
+            bounds(40.0, 50.0, 200.0, 100.0),
+        );
+        assert!(runtime.finish_floating_drag());
+        assert!(!runtime.finish_floating_drag());
     }
 
     #[test]

@@ -40,8 +40,8 @@ impl DockHost {
             .unwrap_or(false)
     }
 
-    pub(crate) fn finish_splitter_drag(&mut self) {
-        self.interaction.finish_splitter_drag();
+    pub(crate) fn finish_splitter_drag(&mut self) -> bool {
+        self.interaction.finish_splitter_drag()
     }
 
     pub(crate) fn start_floating_drag(
@@ -69,8 +69,8 @@ impl DockHost {
             .unwrap_or(false)
     }
 
-    pub(crate) fn finish_floating_drag(&mut self) {
-        self.interaction.finish_floating_drag();
+    pub(crate) fn finish_floating_drag(&mut self) -> bool {
+        self.interaction.finish_floating_drag()
     }
 
     pub(crate) fn update_tabs_drop_intent(

@@ -72,9 +72,12 @@ impl DockHost {
         changed
     }
 
-    pub(crate) fn finish_floating_drag_from_render(&mut self, cx: &mut Context<Self>) {
-        self.finish_floating_drag();
-        cx.notify();
+    pub(crate) fn finish_floating_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self.finish_floating_drag();
+        if changed {
+            cx.notify();
+        }
+        changed
     }
 
     pub(crate) fn begin_splitter_drag_from_render(
@@ -108,9 +111,12 @@ impl DockHost {
         changed
     }
 
-    pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) {
-        self.finish_splitter_drag();
-        cx.notify();
+    pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
+        let changed = self.finish_splitter_drag();
+        if changed {
+            cx.notify();
+        }
+        changed
     }
 
     fn commit_action_from_render(&mut self, action: DockAction, cx: &mut Context<Self>) -> bool {
