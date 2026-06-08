@@ -263,14 +263,14 @@ where
         return Ok(false);
     };
     let transaction = transaction.clone();
-    let prepared = editor.prepare_document_transaction(transaction.clone())?;
+    let prepared = editor.prepare_document_transaction(transaction)?;
     store
         .append_log_entry(CanvasLogEntry::from_committed_mutation(
             cursor.next_sequence(),
             prepared.committed(),
         ))
         .map_err(CanvasPersistenceError::Store)?;
-    editor.undo()?;
+    editor.apply_prepared_undo_mutation(prepared);
     cursor.advance();
     Ok(true)
 }
@@ -287,14 +287,14 @@ where
         return Ok(false);
     };
     let transaction = transaction.clone();
-    let prepared = editor.prepare_document_transaction(transaction.clone())?;
+    let prepared = editor.prepare_document_transaction(transaction)?;
     store
         .append_log_entry(CanvasLogEntry::from_committed_mutation(
             cursor.next_sequence(),
             prepared.committed(),
         ))
         .map_err(CanvasPersistenceError::Store)?;
-    editor.redo()?;
+    editor.apply_prepared_redo_mutation(prepared);
     cursor.advance();
     Ok(true)
 }

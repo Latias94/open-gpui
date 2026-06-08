@@ -16,7 +16,7 @@ const ROW_GAP: f32 = 120.0;
 fn large_canvas_benches(c: &mut Criterion) {
     let document = build_grid_document(GRID_COLUMNS, GRID_ROWS);
     let index = SpatialIndex::rebuild(&document);
-    let runtime = CanvasRuntime::from_spatial_index(&document, index.clone());
+    let runtime = CanvasRuntime::rebuild(&document);
     let node_count = document.nodes.len();
     let edge_count = document.edges.len();
 

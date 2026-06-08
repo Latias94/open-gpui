@@ -74,63 +74,55 @@ impl CanvasPaintModel {
         }
     }
 
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::new, CanvasPaintModel::new_with_router_and_kind_registry, CanvasPaintModel::from(&CanvasEditor), or CanvasPaintModel::from_runtime_parts instead; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
     pub fn from_parts(
         document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
+        _index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
     ) -> Self {
-        Self::from_parts_with_router(document, index, viewport, &CanvasDefaultEdgeRouter)
+        let runtime = CanvasRuntime::rebuild(&document);
+        Self::from_runtime_parts(document, Arc::new(runtime), viewport, Default::default())
     }
 
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::new_with_kind_registry, CanvasPaintModel::from(&CanvasEditor), or CanvasPaintModel::from_runtime_parts_with_kind_registry instead; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
     pub fn from_parts_with_kind_registry(
         document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
+        _index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
         kind_registry: CanvasKindRegistry,
     ) -> Self {
-        Self::from_parts_with_router_and_kind_registry(
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &kind_registry);
+        Self::from_runtime_parts_with_kind_registry(
             document,
-            index,
+            Arc::new(runtime),
             viewport,
-            &CanvasDefaultEdgeRouter,
+            Default::default(),
             kind_registry,
         )
     }
 
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::new_with_router or CanvasPaintModel::from_runtime_parts instead; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
     pub fn from_parts_with_router<R>(
         document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
+        _index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
         router: &R,
     ) -> Self
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        Self::from_parts_with_router_and_kind_registry(
-            document,
-            index,
-            viewport,
-            router,
-            CanvasKindRegistry::open(),
-        )
-    }
-
-    pub fn from_parts_with_router_and_kind_registry<R>(
-        document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
-        viewport: CanvasViewport,
-        router: &R,
-        kind_registry: CanvasKindRegistry,
-    ) -> Self
-    where
-        R: CanvasEdgeRouter + ?Sized,
-    {
-        let runtime = CanvasRuntime::from_spatial_index_with_router_and_kind_registry(
-            &document,
-            (*index).clone(),
-            router,
-            &kind_registry,
-        );
+        let kind_registry = CanvasKindRegistry::open();
+        let runtime =
+            CanvasRuntime::rebuild_with_router_and_kind_registry(&document, router, &kind_registry);
         Self {
             document,
             runtime: Arc::new(runtime),
@@ -140,28 +132,57 @@ impl CanvasPaintModel {
         }
     }
 
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::new_with_router_and_kind_registry or CanvasPaintModel::from_runtime_parts_with_kind_registry instead; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
+    pub fn from_parts_with_router_and_kind_registry<R>(
+        document: Arc<CanvasDocument>,
+        _index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        router: &R,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let runtime =
+            CanvasRuntime::rebuild_with_router_and_kind_registry(&document, router, &kind_registry);
+        Self {
+            document,
+            runtime: Arc::new(runtime),
+            kind_registry: Arc::new(kind_registry),
+            viewport,
+            interaction: CanvasPaintInteraction::default(),
+        }
+    }
+
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::from_runtime_parts when a prebuilt runtime is required; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
     pub fn from_parts_with_interaction(
         document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
+        _index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
         interaction: CanvasPaintInteraction,
     ) -> Self {
-        let runtime = CanvasRuntime::from_spatial_index(&document, (*index).clone());
+        let runtime = CanvasRuntime::rebuild(&document);
         Self::from_runtime_parts(document, Arc::new(runtime), viewport, interaction)
     }
 
+    #[deprecated(
+        since = "0.1.0",
+        note = "use CanvasPaintModel::from_runtime_parts_with_kind_registry when a prebuilt runtime is required; caller-supplied spatial indexes can diverge from runtime geometry"
+    )]
     pub fn from_parts_with_interaction_and_kind_registry(
         document: Arc<CanvasDocument>,
-        index: Arc<SpatialIndex>,
+        _index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
         interaction: CanvasPaintInteraction,
         kind_registry: CanvasKindRegistry,
     ) -> Self {
-        let runtime = CanvasRuntime::from_spatial_index_with_kind_registry(
-            &document,
-            (*index).clone(),
-            &kind_registry,
-        );
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &kind_registry);
         Self::from_runtime_parts_with_kind_registry(
             document,
             Arc::new(runtime),
@@ -1031,6 +1052,37 @@ mod tests {
             Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
         );
         assert_eq!(record.view_bounds, record.document_bounds);
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn paint_model_from_parts_rebuilds_runtime_instead_of_trusting_supplied_index() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "visible",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        let model = CanvasPaintModel::from_parts(
+            Arc::new(document),
+            Arc::new(SpatialIndex::default()),
+            CanvasViewport::default(),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert!(
+            frame
+                .records
+                .iter()
+                .any(|record| { record.target == HitTarget::Node(crate::NodeId::from("visible")) })
+        );
     }
 
     #[test]

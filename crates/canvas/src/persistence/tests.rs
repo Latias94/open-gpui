@@ -1,16 +1,43 @@
 use super::*;
 use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
-    CanvasNode, CanvasRecordChange, CanvasRecordId, CanvasSelection, CanvasTool, CanvasToolContext,
+    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordChange, CanvasRecordId,
+    CanvasRecordKind, CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext,
     CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
     DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton, ToolState,
 };
 use open_gpui::{point, px, size};
+use serde_json::json;
 use std::fmt;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 #[derive(Default)]
 struct PersistentStampTool {
     calls: usize,
+}
+
+struct CountedNodeKind {
+    calls: Arc<AtomicUsize>,
+    max_successful_validations: usize,
+}
+
+impl CanvasNodeKind for CountedNodeKind {
+    fn validate_node(&self, node: &CanvasNode) -> Result<(), CanvasSchemaError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call <= self.max_successful_validations {
+            Ok(())
+        } else {
+            Err(CanvasSchemaError::invalid_data(
+                CanvasRecordKind::Node,
+                node.id.clone(),
+                &node.kind,
+                "validation limit exceeded",
+            ))
+        }
+    }
 }
 
 impl CanvasToolReducer for PersistentStampTool {
@@ -687,6 +714,46 @@ fn persistent_redo_logs_redo_transaction_before_mutation() {
 
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.nodes.contains_key(&NodeId::from("a")));
+}
+
+#[test]
+fn persistent_redo_reuses_prepared_mutation_after_logging() {
+    let mut editor = CanvasEditor::default();
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+    node.kind = "counted".to_string();
+    node.data.insert("marker".to_string(), json!(true));
+
+    apply_persistent_transaction(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::single(DocumentCommand::InsertNode(node)),
+    )
+    .unwrap();
+    undo_persistent_transaction(&mut editor, &mut store, &mut cursor).unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = CanvasKindRegistry::open();
+    registry.register_node_kind(
+        "counted",
+        CountedNodeKind {
+            calls: calls.clone(),
+            max_successful_validations: 2,
+        },
+    );
+    editor.set_kind_registry(registry).unwrap();
+
+    let changed = redo_persistent_transaction(&mut editor, &mut store, &mut cursor).unwrap();
+
+    assert!(changed);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(cursor.sequence(), 3);
+    assert_eq!(store.log_entries().len(), 3);
+    assert!(editor.document().nodes.contains_key(&NodeId::from("a")));
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(editor.history().redo_depth(), 0);
 }
 
 #[test]

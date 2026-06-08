@@ -700,6 +700,40 @@ impl CanvasEditor {
         diff
     }
 
+    pub(crate) fn apply_prepared_undo_mutation(
+        &mut self,
+        prepared: crate::journal::CanvasPreparedMutation,
+    ) -> CanvasDocumentDiff {
+        debug_assert_eq!(
+            self.history.next_undo_transaction(),
+            Some(prepared.committed().transaction())
+        );
+        let committed = prepared.apply_to(&mut self.document);
+        let diff = committed.diff().clone();
+        let _ = self.history.pop_undo();
+        self.history.push_redo(committed.inverse().clone());
+        self.selection.retain_document(&self.document);
+        self.sync_runtime_diff(&diff);
+        diff
+    }
+
+    pub(crate) fn apply_prepared_redo_mutation(
+        &mut self,
+        prepared: crate::journal::CanvasPreparedMutation,
+    ) -> CanvasDocumentDiff {
+        debug_assert_eq!(
+            self.history.next_redo_transaction(),
+            Some(prepared.committed().transaction())
+        );
+        let committed = prepared.apply_to(&mut self.document);
+        let diff = committed.diff().clone();
+        let _ = self.history.pop_redo();
+        self.history.push_undo(committed.inverse().clone());
+        self.selection.retain_document(&self.document);
+        self.sync_runtime_diff(&diff);
+        diff
+    }
+
     pub(crate) fn prepare_document_transaction(
         &self,
         transaction: CanvasTransaction,
@@ -812,12 +846,7 @@ impl CanvasEditor {
         };
 
         let prepared = self.prepare_document_transaction(transaction)?;
-        let _ = self.history.pop_undo();
-        let committed = prepared.apply_to(&mut self.document);
-        let diff = committed.diff().clone();
-        self.history.push_redo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
-        self.sync_runtime_diff(&diff);
+        self.apply_prepared_undo_mutation(prepared);
         Ok(true)
     }
 
@@ -827,12 +856,7 @@ impl CanvasEditor {
         };
 
         let prepared = self.prepare_document_transaction(transaction)?;
-        let _ = self.history.pop_redo();
-        let committed = prepared.apply_to(&mut self.document);
-        let diff = committed.diff().clone();
-        self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
-        self.sync_runtime_diff(&diff);
+        self.apply_prepared_redo_mutation(prepared);
         Ok(true)
     }
 
