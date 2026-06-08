@@ -1,0 +1,578 @@
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_canvas::{
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasPaintModel,
+    CanvasPaintOptions, CanvasRuntime, CanvasShape, CanvasViewport, HitOptions, HitRecord,
+    HitTarget, SpatialIndex, collect_visible_records,
+};
+use rstar::{AABB as RStarAabb, RTree, RTreeObject};
+use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
+use std::{sync::Arc, time::Duration};
+
+const GRID_COLUMNS: usize = 120;
+const GRID_ROWS: usize = 80;
+const DRAG_FRAMES: usize = 120;
+
+fn spatial_index_strategy_benches(c: &mut Criterion) {
+    let workloads = [
+        Workload::new("grid", grid_document(GRID_COLUMNS, GRID_ROWS)),
+        Workload::new("dense_overlap", dense_overlap_document(2_500)),
+        Workload::new("clustered", clustered_document(80, 64)),
+        Workload::new("long_edges", long_edge_document(2_000)),
+        Workload::new("mixed", mixed_document(1_200)),
+    ];
+
+    for workload in workloads {
+        bench_workload(c, &workload);
+    }
+}
+
+fn bench_workload(c: &mut Criterion, workload: &Workload) {
+    let mut group = c.benchmark_group(format!("spatial_index/{}", workload.name));
+    let viewport = workload.viewport;
+    let hit_point = workload.hit_point;
+    let options = HitOptions {
+        include_locked: true,
+        ..HitOptions::default()
+    };
+
+    group.bench_with_input(
+        BenchmarkId::new("rebuild/vector", workload.records.len()),
+        &workload.document,
+        |b, document| {
+            b.iter(|| SpatialIndex::rebuild(black_box(document)));
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("rebuild/rstar", workload.records.len()),
+        &workload.records,
+        |b, records| {
+            b.iter(|| RStarCandidate::new(black_box(records)));
+        },
+    );
+
+    group.bench_with_input(
+        BenchmarkId::new("rebuild/static_aabb", workload.records.len()),
+        &workload.records,
+        |b, records| {
+            b.iter(|| StaticAabbCandidate::new(black_box(records.clone())));
+        },
+    );
+
+    group.bench_function("query/vector", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .oracle
+                    .query_with_options(black_box(viewport), black_box(options))
+                    .count(),
+            )
+        });
+    });
+
+    group.bench_function("query/rstar", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .rstar
+                    .query_count(black_box(viewport), black_box(options)),
+            )
+        });
+    });
+
+    group.bench_function("query/static_aabb", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .static_aabb
+                    .query_count(black_box(viewport), black_box(options)),
+            )
+        });
+    });
+
+    group.bench_function("hit_test/vector", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .oracle
+                    .hit_test(black_box(hit_point), black_box(options))
+                    .count(),
+            )
+        });
+    });
+
+    group.bench_function("hit_test/rstar", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .rstar
+                    .hit_test_count(black_box(hit_point), black_box(options)),
+            )
+        });
+    });
+
+    group.bench_function("hit_test/static_aabb", |b| {
+        b.iter(|| {
+            black_box(
+                workload
+                    .static_aabb
+                    .hit_test_count(black_box(hit_point), black_box(options)),
+            )
+        });
+    });
+
+    let paint_model = CanvasPaintModel::from_runtime_parts(
+        Arc::new(workload.document.clone()),
+        Arc::new(CanvasRuntime::rebuild(&workload.document)),
+        CanvasViewport::new(viewport.origin, 1.0).expect("benchmark viewport should be valid"),
+        Default::default(),
+    );
+    let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), viewport.size);
+    let paint_options = CanvasPaintOptions {
+        cull_margin: px(128.0),
+        ..CanvasPaintOptions::default()
+    };
+    group.bench_function("paint_frame_culling/current", |b| {
+        b.iter(|| {
+            black_box(collect_visible_records(
+                black_box(&paint_model),
+                black_box(canvas_bounds),
+                black_box(paint_options),
+            ))
+        });
+    });
+
+    for selected_nodes in [1, 10, 100] {
+        group.bench_function(format!("drag_rebuild/vector/{selected_nodes}"), |b| {
+            b.iter(|| {
+                black_box(simulate_drag_rebuild(
+                    black_box(&workload.document),
+                    selected_nodes,
+                ))
+            });
+        });
+        group.bench_function(format!("drag_rebuild/rstar/{selected_nodes}"), |b| {
+            b.iter(|| {
+                black_box(simulate_drag_candidate(
+                    black_box(&workload.document),
+                    selected_nodes,
+                    CandidateKind::RStar,
+                ))
+            });
+        });
+        group.bench_function(format!("drag_rebuild/static_aabb/{selected_nodes}"), |b| {
+            b.iter(|| {
+                black_box(simulate_drag_candidate(
+                    black_box(&workload.document),
+                    selected_nodes,
+                    CandidateKind::StaticAabb,
+                ))
+            });
+        });
+    }
+
+    group.finish();
+}
+
+struct Workload {
+    name: &'static str,
+    document: CanvasDocument,
+    viewport: Bounds<Pixels>,
+    hit_point: Point<Pixels>,
+    oracle: SpatialIndex,
+    records: Vec<HitRecord>,
+    rstar: RStarCandidate,
+    static_aabb: StaticAabbCandidate,
+}
+
+impl Workload {
+    fn new(name: &'static str, document: CanvasDocument) -> Self {
+        let oracle = SpatialIndex::rebuild(&document);
+        let records = oracle.records().to_vec();
+        let viewport = Bounds::new(
+            point(px(2_400.0), px(1_400.0)),
+            size(px(1_280.0), px(720.0)),
+        );
+        let hit_point = point(px(2_560.0), px(1_520.0));
+
+        Self {
+            name,
+            document,
+            viewport,
+            hit_point,
+            oracle,
+            rstar: RStarCandidate::new(&records),
+            static_aabb: StaticAabbCandidate::new(records.clone()),
+            records,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct IndexedRecord {
+    record: HitRecord,
+}
+
+struct RStarCandidate {
+    tree: RTree<IndexedRecord>,
+}
+
+impl RStarCandidate {
+    fn new(records: &[HitRecord]) -> Self {
+        Self {
+            tree: RTree::bulk_load(indexed_records(records)),
+        }
+    }
+
+    fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
+        self.tree
+            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .filter(|record| query_matches(&record.record, viewport, options))
+            .count()
+    }
+
+    fn hit_test_count(&self, point: Point<Pixels>, options: HitOptions) -> usize {
+        let viewport = point_query_bounds(point, options.margin);
+        self.tree
+            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .filter(|record| hit_matches(&record.record, point, options))
+            .count()
+    }
+}
+
+impl RTreeObject for IndexedRecord {
+    type Envelope = RStarAabb<[f32; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        rstar_envelope(self.record.bounds)
+    }
+}
+
+struct StaticAabbCandidate {
+    records: Vec<HitRecord>,
+    index: StaticAABB2DIndex<f32>,
+}
+
+impl StaticAabbCandidate {
+    fn new(records: Vec<HitRecord>) -> Self {
+        let mut builder = StaticAABB2DIndexBuilder::new(records.len());
+        for record in &records {
+            let [min_x, min_y, max_x, max_y] = aabb_extents(record.bounds);
+            builder.add(min_x, min_y, max_x, max_y);
+        }
+
+        Self {
+            records,
+            index: builder
+                .build()
+                .expect("static AABB candidate should receive every record extent"),
+        }
+    }
+
+    fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
+        let [min_x, min_y, max_x, max_y] = aabb_extents(viewport);
+        self.index
+            .query_iter(min_x, min_y, max_x, max_y)
+            .map(|ordinal| &self.records[ordinal])
+            .filter(|record| query_matches(record, viewport, options))
+            .count()
+    }
+
+    fn hit_test_count(&self, point: Point<Pixels>, options: HitOptions) -> usize {
+        let viewport = point_query_bounds(point, options.margin);
+        let [min_x, min_y, max_x, max_y] = aabb_extents(viewport);
+        self.index
+            .query_iter(min_x, min_y, max_x, max_y)
+            .map(|ordinal| &self.records[ordinal])
+            .filter(|record| hit_matches(record, point, options))
+            .count()
+    }
+}
+
+enum CandidateKind {
+    RStar,
+    StaticAabb,
+}
+
+fn simulate_drag_rebuild(document: &CanvasDocument, selected_nodes: usize) -> usize {
+    let mut document = document.clone();
+    let ids = document
+        .nodes
+        .keys()
+        .take(selected_nodes)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut count = 0;
+
+    for frame in 0..DRAG_FRAMES {
+        for id in &ids {
+            let mut node = document.nodes[id].clone();
+            node.position.x += px(1.0 + frame as f32 * 0.01);
+            document.update_node(node).unwrap();
+        }
+
+        count += SpatialIndex::rebuild(&document).records().len();
+    }
+
+    count
+}
+
+fn simulate_drag_candidate(
+    document: &CanvasDocument,
+    selected_nodes: usize,
+    kind: CandidateKind,
+) -> usize {
+    let mut document = document.clone();
+    let ids = document
+        .nodes
+        .keys()
+        .take(selected_nodes)
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut count = 0;
+
+    for frame in 0..DRAG_FRAMES {
+        for id in &ids {
+            let mut node = document.nodes[id].clone();
+            node.position.x += px(1.0 + frame as f32 * 0.01);
+            document.update_node(node).unwrap();
+        }
+
+        let records = SpatialIndex::rebuild(&document).records().to_vec();
+        count += match kind {
+            CandidateKind::RStar => RStarCandidate::new(&records).query_count(
+                Bounds::new(
+                    point(px(2_400.0), px(1_400.0)),
+                    size(px(1_280.0), px(720.0)),
+                ),
+                HitOptions::default(),
+            ),
+            CandidateKind::StaticAabb => StaticAabbCandidate::new(records).query_count(
+                Bounds::new(
+                    point(px(2_400.0), px(1_400.0)),
+                    size(px(1_280.0), px(720.0)),
+                ),
+                HitOptions::default(),
+            ),
+        };
+    }
+
+    count
+}
+
+fn indexed_records(records: &[HitRecord]) -> Vec<IndexedRecord> {
+    records
+        .iter()
+        .cloned()
+        .map(|record| IndexedRecord { record })
+        .collect()
+}
+
+fn query_matches(record: &HitRecord, viewport: Bounds<Pixels>, options: HitOptions) -> bool {
+    options_match(record, options) && record.bounds.intersects(&viewport)
+}
+
+fn hit_matches(record: &HitRecord, point: Point<Pixels>, options: HitOptions) -> bool {
+    if !options_match(record, options) {
+        return false;
+    }
+
+    let bounds = if options.margin == Pixels::ZERO {
+        record.bounds
+    } else {
+        record.bounds.dilate(options.margin)
+    };
+    bounds.contains(&point)
+}
+
+fn options_match(record: &HitRecord, options: HitOptions) -> bool {
+    (options.include_hidden || !record.hidden)
+        && (options.include_locked || !record.locked)
+        && (options.include_handles || !matches!(record.target, HitTarget::Handle { .. }))
+}
+
+fn point_query_bounds(point: Point<Pixels>, margin: Pixels) -> Bounds<Pixels> {
+    let extent = margin.max(px(1.0));
+    Bounds::centered_at(point, size(extent * 2.0, extent * 2.0))
+}
+
+fn rstar_envelope(bounds: Bounds<Pixels>) -> RStarAabb<[f32; 2]> {
+    let [min_x, min_y, max_x, max_y] = aabb_extents(bounds);
+    RStarAabb::from_corners([min_x, min_y], [max_x, max_y])
+}
+
+fn aabb_extents(bounds: Bounds<Pixels>) -> [f32; 4] {
+    let bottom_right = bounds.bottom_right();
+    [
+        bounds.origin.x.as_f32(),
+        bounds.origin.y.as_f32(),
+        bottom_right.x.as_f32(),
+        bottom_right.y.as_f32(),
+    ]
+}
+
+fn grid_document(columns: usize, rows: usize) -> CanvasDocument {
+    let mut document = CanvasDocument::default();
+
+    for row in 0..rows {
+        for column in 0..columns {
+            let id = node_id(row, column);
+            let mut node = CanvasNode::new(
+                id.clone(),
+                point(px(column as f32 * 160.0), px(row as f32 * 120.0)),
+                size(px(96.0), px(56.0)),
+            );
+            node.z_index = (row * columns + column) as i32;
+            document.insert_node(node).unwrap();
+
+            if column > 0 {
+                document
+                    .insert_edge(CanvasEdge::new(
+                        edge_id(row, column - 1, row, column),
+                        CanvasEndpoint::new(node_id(row, column - 1), None::<String>),
+                        CanvasEndpoint::new(id, None::<String>),
+                    ))
+                    .unwrap();
+            }
+        }
+    }
+
+    document
+}
+
+fn dense_overlap_document(count: usize) -> CanvasDocument {
+    let mut document = CanvasDocument::default();
+
+    for index in 0..count {
+        let mut node = CanvasNode::new(
+            format!("overlap-{index}"),
+            point(
+                px(2_400.0 + (index % 48) as f32 * 2.0),
+                px(1_400.0 + (index % 48) as f32 * 2.0),
+            ),
+            size(px(96.0), px(96.0)),
+        );
+        node.z_index = index as i32;
+        document.insert_node(node).unwrap();
+    }
+
+    document
+}
+
+fn clustered_document(clusters: usize, nodes_per_cluster: usize) -> CanvasDocument {
+    let mut document = CanvasDocument::default();
+
+    for cluster in 0..clusters {
+        let base_x = (cluster % 10) as f32 * 700.0;
+        let base_y = (cluster / 10) as f32 * 520.0;
+        for index in 0..nodes_per_cluster {
+            let mut node = CanvasNode::new(
+                format!("cluster-{cluster}-{index}"),
+                point(
+                    px(base_x + (index % 8) as f32 * 84.0),
+                    px(base_y + (index / 8) as f32 * 72.0),
+                ),
+                size(px(64.0), px(44.0)),
+            );
+            node.z_index = (cluster * nodes_per_cluster + index) as i32;
+            document.insert_node(node).unwrap();
+        }
+    }
+
+    document
+}
+
+fn long_edge_document(count: usize) -> CanvasDocument {
+    let mut document = CanvasDocument::default();
+
+    for index in 0..count {
+        let id = format!("long-{index}");
+        document
+            .insert_node(CanvasNode::new(
+                id.clone(),
+                point(px(index as f32 * 24.0), px((index % 20) as f32 * 140.0)),
+                size(px(72.0), px(44.0)),
+            ))
+            .unwrap();
+
+        if index > 0 {
+            document
+                .insert_edge(CanvasEdge::new(
+                    format!("long-edge-{}-{index}", index - 1),
+                    CanvasEndpoint::new(format!("long-{}", index - 1), None::<String>),
+                    CanvasEndpoint::new(id, None::<String>),
+                ))
+                .unwrap();
+        }
+    }
+
+    document
+}
+
+fn mixed_document(count: usize) -> CanvasDocument {
+    let mut document = CanvasDocument::default();
+
+    for index in 0..count {
+        let mut node = CanvasNode::new(
+            format!("mixed-{index}"),
+            point(
+                px((index % 80) as f32 * 92.0),
+                px((index / 80) as f32 * 84.0),
+            ),
+            size(px(68.0), px(42.0)),
+        );
+        node.z_index = index as i32;
+        if index % 11 == 0 {
+            node.locked = true;
+        }
+        if index % 17 == 0 {
+            node.hidden = true;
+        }
+        if index % 5 == 0 {
+            node.handles
+                .push(CanvasHandle::new("out", point(px(68.0), px(21.0))));
+        }
+        document.insert_node(node).unwrap();
+
+        if index % 7 == 0 {
+            let mut shape = CanvasShape::new(
+                format!("mixed-shape-{index}"),
+                Bounds::new(
+                    point(
+                        px((index % 80) as f32 * 92.0 + 24.0),
+                        px((index / 80) as f32 * 84.0),
+                    ),
+                    size(px(44.0), px(44.0)),
+                ),
+            );
+            shape.z_index = index as i32 + 10_000;
+            document.insert_shape(shape).unwrap();
+        }
+    }
+
+    document
+}
+
+fn node_id(row: usize, column: usize) -> String {
+    format!("node-{row}-{column}")
+}
+
+fn edge_id(
+    source_row: usize,
+    source_column: usize,
+    target_row: usize,
+    target_column: usize,
+) -> String {
+    format!("edge-{source_row}-{source_column}-{target_row}-{target_column}")
+}
+
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(10)
+        .warm_up_time(Duration::from_millis(250))
+        .measurement_time(Duration::from_secs(2));
+    targets = spatial_index_strategy_benches
+}
+criterion_main!(benches);

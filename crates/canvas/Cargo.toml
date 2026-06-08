@@ -27,9 +27,15 @@ thiserror.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+rstar = "0.13.0"
+static_aabb2d_index = "2.0.0"
 
 [[bench]]
 name = "large_canvas"
+harness = false
+
+[[bench]]
+name = "spatial_index_strategies"
 harness = false
 
 [lints]
