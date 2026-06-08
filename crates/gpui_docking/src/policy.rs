@@ -9,6 +9,7 @@ pub struct DockPolicy {
     allow_same_stack_center_drop: bool,
     allow_splitter_resize: bool,
     allow_floating: bool,
+    allow_platform_viewports: bool,
 }
 
 impl DockPolicy {
@@ -67,6 +68,16 @@ impl DockPolicy {
         self.allow_floating = allowed;
     }
 
+    /// Returns whether platform viewport tear-off interactions are allowed.
+    pub fn allows_platform_viewports(&self) -> bool {
+        self.allow_platform_viewports
+    }
+
+    /// Enables or disables platform viewport tear-off interactions.
+    pub fn set_allow_platform_viewports(&mut self, allowed: bool) {
+        self.allow_platform_viewports = allowed;
+    }
+
     pub(crate) fn validate_drop_zone(&self, zone: DropZone) -> Result<(), DockPolicyError> {
         match zone {
             DropZone::Center if !self.allow_center_merge => {
@@ -105,6 +116,15 @@ impl DockPolicy {
             Err(DockPolicyError::FloatingDisabled)
         }
     }
+
+    /// Returns a typed error when platform viewport tear-off interactions are disabled.
+    pub fn validate_platform_viewports(&self) -> Result<(), DockPolicyError> {
+        if self.allow_platform_viewports {
+            Ok(())
+        } else {
+            Err(DockPolicyError::PlatformViewportsDisabled)
+        }
+    }
 }
 
 impl Default for DockPolicy {
@@ -115,6 +135,7 @@ impl Default for DockPolicy {
             allow_same_stack_center_drop: true,
             allow_splitter_resize: true,
             allow_floating: false,
+            allow_platform_viewports: false,
         }
     }
 }
@@ -137,6 +158,9 @@ pub enum DockPolicyError {
     /// Floating interactions are disabled.
     #[error("floating is disabled by docking policy")]
     FloatingDisabled,
+    /// Platform viewport tear-off interactions are disabled.
+    #[error("platform viewports are disabled by docking policy")]
+    PlatformViewportsDisabled,
 }
 
 #[cfg(test)]
@@ -155,6 +179,10 @@ mod tests {
             policy.validate_floating(),
             Err(DockPolicyError::FloatingDisabled)
         );
+        assert_eq!(
+            policy.validate_platform_viewports(),
+            Err(DockPolicyError::PlatformViewportsDisabled)
+        );
     }
 
     #[test]
@@ -164,6 +192,7 @@ mod tests {
         policy.set_allow_edge_split(false);
         policy.set_allow_same_stack_center_drop(false);
         policy.set_allow_splitter_resize(false);
+        policy.set_allow_platform_viewports(false);
 
         assert_eq!(
             policy.validate_drop_zone(DropZone::Center),
@@ -180,6 +209,32 @@ mod tests {
         assert_eq!(
             policy.validate_splitter_resize(),
             Err(DockPolicyError::SplitterResizeDisabled)
+        );
+        assert_eq!(
+            policy.validate_platform_viewports(),
+            Err(DockPolicyError::PlatformViewportsDisabled)
+        );
+    }
+
+    #[test]
+    fn platform_viewports_are_independent_from_in_window_floating() {
+        let mut policy = DockPolicy::default();
+
+        policy.set_allow_platform_viewports(true);
+        assert!(policy.allows_platform_viewports());
+        assert!(policy.validate_platform_viewports().is_ok());
+        assert!(!policy.allows_floating());
+        assert_eq!(
+            policy.validate_floating(),
+            Err(DockPolicyError::FloatingDisabled)
+        );
+
+        policy.set_allow_floating(true);
+        policy.set_allow_platform_viewports(false);
+        assert!(policy.allows_floating());
+        assert_eq!(
+            policy.validate_platform_viewports(),
+            Err(DockPolicyError::PlatformViewportsDisabled)
         );
     }
 }

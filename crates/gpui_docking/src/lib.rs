@@ -14,6 +14,8 @@
 //! Common GPUI applications should start with [`DockController::builder`], register lazy panel
 //! factories, and mount a controller-backed [`DockHost`]. Advanced callers can keep using
 //! [`DockGraph`], [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly.
+//! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
+//! applications can enable platform windows without changing graph-backed floating behavior.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, Context};

@@ -56,6 +56,91 @@ pub struct DockViewportHit {
     pub host_position: Point<Pixels>,
 }
 
+/// Runtime result of opening or reopening a platform viewport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportOpenOutcome {
+    /// Logical dock space rendered by the window.
+    pub space: DockSpaceId,
+    /// GPUI window that renders the logical dock space.
+    pub window: AnyWindowHandle,
+    /// Whether the runtime opened, reused, or replaced a window.
+    pub status: DockViewportOpenStatus,
+}
+
+/// How an open or reopen request resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportOpenStatus {
+    /// A new GPUI window was opened and registered.
+    Opened,
+    /// An existing live GPUI window was reused.
+    Reused,
+    /// A stale or superseded mapping was replaced by a new window.
+    Replaced,
+}
+
+/// Default behavior for a platform viewport close request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DockViewportClosePolicy {
+    /// Unregister the runtime window and keep the logical dock layout available for reopen.
+    #[default]
+    RetainLayout,
+    /// Reject the close request and leave the runtime mapping intact.
+    Prevent,
+}
+
+/// Runtime result of closing a platform viewport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportCloseOutcome {
+    /// Logical dock space that was associated with the closed window, when known.
+    pub space: Option<DockSpaceId>,
+    /// GPUI window id received from the close callback.
+    pub window_id: WindowId,
+    /// How the close request resolved.
+    pub status: DockViewportCloseStatus,
+}
+
+/// How a close request resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportCloseStatus {
+    /// The window closed and its runtime mapping was removed.
+    Closed,
+    /// Policy rejected the close request before the window closed.
+    Vetoed,
+    /// The runtime did not know the closed window id.
+    UnknownWindow,
+}
+
+/// Runtime result of unregistering a platform viewport mapping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportUnregisterOutcome {
+    /// Logical dock space removed from the adapter mapping.
+    pub space: DockSpaceId,
+    /// GPUI window removed from the adapter mapping.
+    pub window: AnyWindowHandle,
+    /// Why the mapping was removed.
+    pub reason: DockViewportUnregisterReason,
+}
+
+/// Reason a platform viewport mapping was removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportUnregisterReason {
+    /// The platform window closed.
+    Closed,
+    /// A new window replaced the previous mapping.
+    Replaced,
+    /// The application discarded runtime placement for the space.
+    Discarded,
+}
+
+/// Summary of applying saved viewport placement to runtime windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DockViewportRestoreOutcome {
+    /// Number of saved placement entries applied to registered windows.
+    pub applied: usize,
+    /// Number of saved placement entries skipped because no runtime window was registered.
+    pub skipped: usize,
+}
+
 /// Serializable adapter-level viewport placement data.
 ///
 /// This record is intentionally separate from [`DockLayout`](crate::DockLayout): it stores
@@ -402,12 +487,14 @@ impl DockViewportAdapter {
     pub fn apply_placement(
         &mut self,
         placement: &DockViewportPlacementLayout,
-    ) -> Result<usize, DockViewportPlacementValidationError> {
+    ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
         placement.validate()?;
 
         let mut applied = 0;
+        let mut skipped = 0;
         for viewport in &placement.viewports {
             let Some(snapshot) = self.viewports.get_mut(&viewport.space) else {
+                skipped += 1;
                 continue;
             };
             snapshot.display_id = viewport.display_id.map(DisplayId::from);
@@ -418,7 +505,7 @@ impl DockViewportAdapter {
             applied += 1;
         }
 
-        Ok(applied)
+        Ok(DockViewportRestoreOutcome { applied, skipped })
     }
 }
 
@@ -489,6 +576,40 @@ mod tests {
         assert_eq!(removed_space, secondary);
         assert_eq!(removed.window, second);
         assert!(adapter.is_empty());
+    }
+
+    #[test]
+    fn viewport_lifecycle_types_preserve_runtime_boundaries() {
+        let main = space("main");
+        let window = handle(7);
+        let open = DockViewportOpenOutcome {
+            space: main.clone(),
+            window,
+            status: DockViewportOpenStatus::Opened,
+        };
+        assert_eq!(open.space, main.clone());
+        assert_eq!(open.window, window);
+        assert_eq!(open.status, DockViewportOpenStatus::Opened);
+        assert_eq!(
+            DockViewportClosePolicy::default(),
+            DockViewportClosePolicy::RetainLayout
+        );
+
+        let close = DockViewportCloseOutcome {
+            space: Some(main.clone()),
+            window_id: window.window_id(),
+            status: DockViewportCloseStatus::Closed,
+        };
+        assert_eq!(close.space, Some(main.clone()));
+        assert_eq!(close.window_id, window.window_id());
+        assert_eq!(close.status, DockViewportCloseStatus::Closed);
+
+        let unregister = DockViewportUnregisterOutcome {
+            space: main,
+            window,
+            reason: DockViewportUnregisterReason::Closed,
+        };
+        assert_eq!(unregister.reason, DockViewportUnregisterReason::Closed);
     }
 
     #[test]
@@ -566,7 +687,10 @@ mod tests {
             restored
                 .apply_placement(&placement)
                 .expect("placement should apply"),
-            1
+            DockViewportRestoreOutcome {
+                applied: 1,
+                skipped: 1,
+            }
         );
 
         let snapshot = restored
@@ -610,7 +734,10 @@ mod tests {
             restored
                 .apply_placement(&placement)
                 .expect("saved placement should apply to registered restore windows"),
-            2
+            DockViewportRestoreOutcome {
+                applied: 2,
+                skipped: 0,
+            }
         );
         assert_eq!(restored.window_for_space(&main), Some(handle(101)));
         assert_eq!(restored.space_for_window(handle(102)), Some(&secondary));
