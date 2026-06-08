@@ -39,10 +39,16 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - Edge route metadata for straight, polyline, orthogonal, cubic-bezier, and custom routers,
   including manual waypoints, bezier control points, route options, and interaction width.
 - A viewport/camera model that is separate from document data.
+- A document mutation journal that returns committed mutations containing the applied transaction,
+  inverse transaction, actual document diff, and actual semantic record operation batch.
 - A `CanvasRuntime` owner for spatial hit testing and indexed graph caches that can be rebuilt or
   incrementally updated without changing document serialization.
 - A `CanvasSpatialIndex` query trait so future R-tree, tile, or GPU-assisted culling indexes can
   plug into query and hit-test call sites without changing document records.
+- A `CanvasGeometryResolver` that centralizes record bounds, handle positions, edge routes, hit
+  geometry, endpoint picking, previews, and paint fallback semantics.
+- A `CanvasKindRegistry` that layers per-kind defaults, migrations, validation, and geometry hooks
+  over the open `kind: String` plus JSON payload model.
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
   edge sides into deterministic node handles.
 - A persistence boundary based on checkpoints and monotonic transaction logs.
@@ -68,7 +74,14 @@ to verify in the first release. Query call sites also have an object-safe `Canva
 visitor trait. That trait deliberately covers query and hit-test traversal, not document mutation
 or cache ownership, so future R-tree or tile indexes can be introduced without making
 `CanvasEditor` generic too early. `CanvasRuntime` is the cache owner that keeps the current
-`SpatialIndex` and `CanvasGraphIndex` synchronized from committed document diffs.
+`SpatialIndex`, `CanvasGraphIndex`, and edge geometry cache synchronized from committed document
+diffs.
+
+Geometry has one resolver boundary. `CanvasGeometryResolver` combines the canonical document,
+router policy, and optional kind registry to answer bounds, handle positions, route paths, edge
+bounds, precise hit areas, and endpoint locations. Runtime caches, built-in tools, connection
+previews, culling, and GPUI paint all use this resolver path so a custom router or registered kind
+does not have to be reimplemented in every subsystem.
 
 The native smoke example exercises the interaction boundary without expanding the public adapter
 surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
@@ -101,9 +114,10 @@ endpoints while leaving invalid handles as ordinary pointer positions.
 
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
 Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
-one path for recorded transactions, gesture sessions, selection changes, viewport changes, and
-tool-state changes. This keeps the enum-based MVP simple while giving custom
-tools and future CRDT adapters a stable mutation vocabulary.
+one path for recorded transactions, gesture sessions, selection changes, viewport changes,
+tool-state changes, runtime-cache synchronization, and kind-registry validation. This keeps the
+enum-based MVP simple while giving custom tools and future CRDT adapters a stable mutation
+vocabulary.
 Selection effects include replace, add, remove, toggle, set, and clear operations. This keeps
 multi-select behavior available to custom tools and future modifier-key interactions without
 requiring each tool to mutate `CanvasSelection` directly.
@@ -138,20 +152,28 @@ nodes without a separate transform mode.
 flowchart TD
     App[Application] --> Widget[GPUI Canvas Widget]
     Widget --> Editor[CanvasEditor]
-    Editor --> Tools[Tool State Machine]
-    Editor --> Viewport[Viewport / Camera]
-    Editor --> Doc[CanvasDocument]
-    Doc --> Nodes[Nodes]
-    Doc --> Edges[Edges]
-    Doc --> Shapes[Shapes]
-    Nodes --> Handles[Handles]
-    Edges --> Handles
-    Editor --> Index[Spatial Index]
-    Index --> HitTest[Hit Testing / Culling]
-    Widget --> Paint[Batched GPUI Paint]
-    Doc -.future adapter.-> Loro[Loro CRDT]
-    Doc -.future adapter.-> Redb[redb Local Cache]
-    Doc -.future adapter.-> Rkyv[rkyv Snapshots]
+    App --> Store[Persistence Store]
+    App --> Registry[Kind Registry]
+    Registry --> Editor
+    Registry --> Geometry[Geometry Resolver]
+    Tools[Tool Reducers] --> Effects[Tool Effects / Gestures]
+    Effects --> Editor
+    Editor --> Journal[Document Mutation Journal]
+    Journal --> Doc[CanvasDocument]
+    Journal --> History[Undo / Redo]
+    Journal --> Store
+    Journal --> Runtime[CanvasRuntime]
+    Runtime --> Spatial[Spatial Index]
+    Runtime --> Graph[Graph Index]
+    Runtime --> Routes[Edge Geometry Cache]
+    Runtime --> Frame[Paint Frame Snapshot]
+    Geometry --> Runtime
+    Geometry --> Tools
+    Geometry --> Paint[Batched GPUI Paint]
+    Widget --> Paint
+    Store -.future adapter.-> Loro[Loro CRDT]
+    Store -.future adapter.-> Redb[redb Local Cache]
+    Store -.future adapter.-> Rkyv[rkyv Snapshots]
 ```
 
 ## Data Model
@@ -171,6 +193,15 @@ The distinction between nodes and shapes is intentional. Nodes are semantic grap
 handles and optional application payload. Shapes are drawable records with bounds and no required
 graph semantics. Applications may build mind-map topics as nodes, freehand strokes as shapes, and
 links as edges in the same document.
+
+Kind-specific behavior is registry-driven rather than stored as hidden document state.
+`CanvasKindRegistry::open` leaves unknown kinds untouched, preserving imported and
+application-defined records. Applications that need stronger contracts can register
+`CanvasNodeKind`, `CanvasEdgeKind`, or `CanvasShapeKind` handlers. Registered handlers can add
+default data, migrate older payloads, validate records, and override node bounds, shape bounds, or
+handle positions. Snapshot loading, transactions, gestures, undo/redo validation, runtime cache
+rebuilds, endpoint picking, and paint snapshots can all receive the same registry, so a kind policy
+is not scattered across serializers, tools, indexes, and renderers.
 
 Route metadata is stored as intent, not as a renderer contract. The core model records route kind,
 manual waypoints, optional control points, route-specific options, and interaction width so that
@@ -236,10 +267,12 @@ honest while leaving a stable place to attach optional dependencies later.
 Applications can connect editor mutations to persistence through `CanvasPersistenceCursor` and
 `apply_persistent_transaction`. The helper prepares a committed mutation against the current editor
 document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies that same
-prepared mutation through `CanvasEditor`. This keeps `CanvasEditor` free of concrete storage
-ownership while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry
-point. Gesture updates remain outside the persistence log until the active gesture is committed as
-one explicit transaction.
+prepared mutation through `CanvasEditor`. The log entry can carry the committed mutation's actual
+record operation batch, so implicit document effects such as incident edge deletion are visible to
+persistence and future CRDT adapters. This keeps `CanvasEditor` free of concrete storage ownership
+while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry point.
+Gesture updates remain outside the persistence log until the active gesture is committed as one
+explicit transaction.
 
 `save_canvas_checkpoint` complements the log hook by writing a snapshot at the current cursor
 sequence and compacting log entries through that sequence. Checkpointing is explicit rather than
@@ -285,10 +318,10 @@ Tools should be local, explicit, and easy to test:
 
 The first custom-tool boundary is intentionally reducer-shaped. `CanvasTool::custom` selects an
 application-owned tool, `CanvasToolContext` exposes read-only document, viewport, selection,
-history, and runtime-cache state, and `CanvasToolReducer` returns `CanvasToolEffect` values for the
-editor to apply. This avoids giving extensions mutable access to `CanvasEditor`, so undo, selection
-retention, runtime-cache refresh, persistence logging, and future CRDT translation still pass
-through the same effect vocabulary.
+history, edge router, kind registry, and runtime-cache state, and `CanvasToolReducer` returns
+`CanvasToolEffect` values for the editor to apply. This avoids giving extensions mutable access to
+`CanvasEditor`, so undo, selection retention, runtime-cache refresh, schema validation,
+persistence logging, and future CRDT translation still pass through the same effect vocabulary.
 
 `CanvasToolRegistry` is an ergonomic adapter over the same reducer contract. It maps
 `CanvasToolId` values to boxed reducers, dispatches the active custom tool, and reports a
@@ -356,7 +389,7 @@ Decision: chosen.
 | Package identity | `open-gpui-canvas` builds as a workspace crate | `cargo check -p open-gpui-canvas` |
 | Model correctness | Node, edge, handle, viewport, and hit-test basics are covered | crate unit tests |
 | Rendering direction | The default path can render visible records without per-record elements | code review and smoke example |
-| Extension path | Applications can define custom payloads without forking core types | serde payload examples/tests |
+| Extension path | Applications can define custom payloads and registered kind policy without forking core types | serde payload and registry tests |
 | Release hygiene | The crate follows Open GPUI package metadata and docs attribution | manifest and README review |
 
 ## Risks and Mitigations
@@ -375,6 +408,7 @@ Decision: chosen.
 - The first implementation must include tests for model operations and hit testing before adding
   rich visual polish.
 - Future collaboration and persistence work should translate commands or document diffs rather than
-  mutate renderer caches directly.
+  mutate renderer caches directly. When actual semantic changes matter, adapters should consume
+  committed mutation record operation batches.
 - The public API may remain intentionally small in 0.1 while the crate proves interaction and
   rendering paths through examples.

@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::journal::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
 use crate::resolve::CanvasGeometryResolver;
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
+use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
 
 pub type CanvasValue = Map<String, Value>;
 
@@ -110,6 +111,16 @@ pub enum CanvasRecordId {
     Node(NodeId),
     Edge(EdgeId),
     Shape(ShapeId),
+}
+
+impl fmt::Display for CanvasRecordId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Node(id) => write!(f, "node:{id}"),
+            Self::Edge(id) => write!(f, "edge:{id}"),
+            Self::Shape(id) => write!(f, "shape:{id}"),
+        }
+    }
 }
 
 impl From<NodeId> for CanvasRecordId {
@@ -446,6 +457,8 @@ pub enum DocumentError {
     InvalidEdgeInteractionWidth(EdgeId),
     #[error("edge `{0}` has an invalid route point")]
     InvalidEdgeRoutePoint(EdgeId),
+    #[error(transparent)]
+    Schema(#[from] CanvasSchemaError),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -635,6 +648,13 @@ impl CanvasDocument {
     }
 
     pub fn from_snapshot(snapshot: CanvasSnapshot) -> Result<Self, DocumentError> {
+        Self::from_snapshot_with_kind_registry(snapshot, &CanvasKindRegistry::open())
+    }
+
+    pub fn from_snapshot_with_kind_registry(
+        snapshot: CanvasSnapshot,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Result<Self, DocumentError> {
         let snapshot = migrate_canvas_snapshot(snapshot)?;
 
         let mut document = Self {
@@ -644,17 +664,21 @@ impl CanvasDocument {
         };
 
         for node in snapshot.nodes {
+            let node = kind_registry.normalize_node(node)?;
             document.insert_node(node)?;
         }
 
         for shape in snapshot.shapes {
+            let shape = kind_registry.normalize_shape(shape)?;
             document.insert_shape(shape)?;
         }
 
         for edge in snapshot.edges {
+            let edge = kind_registry.normalize_edge(edge)?;
             document.insert_edge(edge)?;
         }
 
+        kind_registry.validate_document(&document)?;
         Ok(document)
     }
 
@@ -682,6 +706,14 @@ impl CanvasDocument {
         }
     }
 
+    pub fn apply_with_kind_registry(
+        &mut self,
+        command: DocumentCommand,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Result<(), DocumentError> {
+        self.apply(kind_registry.normalize_command(command)?)
+    }
+
     pub fn apply_transaction(
         &mut self,
         transaction: CanvasTransaction,
@@ -704,11 +736,20 @@ impl CanvasDocument {
         CanvasMutationJournal::commit(self, transaction)
     }
 
-    pub(crate) fn prepare_transaction(
+    pub fn commit_transaction_with_kind_registry(
+        &mut self,
+        transaction: CanvasTransaction,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Result<CanvasCommittedMutation, DocumentError> {
+        CanvasMutationJournal::commit_with_kind_registry(self, transaction, kind_registry)
+    }
+
+    pub(crate) fn prepare_transaction_with_kind_registry(
         &self,
         transaction: CanvasTransaction,
+        kind_registry: &CanvasKindRegistry,
     ) -> Result<CanvasPreparedMutation, DocumentError> {
-        CanvasMutationJournal::prepare(self, transaction)
+        CanvasMutationJournal::prepare_with_kind_registry(self, transaction, kind_registry)
     }
 
     pub fn invert_transaction(

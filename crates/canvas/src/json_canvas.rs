@@ -620,6 +620,71 @@ mod tests {
     }
 
     #[test]
+    fn preserves_unknown_json_canvas_extra_payload() {
+        let input = r##"{
+            "nodes": [
+                {
+                    "id": "note",
+                    "type": "text",
+                    "x": 0,
+                    "y": 0,
+                    "width": 120,
+                    "height": 80,
+                    "text": "Hello",
+                    "customNode": { "priority": 2 }
+                },
+                {
+                    "id": "target",
+                    "type": "text",
+                    "x": 200,
+                    "y": 0,
+                    "width": 120,
+                    "height": 80,
+                    "text": "Target"
+                }
+            ],
+            "edges": [
+                {
+                    "id": "edge",
+                    "fromNode": "note",
+                    "toNode": "target",
+                    "label": "relates",
+                    "customEdge": ["kept"]
+                }
+            ]
+        }"##;
+
+        let document = document_from_json_canvas_str(input).unwrap();
+
+        assert_eq!(
+            document.nodes[&NodeId::from("note")].data.get("customNode"),
+            Some(&json!({ "priority": 2 }))
+        );
+        assert_eq!(
+            document.edges[&EdgeId::from("edge")].data.get("customEdge"),
+            Some(&json!(["kept"]))
+        );
+
+        let exported = JsonCanvas::from_document(&document).unwrap();
+        let note = exported
+            .nodes
+            .iter()
+            .find(|node| node.id == "note")
+            .unwrap();
+        let edge = exported
+            .edges
+            .iter()
+            .find(|edge| edge.id == "edge")
+            .unwrap();
+
+        assert_eq!(
+            note.extra.get("customNode"),
+            Some(&json!({ "priority": 2 }))
+        );
+        assert_eq!(edge.extra.get("customEdge"), Some(&json!(["kept"])));
+    }
+
+    #[test]
     fn exports_json_canvas_nodes_by_z_index() {
         let mut document = CanvasDocument::default();
         let mut front = CanvasNode::new(

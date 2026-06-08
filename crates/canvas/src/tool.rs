@@ -1,9 +1,9 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver, CanvasNode,
-    CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError,
-    EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry,
+    CanvasNode, CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand,
+    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
     connection_hit_options,
 };
 use indexmap::{IndexMap, IndexSet};
@@ -312,6 +312,7 @@ pub struct CanvasToolContext<'a> {
     pub state: &'a ToolState,
     pub runtime: &'a CanvasRuntime,
     pub edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
+    pub kind_registry: &'a CanvasKindRegistry,
     pub selection: &'a CanvasSelection,
     pub history: &'a CanvasHistory,
 }
@@ -325,6 +326,7 @@ impl fmt::Debug for CanvasToolContext<'_> {
             .field("state", self.state)
             .field("runtime", self.runtime)
             .field("edge_router", &"<dyn CanvasEdgeRouter>")
+            .field("kind_registry", self.kind_registry)
             .field("selection", self.selection)
             .field("history", self.history)
             .finish()
@@ -524,6 +526,7 @@ pub struct CanvasEditor {
     state: ToolState,
     runtime: CanvasRuntime,
     edge_router: Arc<dyn CanvasEdgeRouter + Send + Sync>,
+    kind_registry: Arc<CanvasKindRegistry>,
     selection: CanvasSelection,
     history: CanvasHistory,
     gesture: Option<CanvasGestureSession>,
@@ -545,7 +548,12 @@ impl CanvasEditor {
         R: CanvasEdgeRouter + Send + Sync + 'static,
     {
         let edge_router = Arc::new(edge_router);
-        let runtime = CanvasRuntime::rebuild_with_router(&document, edge_router.as_ref());
+        let kind_registry = Arc::new(CanvasKindRegistry::open());
+        let runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
+            &document,
+            edge_router.as_ref(),
+            kind_registry.as_ref(),
+        );
         Self {
             document,
             viewport: CanvasViewport::default(),
@@ -553,10 +561,55 @@ impl CanvasEditor {
             state: ToolState::Idle,
             runtime,
             edge_router,
+            kind_registry,
             selection: CanvasSelection::default(),
             history: CanvasHistory::default(),
             gesture: None,
         }
+    }
+
+    pub fn try_new_with_kind_registry(
+        document: CanvasDocument,
+        kind_registry: CanvasKindRegistry,
+    ) -> Result<Self, DocumentError> {
+        Self::try_new_with_router_and_kind_registry(
+            document,
+            CanvasDefaultEdgeRouter,
+            kind_registry,
+        )
+    }
+
+    pub fn try_new_with_router_and_kind_registry<R>(
+        document: CanvasDocument,
+        edge_router: R,
+        kind_registry: CanvasKindRegistry,
+    ) -> Result<Self, DocumentError>
+    where
+        R: CanvasEdgeRouter + Send + Sync + 'static,
+    {
+        let document = CanvasDocument::from_snapshot_with_kind_registry(
+            document.to_snapshot(),
+            &kind_registry,
+        )?;
+        let edge_router = Arc::new(edge_router);
+        let kind_registry = Arc::new(kind_registry);
+        let runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
+            &document,
+            edge_router.as_ref(),
+            kind_registry.as_ref(),
+        );
+        Ok(Self {
+            document,
+            viewport: CanvasViewport::default(),
+            tool: CanvasTool::Select,
+            state: ToolState::Idle,
+            runtime,
+            edge_router,
+            kind_registry,
+            selection: CanvasSelection::default(),
+            history: CanvasHistory::default(),
+            gesture: None,
+        })
     }
 
     pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
@@ -598,6 +651,10 @@ impl CanvasEditor {
         self.edge_router.as_ref()
     }
 
+    pub fn kind_registry(&self) -> &CanvasKindRegistry {
+        self.kind_registry.as_ref()
+    }
+
     pub fn selection(&self) -> &CanvasSelection {
         &self.selection
     }
@@ -621,7 +678,9 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
-        let committed = self.document.commit_transaction(transaction)?;
+        let committed = self
+            .document
+            .commit_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())?;
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
@@ -645,7 +704,8 @@ impl CanvasEditor {
         &self,
         transaction: CanvasTransaction,
     ) -> Result<crate::journal::CanvasPreparedMutation, DocumentError> {
-        self.document.prepare_transaction(transaction)
+        self.document
+            .prepare_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())
     }
 
     pub(crate) fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
@@ -719,7 +779,7 @@ impl CanvasEditor {
         let Some(gesture) = &self.gesture else {
             return Ok(None);
         };
-        gesture.prepare_commit(&self.document)
+        gesture.prepare_commit_with_kind_registry(&self.document, self.kind_registry.as_ref())
     }
 
     pub(crate) fn apply_prepared_gesture_commit(
@@ -747,11 +807,13 @@ impl CanvasEditor {
     }
 
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
-        let Some(transaction) = self.history.pop_undo() else {
+        let Some(transaction) = self.history.next_undo_transaction().cloned() else {
             return Ok(false);
         };
 
-        let committed = self.document.commit_transaction(transaction)?;
+        let prepared = self.prepare_document_transaction(transaction)?;
+        let _ = self.history.pop_undo();
+        let committed = prepared.apply_to(&mut self.document);
         let diff = committed.diff().clone();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
@@ -760,11 +822,13 @@ impl CanvasEditor {
     }
 
     pub fn redo(&mut self) -> Result<bool, DocumentError> {
-        let Some(transaction) = self.history.pop_redo() else {
+        let Some(transaction) = self.history.next_redo_transaction().cloned() else {
             return Ok(false);
         };
 
-        let committed = self.document.commit_transaction(transaction)?;
+        let prepared = self.prepare_document_transaction(transaction)?;
+        let _ = self.history.pop_redo();
+        let committed = prepared.apply_to(&mut self.document);
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
@@ -777,8 +841,11 @@ impl CanvasEditor {
     }
 
     pub fn rebuild_runtime(&mut self) {
-        self.runtime =
-            CanvasRuntime::rebuild_with_router(&self.document, self.edge_router.as_ref());
+        self.runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
+            &self.document,
+            self.edge_router.as_ref(),
+            self.kind_registry.as_ref(),
+        );
     }
 
     pub fn set_edge_router<R>(&mut self, edge_router: R)
@@ -787,6 +854,26 @@ impl CanvasEditor {
     {
         self.edge_router = Arc::new(edge_router);
         self.rebuild_runtime();
+    }
+
+    pub fn set_kind_registry(
+        &mut self,
+        kind_registry: CanvasKindRegistry,
+    ) -> Result<(), DocumentError> {
+        let document = CanvasDocument::from_snapshot_with_kind_registry(
+            self.document.to_snapshot(),
+            &kind_registry,
+        )?;
+        let document_changed = document != self.document;
+        self.document = document;
+        self.kind_registry = Arc::new(kind_registry);
+        self.selection.retain_document(&self.document);
+        self.gesture = None;
+        if document_changed {
+            self.history.clear();
+        }
+        self.rebuild_runtime();
+        Ok(())
     }
 
     pub fn set_tool(&mut self, tool: CanvasTool) {
@@ -810,6 +897,7 @@ impl CanvasEditor {
             state: &self.state,
             runtime: &self.runtime,
             edge_router: self.edge_router.as_ref(),
+            kind_registry: self.kind_registry.as_ref(),
             selection: &self.selection,
             history: &self.history,
         }
@@ -1226,7 +1314,11 @@ impl CanvasEditor {
         point: Point<Pixels>,
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
-        let resolver = CanvasGeometryResolver::new(&self.document);
+        let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+            &self.document,
+            self.edge_router.as_ref(),
+            Some(self.kind_registry.as_ref()),
+        );
         resolver
             .connection_endpoint_at(self.runtime.hit_test(point, connection_hit_options()), role)
     }
@@ -1262,7 +1354,9 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
-        let committed = self.document.commit_transaction(transaction)?;
+        let committed = self
+            .document
+            .commit_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())?;
         let diff = committed.diff().clone();
         self.selection.retain_document(&self.document);
         self.sync_runtime_diff(&diff);
@@ -1270,8 +1364,12 @@ impl CanvasEditor {
     }
 
     fn sync_runtime_diff(&mut self, diff: &CanvasDocumentDiff) {
-        self.runtime
-            .apply_diff_with_router(&self.document, diff, self.edge_router.as_ref());
+        self.runtime.apply_diff_with_router_and_kind_registry(
+            &self.document,
+            diff,
+            self.edge_router.as_ref(),
+            self.kind_registry.as_ref(),
+        );
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
@@ -1404,8 +1502,12 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, CanvasRoutePath, CanvasRouteRequest, CanvasShape, HandleId};
+    use crate::{
+        CanvasNode, CanvasNodeKind, CanvasRecordKind, CanvasRoutePath, CanvasRouteRequest,
+        CanvasSchemaError, CanvasShape, HandleId,
+    };
     use open_gpui::{point, px, size};
+    use serde_json::{Value, json};
 
     #[derive(Default)]
     struct StampTool {
@@ -1460,6 +1562,39 @@ mod tests {
                     payload,
                 }),
             ])
+        }
+    }
+
+    struct RequiredTitleNodeKind;
+
+    impl CanvasNodeKind for RequiredTitleNodeKind {
+        fn default_data(&self) -> CanvasValue {
+            CanvasValue::from_iter([("title".to_string(), json!("Untitled"))])
+        }
+
+        fn migrate_node(&self, node: &mut CanvasNode) -> Result<(), CanvasSchemaError> {
+            if let Some(value) = node.data.remove("label") {
+                node.data.insert("title".to_string(), value);
+            }
+            Ok(())
+        }
+
+        fn validate_node(&self, node: &CanvasNode) -> Result<(), CanvasSchemaError> {
+            match node.data.get("title") {
+                Some(Value::String(title)) if !title.trim().is_empty() => Ok(()),
+                Some(_) => Err(CanvasSchemaError::invalid_data(
+                    CanvasRecordKind::Node,
+                    node.id.clone(),
+                    &node.kind,
+                    "title must be a non-empty string",
+                )),
+                None => Err(CanvasSchemaError::missing_required_data(
+                    CanvasRecordKind::Node,
+                    node.id.clone(),
+                    &node.kind,
+                    "title",
+                )),
+            }
         }
     }
 
@@ -2657,6 +2792,109 @@ mod tests {
     }
 
     #[test]
+    fn editor_kind_registry_normalizes_and_validates_transactions() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("note", RequiredTitleNodeKind);
+        let mut editor =
+            CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
+
+        let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        note.kind = "note".to_string();
+        note.data.insert("label".to_string(), json!("Migrated"));
+
+        editor.apply(DocumentCommand::InsertNode(note)).unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("note")]
+                .data
+                .get("title"),
+            Some(&json!("Migrated"))
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        let mut invalid = CanvasNode::new(
+            "invalid",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        invalid.kind = "note".to_string();
+        invalid.data.insert("title".to_string(), json!(false));
+        let err = editor
+            .apply(DocumentCommand::InsertNode(invalid))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DocumentError::Schema(CanvasSchemaError::InvalidData {
+                record_kind: CanvasRecordKind::Node,
+                record_id: crate::CanvasRecordId::Node(id),
+                kind,
+                ..
+            }) if id == NodeId::from("invalid") && kind == "note"
+        ));
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("invalid")));
+        assert_eq!(editor.history.undo_depth(), 1);
+    }
+
+    #[test]
+    fn editor_set_kind_registry_normalizes_document_and_clears_stale_history() {
+        let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        note.kind = "note".to_string();
+        note.data.insert("label".to_string(), json!("Migrated"));
+        let mut editor = CanvasEditor::default();
+        editor.apply(DocumentCommand::InsertNode(note)).unwrap();
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("note", RequiredTitleNodeKind);
+        editor.set_kind_registry(registry).unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("note")]
+                .data
+                .get("title"),
+            Some(&json!("Migrated"))
+        );
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(
+            editor
+                .runtime()
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn editor_set_kind_registry_rejects_invalid_existing_document_atomically() {
+        let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        note.kind = "note".to_string();
+        note.data.insert("title".to_string(), json!(false));
+        let mut document = CanvasDocument::default();
+        document.insert_node(note).unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("note", RequiredTitleNodeKind);
+        let err = editor.set_kind_registry(registry).unwrap_err();
+
+        assert!(matches!(
+            err,
+            DocumentError::Schema(CanvasSchemaError::InvalidData {
+                record_id: crate::CanvasRecordId::Node(id),
+                ..
+            }) if id == NodeId::from("note")
+        ));
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("note")]
+                .data
+                .get("title"),
+            Some(&json!(false))
+        );
+        assert!(editor.kind_registry().node_kind("note").is_none());
+    }
+
+    #[test]
     fn tool_effect_applies_recorded_transaction() {
         let mut editor = CanvasEditor::default();
 
@@ -2704,6 +2942,41 @@ mod tests {
                 .next()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn gesture_update_uses_kind_registry_validation() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("note", RequiredTitleNodeKind);
+        let mut editor =
+            CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
+        let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        note.kind = "note".to_string();
+        note.data.insert("title".to_string(), json!("Valid"));
+        editor
+            .apply(DocumentCommand::InsertNode(note.clone()))
+            .unwrap();
+
+        let mut invalid = note.clone();
+        invalid.data.insert("title".to_string(), json!(false));
+        let err = editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(invalid),
+                )),
+            ])
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DocumentError::Schema(CanvasSchemaError::InvalidData {
+                record_id: crate::CanvasRecordId::Node(id),
+                ..
+            }) if id == NodeId::from("note")
+        ));
+        assert_eq!(editor.document.nodes[&NodeId::from("note")], note);
+        assert_eq!(editor.history.undo_depth(), 1);
     }
 
     #[test]

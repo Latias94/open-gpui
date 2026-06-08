@@ -1,7 +1,8 @@
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasRoutePath, CanvasRouteRequest, DocumentError,
-    HitOptions, HitRecord, HitTarget,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
+    CanvasRoutePath, CanvasRouteRequest, CanvasShape, DocumentError, HitOptions, HitRecord,
+    HitTarget,
 };
 use open_gpui::{Bounds, Pixels, Point};
 
@@ -15,11 +16,19 @@ pub struct CanvasResolvedEdgeGeometry {
 pub struct CanvasGeometryResolver<'a, R = CanvasDefaultEdgeRouter> {
     document: &'a CanvasDocument,
     router: R,
+    kind_registry: Option<&'a CanvasKindRegistry>,
 }
 
 impl<'a> CanvasGeometryResolver<'a> {
     pub fn new(document: &'a CanvasDocument) -> Self {
         Self::with_router(document, CanvasDefaultEdgeRouter)
+    }
+
+    pub fn with_kind_registry(
+        document: &'a CanvasDocument,
+        kind_registry: &'a CanvasKindRegistry,
+    ) -> Self {
+        Self::with_router_and_kind_registry(document, CanvasDefaultEdgeRouter, Some(kind_registry))
     }
 }
 
@@ -28,11 +37,43 @@ where
     R: CanvasEdgeRouter,
 {
     pub fn with_router(document: &'a CanvasDocument, router: R) -> Self {
-        Self { document, router }
+        Self::with_router_and_kind_registry(document, router, None)
+    }
+
+    pub fn with_router_and_kind_registry(
+        document: &'a CanvasDocument,
+        router: R,
+        kind_registry: Option<&'a CanvasKindRegistry>,
+    ) -> Self {
+        Self {
+            document,
+            router,
+            kind_registry,
+        }
     }
 
     pub fn document(&self) -> &'a CanvasDocument {
         self.document
+    }
+
+    pub fn kind_registry(&self) -> Option<&'a CanvasKindRegistry> {
+        self.kind_registry
+    }
+
+    pub fn node_bounds(&self, node: &CanvasNode) -> Bounds<Pixels> {
+        self.kind_registry
+            .and_then(|registry| registry.node_bounds(node))
+            .unwrap_or_else(|| node.bounds())
+    }
+
+    pub fn shape_bounds(&self, shape: &CanvasShape) -> Bounds<Pixels> {
+        self.kind_registry
+            .and_then(|registry| registry.shape_bounds(shape))
+            .unwrap_or(shape.bounds)
+    }
+
+    pub fn handle_bounds(&self, node: &CanvasNode, handle: &CanvasHandle) -> Bounds<Pixels> {
+        Bounds::centered_at(self.resolved_handle_position(node, handle), handle.size)
     }
 
     pub fn endpoint_position(
@@ -52,10 +93,10 @@ where
                         node_id: endpoint.node_id.clone(),
                         handle_id: handle_id.clone(),
                     })?;
-            return Ok(node.position + handle.position);
+            return Ok(self.resolved_handle_position(node, handle));
         }
 
-        Ok(node.bounds().center())
+        Ok(self.node_bounds(node).center())
     }
 
     pub fn edge_route_path(&self, edge: &CanvasEdge) -> Result<CanvasRoutePath, DocumentError> {
@@ -134,6 +175,12 @@ where
         let target = self.connection_endpoint_at(records, CanvasConnectionEndpointRole::Target)?;
         let target_position = self.endpoint_position(&target).ok()?;
         (target_position != source).then_some(target_position)
+    }
+
+    fn resolved_handle_position(&self, node: &CanvasNode, handle: &CanvasHandle) -> Point<Pixels> {
+        self.kind_registry
+            .and_then(|registry| registry.handle_position(node, &handle.id))
+            .unwrap_or(node.position + handle.position)
     }
 }
 

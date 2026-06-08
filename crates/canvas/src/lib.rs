@@ -17,6 +17,7 @@ mod persistence;
 mod resolve;
 mod routing;
 mod runtime;
+mod schema;
 #[cfg(test)]
 mod test_support;
 mod tool;
@@ -69,6 +70,10 @@ pub use routing::{
     CanvasRouteSegment,
 };
 pub use runtime::CanvasRuntime;
+pub use schema::{
+    CanvasEdgeKind, CanvasKindRegistry, CanvasNodeKind, CanvasRecordKind, CanvasSchemaError,
+    CanvasShapeKind,
+};
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
     CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,

@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasRecord, CanvasRecordChange, CanvasRecordId,
-    CanvasRecordOperationBatch, CanvasTransaction, DocumentError,
+    CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecord, CanvasRecordChange,
+    CanvasRecordId, CanvasRecordOperationBatch, CanvasTransaction, DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,16 +65,19 @@ impl CanvasPreparedMutation {
 pub(crate) struct CanvasMutationJournal;
 
 impl CanvasMutationJournal {
-    pub fn prepare(
+    pub fn prepare_with_kind_registry(
         document: &CanvasDocument,
         transaction: CanvasTransaction,
+        kind_registry: &CanvasKindRegistry,
     ) -> Result<CanvasPreparedMutation, DocumentError> {
+        let transaction = kind_registry.normalize_transaction(transaction)?;
         let inverse = document.invert_transaction(&transaction)?;
         let mut draft = document.clone();
 
         for command in transaction.commands.iter().cloned() {
             draft.apply(command)?;
         }
+        kind_registry.validate_document(&draft)?;
 
         let diff = draft.diff_against(document);
         let record_changes = record_changes_from_diff(&draft, &diff);
@@ -95,7 +98,15 @@ impl CanvasMutationJournal {
         document: &mut CanvasDocument,
         transaction: CanvasTransaction,
     ) -> Result<CanvasCommittedMutation, DocumentError> {
-        let prepared = Self::prepare(document, transaction)?;
+        Self::commit_with_kind_registry(document, transaction, &CanvasKindRegistry::open())
+    }
+
+    pub fn commit_with_kind_registry(
+        document: &mut CanvasDocument,
+        transaction: CanvasTransaction,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Result<CanvasCommittedMutation, DocumentError> {
+        let prepared = Self::prepare_with_kind_registry(document, transaction, kind_registry)?;
         Ok(prepared.apply_to(document))
     }
 }

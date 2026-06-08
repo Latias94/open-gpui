@@ -1,7 +1,7 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
-    CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasRecordId,
-    CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, SpatialIndex,
+    CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
+    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, SpatialIndex,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -18,19 +18,72 @@ impl CanvasRuntime {
         Self::rebuild_with_router(document, &CanvasDefaultEdgeRouter)
     }
 
+    pub fn rebuild_with_kind_registry(
+        document: &CanvasDocument,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self {
+        Self::rebuild_with_router_and_optional_kind_registry(
+            document,
+            &CanvasDefaultEdgeRouter,
+            Some(kind_registry),
+        )
+    }
+
     pub fn rebuild_with_router<R>(document: &CanvasDocument, router: &R) -> Self
     where
         R: CanvasEdgeRouter + ?Sized,
     {
+        Self::rebuild_with_router_and_optional_kind_registry(document, router, None)
+    }
+
+    pub fn rebuild_with_router_and_kind_registry<R>(
+        document: &CanvasDocument,
+        router: &R,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        Self::rebuild_with_router_and_optional_kind_registry(document, router, Some(kind_registry))
+    }
+
+    fn rebuild_with_router_and_optional_kind_registry<R>(
+        document: &CanvasDocument,
+        router: &R,
+        kind_registry: Option<&CanvasKindRegistry>,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let spatial_index = match kind_registry {
+            Some(kind_registry) => {
+                SpatialIndex::rebuild_with_router_and_kind_registry(document, router, kind_registry)
+            }
+            None => SpatialIndex::rebuild_with_router(document, router),
+        };
+
         Self {
-            spatial_index: SpatialIndex::rebuild_with_router(document, router),
+            spatial_index,
             graph_index: CanvasGraphIndex::rebuild(document),
-            edge_geometries: resolve_edge_geometries(document, router),
+            edge_geometries: resolve_edge_geometries(document, router, kind_registry),
         }
     }
 
     pub fn from_spatial_index(document: &CanvasDocument, spatial_index: SpatialIndex) -> Self {
         Self::from_spatial_index_with_router(document, spatial_index, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn from_spatial_index_with_kind_registry(
+        document: &CanvasDocument,
+        spatial_index: SpatialIndex,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self {
+        Self::from_spatial_index_with_router_and_kind_registry(
+            document,
+            spatial_index,
+            &CanvasDefaultEdgeRouter,
+            kind_registry,
+        )
     }
 
     pub fn from_spatial_index_with_router<R>(
@@ -41,15 +94,63 @@ impl CanvasRuntime {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
+        Self::from_spatial_index_with_router_and_optional_kind_registry(
+            document,
+            spatial_index,
+            router,
+            None,
+        )
+    }
+
+    pub fn from_spatial_index_with_router_and_kind_registry<R>(
+        document: &CanvasDocument,
+        spatial_index: SpatialIndex,
+        router: &R,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        Self::from_spatial_index_with_router_and_optional_kind_registry(
+            document,
+            spatial_index,
+            router,
+            Some(kind_registry),
+        )
+    }
+
+    fn from_spatial_index_with_router_and_optional_kind_registry<R>(
+        document: &CanvasDocument,
+        spatial_index: SpatialIndex,
+        router: &R,
+        kind_registry: Option<&CanvasKindRegistry>,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
         Self {
             spatial_index,
             graph_index: CanvasGraphIndex::rebuild(document),
-            edge_geometries: resolve_edge_geometries(document, router),
+            edge_geometries: resolve_edge_geometries(document, router, kind_registry),
         }
     }
 
     pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
         self.apply_diff_with_router(document, diff, &CanvasDefaultEdgeRouter);
+    }
+
+    pub fn apply_diff_with_kind_registry(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        kind_registry: &CanvasKindRegistry,
+    ) {
+        self.apply_diff_with_router_and_kind_registry(
+            document,
+            diff,
+            &CanvasDefaultEdgeRouter,
+            kind_registry,
+        );
     }
 
     pub fn apply_diff_with_router<R>(
@@ -60,14 +161,55 @@ impl CanvasRuntime {
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
+        self.apply_diff_with_router_and_optional_kind_registry(document, diff, router, None);
+    }
+
+    pub fn apply_diff_with_router_and_kind_registry<R>(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        router: &R,
+        kind_registry: &CanvasKindRegistry,
+    ) where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        self.apply_diff_with_router_and_optional_kind_registry(
+            document,
+            diff,
+            router,
+            Some(kind_registry),
+        );
+    }
+
+    fn apply_diff_with_router_and_optional_kind_registry<R>(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        router: &R,
+        kind_registry: Option<&CanvasKindRegistry>,
+    ) where
+        R: CanvasEdgeRouter + ?Sized,
+    {
         if diff.is_empty() {
             return;
         }
 
-        self.spatial_index
-            .apply_diff_with_router(document, diff, router);
+        match kind_registry {
+            Some(kind_registry) => {
+                self.spatial_index.apply_diff_with_router_and_kind_registry(
+                    document,
+                    diff,
+                    router,
+                    kind_registry,
+                );
+            }
+            None => {
+                self.spatial_index
+                    .apply_diff_with_router(document, diff, router);
+            }
+        }
         self.graph_index.apply_diff(document, diff);
-        self.apply_edge_geometry_diff(document, diff, router);
+        self.apply_edge_geometry_diff(document, diff, router, kind_registry);
     }
 
     pub fn spatial_index(&self) -> &SpatialIndex {
@@ -115,6 +257,7 @@ impl CanvasRuntime {
         document: &CanvasDocument,
         diff: &CanvasDocumentDiff,
         router: &R,
+        kind_registry: Option<&CanvasKindRegistry>,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
@@ -123,7 +266,7 @@ impl CanvasRuntime {
         }
 
         for record_id in diff.updated.iter().chain(&diff.inserted) {
-            self.refresh_edge_geometry(document, record_id, router);
+            self.refresh_edge_geometry(document, record_id, router, kind_registry);
         }
     }
 
@@ -132,6 +275,7 @@ impl CanvasRuntime {
         document: &CanvasDocument,
         record_id: &CanvasRecordId,
         router: &R,
+        kind_registry: Option<&CanvasKindRegistry>,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
@@ -146,6 +290,7 @@ impl CanvasRuntime {
                         document,
                         &CanvasRecordId::Edge(edge.id.clone()),
                         router,
+                        kind_registry,
                     );
                 }
             }
@@ -154,7 +299,11 @@ impl CanvasRuntime {
                     self.edge_geometries.shift_remove(id);
                     return;
                 };
-                let resolver = CanvasGeometryResolver::with_router(document, router);
+                let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+                    document,
+                    router,
+                    kind_registry,
+                );
                 match resolver.edge_geometry(edge) {
                     Ok(geometry) => {
                         self.edge_geometries.insert(id.clone(), geometry);
@@ -188,11 +337,13 @@ impl CanvasRuntime {
 fn resolve_edge_geometries<R>(
     document: &CanvasDocument,
     router: &R,
+    kind_registry: Option<&CanvasKindRegistry>,
 ) -> IndexMap<EdgeId, CanvasResolvedEdgeGeometry>
 where
     R: CanvasEdgeRouter + ?Sized,
 {
-    let resolver = CanvasGeometryResolver::with_router(document, router);
+    let resolver =
+        CanvasGeometryResolver::with_router_and_kind_registry(document, router, kind_registry);
     document
         .edges
         .values()
@@ -209,10 +360,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRoutePath, CanvasRouteRequest,
-        CanvasTransaction, DocumentCommand, EdgeId, NodeId,
+        CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+        CanvasRoutePath, CanvasRouteRequest, CanvasTransaction, DocumentCommand, EdgeId, NodeId,
     };
-    use open_gpui::{point, px, size};
+    use open_gpui::{Bounds, point, px, size};
 
     #[test]
     fn runtime_rebuilds_spatial_and_graph_indexes() {
@@ -333,6 +484,100 @@ mod tests {
         );
     }
 
+    #[test]
+    fn runtime_uses_kind_registry_geometry_for_index_and_routes() {
+        let mut document = CanvasDocument::default();
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        source.kind = "wide".to_string();
+        source
+            .handles
+            .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
+        document.insert_node(source).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        let registry = geometry_registry();
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+
+        assert!(runtime.hit_test(point(px(-4.0), px(5.0)), HitOptions::default()).any(
+            |record| matches!(&record.target, crate::HitTarget::Node(id) if id == &NodeId::from("a"))
+        ));
+        assert!(
+            runtime
+                .hit_test(
+                    point(px(30.0), px(5.0)),
+                    HitOptions {
+                        include_handles: true,
+                        ..HitOptions::default()
+                    }
+                )
+                .any(|record| matches!(
+                    &record.target,
+                    crate::HitTarget::Handle { node_id, handle_id }
+                        if node_id == &NodeId::from("a") && handle_id.as_str() == "out"
+                ))
+        );
+        assert_eq!(
+            runtime
+                .edge_geometry(&EdgeId::from("a-b"))
+                .unwrap()
+                .path
+                .document_points(),
+            vec![point(px(30.0), px(5.0)), point(px(25.0), px(5.0))]
+        );
+    }
+
+    #[test]
+    fn runtime_applies_kind_registry_geometry_after_diff() {
+        let mut document = connected_registry_document();
+        let registry = geometry_registry();
+        let mut runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+        let mut moved = document.nodes[&NodeId::from("a")].clone();
+        moved.position = point(px(10.0), px(0.0));
+
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+                moved,
+            )))
+            .unwrap();
+        runtime.apply_diff_with_kind_registry(&document, &diff, &registry);
+
+        assert_eq!(
+            runtime
+                .edge_geometry(&EdgeId::from("a-b"))
+                .unwrap()
+                .path
+                .document_points(),
+            vec![point(px(40.0), px(5.0)), point(px(25.0), px(5.0))]
+        );
+        assert!(
+            runtime
+                .hit_test(
+                    point(px(40.0), px(5.0)),
+                    HitOptions {
+                        include_handles: true,
+                        ..HitOptions::default()
+                    }
+                )
+                .any(|record| matches!(
+                    &record.target,
+                    crate::HitTarget::Handle { node_id, handle_id }
+                        if node_id == &NodeId::from("a") && handle_id.as_str() == "out"
+                ))
+        );
+    }
+
     fn connected_document() -> CanvasDocument {
         let mut document = CanvasDocument::default();
         document
@@ -357,6 +602,58 @@ mod tests {
             ))
             .unwrap();
         document
+    }
+
+    fn connected_registry_document() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        source.kind = "wide".to_string();
+        source
+            .handles
+            .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
+        document.insert_node(source).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+    }
+
+    fn geometry_registry() -> CanvasKindRegistry {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("wide", WideNodeKind);
+        registry
+    }
+
+    struct WideNodeKind;
+
+    impl CanvasNodeKind for WideNodeKind {
+        fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
+            Some(node.bounds().dilate(px(5.0)))
+        }
+
+        fn handle_position(
+            &self,
+            node: &CanvasNode,
+            handle_id: &crate::HandleId,
+        ) -> Option<open_gpui::Point<open_gpui::Pixels>> {
+            (handle_id.as_str() == "out").then(|| {
+                point(
+                    node.position.x + node.size.width + px(20.0),
+                    node.position.y + px(5.0),
+                )
+            })
+        }
     }
 
     struct VerticalDetourRouter;

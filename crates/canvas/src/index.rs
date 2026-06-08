@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver, CanvasRecordId,
-    EdgeId, HandleId, NodeId, ShapeId,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
+    CanvasKindRegistry, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
 };
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
@@ -70,11 +70,36 @@ impl SpatialIndex {
         Self::rebuild_with_resolver(CanvasGeometryResolver::new(document))
     }
 
+    pub fn rebuild_with_kind_registry(
+        document: &CanvasDocument,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self {
+        Self::rebuild_with_resolver(CanvasGeometryResolver::with_kind_registry(
+            document,
+            kind_registry,
+        ))
+    }
+
     pub fn rebuild_with_router<R>(document: &CanvasDocument, router: &R) -> Self
     where
         R: CanvasEdgeRouter + ?Sized,
     {
         Self::rebuild_with_resolver(CanvasGeometryResolver::with_router(document, router))
+    }
+
+    pub fn rebuild_with_router_and_kind_registry<R>(
+        document: &CanvasDocument,
+        router: &R,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router_and_kind_registry(
+            document,
+            router,
+            Some(kind_registry),
+        ))
     }
 
     fn rebuild_with_resolver<R>(resolver: CanvasGeometryResolver<'_, R>) -> Self
@@ -87,7 +112,7 @@ impl SpatialIndex {
         for node in document.nodes.values() {
             records.push(HitRecord {
                 target: HitTarget::Node(node.id.clone()),
-                bounds: node.bounds(),
+                bounds: resolver.node_bounds(node),
                 z_index: node.z_index,
                 hidden: node.hidden,
                 locked: node.locked,
@@ -99,7 +124,7 @@ impl SpatialIndex {
                         node_id: node.id.clone(),
                         handle_id: handle.id.clone(),
                     },
-                    bounds: handle.bounds_in_document(node),
+                    bounds: resolver.handle_bounds(node, handle),
                     z_index: node.z_index,
                     hidden: node.hidden || handle.hidden || !handle.connectable,
                     locked: node.locked,
@@ -110,7 +135,7 @@ impl SpatialIndex {
         for shape in document.shapes.values() {
             records.push(HitRecord {
                 target: HitTarget::Shape(shape.id.clone()),
-                bounds: shape.bounds,
+                bounds: resolver.shape_bounds(shape),
                 z_index: shape.z_index,
                 hidden: shape.hidden,
                 locked: shape.locked,
@@ -137,6 +162,18 @@ impl SpatialIndex {
         self.apply_diff_with_resolver(CanvasGeometryResolver::new(document), diff);
     }
 
+    pub fn apply_diff_with_kind_registry(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        kind_registry: &CanvasKindRegistry,
+    ) {
+        self.apply_diff_with_resolver(
+            CanvasGeometryResolver::with_kind_registry(document, kind_registry),
+            diff,
+        );
+    }
+
     pub fn apply_diff_with_router<R>(
         &mut self,
         document: &CanvasDocument,
@@ -146,6 +183,25 @@ impl SpatialIndex {
         R: CanvasEdgeRouter + ?Sized,
     {
         self.apply_diff_with_resolver(CanvasGeometryResolver::with_router(document, router), diff);
+    }
+
+    pub fn apply_diff_with_router_and_kind_registry<R>(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        router: &R,
+        kind_registry: &CanvasKindRegistry,
+    ) where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        self.apply_diff_with_resolver(
+            CanvasGeometryResolver::with_router_and_kind_registry(
+                document,
+                router,
+                Some(kind_registry),
+            ),
+            diff,
+        );
     }
 
     fn apply_diff_with_resolver<R>(
@@ -238,7 +294,7 @@ impl SpatialIndex {
 
                 self.records.push(HitRecord {
                     target: HitTarget::Node(node.id.clone()),
-                    bounds: node.bounds(),
+                    bounds: resolver.node_bounds(node),
                     z_index: node.z_index,
                     hidden: node.hidden,
                     locked: node.locked,
@@ -250,7 +306,7 @@ impl SpatialIndex {
                             node_id: node.id.clone(),
                             handle_id: handle.id.clone(),
                         },
-                        bounds: handle.bounds_in_document(node),
+                        bounds: resolver.handle_bounds(node, handle),
                         z_index: node.z_index,
                         hidden: node.hidden || handle.hidden || !handle.connectable,
                         locked: node.locked,
@@ -290,7 +346,7 @@ impl SpatialIndex {
 
                 self.records.push(HitRecord {
                     target: HitTarget::Shape(shape.id.clone()),
-                    bounds: shape.bounds,
+                    bounds: resolver.shape_bounds(shape),
                     z_index: shape.z_index,
                     hidden: shape.hidden,
                     locked: shape.locked,

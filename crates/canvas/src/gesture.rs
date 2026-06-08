@@ -1,6 +1,7 @@
 use crate::journal::CanvasMutationJournal;
 use crate::{
-    CanvasCommittedMutation, CanvasDocument, CanvasTransaction, DocumentCommand, DocumentError,
+    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasTransaction,
+    DocumentCommand, DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,16 +16,21 @@ impl CanvasGestureSession {
         }
     }
 
-    pub(crate) fn prepare_commit(
+    pub(crate) fn prepare_commit_with_kind_registry(
         &self,
         current: &CanvasDocument,
+        kind_registry: &CanvasKindRegistry,
     ) -> Result<Option<CanvasPreparedGestureCommit>, DocumentError> {
         let transaction = transaction_between(&self.baseline, current);
         if transaction.is_empty() {
             return Ok(None);
         }
 
-        let prepared = CanvasMutationJournal::prepare(&self.baseline, transaction)?;
+        let prepared = CanvasMutationJournal::prepare_with_kind_registry(
+            &self.baseline,
+            transaction,
+            kind_registry,
+        )?;
         Ok(Some(CanvasPreparedGestureCommit {
             committed: prepared.committed().clone(),
         }))
@@ -130,7 +136,10 @@ mod tests {
             )))
             .unwrap();
 
-        let commit = session.prepare_commit(&current).unwrap().unwrap();
+        let commit = session
+            .prepare_commit_with_kind_registry(&current, &CanvasKindRegistry::open())
+            .unwrap()
+            .unwrap();
 
         assert_eq!(
             commit.committed().transaction().commands,

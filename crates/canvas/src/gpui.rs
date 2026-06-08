@@ -1,8 +1,8 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasViewport, HitOptions, HitTarget,
-    PointerButton, SpatialIndex, ToolState, connection_hit_options,
+    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasViewport,
+    HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState, connection_hit_options,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -15,6 +15,7 @@ use std::sync::Arc;
 pub struct CanvasPaintModel {
     pub document: Arc<CanvasDocument>,
     pub runtime: Arc<CanvasRuntime>,
+    pub kind_registry: Arc<CanvasKindRegistry>,
     pub viewport: CanvasViewport,
     pub interaction: CanvasPaintInteraction,
 }
@@ -22,6 +23,19 @@ pub struct CanvasPaintModel {
 impl CanvasPaintModel {
     pub fn new(document: CanvasDocument, viewport: CanvasViewport) -> Self {
         Self::new_with_router(document, viewport, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn new_with_kind_registry(
+        document: CanvasDocument,
+        viewport: CanvasViewport,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self {
+        Self::new_with_router_and_kind_registry(
+            document,
+            viewport,
+            &CanvasDefaultEdgeRouter,
+            kind_registry,
+        )
     }
 
     pub fn new_with_router<R>(
@@ -32,10 +46,29 @@ impl CanvasPaintModel {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let runtime = CanvasRuntime::rebuild_with_router(&document, router);
+        Self::new_with_router_and_kind_registry(
+            document,
+            viewport,
+            router,
+            CanvasKindRegistry::open(),
+        )
+    }
+
+    pub fn new_with_router_and_kind_registry<R>(
+        document: CanvasDocument,
+        viewport: CanvasViewport,
+        router: &R,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let runtime =
+            CanvasRuntime::rebuild_with_router_and_kind_registry(&document, router, &kind_registry);
         Self {
             document: Arc::new(document),
             runtime: Arc::new(runtime),
+            kind_registry: Arc::new(kind_registry),
             viewport,
             interaction: CanvasPaintInteraction::default(),
         }
@@ -49,6 +82,21 @@ impl CanvasPaintModel {
         Self::from_parts_with_router(document, index, viewport, &CanvasDefaultEdgeRouter)
     }
 
+    pub fn from_parts_with_kind_registry(
+        document: Arc<CanvasDocument>,
+        index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self {
+        Self::from_parts_with_router_and_kind_registry(
+            document,
+            index,
+            viewport,
+            &CanvasDefaultEdgeRouter,
+            kind_registry,
+        )
+    }
+
     pub fn from_parts_with_router<R>(
         document: Arc<CanvasDocument>,
         index: Arc<SpatialIndex>,
@@ -58,11 +106,35 @@ impl CanvasPaintModel {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let runtime =
-            CanvasRuntime::from_spatial_index_with_router(&document, (*index).clone(), router);
+        Self::from_parts_with_router_and_kind_registry(
+            document,
+            index,
+            viewport,
+            router,
+            CanvasKindRegistry::open(),
+        )
+    }
+
+    pub fn from_parts_with_router_and_kind_registry<R>(
+        document: Arc<CanvasDocument>,
+        index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        router: &R,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let runtime = CanvasRuntime::from_spatial_index_with_router_and_kind_registry(
+            &document,
+            (*index).clone(),
+            router,
+            &kind_registry,
+        );
         Self {
             document,
             runtime: Arc::new(runtime),
+            kind_registry: Arc::new(kind_registry),
             viewport,
             interaction: CanvasPaintInteraction::default(),
         }
@@ -78,15 +150,53 @@ impl CanvasPaintModel {
         Self::from_runtime_parts(document, Arc::new(runtime), viewport, interaction)
     }
 
+    pub fn from_parts_with_interaction_and_kind_registry(
+        document: Arc<CanvasDocument>,
+        index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        interaction: CanvasPaintInteraction,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self {
+        let runtime = CanvasRuntime::from_spatial_index_with_kind_registry(
+            &document,
+            (*index).clone(),
+            &kind_registry,
+        );
+        Self::from_runtime_parts_with_kind_registry(
+            document,
+            Arc::new(runtime),
+            viewport,
+            interaction,
+            kind_registry,
+        )
+    }
+
     pub fn from_runtime_parts(
         document: Arc<CanvasDocument>,
         runtime: Arc<CanvasRuntime>,
         viewport: CanvasViewport,
         interaction: CanvasPaintInteraction,
     ) -> Self {
+        Self::from_runtime_parts_with_kind_registry(
+            document,
+            runtime,
+            viewport,
+            interaction,
+            CanvasKindRegistry::open(),
+        )
+    }
+
+    pub fn from_runtime_parts_with_kind_registry(
+        document: Arc<CanvasDocument>,
+        runtime: Arc<CanvasRuntime>,
+        viewport: CanvasViewport,
+        interaction: CanvasPaintInteraction,
+        kind_registry: CanvasKindRegistry,
+    ) -> Self {
         Self {
             document,
             runtime,
+            kind_registry: Arc::new(kind_registry),
             viewport,
             interaction,
         }
@@ -98,6 +208,7 @@ impl From<&CanvasEditor> for CanvasPaintModel {
         Self {
             document: Arc::new(editor.document().clone()),
             runtime: Arc::new(editor.runtime().clone()),
+            kind_registry: Arc::new(editor.kind_registry().clone()),
             viewport: editor.viewport(),
             interaction: CanvasPaintInteraction {
                 selection: editor.selection().clone(),
@@ -520,7 +631,10 @@ fn connection_preview(
     source: &CanvasEndpoint,
     current: Point<Pixels>,
 ) -> Option<CanvasPaintConnectionPreview> {
-    let resolver = CanvasGeometryResolver::new(&model.document);
+    let resolver = CanvasGeometryResolver::with_kind_registry(
+        model.document.as_ref(),
+        model.kind_registry.as_ref(),
+    );
     let source = resolver.endpoint_position(source).ok()?;
     let target = connection_preview_target_position(model, source, current).unwrap_or(current);
     Some(CanvasPaintConnectionPreview {
@@ -534,7 +648,10 @@ fn connection_preview_target_position(
     source: Point<Pixels>,
     current: Point<Pixels>,
 ) -> Option<Point<Pixels>> {
-    let resolver = CanvasGeometryResolver::new(&model.document);
+    let resolver = CanvasGeometryResolver::with_kind_registry(
+        model.document.as_ref(),
+        model.kind_registry.as_ref(),
+    );
     resolver.connection_preview_target(
         model.runtime.hit_test(current, connection_hit_options()),
         source,
@@ -618,9 +735,12 @@ fn paint_edge(
         .edge_geometry(&edge.id)
         .map(|geometry| geometry.path.clone())
         .or_else(|| {
-            CanvasGeometryResolver::new(&model.document)
-                .edge_route_path(edge)
-                .ok()
+            CanvasGeometryResolver::with_kind_registry(
+                model.document.as_ref(),
+                model.kind_registry.as_ref(),
+            )
+            .edge_route_path(edge)
+            .ok()
         })
     else {
         return;
@@ -726,8 +846,8 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 mod tests {
     use super::*;
     use crate::{
-        CanvasHandle, CanvasNode, CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode,
-        CanvasToolEffect, EdgeId, HandleRole,
+        CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRoutePath,
+        CanvasRouteRequest, CanvasSelectionMode, CanvasToolEffect, EdgeId, HandleRole,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
@@ -884,6 +1004,36 @@ mod tests {
     }
 
     #[test]
+    fn paint_model_uses_kind_registry_bounds_in_frame_records() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("wide", point(px(10.0), px(10.0)), size(px(20.0), px(20.0)));
+        node.kind = "wide".to_string();
+        document.insert_node(node).unwrap();
+        let model = CanvasPaintModel::new_with_kind_registry(
+            document,
+            CanvasViewport::default(),
+            geometry_registry(),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let record = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Node(crate::NodeId::from("wide")))
+            .unwrap();
+        assert_eq!(
+            record.document_bounds,
+            Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
+        );
+        assert_eq!(record.view_bounds, record.document_bounds);
+    }
+
+    #[test]
     fn selected_records_are_marked_in_paint_frame() {
         let mut document = CanvasDocument::default();
         document
@@ -1018,6 +1168,50 @@ mod tests {
             Some(CanvasPaintConnectionPreview {
                 source_view_position: point(px(110.0), px(60.0)),
                 target_view_position: point(px(180.0), px(120.0)),
+            })
+        );
+    }
+
+    #[test]
+    fn connecting_preview_uses_kind_registry_endpoint_positions() {
+        let mut source =
+            CanvasNode::new("source", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        source.kind = "wide".to_string();
+        let mut source_handle = CanvasHandle::new("out", point(px(10.0), px(5.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target =
+            CanvasNode::new("target", point(px(60.0), px(0.0)), size(px(10.0), px(10.0)));
+        target.kind = "wide".to_string();
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(5.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut model = CanvasPaintModel::new_with_kind_registry(
+            document,
+            CanvasViewport::default(),
+            geometry_registry(),
+        );
+        model.interaction.state = ToolState::Connecting {
+            source: CanvasEndpoint::new("source", Some("out")),
+            current: point(px(40.0), px(5.0)),
+        };
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.connection_preview,
+            Some(CanvasPaintConnectionPreview {
+                source_view_position: point(px(30.0), px(5.0)),
+                target_view_position: point(px(40.0), px(5.0)),
             })
         );
     }
@@ -1321,6 +1515,35 @@ mod tests {
             ))
             .unwrap();
         document
+    }
+
+    fn geometry_registry() -> CanvasKindRegistry {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("wide", WideNodeKind);
+        registry
+    }
+
+    struct WideNodeKind;
+
+    impl CanvasNodeKind for WideNodeKind {
+        fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
+            Some(node.bounds().dilate(px(5.0)))
+        }
+
+        fn handle_position(
+            &self,
+            node: &CanvasNode,
+            handle_id: &crate::HandleId,
+        ) -> Option<open_gpui::Point<open_gpui::Pixels>> {
+            match handle_id.as_str() {
+                "out" => Some(point(
+                    node.position.x + node.size.width + px(20.0),
+                    node.position.y + px(5.0),
+                )),
+                "in" => Some(point(node.position.x - px(20.0), node.position.y + px(5.0))),
+                _ => None,
+            }
+        }
     }
 
     struct VerticalDetourRouter;

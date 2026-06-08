@@ -22,10 +22,14 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasRuntime` owns runtime caches for spatial hit testing and indexed graph queries. The
   underlying `SpatialIndex` still exposes the replaceable query boundary for future R-tree, tile,
   or GPU-assisted indexes.
+- `CanvasGeometryResolver` centralizes record bounds, handle positions, route paths, edge bounds,
+  hit areas, endpoint picking, previews, and paint fallback geometry.
+- `CanvasKindRegistry` lets applications register node, edge, and shape kind handlers for
+  defaults, migrations, validation, and geometry hooks while unknown kinds remain open records.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
-- `CanvasEditor` applies transactions, tracks undo/redo, maintains selection, and dispatches tool
-  events.
+- `CanvasEditor` owns document mutation, undo/redo, selection, gestures, runtime cache sync, edge
+  router policy, and kind registry policy behind explicit methods.
 - `CanvasEvent` normalizes pointer, wheel, key, and cancel events; pointer and key events carry
   modifiers, and the select tool can delete editable selections with Delete or Backspace through
   the same transaction path as other edits.
@@ -171,6 +175,96 @@ let actual_batch = committed.record_operation_batch(8);
 assert_eq!(actual_batch.operations.len(), 1);
 ```
 
+## Register Canvas Kinds
+
+The persisted model stays open: `kind` is still a string and payload data is still JSON-shaped
+`CanvasValue`. Applications that need stronger contracts can install a `CanvasKindRegistry`.
+Registered handlers can migrate older data, add defaults, validate records, and override geometry
+used by mutation, runtime indexes, hit testing, previews, and GPUI paint.
+
+Unknown kinds are intentionally left unchanged so imported JSON Canvas files, application-specific
+records, and future ecosystem extensions can still be loaded before a handler exists.
+
+```rust
+use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_canvas::{
+    CanvasDocument, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordKind,
+    CanvasSchemaError, CanvasTransaction, CanvasValue, DocumentCommand, NodeId,
+};
+use serde_json::{Value, json};
+
+struct NoteKind;
+
+impl CanvasNodeKind for NoteKind {
+    fn default_data(&self) -> CanvasValue {
+        CanvasValue::from_iter([("title".to_string(), json!("Untitled"))])
+    }
+
+    fn migrate_node(&self, node: &mut CanvasNode) -> Result<(), CanvasSchemaError> {
+        if let Some(label) = node.data.remove("label") {
+            node.data.insert("title".to_string(), label);
+        }
+        Ok(())
+    }
+
+    fn validate_node(&self, node: &CanvasNode) -> Result<(), CanvasSchemaError> {
+        match node.data.get("title") {
+            Some(Value::String(title)) if !title.trim().is_empty() => Ok(()),
+            None => Err(CanvasSchemaError::missing_required_data(
+                CanvasRecordKind::Node,
+                node.id.clone(),
+                &node.kind,
+                "title",
+            )),
+            Some(_) => Err(CanvasSchemaError::invalid_data(
+                CanvasRecordKind::Node,
+                node.id.clone(),
+                &node.kind,
+                "title must be a non-empty string",
+            )),
+        }
+    }
+
+    fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
+        Some(node.bounds().dilate(px(8.0)))
+    }
+
+    fn handle_position(
+        &self,
+        node: &CanvasNode,
+        handle_id: &open_gpui_canvas::HandleId,
+    ) -> Option<Point<Pixels>> {
+        (handle_id.as_str() == "out")
+            .then(|| point(node.position.x + node.size.width + px(16.0), node.position.y))
+    }
+}
+
+let mut registry = CanvasKindRegistry::open();
+registry.register_node_kind("note", NoteKind);
+
+let mut node = CanvasNode::new("note-1", point(px(0.0), px(0.0)), size(px(160.0), px(72.0)));
+node.kind = "note".to_string();
+node.data.insert("label".to_string(), json!("Migrated title"));
+
+let mut document = CanvasDocument::default();
+document
+    .commit_transaction_with_kind_registry(
+        CanvasTransaction::single(DocumentCommand::InsertNode(node)),
+        &registry,
+    )
+    .unwrap();
+
+assert_eq!(
+    document.nodes[&NodeId::from("note-1")].data.get("title"),
+    Some(&json!("Migrated title"))
+);
+```
+
+Use `CanvasDocument::from_snapshot_with_kind_registry` to normalize and validate a snapshot at load
+time. Use `CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_registry` when the
+interactive editor should apply the same registry to transactions, gestures, undo/redo validation,
+runtime caches, and paint snapshots.
+
 ## Route Edges
 
 `CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns straight, polyline,
@@ -290,6 +384,8 @@ assert!(exported.contains("nodes"));
 
 Text, file, link, and group nodes are mapped into `CanvasNode` records. Edge sides become
 deterministic node handles so Obsidian-style connections remain round-trippable.
+Unknown JSON Canvas payload fields are preserved in record data when possible, and unknown canvas
+record kinds remain loadable through the open kind registry.
 
 ## Persistence
 
