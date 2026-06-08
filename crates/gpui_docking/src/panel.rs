@@ -1,5 +1,5 @@
-use crate::{DockHost, DockItemId};
-use open_gpui::{AnyView, App, Context};
+use crate::DockItemId;
+use open_gpui::{AnyView, App};
 use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
 
 type DockPanelFactory = Rc<dyn Fn(&mut App) -> AnyView>;
@@ -158,7 +158,7 @@ impl DockPanel {
     }
 
     /// Returns the panel view, instantiating lazy panels on first render.
-    pub fn resolve_view(&self, cx: &mut Context<DockHost>) -> AnyView {
+    pub fn resolve_view(&self, cx: &mut App) -> AnyView {
         self.inner.view_lifecycle.resolve_view(cx)
     }
 }
@@ -195,7 +195,7 @@ impl DockPanelViewLifecycle {
         }
     }
 
-    fn resolve_view(&self, cx: &mut Context<DockHost>) -> AnyView {
+    fn resolve_view(&self, cx: &mut App) -> AnyView {
         match &self.source {
             DockPanelViewSource::View(view) => view.clone(),
             DockPanelViewSource::Lazy { factory, view } => view.get_or_init(|| factory(cx)).clone(),
