@@ -23,6 +23,7 @@ members = [
     "crates/sum_tree",
     "crates/util",
     "crates/util_macros",
+    "examples/docking-native",
     "examples/smoke-native",
     "xtask",
 ]
