@@ -24,3 +24,6 @@ serde.workspace = true
 serde_json.workspace = true
 slotmap.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
