@@ -11,6 +11,7 @@ mod layout;
 mod op;
 mod panel;
 mod render;
+mod splitter;
 mod workspace;
 
 #[cfg(test)]

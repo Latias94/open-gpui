@@ -20,6 +20,13 @@ pub(crate) enum DockDebugRegion {
         /// Child index within the split.
         index: usize,
     },
+    /// A splitter handle between adjacent split children.
+    SplitterHandle {
+        /// Runtime split node id.
+        split: DockNodeId,
+        /// Handle index between child `index` and child `index + 1`.
+        index: usize,
+    },
     /// A tabs container.
     Tabs {
         /// Runtime tabs node id.

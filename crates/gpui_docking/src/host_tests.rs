@@ -5,8 +5,8 @@ use crate::{
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
-    ParentElement, Pixels, Render, Styled, TestAppContext, VisualTestContext, Window, WindowHandle,
-    div, px, rgb, size,
+    MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext, VisualTestContext, Window,
+    WindowHandle, div, point, px, rgb, size,
 };
 use slotmap::Key;
 
@@ -508,6 +508,142 @@ fn unnormalized_split_fractions_are_repaired_for_rendering(cx: &mut TestAppConte
 
     assert_close(width(debug_bounds(&mut visual, &left)), 400.0);
     assert_close(width(debug_bounds(&mut visual, &right)), 200.0);
+}
+
+#[open_gpui::test]
+fn horizontal_splitter_drag_updates_width_fractions(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle { split, index: 0 },
+    )
+    .expect("splitter handle selector should be emitted");
+    let left = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 0 },
+    )
+    .expect("left split selector should be emitted");
+    let right = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 1 },
+    )
+    .expect("right split selector should be emitted");
+
+    assert_close(width(debug_bounds(&mut visual, &left)), 200.0);
+    assert_close(width(debug_bounds(&mut visual, &right)), 200.0);
+
+    let start = debug_bounds(&mut visual, &handle).center();
+    let end = point(start.x + px(80.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_close(width(debug_bounds(&mut visual, &left)), 280.0);
+    assert_close(width(debug_bounds(&mut visual, &right)), 120.0);
+    host.read_with(&visual, |host, _| {
+        let DockNode::Split { fractions, .. } =
+            host.graph().node(split).expect("split should exist")
+        else {
+            panic!("root should be split");
+        };
+        assert_close(fractions[0], 0.7);
+        assert_close(fractions[1], 0.3);
+        assert!(host.splitter_drag().is_none());
+    });
+}
+
+#[open_gpui::test]
+fn vertical_splitter_drag_updates_height_fractions(cx: &mut TestAppContext) {
+    let (graph, split, _top, _bottom) = split_graph(SplitAxis::Vertical, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(320.0), px(400.0)),
+    );
+
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle { split, index: 0 },
+    )
+    .expect("splitter handle selector should be emitted");
+    let top = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 0 },
+    )
+    .expect("top split selector should be emitted");
+    let bottom = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 1 },
+    )
+    .expect("bottom split selector should be emitted");
+
+    let start = debug_bounds(&mut visual, &handle).center();
+    let end = point(start.x, start.y + px(80.0));
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_close(height(debug_bounds(&mut visual, &top)), 280.0);
+    assert_close(height(debug_bounds(&mut visual, &bottom)), 120.0);
+}
+
+#[open_gpui::test]
+fn splitter_drag_clamps_to_minimum_pane_size(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitterHandle { split, index: 0 },
+    )
+    .expect("splitter handle selector should be emitted");
+    let left = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 0 },
+    )
+    .expect("left split selector should be emitted");
+    let right = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 1 },
+    )
+    .expect("right split selector should be emitted");
+
+    let start = debug_bounds(&mut visual, &handle).center();
+    let end = point(start.x - px(300.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert_close(width(debug_bounds(&mut visual, &left)), 96.0);
+    assert_close(width(debug_bounds(&mut visual, &right)), 304.0);
 }
 
 #[open_gpui::test]

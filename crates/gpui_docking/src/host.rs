@@ -1,10 +1,11 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockPanel,
-    DockPanelRegistry, DockSpaceId,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockOp,
+    DockPanel, DockPanelRegistry, DockSpaceId,
     debug::{DockDebugInstrumentation, DockDebugRegion},
+    splitter,
     workspace::DockWorkspace,
 };
-use open_gpui::AnyView;
+use open_gpui::{AnyView, Pixels, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -15,6 +16,10 @@ pub struct DockHostOptions {
     pub missing_panel_prefix: String,
     /// Message rendered for in-window floating nodes during Phase 2.
     pub deferred_floating_message: String,
+    /// Minimum rendered size for a split pane during splitter resizing.
+    pub split_min_size: Pixels,
+    /// Hit target and visual thickness for rendered splitter handles.
+    pub splitter_handle_size: Pixels,
 }
 
 impl Default for DockHostOptions {
@@ -23,8 +28,19 @@ impl Default for DockHostOptions {
             empty_message: "Empty dock space".to_string(),
             missing_panel_prefix: "Missing panel".to_string(),
             deferred_floating_message: "Floating panels render in a later phase".to_string(),
+            split_min_size: px(96.0),
+            splitter_handle_size: px(6.0),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SplitterDrag {
+    pub(crate) split: DockNodeId,
+    pub(crate) handle_index: usize,
+    pub(crate) start_position: Pixels,
+    pub(crate) split_extent: Pixels,
+    pub(crate) initial_fractions: Vec<f32>,
 }
 
 /// Retained GPUI host that renders one logical dock workspace.
@@ -32,6 +48,7 @@ impl Default for DockHostOptions {
 pub struct DockHost {
     workspace: DockWorkspace,
     debug: DockDebugInstrumentation,
+    splitter_drag: Option<SplitterDrag>,
 }
 
 impl DockHost {
@@ -60,6 +77,7 @@ impl DockHost {
         Self {
             workspace,
             debug: DockDebugInstrumentation::default(),
+            splitter_drag: None,
         }
     }
 
@@ -168,5 +186,55 @@ impl DockHost {
 
     pub(crate) fn selector_prefix(&self) -> String {
         format!("dock:{}", self.space())
+    }
+
+    pub(crate) fn start_splitter_drag(
+        &mut self,
+        split: DockNodeId,
+        handle_index: usize,
+        start_position: Pixels,
+        split_extent: Pixels,
+        initial_fractions: Vec<f32>,
+    ) {
+        self.splitter_drag = Some(SplitterDrag {
+            split,
+            handle_index,
+            start_position,
+            split_extent,
+            initial_fractions,
+        });
+    }
+
+    pub(crate) fn update_splitter_drag(&mut self, position: Pixels) -> bool {
+        let Some(drag) = self.splitter_drag.as_ref() else {
+            return false;
+        };
+        let delta = position - drag.start_position;
+        let Some(fractions) = splitter::resize_adjacent_fractions(
+            &drag.initial_fractions,
+            drag.initial_fractions.len(),
+            drag.handle_index,
+            drag.split_extent,
+            delta,
+            self.options().split_min_size,
+        ) else {
+            return false;
+        };
+
+        self.workspace
+            .apply_op_checked(&DockOp::SetSplitFractions {
+                split: drag.split,
+                fractions,
+            })
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn finish_splitter_drag(&mut self) {
+        self.splitter_drag = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
+        self.splitter_drag.as_ref()
     }
 }

@@ -1,10 +1,11 @@
 use crate::{
     DockAction, DockHost, DockItemId, DockNode, DockNodeId, DockPanelResolution, SplitAxis,
-    debug::DockDebugRegion,
+    debug::DockDebugRegion, splitter,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, black, div, relative, rgb, white,
+    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Window, black, canvas, div, px, relative, rgb, white,
 };
 
 impl Render for DockHost {
@@ -130,10 +131,11 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", self.selector_prefix(), node.as_u64()),
         );
-        let shares = cleaned_layout_shares(children.len(), &fractions);
+        let shares = splitter::cleaned_shares(children.len(), &fractions);
         let mut split = div()
             .id(selector.clone())
             .debug_selector(move || selector)
+            .relative()
             .flex()
             .size_full()
             .overflow_hidden();
@@ -167,7 +169,155 @@ impl DockHost {
             );
         }
 
+        if shares.len() >= 2 {
+            let handle_size = self.options().splitter_handle_size;
+            let handle_offset = -handle_size / 2.0;
+            let mut cursor = 0.0_f32;
+
+            for (index, share) in shares
+                .iter()
+                .take(shares.len().saturating_sub(1))
+                .enumerate()
+            {
+                cursor += *share;
+                let selector = self.record_debug_selector(
+                    DockDebugRegion::SplitterHandle { split: node, index },
+                    format!(
+                        "{}:split:{}:handle:{}",
+                        self.selector_prefix(),
+                        node.as_u64(),
+                        index
+                    ),
+                );
+                let mut handle = div()
+                    .id(selector.clone())
+                    .debug_selector(move || selector)
+                    .absolute()
+                    .bg(rgb(0xc8d0dc))
+                    .hover(|this| this.bg(rgb(0x94a3b8)))
+                    .cursor_pointer();
+
+                handle = match axis {
+                    SplitAxis::Horizontal => handle
+                        .left(relative(cursor))
+                        .top(px(0.0))
+                        .ml(handle_offset)
+                        .h_full()
+                        .w(handle_size),
+                    SplitAxis::Vertical => handle
+                        .top(relative(cursor))
+                        .left(px(0.0))
+                        .mt(handle_offset)
+                        .w_full()
+                        .h(handle_size),
+                };
+
+                split = split.child(handle);
+            }
+        }
+
+        split = split.child(self.render_splitter_event_layer(node, axis, shares, cx));
+
         split.into_any_element()
+    }
+
+    fn render_splitter_event_layer(
+        &self,
+        node: DockNodeId,
+        axis: SplitAxis,
+        shares: Vec<f32>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entity = cx.entity();
+        let handle_size = self.options().splitter_handle_size;
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |split_bounds, _, window, _| {
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            let shares = shares.clone();
+                            move |event: &MouseDownEvent, _, _, app| {
+                                if event.button != MouseButton::Left {
+                                    return;
+                                }
+
+                                let handles = splitter::handle_bounds(
+                                    axis,
+                                    split_bounds,
+                                    &shares,
+                                    handle_size,
+                                );
+                                let Some(handle_index) = handles
+                                    .iter()
+                                    .position(|bounds| bounds.contains(&event.position))
+                                else {
+                                    return;
+                                };
+
+                                let split_extent = match axis {
+                                    SplitAxis::Horizontal => split_bounds.size.width,
+                                    SplitAxis::Vertical => split_bounds.size.height,
+                                };
+                                let start_position = match axis {
+                                    SplitAxis::Horizontal => event.position.x,
+                                    SplitAxis::Vertical => event.position.y,
+                                };
+
+                                entity.update(app, |host, cx| {
+                                    host.start_splitter_drag(
+                                        node,
+                                        handle_index,
+                                        start_position,
+                                        split_extent,
+                                        shares.clone(),
+                                    );
+                                    cx.notify();
+                                });
+                                app.stop_propagation();
+                            }
+                        });
+
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |event: &MouseMoveEvent, _, _, app| {
+                                if event.pressed_button != Some(MouseButton::Left) {
+                                    return;
+                                }
+
+                                let position = match axis {
+                                    SplitAxis::Horizontal => event.position.x,
+                                    SplitAxis::Vertical => event.position.y,
+                                };
+                                entity.update(app, |host, cx| {
+                                    if host.update_splitter_drag(position) {
+                                        cx.notify();
+                                    }
+                                });
+                            }
+                        });
+
+                        window.on_mouse_event(move |event: &MouseUpEvent, _, _, app| {
+                            if event.button != MouseButton::Left {
+                                return;
+                            }
+
+                            entity.update(app, |host, cx| {
+                                host.finish_splitter_drag();
+                                cx.notify();
+                            });
+                        });
+                    },
+                )
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     fn render_tabs(
@@ -318,34 +468,4 @@ impl DockHost {
             }
         }
     }
-}
-
-fn cleaned_layout_shares(len: usize, fractions: &[f32]) -> Vec<f32> {
-    let mut shares: Vec<f32> = (0..len)
-        .map(|index| fractions.get(index).copied().unwrap_or(1.0))
-        .collect();
-
-    for share in &mut shares {
-        if !share.is_finite() || *share < 0.0 {
-            *share = 0.0;
-        }
-    }
-
-    let sum: f32 = shares.iter().sum();
-    if !sum.is_finite() || sum <= f32::EPSILON {
-        let len = shares.len().max(1);
-        return vec![1.0 / len as f32; len];
-    }
-
-    for share in &mut shares {
-        *share /= sum;
-    }
-
-    if !shares.is_empty() {
-        let rest: f32 = shares.iter().take(shares.len().saturating_sub(1)).sum();
-        let last = shares.len().saturating_sub(1);
-        shares[last] = (1.0 - rest).clamp(0.0, 1.0);
-    }
-
-    shares
 }
