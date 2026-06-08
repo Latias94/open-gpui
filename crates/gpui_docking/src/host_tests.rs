@@ -1,13 +1,13 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
     DockGraph, DockHost, DockItemId, DockLayoutNode, DockNode, DockNodeId, DockOpApplyError,
-    DockPolicyError, DockSpaceId, DockWorkspace, DropZone, EditorDockLayoutSpec, SplitAxis,
-    debug::DockDebugRegion,
+    DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportOpenStatus, DockWorkspace,
+    DropZone, EditorDockLayoutSpec, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
     MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext, VisualTestContext, Window,
-    WindowHandle, div, point, px, rgb, size,
+    WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb, size,
 };
 use slotmap::Key;
 use std::{cell::Cell, rc::Rc};
@@ -72,6 +72,15 @@ fn split_graph(
 
 fn floating_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
     Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+}
+
+fn viewport_window_options(width: f32, height: f32) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+            0.0, 0.0, width, height,
+        ))),
+        ..Default::default()
+    }
 }
 
 fn floating_overlay_graph() -> (DockGraph, DockNodeId, DockNodeId) {
@@ -564,6 +573,74 @@ fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
         *active
     });
     assert_eq!(active, 1);
+}
+
+#[open_gpui::test]
+fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(primary_space.clone(), primary_tabs);
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut adapter = DockViewportAdapter::new();
+
+    let opened = cx
+        .update(|app| {
+            adapter.open_viewport(
+                controller.clone(),
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open");
+    assert_eq!(opened.space, secondary_space);
+    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(
+        adapter.window_for_space(&secondary_space),
+        Some(opened.window)
+    );
+
+    let opened_window = opened
+        .window
+        .downcast::<DockHost>()
+        .expect("viewport window should render DockHost");
+    let host = opened_window
+        .root(cx)
+        .expect("opened viewport should expose DockHost root");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(opened.window, cx);
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
+        "secondary viewport should render the shared controller's secondary panel"
+    );
+
+    let reused = cx
+        .update(|app| {
+            adapter.open_viewport(
+                controller.clone(),
+                secondary_space.clone(),
+                viewport_window_options(480.0, 260.0),
+                app,
+            )
+        })
+        .expect("live secondary viewport should be reused");
+    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window, opened.window);
+    assert_eq!(adapter.len(), 1);
 }
 
 #[open_gpui::test]

@@ -1,5 +1,8 @@
-use crate::{DockLayoutRect, DockSpaceId};
-use open_gpui::{AnyWindowHandle, Bounds, DisplayId, Pixels, Point, WindowBounds, WindowId, point};
+use crate::{DockController, DockHost, DockLayoutRect, DockSpaceId};
+use open_gpui::{
+    AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result,
+    WindowBounds, WindowId, WindowOptions, point,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use thiserror::Error;
@@ -312,6 +315,52 @@ impl DockViewportAdapter {
         self.windows.insert(window_id, space.clone());
         self.viewports
             .insert(space, DockViewportSnapshot::new(window))
+    }
+
+    /// Opens or reuses a GPUI window that renders a logical dock space.
+    ///
+    /// The returned window root is a controller-backed [`DockHost`]. If the dock space already has
+    /// a live registered window, that window is activated and reused. If the existing mapping is
+    /// stale, it is removed before opening a replacement window.
+    pub fn open_viewport(
+        &mut self,
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> Result<DockViewportOpenOutcome> {
+        let space = space.into();
+        let mut status = DockViewportOpenStatus::Opened;
+
+        if let Some(window) = self.window_for_space(&space) {
+            if window
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return Ok(DockViewportOpenOutcome {
+                    space,
+                    window,
+                    status: DockViewportOpenStatus::Reused,
+                });
+            }
+
+            self.unregister_space(&space);
+            status = DockViewportOpenStatus::Replaced;
+        }
+
+        let host_space = space.clone();
+        let window = cx
+            .open_window(options, move |_, cx| {
+                cx.new(move |cx| DockHost::from_controller(controller, host_space, cx))
+            })?
+            .into();
+        self.register_viewport(space.clone(), window);
+
+        Ok(DockViewportOpenOutcome {
+            space,
+            window,
+            status,
+        })
     }
 
     /// Removes a viewport by logical dock space.
