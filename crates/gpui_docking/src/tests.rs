@@ -617,11 +617,49 @@ fn checked_resize_reports_split_errors_without_mutation() {
             .expect_err("invalid fraction should fail"),
         DockOpApplyError::SplitFractionInvalid { split, index: 1 }
     );
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractionsMany {
+                updates: vec![
+                    SplitFractionsUpdate {
+                        split,
+                        fractions: vec![0.25, 0.75],
+                    },
+                    SplitFractionsUpdate {
+                        split,
+                        fractions: vec![0.75, 0.25],
+                    },
+                ],
+            })
+            .expect_err("duplicate split updates should fail before mutation"),
+        DockOpApplyError::DuplicateSplitFractionUpdate { split }
+    );
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::SetSplitFractionsMany {
+                updates: vec![SplitFractionsUpdate {
+                    split,
+                    fractions: vec![0.5, 0.5],
+                }],
+            })
+            .expect("matching batch fractions should be a valid no-op")
+    );
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractionsMany {
+                updates: vec![SplitFractionsUpdate {
+                    split,
+                    fractions: vec![0.25, 0.75],
+                }],
+            })
+            .expect("changed batch fractions should apply")
+    );
 
     let DockNode::Split { fractions, .. } = graph.node(split).expect("split should remain") else {
         panic!("root should be split");
     };
-    assert_eq!(fractions, &vec![0.5, 0.5]);
+    assert_eq!(fractions, &vec![0.25, 0.75]);
 }
 
 #[test]

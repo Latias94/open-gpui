@@ -2,9 +2,7 @@ use crate::{DockItemId, DockNodeId, DockOp, DockOpApplyError, DockSpaceId, Split
 use open_gpui::{Bounds, Pixels, Point, Size, point, px, size};
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
-use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Axis used by split dock nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -361,9 +359,7 @@ impl DockGraph {
                 Ok(self.apply_op(op))
             }
             DockOp::SetSplitFractionsMany { updates } => {
-                for update in updates {
-                    self.validate_split_fractions(update.split, &update.fractions)?;
-                }
+                self.validate_split_fraction_updates(updates)?;
                 Ok(self.apply_op(op))
             }
             DockOp::SetSplitFractionTwo {
@@ -778,6 +774,22 @@ impl DockGraph {
             if !fraction.is_finite() || fraction < 0.0 {
                 return Err(DockOpApplyError::SplitFractionInvalid { split, index });
             }
+        }
+        Ok(())
+    }
+
+    fn validate_split_fraction_updates(
+        &self,
+        updates: &[SplitFractionsUpdate],
+    ) -> Result<(), DockOpApplyError> {
+        let mut seen = HashSet::new();
+        for update in updates {
+            if !seen.insert(update.split) {
+                return Err(DockOpApplyError::DuplicateSplitFractionUpdate {
+                    split: update.split,
+                });
+            }
+            self.validate_split_fractions(update.split, &update.fractions)?;
         }
         Ok(())
     }

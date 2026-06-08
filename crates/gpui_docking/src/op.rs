@@ -272,6 +272,13 @@ pub enum DockOpApplyError {
         index: usize,
     },
 
+    /// A batch split fraction operation contains more than one update for the same split.
+    #[error("duplicate split fraction update for split node {split:?}")]
+    DuplicateSplitFractionUpdate {
+        /// The split node that appears more than once.
+        split: DockNodeId,
+    },
+
     /// The requested operation could not be applied.
     #[error("dock operation failed")]
     OperationFailed,
