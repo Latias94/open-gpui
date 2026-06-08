@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prepared mutation in memory, avoiding a second prepare/apply pass.
 - Removed the pre-release `CanvasPaintModel::from_runtime_parts*` constructors so paint snapshots
   cannot pair a document with a runtime built from a different geometry policy.
+- Made `CanvasPaintModel` state private and routed edge paint through runtime-resolved geometry so
+  GPUI paint cannot bypass router and kind-registry policy.
 
 ## [0.1.0] - 2026-06-07
 

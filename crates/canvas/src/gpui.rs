@@ -14,11 +14,11 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct CanvasPaintModel {
-    pub document: Arc<CanvasDocument>,
-    pub runtime: Arc<CanvasRuntime>,
-    pub kind_registry: Arc<CanvasKindRegistry>,
-    pub viewport: CanvasViewport,
-    pub interaction: CanvasPaintInteraction,
+    document: Arc<CanvasDocument>,
+    runtime: Arc<CanvasRuntime>,
+    kind_registry: Arc<CanvasKindRegistry>,
+    viewport: CanvasViewport,
+    interaction: CanvasPaintInteraction,
 }
 
 impl CanvasPaintModel {
@@ -73,6 +73,30 @@ impl CanvasPaintModel {
             viewport,
             interaction: CanvasPaintInteraction::default(),
         }
+    }
+
+    pub fn document(&self) -> &CanvasDocument {
+        self.document.as_ref()
+    }
+
+    pub fn runtime(&self) -> &CanvasRuntime {
+        self.runtime.as_ref()
+    }
+
+    pub fn kind_registry(&self) -> &CanvasKindRegistry {
+        self.kind_registry.as_ref()
+    }
+
+    pub fn viewport(&self) -> CanvasViewport {
+        self.viewport
+    }
+
+    pub fn interaction(&self) -> &CanvasPaintInteraction {
+        &self.interaction
+    }
+
+    pub fn interaction_mut(&mut self) -> &mut CanvasPaintInteraction {
+        &mut self.interaction
     }
 }
 
@@ -695,19 +719,7 @@ fn paint_edge(
     stroke_width: Pixels,
 ) {
     let mut builder = PathBuilder::stroke(stroke_width);
-    let Some(path) = model
-        .runtime
-        .edge_geometry(&edge.id)
-        .map(|geometry| geometry.path.clone())
-        .or_else(|| {
-            CanvasGeometryResolver::with_kind_registry(
-                model.document.as_ref(),
-                model.kind_registry.as_ref(),
-            )
-            .edge_route_path(edge)
-            .ok()
-        })
-    else {
+    let Some(path) = paint_edge_route_path(model, edge).cloned() else {
         return;
     };
 
@@ -747,6 +759,16 @@ fn paint_edge(
     if let Ok(path) = builder.build() {
         window.paint_path(path, stroke);
     }
+}
+
+fn paint_edge_route_path<'a>(
+    model: &'a CanvasPaintModel,
+    edge: &CanvasEdge,
+) -> Option<&'a crate::CanvasRoutePath> {
+    model
+        .runtime
+        .edge_geometry(&edge.id)
+        .map(|geometry| &geometry.path)
 }
 
 fn document_to_window_point(
@@ -966,6 +988,32 @@ mod tests {
                 point(px(25.0), px(5.0)),
             ]
         );
+    }
+
+    #[test]
+    fn edge_paint_route_comes_only_from_runtime_geometry() {
+        let document = connected_edge_document();
+        let model = CanvasPaintModel::new_with_router(
+            document,
+            CanvasViewport::default(),
+            &VerticalDetourRouter,
+        );
+        let edge = model.document().edges.get(&EdgeId::from("a-b")).unwrap();
+
+        assert_eq!(
+            paint_edge_route_path(&model, edge)
+                .unwrap()
+                .document_points(),
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(5.0), px(80.0)),
+                point(px(25.0), px(5.0)),
+            ]
+        );
+
+        let mut unresolved_edge = edge.clone();
+        unresolved_edge.id = EdgeId::from("missing");
+        assert!(paint_edge_route_path(&model, &unresolved_edge).is_none());
     }
 
     #[test]

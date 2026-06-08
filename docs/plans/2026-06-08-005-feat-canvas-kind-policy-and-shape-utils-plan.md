@@ -215,6 +215,9 @@ system instead of many local conditionals.
 - 2026-06-08: Added the first transform-constraint slice: node and shape resize proposal hooks,
   registry-level resize validation, editor resize gesture integration, and removal of paint model
   constructors that accepted caller-supplied runtime parts.
+- 2026-06-08: Tightened the GPUI paint snapshot boundary by making `CanvasPaintModel` state private
+  and requiring edge paint to use runtime-resolved edge geometry instead of recomputing routes with
+  a fallback resolver.
 
 ---
 

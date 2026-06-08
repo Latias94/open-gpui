@@ -331,7 +331,9 @@ changing `CanvasEdgeRoute` serialization.
 
 The default adapter snapshots document state and runtime caches into `CanvasPaintModel`, culls
 visible records through `CanvasRuntime`, and paints the resulting frame through GPUI's low-level
-canvas callback.
+canvas callback. `CanvasPaintModel` owns a consistent document, runtime, kind-registry, viewport,
+and interaction snapshot; applications construct it from a document or `CanvasEditor` instead of
+assembling those parts by hand.
 
 ```rust
 use open_gpui_canvas::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view};
