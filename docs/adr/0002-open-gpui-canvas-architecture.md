@@ -109,6 +109,9 @@ The first built-in modifier behavior is shift-click selection toggling. It uses
 Shift-drag on blank canvas is additive rather than cumulative: the tool snapshots the base
 selection at pointer-down time, unions intersection hits with that baseline while the marquee
 moves, and preserves the baseline selection even when the pointer crosses back over empty space.
+Pointing and selection states also use that base-selection snapshot as the cancel target, so
+aborted blank clicks or marquee gestures restore the pre-gesture selection rather than committing
+transient selection mutations.
 Shift-constrained node translation uses pointer-move modifiers, chooses the dominant axis from the
 first shifted move, and preserves that axis while Shift remains held so graph layouts can align
 nodes without a separate transform mode.

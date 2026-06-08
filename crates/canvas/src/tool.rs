@@ -805,7 +805,7 @@ impl CanvasEditor {
                             CanvasToolEffect::SetState(ToolState::Pointing {
                                 origin: document_position,
                                 selection_mode: CanvasSelectionMode::Replace,
-                                base_selection: CanvasSelection::default(),
+                                base_selection: self.selection.clone(),
                             }),
                         ]
                     }
@@ -947,10 +947,17 @@ impl CanvasEditor {
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
             }
-            (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
+            (ToolState::Pointing { base_selection, .. }, CanvasEvent::Cancel)
+            | (ToolState::Selecting { base_selection, .. }, CanvasEvent::Cancel) => {
+                vec![
+                    CanvasToolEffect::SetSelection(base_selection.clone()),
+                    CanvasToolEffect::SetState(ToolState::Idle),
+                ]
+            }
+            (ToolState::Pointing { .. }, CanvasEvent::PointerUp { .. }) => {
                 vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
-            (ToolState::Selecting { .. }, CanvasEvent::PointerUp { .. } | CanvasEvent::Cancel) => {
+            (ToolState::Selecting { .. }, CanvasEvent::PointerUp { .. }) => {
                 vec![CanvasToolEffect::SetState(ToolState::Idle)]
             }
             (_, CanvasEvent::Wheel { delta }) => {
@@ -1437,6 +1444,38 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_cancel_restores_selection_after_canvas_press() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "base",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("base"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(300.0), px(300.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(editor.selection.is_empty());
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("base")]
+        );
+        assert_eq!(editor.state, ToolState::Idle);
+    }
+
+    #[test]
     fn select_tool_shift_click_toggles_selection() {
         let mut document = CanvasDocument::default();
         document
@@ -1673,6 +1712,54 @@ mod tests {
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("inside")]
+        );
+        assert_eq!(editor.state, ToolState::Idle);
+    }
+
+    #[test]
+    fn select_tool_cancel_restores_selection_after_box_select() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "base",
+                point(px(200.0), px(200.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "inside",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("base"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(0.0), px(0.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(40.0), px(40.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("inside")]
+        );
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("base")]
         );
         assert_eq!(editor.state, ToolState::Idle);
     }

@@ -30,6 +30,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - The built-in select tool also supports shift-drag additive marquee selection, seeded from the
   drag start selection so box selection can grow a baseline set without accumulating during move
   events.
+- Pointing and box-selection gestures snapshot the starting selection and restore it on cancel,
+  keeping transient selection changes out of the committed editor state.
 - The built-in select tool uses pointer-move modifiers for shift-constrained node translation,
   locking to the first shifted move's dominant axis while the modifier remains held.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
