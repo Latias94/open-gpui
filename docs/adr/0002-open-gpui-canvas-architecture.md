@@ -39,8 +39,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - Edge route metadata for straight, polyline, orthogonal, cubic-bezier, and custom routers,
   including manual waypoints, bezier control points, route options, and interaction width.
 - A viewport/camera model that is separate from document data.
-- A spatial index and hit-test API that can be rebuilt or incrementally updated without changing
-  document serialization.
+- A `CanvasRuntime` owner for spatial hit testing and indexed graph caches that can be rebuilt or
+  incrementally updated without changing document serialization.
 - A `CanvasSpatialIndex` query trait so future R-tree, tile, or GPU-assisted culling indexes can
   plug into query and hit-test call sites without changing document records.
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
@@ -58,8 +58,8 @@ selected controls, text editors, or node widgets through elements, but the docum
 and default rendering path must be able to paint visible canvas records in batches.
 
 The first GPUI adapter follows that rule by building a `CanvasPaintModel` snapshot from a document,
-spatial index, and viewport. Its prepaint step queries the visible document bounds through
-`SpatialIndex`, and its paint step emits GPUI quads and paths through the low-level `canvas`
+runtime cache, and viewport. Its prepaint step queries the visible document bounds through
+`CanvasRuntime`, and its paint step emits GPUI quads and paths through the low-level `canvas`
 callback. It intentionally does not own application state or turn every record into an element;
 future overlays can layer selected node widgets on top of this batched base renderer.
 
@@ -67,7 +67,8 @@ The default `SpatialIndex` remains a simple sorted record vector because it is p
 to verify in the first release. Query call sites also have an object-safe `CanvasSpatialIndex`
 visitor trait. That trait deliberately covers query and hit-test traversal, not document mutation
 or cache ownership, so future R-tree or tile indexes can be introduced without making
-`CanvasEditor` generic too early.
+`CanvasEditor` generic too early. `CanvasRuntime` is the cache owner that keeps the current
+`SpatialIndex` and `CanvasGraphIndex` synchronized from committed document diffs.
 
 The native smoke example exercises the interaction boundary without expanding the public adapter
 surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
@@ -284,9 +285,9 @@ Tools should be local, explicit, and easy to test:
 
 The first custom-tool boundary is intentionally reducer-shaped. `CanvasTool::custom` selects an
 application-owned tool, `CanvasToolContext` exposes read-only document, viewport, selection,
-history, and spatial-index state, and `CanvasToolReducer` returns `CanvasToolEffect` values for the
+history, and runtime-cache state, and `CanvasToolReducer` returns `CanvasToolEffect` values for the
 editor to apply. This avoids giving extensions mutable access to `CanvasEditor`, so undo, selection
-retention, spatial-index refresh, persistence logging, and future CRDT translation still pass
+retention, runtime-cache refresh, persistence logging, and future CRDT translation still pass
 through the same effect vocabulary.
 
 `CanvasToolRegistry` is an ergonomic adapter over the same reducer contract. It maps

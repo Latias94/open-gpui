@@ -19,9 +19,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   source and target roles while picking endpoints, and connection previews snap to valid target
   endpoints.
 - `CanvasGraph` provides zero-copy graph queries over the canonical document records.
-- `SpatialIndex` supports hit testing and visible-record culling without one GPUI element per
-  canvas object, while `CanvasSpatialIndex` exposes the replaceable query boundary for future
-  R-tree, tile, or GPU-assisted indexes.
+- `CanvasRuntime` owns runtime caches for spatial hit testing and indexed graph queries. The
+  underlying `SpatialIndex` still exposes the replaceable query boundary for future R-tree, tile,
+  or GPU-assisted indexes.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
 - `CanvasEditor` applies transactions, tracks undo/redo, maintains selection, and dispatches tool
@@ -192,8 +192,9 @@ changing `CanvasEdgeRoute` serialization.
 
 ## Render Through GPUI
 
-The default adapter snapshots document state into `CanvasPaintModel`, culls visible records through
-`SpatialIndex`, and paints the resulting frame through GPUI's low-level canvas callback.
+The default adapter snapshots document state and runtime caches into `CanvasPaintModel`, culls
+visible records through `CanvasRuntime`, and paints the resulting frame through GPUI's low-level
+canvas callback.
 
 ```rust
 use open_gpui_canvas::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view};
@@ -228,7 +229,7 @@ per-record GPUI elements.
 ## Add A Custom Tool
 
 Custom tools read editor state through `CanvasToolContext` and return `CanvasToolEffect` values.
-They do not receive `&mut CanvasEditor`, so undo, selection pruning, spatial-index updates,
+They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cache updates,
 persistence, and future CRDT translation keep passing through one mutation path.
 
 ```rust

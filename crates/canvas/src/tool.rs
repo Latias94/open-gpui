@@ -1,8 +1,8 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::{
     CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint,
-    CanvasNode, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError,
-    EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasNode, CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand,
+    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -308,7 +308,7 @@ pub struct CanvasToolContext<'a> {
     pub viewport: &'a CanvasViewport,
     pub tool: &'a CanvasTool,
     pub state: &'a ToolState,
-    pub index: &'a SpatialIndex,
+    pub runtime: &'a CanvasRuntime,
     pub selection: &'a CanvasSelection,
     pub history: &'a CanvasHistory,
 }
@@ -327,7 +327,7 @@ impl CanvasToolContext<'_> {
         view_position: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.index
+        self.runtime
             .hit_test(self.document_position(view_position), options)
     }
 }
@@ -504,7 +504,7 @@ pub struct CanvasEditor {
     viewport: CanvasViewport,
     tool: CanvasTool,
     state: ToolState,
-    index: SpatialIndex,
+    runtime: CanvasRuntime,
     selection: CanvasSelection,
     history: CanvasHistory,
     gesture: Option<CanvasGestureSession>,
@@ -518,13 +518,13 @@ impl Default for CanvasEditor {
 
 impl CanvasEditor {
     pub fn new(document: CanvasDocument) -> Self {
-        let index = SpatialIndex::rebuild(&document);
+        let runtime = CanvasRuntime::rebuild(&document);
         Self {
             document,
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
-            index,
+            runtime,
             selection: CanvasSelection::default(),
             history: CanvasHistory::default(),
             gesture: None,
@@ -559,7 +559,11 @@ impl CanvasEditor {
     }
 
     pub fn index(&self) -> &SpatialIndex {
-        &self.index
+        self.runtime.spatial_index()
+    }
+
+    pub fn runtime(&self) -> &CanvasRuntime {
+        &self.runtime
     }
 
     pub fn selection(&self) -> &CanvasSelection {
@@ -589,7 +593,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         Ok(diff)
     }
 
@@ -601,7 +605,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         diff
     }
 
@@ -695,7 +699,7 @@ impl CanvasEditor {
             .push_undo(prepared.committed().inverse().clone());
         self.gesture = None;
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         diff
     }
 
@@ -719,7 +723,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         Ok(true)
     }
 
@@ -732,12 +736,16 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         Ok(true)
     }
 
     pub fn rebuild_index(&mut self) {
-        self.index = SpatialIndex::rebuild(&self.document);
+        self.rebuild_runtime();
+    }
+
+    pub fn rebuild_runtime(&mut self) {
+        self.runtime = CanvasRuntime::rebuild(&self.document);
     }
 
     pub fn set_tool(&mut self, tool: CanvasTool) {
@@ -759,7 +767,7 @@ impl CanvasEditor {
             viewport: &self.viewport,
             tool: &self.tool,
             state: &self.state,
-            index: &self.index,
+            runtime: &self.runtime,
             selection: &self.selection,
             history: &self.history,
         }
@@ -869,7 +877,7 @@ impl CanvasEditor {
             ) => {
                 let document_position = self.viewport.view_to_document(position);
                 let hit = self
-                    .index
+                    .runtime
                     .hit_test(document_position, HitOptions::default())
                     .map(|record| record.target.clone())
                     .next();
@@ -1176,7 +1184,7 @@ impl CanvasEditor {
         point: Point<Pixels>,
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
-        for record in self.index.hit_test(
+        for record in self.runtime.hit_test(
             point,
             HitOptions {
                 include_handles: true,
@@ -1250,7 +1258,7 @@ impl CanvasEditor {
         let committed = self.document.commit_transaction(transaction)?;
         let diff = committed.diff().clone();
         self.selection.retain_document(&self.document);
-        self.index.apply_diff(&self.document, &diff);
+        self.runtime.apply_diff(&self.document, &diff);
         Ok(diff)
     }
 
@@ -1317,7 +1325,10 @@ impl CanvasEditor {
 
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
-        for record in self.index.query_with_options(bounds, HitOptions::default()) {
+        for record in self
+            .runtime
+            .query_with_options(bounds, HitOptions::default())
+        {
             match &record.target {
                 HitTarget::Node(id) => {
                     selection.nodes.insert(id.clone());
@@ -2651,7 +2662,7 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 1);
         assert!(
             editor
-                .index
+                .index()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -2676,7 +2687,7 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 0);
         assert!(
             editor
-                .index
+                .index()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -2861,7 +2872,7 @@ mod tests {
 
         assert!(
             editor
-                .index
+                .index()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_some()
@@ -2870,7 +2881,7 @@ mod tests {
         assert!(editor.undo().unwrap());
         assert!(
             editor
-                .index
+                .index()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .is_none()

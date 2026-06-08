@@ -1,6 +1,6 @@
 use crate::{
     CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint,
-    CanvasEvent, CanvasKey, CanvasKeyModifiers, CanvasRouteSegment, CanvasSelection,
+    CanvasEvent, CanvasKey, CanvasKeyModifiers, CanvasRouteSegment, CanvasRuntime, CanvasSelection,
     CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
 };
 use open_gpui::{
@@ -13,17 +13,17 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct CanvasPaintModel {
     pub document: Arc<CanvasDocument>,
-    pub index: Arc<SpatialIndex>,
+    pub runtime: Arc<CanvasRuntime>,
     pub viewport: CanvasViewport,
     pub interaction: CanvasPaintInteraction,
 }
 
 impl CanvasPaintModel {
     pub fn new(document: CanvasDocument, viewport: CanvasViewport) -> Self {
-        let index = SpatialIndex::rebuild(&document);
+        let runtime = CanvasRuntime::rebuild(&document);
         Self {
             document: Arc::new(document),
-            index: Arc::new(index),
+            runtime: Arc::new(runtime),
             viewport,
             interaction: CanvasPaintInteraction::default(),
         }
@@ -34,9 +34,10 @@ impl CanvasPaintModel {
         index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
     ) -> Self {
+        let runtime = CanvasRuntime::from_spatial_index(&document, (*index).clone());
         Self {
             document,
-            index,
+            runtime: Arc::new(runtime),
             viewport,
             interaction: CanvasPaintInteraction::default(),
         }
@@ -48,9 +49,19 @@ impl CanvasPaintModel {
         viewport: CanvasViewport,
         interaction: CanvasPaintInteraction,
     ) -> Self {
+        let runtime = CanvasRuntime::from_spatial_index(&document, (*index).clone());
+        Self::from_runtime_parts(document, Arc::new(runtime), viewport, interaction)
+    }
+
+    pub fn from_runtime_parts(
+        document: Arc<CanvasDocument>,
+        runtime: Arc<CanvasRuntime>,
+        viewport: CanvasViewport,
+        interaction: CanvasPaintInteraction,
+    ) -> Self {
         Self {
             document,
-            index,
+            runtime,
             viewport,
             interaction,
         }
@@ -61,7 +72,7 @@ impl From<&CanvasEditor> for CanvasPaintModel {
     fn from(editor: &CanvasEditor) -> Self {
         Self {
             document: Arc::new(editor.document().clone()),
-            index: Arc::new(editor.index().clone()),
+            runtime: Arc::new(editor.runtime().clone()),
             viewport: editor.viewport(),
             interaction: CanvasPaintInteraction {
                 selection: editor.selection().clone(),
@@ -305,7 +316,7 @@ pub fn collect_visible_records(
         margin: Pixels::ZERO,
     };
     let records = model
-        .index
+        .runtime
         .query_with_options(visible_document_bounds, hit_options)
         .map(|record| CanvasPaintRecord {
             target: record.target.clone(),
@@ -506,7 +517,7 @@ fn connection_target_endpoint_at(
     model: &CanvasPaintModel,
     point: Point<Pixels>,
 ) -> Option<CanvasEndpoint> {
-    for record in model.index.hit_test(
+    for record in model.runtime.hit_test(
         point,
         HitOptions {
             include_handles: true,

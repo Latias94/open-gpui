@@ -15,6 +15,7 @@ mod journal;
 mod json_canvas;
 mod persistence;
 mod routing;
+mod runtime;
 #[cfg(test)]
 mod test_support;
 mod tool;
@@ -65,6 +66,7 @@ pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,
 };
+pub use runtime::CanvasRuntime;
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
     CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
