@@ -125,11 +125,30 @@ impl DockPanel {
 /// registry storage shape.
 #[derive(Debug, Clone)]
 pub(crate) struct DockPanelRenderRegistration {
+    entry: DockPanelEntrySnapshot,
+}
+
+#[derive(Debug, Clone)]
+struct DockPanelEntrySnapshot {
     descriptor: DockPanelDescriptor,
     view: DockPanelViewHandle,
 }
 
 impl DockPanelRenderRegistration {
+    fn new(entry: DockPanelEntrySnapshot) -> Self {
+        Self { entry }
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        self.entry.title()
+    }
+
+    pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
+        self.entry.resolve_view(cx)
+    }
+}
+
+impl DockPanelEntrySnapshot {
     fn new(descriptor: &DockPanelDescriptor, view: DockPanelViewHandle) -> Self {
         Self {
             descriptor: descriptor.clone(),
@@ -137,11 +156,27 @@ impl DockPanelRenderRegistration {
         }
     }
 
-    pub(crate) fn title(&self) -> &str {
+    fn descriptor(&self) -> &DockPanelDescriptor {
+        &self.descriptor
+    }
+
+    fn title(&self) -> &str {
         self.descriptor.title()
     }
 
-    pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
+    fn is_closable(&self) -> bool {
+        self.descriptor.is_closable()
+    }
+
+    fn view(&self) -> Result<&AnyView, DockPanelViewError> {
+        self.view.view()
+    }
+
+    fn has_view(&self) -> bool {
+        self.view.has_view()
+    }
+
+    fn resolve_view(&self, cx: &mut App) -> AnyView {
         self.view.resolve_view(cx)
     }
 }
@@ -153,39 +188,42 @@ impl DockPanelRenderRegistration {
 /// to be the same map entry.
 #[derive(Debug, Clone)]
 pub struct DockPanelRegistration {
-    descriptor: DockPanelDescriptor,
-    view: DockPanelViewHandle,
+    entry: DockPanelEntrySnapshot,
 }
 
 impl DockPanelRegistration {
+    fn new(entry: DockPanelEntrySnapshot) -> Self {
+        Self { entry }
+    }
+
     /// Returns panel metadata without touching live view state.
     pub fn descriptor(&self) -> &DockPanelDescriptor {
-        &self.descriptor
+        self.entry.descriptor()
     }
 
     /// Returns the panel title shown in tab chrome.
     pub fn title(&self) -> &str {
-        self.descriptor.title()
+        self.entry.title()
     }
 
     /// Returns whether the panel can be closed by panel lifecycle policy.
     pub fn is_closable(&self) -> bool {
-        self.descriptor.is_closable()
+        self.entry.is_closable()
     }
 
     /// Returns the already-instantiated GPUI view used as this panel's rendered root.
     pub fn view(&self) -> Result<&AnyView, DockPanelViewError> {
-        self.view.view()
+        self.entry.view()
     }
 
     /// Returns true when this panel has an instantiated view.
     pub fn has_view(&self) -> bool {
-        self.view.has_view()
+        self.entry.has_view()
     }
 
     /// Returns the panel view, instantiating lazy panels on first render.
     pub fn resolve_view(&self, cx: &mut App) -> AnyView {
-        self.view.resolve_view(cx)
+        self.entry.resolve_view(cx)
     }
 }
 
@@ -265,10 +303,7 @@ impl DockPanelRegistry {
 
     /// Returns a registered panel by dock item id.
     pub fn get(&self, item: &DockItemId) -> Option<DockPanelRegistration> {
-        Some(DockPanelRegistration {
-            descriptor: self.catalog.descriptor(item)?.clone(),
-            view: self.views.view(item)?,
-        })
+        self.entry_snapshot(item).map(DockPanelRegistration::new)
     }
 
     /// Returns panel metadata without instantiating or exposing a live view.
@@ -280,10 +315,8 @@ impl DockPanelRegistry {
         &self,
         item: &DockItemId,
     ) -> Option<DockPanelRenderRegistration> {
-        Some(DockPanelRenderRegistration::new(
-            self.catalog.descriptor(item)?,
-            self.views.view(item)?,
-        ))
+        self.entry_snapshot(item)
+            .map(DockPanelRenderRegistration::new)
     }
 
     /// Resolves a dock item to either registered content or a missing-panel state.
@@ -306,6 +339,13 @@ impl DockPanelRegistry {
     /// Returns true when no panels are registered.
     pub fn is_empty(&self) -> bool {
         self.catalog.is_empty()
+    }
+
+    fn entry_snapshot(&self, item: &DockItemId) -> Option<DockPanelEntrySnapshot> {
+        Some(DockPanelEntrySnapshot::new(
+            self.catalog.descriptor(item)?,
+            self.views.view(item)?,
+        ))
     }
 }
 
