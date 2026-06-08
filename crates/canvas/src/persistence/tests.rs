@@ -506,7 +506,7 @@ fn persistent_transaction_appends_successful_editor_transaction() {
         apply_persistent_transaction(&mut editor, &mut store, &mut cursor, transaction.clone())
             .unwrap();
 
-    assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+    assert!(editor.document().nodes.contains_key(&NodeId::from("a")));
     assert_eq!(
         diff.inserted.iter().cloned().collect::<Vec<_>>(),
         vec![CanvasRecordId::Node(NodeId::from("a"))]
@@ -565,7 +565,7 @@ fn persistent_transaction_does_not_log_document_failure() {
     );
     assert_eq!(cursor.sequence(), 0);
     assert!(store.log_entries().is_empty());
-    assert!(editor.document.nodes.is_empty());
+    assert!(editor.document().nodes.is_empty());
 }
 
 #[test]
@@ -619,8 +619,8 @@ fn persistent_transaction_does_not_mutate_editor_when_store_fails() {
 
     assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
     assert_eq!(cursor.sequence(), 0);
-    assert!(editor.document.nodes.is_empty());
-    assert_eq!(editor.history.undo_depth(), 0);
+    assert!(editor.document().nodes.is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
 }
 
 #[test]
@@ -644,9 +644,9 @@ fn persistent_undo_logs_inverse_transaction_before_mutation() {
 
     assert!(changed);
     assert_eq!(cursor.sequence(), 2);
-    assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
-    assert_eq!(editor.history.undo_depth(), 0);
-    assert_eq!(editor.history.redo_depth(), 1);
+    assert!(!editor.document().nodes.contains_key(&NodeId::from("a")));
+    assert_eq!(editor.history().undo_depth(), 0);
+    assert_eq!(editor.history().redo_depth(), 1);
     assert_eq!(store.log_entries().len(), 2);
     assert!(matches!(
         store.log_entries()[1].transaction.commands.as_slice(),
@@ -676,9 +676,9 @@ fn persistent_redo_logs_redo_transaction_before_mutation() {
 
     assert!(changed);
     assert_eq!(cursor.sequence(), 3);
-    assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
-    assert_eq!(editor.history.undo_depth(), 1);
-    assert_eq!(editor.history.redo_depth(), 0);
+    assert!(editor.document().nodes.contains_key(&NodeId::from("a")));
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(editor.history().redo_depth(), 0);
     assert_eq!(store.log_entries().len(), 3);
     assert!(matches!(
         store.log_entries()[2].transaction.commands.as_slice(),
@@ -700,7 +700,7 @@ fn persistent_undo_and_redo_skip_empty_history() {
 
     assert_eq!(cursor.sequence(), 4);
     assert!(store.log_entries().is_empty());
-    assert!(editor.document.nodes.is_empty());
+    assert!(editor.document().nodes.is_empty());
 }
 
 #[test]
@@ -753,9 +753,9 @@ fn persistent_undo_does_not_mutate_editor_when_store_fails() {
 
     assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
     assert_eq!(cursor.sequence(), 9);
-    assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
-    assert_eq!(editor.history.undo_depth(), 1);
-    assert_eq!(editor.history.redo_depth(), 0);
+    assert!(editor.document().nodes.contains_key(&NodeId::from("a")));
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(editor.history().redo_depth(), 0);
 }
 
 #[test]
@@ -874,7 +874,7 @@ fn persistent_tool_effects_log_recorded_transactions() {
 
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
-    assert!(editor.selection.nodes.contains(&NodeId::from("a")));
+    assert!(editor.selection().nodes.contains(&NodeId::from("a")));
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.nodes.contains_key(&NodeId::from("a")));
 }
@@ -910,8 +910,8 @@ fn persistent_tool_effects_commit_unrecorded_gesture_on_push_undo() {
 
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
-    assert_eq!(editor.history.undo_depth(), 1);
-    assert_eq!(editor.document.nodes[&NodeId::from("a")], moved);
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(editor.document().nodes[&NodeId::from("a")], moved);
 
     let restored = load_canvas_document(&store).unwrap();
     assert_eq!(
@@ -949,7 +949,7 @@ fn persistent_tool_effects_keep_unrecorded_effects_out_of_log() {
     assert_eq!(cursor.sequence(), 9);
     assert!(store.log_entries().is_empty());
     assert_eq!(
-        editor.document.nodes[&NodeId::from("a")].position,
+        editor.document().nodes[&NodeId::from("a")].position,
         point(px(12.0), px(0.0))
     );
 }
@@ -975,7 +975,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
     editor.set_tool(CanvasTool::Connect);
     let mut store = MemoryCanvasPersistenceStore::default();
     store
-        .save_checkpoint(CanvasCheckpoint::new(0, &editor.document))
+        .save_checkpoint(CanvasCheckpoint::new(0, editor.document()))
         .unwrap();
     let mut cursor = CanvasPersistenceCursor::default();
 
@@ -1005,8 +1005,8 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
     )
     .unwrap();
 
-    assert_eq!(editor.document.edges.len(), 1);
-    assert_eq!(editor.history.undo_depth(), 1);
+    assert_eq!(editor.document().edges.len(), 1);
+    assert_eq!(editor.history().undo_depth(), 1);
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
     assert!(matches!(
@@ -1023,7 +1023,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
 #[test]
 fn persistent_event_dispatch_logs_custom_tool_transaction() {
     let mut editor = CanvasEditor::default();
-    editor.viewport = crate::CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+    editor.set_viewport(crate::CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap());
     editor.set_tool(CanvasTool::custom("stamp"));
     let mut tool = PersistentStampTool::default();
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1046,7 +1046,7 @@ fn persistent_event_dispatch_logs_custom_tool_transaction() {
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
     assert_eq!(
-        editor.document.nodes[&NodeId::from("persistent-stamp-0")].position,
+        editor.document().nodes[&NodeId::from("persistent-stamp-0")].position,
         point(px(110.0), px(55.0))
     );
 
@@ -1084,7 +1084,7 @@ fn persistent_registry_event_dispatch_logs_registered_custom_tool_transaction() 
     assert_eq!(store.log_entries().len(), 1);
     assert!(
         editor
-            .document
+            .document()
             .nodes
             .contains_key(&NodeId::from("persistent-stamp-0"))
     );
@@ -1117,6 +1117,6 @@ fn persistent_registry_event_dispatch_reports_missing_custom_tool_without_mutati
     );
     assert_eq!(cursor.sequence(), 0);
     assert!(store.log_entries().is_empty());
-    assert!(editor.document.nodes.is_empty());
-    assert_eq!(editor.history.undo_depth(), 0);
+    assert!(editor.document().nodes.is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
 }

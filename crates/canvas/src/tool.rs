@@ -498,13 +498,13 @@ impl CanvasHistory {
 }
 
 pub struct CanvasEditor {
-    pub document: CanvasDocument,
-    pub viewport: CanvasViewport,
-    pub tool: CanvasTool,
-    pub state: ToolState,
-    pub index: SpatialIndex,
-    pub selection: CanvasSelection,
-    pub history: CanvasHistory,
+    document: CanvasDocument,
+    viewport: CanvasViewport,
+    tool: CanvasTool,
+    state: ToolState,
+    index: SpatialIndex,
+    selection: CanvasSelection,
+    history: CanvasHistory,
 }
 
 impl Default for CanvasEditor {
@@ -536,6 +536,34 @@ impl CanvasEditor {
         commands: impl IntoIterator<Item = DocumentCommand>,
     ) -> Result<(), DocumentError> {
         self.apply_transaction(CanvasTransaction::new(commands))
+    }
+
+    pub fn document(&self) -> &CanvasDocument {
+        &self.document
+    }
+
+    pub fn viewport(&self) -> CanvasViewport {
+        self.viewport
+    }
+
+    pub fn tool(&self) -> &CanvasTool {
+        &self.tool
+    }
+
+    pub fn state(&self) -> &ToolState {
+        &self.state
+    }
+
+    pub fn index(&self) -> &SpatialIndex {
+        &self.index
+    }
+
+    pub fn selection(&self) -> &CanvasSelection {
+        &self.selection
+    }
+
+    pub fn history(&self) -> &CanvasHistory {
+        &self.history
     }
 
     pub fn apply_transaction(
@@ -571,6 +599,21 @@ impl CanvasEditor {
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
         diff
+    }
+
+    pub(crate) fn prepare_document_transaction(
+        &self,
+        transaction: CanvasTransaction,
+    ) -> Result<crate::journal::CanvasPreparedMutation, DocumentError> {
+        self.document.prepare_transaction(transaction)
+    }
+
+    pub(crate) fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
+        self.history.next_undo_transaction()
+    }
+
+    pub(crate) fn next_redo_transaction(&self) -> Option<&CanvasTransaction> {
+        self.history.next_redo_transaction()
     }
 
     pub fn apply_tool_effect(&mut self, effect: CanvasToolEffect) -> Result<(), DocumentError> {
@@ -668,6 +711,14 @@ impl CanvasEditor {
     pub fn set_tool(&mut self, tool: CanvasTool) {
         self.tool = tool;
         self.state = ToolState::Idle;
+    }
+
+    pub fn set_viewport(&mut self, viewport: CanvasViewport) {
+        self.viewport = viewport;
+    }
+
+    pub fn is_tool_state_idle(&self) -> bool {
+        matches!(self.state, ToolState::Idle)
     }
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {

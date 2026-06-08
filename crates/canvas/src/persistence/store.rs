@@ -239,7 +239,7 @@ where
         return Ok(CanvasDocumentDiff::default());
     }
 
-    let prepared = editor.document.prepare_transaction(transaction)?;
+    let prepared = editor.prepare_document_transaction(transaction)?;
     store
         .append_log_entry(CanvasLogEntry::from_committed_mutation(
             cursor.next_sequence(),
@@ -259,11 +259,11 @@ pub fn undo_persistent_transaction<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let Some(transaction) = editor.history.next_undo_transaction() else {
+    let Some(transaction) = editor.next_undo_transaction() else {
         return Ok(false);
     };
     let transaction = transaction.clone();
-    let prepared = editor.document.prepare_transaction(transaction.clone())?;
+    let prepared = editor.prepare_document_transaction(transaction.clone())?;
     store
         .append_log_entry(CanvasLogEntry::from_committed_mutation(
             cursor.next_sequence(),
@@ -283,11 +283,11 @@ pub fn redo_persistent_transaction<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let Some(transaction) = editor.history.next_redo_transaction() else {
+    let Some(transaction) = editor.next_redo_transaction() else {
         return Ok(false);
     };
     let transaction = transaction.clone();
-    let prepared = editor.document.prepare_transaction(transaction.clone())?;
+    let prepared = editor.prepare_document_transaction(transaction.clone())?;
     store
         .append_log_entry(CanvasLogEntry::from_committed_mutation(
             cursor.next_sequence(),
@@ -392,7 +392,7 @@ pub fn save_canvas_checkpoint<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let checkpoint = CanvasCheckpoint::new(cursor.sequence(), &editor.document);
+    let checkpoint = CanvasCheckpoint::new(cursor.sequence(), editor.document());
     store
         .save_checkpoint(checkpoint.clone())
         .map_err(CanvasPersistenceError::Store)?;
@@ -412,8 +412,8 @@ where
     S: CanvasPersistenceStore,
 {
     if !inverse.is_empty() {
-        let committed_transaction = editor.document.invert_transaction(&inverse)?;
-        let mut document_before_gesture = editor.document.clone();
+        let committed_transaction = editor.document().invert_transaction(&inverse)?;
+        let mut document_before_gesture = editor.document().clone();
         document_before_gesture.apply_transaction(inverse.clone())?;
         let committed = document_before_gesture.prepare_transaction(committed_transaction)?;
         store

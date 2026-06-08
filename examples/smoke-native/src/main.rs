@@ -8,8 +8,7 @@ use open_gpui_canvas::{
     CanvasHandle, CanvasInputMapper, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
     CanvasPaintTheme, CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext,
     CanvasToolEffect, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
-    DocumentError, HandleRole, NodeId, PointerButton, ToolState, collect_visible_records,
-    paint_canvas_frame,
+    DocumentError, HandleRole, NodeId, PointerButton, collect_visible_records, paint_canvas_frame,
 };
 use open_gpui_platform::application;
 
@@ -206,7 +205,7 @@ impl SmokeView {
     }
 
     fn is_pointer_interacting(&self) -> bool {
-        !matches!(self.editor.state, ToolState::Idle)
+        !self.editor.is_tool_state_idle()
     }
 }
 

@@ -60,12 +60,12 @@ impl CanvasPaintModel {
 impl From<&CanvasEditor> for CanvasPaintModel {
     fn from(editor: &CanvasEditor) -> Self {
         Self {
-            document: Arc::new(editor.document.clone()),
-            index: Arc::new(editor.index.clone()),
-            viewport: editor.viewport,
+            document: Arc::new(editor.document().clone()),
+            index: Arc::new(editor.index().clone()),
+            viewport: editor.viewport(),
             interaction: CanvasPaintInteraction {
-                selection: editor.selection.clone(),
-                state: editor.state.clone(),
+                selection: editor.selection().clone(),
+                state: editor.state().clone(),
             },
         }
     }
@@ -711,7 +711,7 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode, HandleRole};
+    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode, CanvasToolEffect, HandleRole};
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
     #[test]
@@ -850,9 +850,10 @@ mod tests {
             .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor
-            .selection
-            .nodes
-            .insert(crate::NodeId::from("selected"));
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("selected"),
+            )))
+            .unwrap();
         let model = CanvasPaintModel::from(&editor);
 
         let frame = collect_visible_records(
@@ -881,15 +882,16 @@ mod tests {
             .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor
-            .selection
-            .nodes
-            .insert(crate::NodeId::from("selected"));
-        editor.state = ToolState::Selecting {
-            origin: point(px(10.0), px(10.0)),
-            current: point(px(40.0), px(50.0)),
-            selection_mode: CanvasSelectionMode::Replace,
-            base_selection: CanvasSelection::default(),
-        };
+            .apply_tool_effects([
+                CanvasToolEffect::AddSelection(HitTarget::Node(crate::NodeId::from("selected"))),
+                CanvasToolEffect::SetState(ToolState::Selecting {
+                    origin: point(px(10.0), px(10.0)),
+                    current: point(px(40.0), px(50.0)),
+                    selection_mode: CanvasSelectionMode::Replace,
+                    base_selection: CanvasSelection::default(),
+                }),
+            ])
+            .unwrap();
         let model = CanvasPaintModel::from(&editor);
 
         let frame = collect_visible_records(
@@ -945,10 +947,12 @@ mod tests {
         let mut document = CanvasDocument::default();
         document.insert_node(node).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.state = ToolState::Connecting {
-            source: CanvasEndpoint::new("source", Some("out")),
-            current: point(px(180.0), px(120.0)),
-        };
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
+                source: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(180.0), px(120.0)),
+            }))
+            .unwrap();
         let model = CanvasPaintModel::from(&editor);
 
         let frame = collect_visible_records(
@@ -990,10 +994,12 @@ mod tests {
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.state = ToolState::Connecting {
-            source: CanvasEndpoint::new("source", Some("out")),
-            current: point(px(204.0), px(64.0)),
-        };
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
+                source: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(204.0), px(64.0)),
+            }))
+            .unwrap();
         let model = CanvasPaintModel::from(&editor);
 
         let frame = collect_visible_records(
@@ -1035,10 +1041,12 @@ mod tests {
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.state = ToolState::Connecting {
-            source: CanvasEndpoint::new("source", Some("out")),
-            current: point(px(204.0), px(64.0)),
-        };
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
+                source: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(204.0), px(64.0)),
+            }))
+            .unwrap();
         let model = CanvasPaintModel::from(&editor);
 
         let frame = collect_visible_records(
