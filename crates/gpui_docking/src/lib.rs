@@ -100,6 +100,7 @@ mod policy;
 mod render;
 mod render_floating;
 mod render_split;
+mod render_tabs;
 mod splitter;
 mod tab_drop_runtime;
 mod viewport;
