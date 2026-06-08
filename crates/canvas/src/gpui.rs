@@ -215,6 +215,7 @@ impl CanvasInputMapper {
         Some(CanvasEvent::PointerDown {
             position: self.local_position(event.position)?,
             button: pointer_button(event.button)?,
+            modifiers: Self::modifiers(event.modifiers),
         })
     }
 
@@ -228,6 +229,7 @@ impl CanvasInputMapper {
         Some(CanvasEvent::PointerUp {
             position: self.local_position(event.position)?,
             button: pointer_button(event.button)?,
+            modifiers: Self::modifiers(event.modifiers),
         })
     }
 
@@ -244,9 +246,13 @@ impl CanvasInputMapper {
     pub fn key_down(&self, event: &KeyDownEvent) -> CanvasEvent {
         CanvasEvent::KeyDown {
             key: canvas_key(&event.keystroke),
-            modifiers: canvas_key_modifiers(event.keystroke.modifiers),
+            modifiers: Self::modifiers(event.keystroke.modifiers),
             repeat: event.is_held,
         }
+    }
+
+    pub fn modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
+        canvas_key_modifiers(modifiers)
     }
 
     pub fn local_position(&self, position: Point<Pixels>) -> Option<Point<Pixels>> {
@@ -893,11 +899,19 @@ mod tests {
             mapper.mouse_down(&MouseDownEvent {
                 button: MouseButton::Left,
                 position: point(px(120.0), px(80.0)),
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
                 ..MouseDownEvent::default()
             }),
             Some(CanvasEvent::PointerDown {
                 position: point(px(20.0), px(30.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
             })
         );
         assert_eq!(
@@ -909,6 +923,7 @@ mod tests {
             Some(CanvasEvent::PointerUp {
                 position: point(px(40.0), px(40.0)),
                 button: PointerButton::Secondary,
+                modifiers: CanvasKeyModifiers::default(),
             })
         );
         assert_eq!(

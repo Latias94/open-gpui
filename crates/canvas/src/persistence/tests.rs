@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CanvasDocument, CanvasEditor, CanvasEvent, CanvasNode, CanvasRecordChange, CanvasRecordId,
-    CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
+    CanvasDocument, CanvasEditor, CanvasEvent, CanvasKeyModifiers, CanvasNode, CanvasRecordChange,
+    CanvasRecordId, CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
     CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError,
     NodeId, PointerButton, ToolState,
 };
@@ -24,6 +24,7 @@ impl CanvasToolReducer for PersistentStampTool {
         let CanvasEvent::PointerDown {
             position,
             button: PointerButton::Primary,
+            ..
         } = event
         else {
             return Ok(Vec::new());
@@ -924,6 +925,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
         CanvasEvent::PointerDown {
             position: point(px(10.0), px(10.0)),
             button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
         },
     )
     .unwrap();
@@ -937,6 +939,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
         CanvasEvent::PointerUp {
             position: point(px(210.0), px(10.0)),
             button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
         },
     )
     .unwrap();
@@ -972,6 +975,7 @@ fn persistent_event_dispatch_logs_custom_tool_transaction() {
         CanvasEvent::PointerDown {
             position: point(px(20.0), px(10.0)),
             button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
         },
         &mut tool,
     )
@@ -1009,6 +1013,7 @@ fn persistent_registry_event_dispatch_logs_registered_custom_tool_transaction() 
         CanvasEvent::PointerDown {
             position: point(px(12.0), px(18.0)),
             button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
         },
         &mut registry,
     )
@@ -1039,6 +1044,7 @@ fn persistent_registry_event_dispatch_reports_missing_custom_tool_without_mutati
         CanvasEvent::PointerDown {
             position: point(px(0.0), px(0.0)),
             button: PointerButton::Primary,
+            modifiers: CanvasKeyModifiers::default(),
         },
         &mut registry,
     )

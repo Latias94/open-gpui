@@ -20,8 +20,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   skip them unless `HitOptions::include_locked` is enabled.
 - `CanvasEditor` applies transactions, tracks undo/redo, maintains selection, and dispatches tool
   events.
-- `CanvasEvent` normalizes pointer, wheel, key, and cancel events; the select tool can delete
-  editable selections with Delete or Backspace through the same transaction path as other edits.
+- `CanvasEvent` normalizes pointer, wheel, key, and cancel events; pointer and key events carry
+  modifiers, and the select tool can delete editable selections with Delete or Backspace through
+  the same transaction path as other edits.
 - `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined
   custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling

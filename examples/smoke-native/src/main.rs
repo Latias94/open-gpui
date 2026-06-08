@@ -34,6 +34,7 @@ impl CanvasToolReducer for StampNodeTool {
         let CanvasEvent::PointerDown {
             position,
             button: PointerButton::Secondary,
+            ..
         } = event
         else {
             return Ok(vec![CanvasToolEffect::SetTool(CanvasTool::Select)]);
@@ -130,6 +131,9 @@ impl Render for SmokeView {
                                         CanvasEvent::PointerUp {
                                             position: event.position - mapper.bounds.origin,
                                             button,
+                                            modifiers: CanvasInputMapper::modifiers(
+                                                event.modifiers,
+                                            ),
                                         }
                                     })
                                 } else {

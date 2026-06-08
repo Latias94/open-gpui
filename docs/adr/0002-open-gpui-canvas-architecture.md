@@ -101,6 +101,9 @@ keep key events renderer-neutral, while the GPUI adapter maps `KeyDownEvent` int
 The select tool's Delete/Backspace behavior emits a normal recorded transaction, skips locked
 records, and lets selection pruning, undo, persistence logging, and future CRDT operation batches
 observe the deletion through the same mutation boundary.
+Pointer down and pointer up events carry the same modifier shape as key events. This avoids a
+parallel modifier model when adding shift-click, additive marquee selection, constrained dragging,
+or tool-specific modifier gestures.
 
 ## Architecture
 

@@ -59,6 +59,8 @@ pub enum CanvasEvent {
     PointerDown {
         position: Point<Pixels>,
         button: PointerButton,
+        #[serde(default)]
+        modifiers: CanvasKeyModifiers,
     },
     PointerMove {
         position: Point<Pixels>,
@@ -66,6 +68,8 @@ pub enum CanvasEvent {
     PointerUp {
         position: Point<Pixels>,
         button: PointerButton,
+        #[serde(default)]
+        modifiers: CanvasKeyModifiers,
     },
     Wheel {
         delta: Point<Pixels>,
@@ -736,6 +740,7 @@ impl CanvasEditor {
                 CanvasEvent::PointerDown {
                     position,
                     button: PointerButton::Primary,
+                    ..
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
@@ -888,6 +893,7 @@ impl CanvasEditor {
                 CanvasEvent::PointerDown {
                     position,
                     button: PointerButton::Primary,
+                    ..
                 },
             ) => {
                 vec![CanvasToolEffect::SetState(ToolState::Panning {
@@ -919,6 +925,7 @@ impl CanvasEditor {
                 CanvasEvent::PointerDown {
                     position,
                     button: PointerButton::Primary,
+                    ..
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
@@ -943,6 +950,7 @@ impl CanvasEditor {
                 CanvasEvent::PointerUp {
                     position,
                     button: PointerButton::Primary,
+                    ..
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
@@ -1121,6 +1129,7 @@ mod tests {
             let CanvasEvent::PointerDown {
                 position,
                 button: PointerButton::Primary,
+                ..
             } = event
             else {
                 return Ok(Vec::new());
@@ -1199,6 +1208,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1210,6 +1220,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(20.0), px(25.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1248,6 +1259,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1259,6 +1271,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(30.0), px(30.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1286,6 +1299,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         assert!(!editor.selection.is_empty());
@@ -1294,12 +1308,14 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(300.0), px(300.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1466,6 +1482,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(0.0), px(0.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1477,6 +1494,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(50.0), px(50.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1512,6 +1530,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1523,6 +1542,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(20.0), px(30.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1562,6 +1582,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1573,6 +1594,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(20.0), px(30.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1596,6 +1618,7 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1631,12 +1654,14 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(210.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1671,12 +1696,14 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(10.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(210.0), px(10.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1709,12 +1736,14 @@ mod tests {
             .handle_event(CanvasEvent::PointerDown {
                 position: point(px(100.0), px(50.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
             .handle_event(CanvasEvent::PointerUp {
                 position: point(px(200.0), px(50.0)),
                 button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1743,6 +1772,7 @@ mod tests {
                 CanvasEvent::PointerDown {
                     position: point(px(20.0), px(10.0)),
                     button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
                 },
                 &mut tool,
             )
@@ -1789,6 +1819,7 @@ mod tests {
                 CanvasEvent::PointerDown {
                     position: point(px(10.0), px(10.0)),
                     button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
                 },
                 &mut tool,
             )
@@ -1829,6 +1860,7 @@ mod tests {
                 CanvasEvent::PointerDown {
                     position: point(px(20.0), px(10.0)),
                     button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
                 },
                 &mut registry,
             )
@@ -1889,6 +1921,7 @@ mod tests {
                 CanvasEvent::PointerDown {
                     position: point(px(10.0), px(10.0)),
                     button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
                 },
                 &mut registry,
             )
