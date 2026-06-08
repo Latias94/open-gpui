@@ -1,8 +1,10 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
-    DockGraph, DockHost, DockItemId, DockLayoutNode, DockNode, DockNodeId, DockOpApplyError,
-    DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportOpenStatus, DockWorkspace,
-    DropZone, EditorDockLayoutSpec, SplitAxis, debug::DockDebugRegion,
+    DockGraph, DockHost, DockItemId, DockLayoutNode, DockLayoutRect, DockNode, DockNodeId,
+    DockOpApplyError, DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportOpenStatus,
+    DockViewportPlacement, DockViewportPlacementLayout, DockViewportWindowBounds,
+    DockViewportWindowState, DockWorkspace, DropZone, EditorDockLayoutSpec, SplitAxis,
+    debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
@@ -641,6 +643,51 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     assert_eq!(reused.status, DockViewportOpenStatus::Reused);
     assert_eq!(reused.window, opened.window);
     assert_eq!(adapter.len(), 1);
+}
+
+#[open_gpui::test]
+fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut adapter = DockViewportAdapter::new();
+    let saved_window_bounds = WindowBounds::Windowed(floating_bounds(80.0, 90.0, 420.0, 260.0));
+    let placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+        space: secondary_space.clone(),
+        display_id: None,
+        window_bounds: Some(DockViewportWindowBounds {
+            state: DockViewportWindowState::Windowed,
+            bounds: DockLayoutRect::from_bounds(saved_window_bounds.get_bounds()),
+        }),
+        host_bounds: None,
+    }]);
+    let fallback_options = viewport_window_options(240.0, 160.0);
+
+    let opened = cx
+        .update(|app| {
+            let options = placement
+                .window_options_for_space(&secondary_space, fallback_options)
+                .expect("saved placement should produce window options");
+            adapter.open_viewport(controller.clone(), secondary_space.clone(), options, app)
+        })
+        .expect("secondary viewport should open with saved placement");
+
+    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(
+        opened
+            .window
+            .update(cx, |_, window, _| window.window_bounds())
+            .expect("opened window should still be live"),
+        saved_window_bounds
+    );
 }
 
 #[open_gpui::test]

@@ -165,6 +165,37 @@ impl DockViewportPlacementLayout {
         }
     }
 
+    /// Returns the saved placement for a logical dock space, when present.
+    pub fn placement_for_space(&self, space: &DockSpaceId) -> Option<&DockViewportPlacement> {
+        self.viewports
+            .iter()
+            .find(|viewport| viewport.space == *space)
+    }
+
+    /// Applies saved platform-window placement to fallback GPUI window options.
+    ///
+    /// This validates the placement layout before returning options so restore flows can reject
+    /// corrupt placement data before opening runtime windows.
+    pub fn window_options_for_space(
+        &self,
+        space: &DockSpaceId,
+        mut fallback: WindowOptions,
+    ) -> Result<WindowOptions, DockViewportPlacementValidationError> {
+        self.validate()?;
+
+        if let Some(placement) = self.placement_for_space(space) {
+            if let Some(display_id) = placement.display_id {
+                fallback.display_id = Some(DisplayId::from(display_id));
+            }
+            fallback.window_bounds = placement
+                .window_bounds
+                .map(DockViewportWindowBounds::to_window_bounds)
+                .or(fallback.window_bounds);
+        }
+
+        Ok(fallback)
+    }
+
     /// Validates adapter-level placement invariants before applying snapshots.
     pub fn validate(&self) -> Result<(), DockViewportPlacementValidationError> {
         if self.placement_version != DOCK_VIEWPORT_PLACEMENT_VERSION {
@@ -1000,6 +1031,120 @@ mod tests {
                 host_position: point(px(5.0), px(5.0)),
             })
         );
+    }
+
+    #[test]
+    fn placement_window_options_use_saved_bounds_and_display_hint() {
+        let main = space("main");
+        let saved_bounds = DockViewportWindowBounds {
+            state: DockViewportWindowState::Maximized,
+            bounds: DockLayoutRect::from_bounds(bounds(100.0, 200.0, 800.0, 600.0)),
+        };
+        let fallback_bounds = WindowBounds::Windowed(bounds(0.0, 0.0, 320.0, 240.0));
+        let placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: main.clone(),
+            display_id: Some(7),
+            window_bounds: Some(saved_bounds),
+            host_bounds: None,
+        }]);
+
+        let options = placement
+            .window_options_for_space(
+                &main,
+                WindowOptions {
+                    window_bounds: Some(fallback_bounds),
+                    focus: false,
+                    ..Default::default()
+                },
+            )
+            .expect("valid placement should produce window options");
+
+        assert_eq!(
+            placement
+                .placement_for_space(&main)
+                .map(|p| p.space.clone()),
+            Some(main)
+        );
+        assert_eq!(options.window_bounds, Some(saved_bounds.to_window_bounds()));
+        assert_eq!(options.display_id, Some(DisplayId::from(7)));
+        assert!(
+            !options.focus,
+            "fallback options should preserve non-placement fields"
+        );
+    }
+
+    #[test]
+    fn placement_window_options_keep_fallback_for_missing_space() {
+        let main = space("main");
+        let secondary = space("secondary");
+        let fallback_bounds = WindowBounds::Windowed(bounds(0.0, 0.0, 320.0, 240.0));
+        let placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: main.clone(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: None,
+        }]);
+
+        let matching_options = placement
+            .window_options_for_space(
+                &main,
+                WindowOptions {
+                    window_bounds: Some(fallback_bounds),
+                    display_id: Some(DisplayId::from(9)),
+                    ..Default::default()
+                },
+            )
+            .expect("missing saved fields should keep fallback options");
+        assert_eq!(matching_options.window_bounds, Some(fallback_bounds));
+        assert_eq!(matching_options.display_id, Some(DisplayId::from(9)));
+
+        let options = placement
+            .window_options_for_space(
+                &secondary,
+                WindowOptions {
+                    window_bounds: Some(fallback_bounds),
+                    display_id: Some(DisplayId::from(9)),
+                    ..Default::default()
+                },
+            )
+            .expect("valid placement should preserve fallback for missing spaces");
+
+        assert!(placement.placement_for_space(&secondary).is_none());
+        assert_eq!(options.window_bounds, Some(fallback_bounds));
+        assert_eq!(options.display_id, Some(DisplayId::from(9)));
+    }
+
+    #[test]
+    fn invalid_placement_rejects_window_options_before_runtime_mutation() {
+        let main = space("main");
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(main.clone(), handle(1));
+        let placement = DockViewportPlacementLayout::new(vec![
+            DockViewportPlacement {
+                space: main.clone(),
+                display_id: None,
+                window_bounds: None,
+                host_bounds: None,
+            },
+            DockViewportPlacement {
+                space: main.clone(),
+                display_id: None,
+                window_bounds: None,
+                host_bounds: None,
+            },
+        ]);
+
+        let error = placement
+            .window_options_for_space(&main, WindowOptions::default())
+            .expect_err("invalid placement should fail before options are returned");
+        assert_eq!(
+            error,
+            DockViewportPlacementValidationError::DuplicateSpace {
+                space: main.clone()
+            }
+        );
+        assert_eq!(adapter.window_for_space(&main), Some(handle(1)));
+        assert_eq!(adapter.spaces(), vec![main]);
     }
 
     #[test]
