@@ -27,6 +27,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+open_gpui = { workspace = true, features = ["test-support"] }
 rstar = "0.13.0"
 static_aabb2d_index = "2.0.0"
 

@@ -1,10 +1,12 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use open_gpui::{Bounds, point, px, size};
+use open_gpui::{BenchAppContext, Bounds, point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
-    CanvasViewport, SpatialIndex, collect_visible_records,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry, CanvasNode,
+    CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasViewport,
+    SpatialIndex, collect_visible_records, prepaint_canvas_frame,
 };
 
+const LABELED_NODE_KIND: &str = "benchmark-labeled-node";
 const GRID_COLUMNS: usize = 200;
 const GRID_ROWS: usize = 100;
 const NODE_WIDTH: f32 = 96.0;
@@ -49,6 +51,60 @@ fn large_canvas_benches(c: &mut Criterion) {
 
         b.iter(|| collect_visible_records(black_box(&model), black_box(canvas_bounds), options));
     });
+
+    c.bench_function("paint_frame_prepaint_labels", |b| {
+        let model = CanvasPaintModel::new_with_kind_registry(
+            labeled_grid_document(&document),
+            CanvasViewport::new(point(px(12_000.0), px(6_000.0)), 1.0)
+                .expect("benchmark viewport should be valid"),
+            labeled_kind_registry(),
+        );
+        let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(1_280.0), px(720.0)));
+        let options = CanvasPaintOptions {
+            cull_margin: px(128.0),
+            ..CanvasPaintOptions::default()
+        };
+        let theme = CanvasPaintTheme::default();
+        let mut app = BenchAppContext::new(Some("paint_frame_prepaint_labels"));
+        let mut window = app.add_empty_window();
+
+        b.iter(|| {
+            window.update(|window, _| {
+                let frame = prepaint_canvas_frame(
+                    black_box(&model),
+                    black_box(canvas_bounds),
+                    options,
+                    theme,
+                    window,
+                );
+                black_box(frame.prepared_label_count())
+            });
+        });
+
+        app.teardown();
+    });
+}
+
+struct BenchmarkLabelNodeKind;
+
+impl CanvasNodeKind for BenchmarkLabelNodeKind {
+    fn node_label(&self, node: &CanvasNode) -> Option<CanvasKindLabel> {
+        Some(CanvasKindLabel::new(format!("Node {}", node.id)).with_inset(px(6.0)))
+    }
+}
+
+fn labeled_kind_registry() -> CanvasKindRegistry {
+    let mut registry = CanvasKindRegistry::open();
+    registry.register_node_kind(LABELED_NODE_KIND, BenchmarkLabelNodeKind);
+    registry
+}
+
+fn labeled_grid_document(document: &CanvasDocument) -> CanvasDocument {
+    let mut document = document.clone();
+    for node in document.nodes.values_mut() {
+        node.kind = LABELED_NODE_KIND.to_string();
+    }
+    document
 }
 
 fn build_grid_document(columns: usize, rows: usize) -> CanvasDocument {
