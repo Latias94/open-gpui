@@ -56,6 +56,21 @@ impl DockLayout {
             }
         }
 
+        let mut item_nodes = HashMap::new();
+        for node in &self.nodes {
+            if let DockLayoutNode::Tabs { id, items, .. } = node {
+                for item in items {
+                    if let Some(first_node) = item_nodes.insert(item.clone(), *id) {
+                        return Err(DockLayoutValidationError::DuplicateItemId {
+                            item: item.clone(),
+                            first_node,
+                            duplicate_node: *id,
+                        });
+                    }
+                }
+            }
+        }
+
         for (id, node) in &by_id {
             match node {
                 DockLayoutNode::Tabs { items, active, .. } => {
@@ -253,6 +268,18 @@ pub enum DockLayoutValidationError {
     DuplicateNodeId {
         /// Duplicate id.
         id: u32,
+    },
+    /// A dock item id appears in more than one serialized tab position.
+    #[error(
+        "duplicate dock layout item id {item}: first seen in node {first_node}, duplicated in node {duplicate_node}"
+    )]
+    DuplicateItemId {
+        /// Duplicate dock item id.
+        item: DockItemId,
+        /// First tabs node containing the item.
+        first_node: u32,
+        /// Tabs node containing the duplicate item.
+        duplicate_node: u32,
     },
     /// A split references a missing node id.
     #[error("missing dock layout node id: {id}")]

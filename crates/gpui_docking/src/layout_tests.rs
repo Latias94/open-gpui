@@ -273,6 +273,44 @@ fn layout_validation_rejects_duplicate_spaces() {
 }
 
 #[test]
+fn layout_validation_rejects_duplicate_items() {
+    let duplicate_items = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![
+            DockLayoutNode::Split {
+                id: 1,
+                axis: SplitAxis::Horizontal,
+                children: vec![2, 3],
+                fractions: vec![0.5, 0.5],
+            },
+            DockLayoutNode::Tabs {
+                id: 2,
+                items: vec![item("a")],
+                active: 0,
+            },
+            DockLayoutNode::Tabs {
+                id: 3,
+                items: vec![item("a")],
+                active: 0,
+            },
+        ],
+    );
+
+    assert_eq!(
+        duplicate_items.validate(),
+        Err(DockLayoutValidationError::DuplicateItemId {
+            item: item("a"),
+            first_node: 2,
+            duplicate_node: 3
+        })
+    );
+}
+
+#[test]
 fn builder_default_editor_layout_sets_root_and_roundtrips() {
     let spec = EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]);
     let graph = DockGraph::default_editor_layout(space(), spec);
