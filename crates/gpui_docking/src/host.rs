@@ -1,12 +1,11 @@
+#[cfg(test)]
+use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockOp,
-    DockPanel, DockPanelRegistry, DockSpaceId,
-    debug::{DockDebugInstrumentation, DockDebugRegion},
-    drop_target::DockDropIntent,
-    splitter,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockNodeId, DockPanelRegistry,
+    DockPolicy, DockSpaceId, debug::DockDebugRegion, drop_target::DockDropIntent, splitter,
     workspace::DockWorkspace,
 };
-use open_gpui::{AnyView, Pixels, px};
+use open_gpui::{Pixels, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -48,6 +47,7 @@ pub(crate) struct SplitterDrag {
 #[derive(Debug)]
 pub struct DockHost {
     workspace: DockWorkspace,
+    #[cfg(test)]
     debug: DockDebugInstrumentation,
     splitter_drag: Option<SplitterDrag>,
     tab_drop_intent: Option<DockDropIntent>,
@@ -78,6 +78,7 @@ impl DockHost {
     pub fn from_workspace(workspace: DockWorkspace) -> Self {
         Self {
             workspace,
+            #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             splitter_drag: None,
             tab_drop_intent: None,
@@ -87,11 +88,6 @@ impl DockHost {
     /// Returns the workspace rendered by this host.
     pub fn workspace(&self) -> &DockWorkspace {
         &self.workspace
-    }
-
-    /// Returns the workspace rendered by this host for owner-level mutation.
-    pub fn workspace_mut(&mut self) -> &mut DockWorkspace {
-        &mut self.workspace
     }
 
     /// Applies a docking action through the host's workspace.
@@ -112,51 +108,9 @@ impl DockHost {
         self.workspace.graph()
     }
 
-    /// Returns the host graph for compatibility mutation by application code.
-    ///
-    /// Prefer applying operations or docking actions through [`DockWorkspace`].
-    pub fn graph_mut(&mut self) -> &mut DockGraph {
-        self.workspace.graph_mut()
-    }
-
-    /// Replaces the host graph.
-    pub fn set_graph(&mut self, graph: DockGraph) {
-        self.workspace.set_graph(graph);
-    }
-
     /// Returns the panel registry.
     pub fn panels(&self) -> &DockPanelRegistry {
         self.workspace.panels()
-    }
-
-    /// Returns the panel registry for compatibility mutation by application code.
-    ///
-    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
-    pub fn panels_mut(&mut self) -> &mut DockPanelRegistry {
-        self.workspace.panels_mut()
-    }
-
-    /// Registers a panel for a dock item, returning any previous registration.
-    ///
-    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
-    pub fn register_panel(
-        &mut self,
-        item: impl Into<DockItemId>,
-        panel: DockPanel,
-    ) -> Option<DockPanel> {
-        self.workspace.register_panel(item, panel)
-    }
-
-    /// Registers a GPUI view as panel content for a dock item.
-    ///
-    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
-    pub fn register_panel_view(
-        &mut self,
-        item: impl Into<DockItemId>,
-        title: impl Into<String>,
-        view: impl Into<AnyView>,
-    ) -> Option<DockPanel> {
-        self.workspace.register_panel_view(item, title, view)
     }
 
     /// Returns the static rendering options.
@@ -164,9 +118,9 @@ impl DockHost {
         self.workspace.options()
     }
 
-    /// Returns mutable static rendering options.
-    pub fn options_mut(&mut self) -> &mut DockHostOptions {
-        self.workspace.options_mut()
+    /// Returns the docking interaction policy.
+    pub fn policy(&self) -> &DockPolicy {
+        self.workspace.policy()
     }
 
     /// Returns a debug selector emitted for a test region during the most recent render.
@@ -176,6 +130,7 @@ impl DockHost {
     }
 
     pub(crate) fn clear_debug_selectors(&mut self) {
+        #[cfg(test)]
         self.debug.clear();
     }
 
@@ -184,7 +139,15 @@ impl DockHost {
         region: DockDebugRegion,
         selector: String,
     ) -> String {
-        self.debug.record(region, selector)
+        #[cfg(test)]
+        {
+            self.debug.record(region, selector)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = region;
+            selector
+        }
     }
 
     pub(crate) fn selector_prefix(&self) -> String {
@@ -225,10 +188,11 @@ impl DockHost {
         };
 
         self.workspace
-            .apply_op_checked(&DockOp::SetSplitFractions {
+            .apply_action(&DockAction::ResizeSplit {
                 split: drag.split,
                 fractions,
             })
+            .map(|outcome| outcome.changed())
             .unwrap_or(false)
     }
 

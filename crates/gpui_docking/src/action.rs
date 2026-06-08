@@ -1,11 +1,11 @@
 use crate::{
-    DockItemId, DockNode, DockNodeId, DockOp, DockOpApplyError, DockSpaceId, DockWorkspace,
-    DropZone,
+    DockItemId, DockNode, DockNodeId, DockOp, DockOpApplyError, DockPolicyError, DockSpaceId,
+    DockWorkspace, DropZone,
 };
 use thiserror::Error;
 
 /// Docking interaction emitted by GPUI render adapters.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DockAction {
     /// Selects a tab within one tabs node.
     SelectTab {
@@ -28,6 +28,13 @@ pub enum DockAction {
         target_tabs: DockNodeId,
         /// The resolved drop zone.
         zone: DropZone,
+    },
+    /// Resizes one split node by replacing its normalized fractions.
+    ResizeSplit {
+        /// The split node to update.
+        split: DockNodeId,
+        /// The next normalized split fractions.
+        fractions: Vec<f32>,
     },
 }
 
@@ -69,6 +76,9 @@ pub enum DockActionApplyError {
     /// The underlying graph operation failed.
     #[error(transparent)]
     Graph(#[from] DockOpApplyError),
+    /// The action was rejected by workspace policy.
+    #[error(transparent)]
+    Policy(#[from] DockPolicyError),
 }
 
 impl DockWorkspace {
@@ -94,6 +104,7 @@ impl DockWorkspace {
                 *target_tabs,
                 *zone,
             ),
+            DockAction::ResizeSplit { split, fractions } => self.resize_split(*split, fractions),
         }
     }
 
@@ -135,7 +146,9 @@ impl DockWorkspace {
         target_tabs: DockNodeId,
         zone: DropZone,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_drop_zone(zone)?;
         if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
+            self.policy().validate_same_stack_center_drop()?;
             return Ok(DockActionOutcome::Unchanged);
         }
 
@@ -146,6 +159,20 @@ impl DockWorkspace {
             target_tabs,
             zone,
             insert_index: None,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn resize_split(
+        &mut self,
+        split: DockNodeId,
+        fractions: &[f32],
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_splitter_resize()?;
+        self.apply_op_checked(&DockOp::SetSplitFractions {
+            split,
+            fractions: fractions.to_vec(),
         })
         .map(DockActionOutcome::from_changed)
         .map_err(Into::into)

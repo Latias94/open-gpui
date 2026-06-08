@@ -173,6 +173,20 @@ pub enum DockOpApplyError {
         node: DockNodeId,
     },
 
+    /// The requested split node does not exist.
+    #[error("split node not found: {split:?}")]
+    SplitNodeNotFound {
+        /// Missing split node.
+        split: DockNodeId,
+    },
+
+    /// The requested node exists but is not a split node.
+    #[error("node is not a split node: {node:?}")]
+    NodeIsNotSplit {
+        /// Node with the wrong kind.
+        node: DockNodeId,
+    },
+
     /// The requested active tab index is out of bounds.
     #[error("active tab index {active} out of bounds for {tabs:?} with length {len}")]
     ActiveOutOfBounds {
@@ -191,6 +205,46 @@ pub enum DockOpApplyError {
         space: DockSpaceId,
         /// The missing item.
         item: DockItemId,
+    },
+
+    /// The target node is not contained by the target dock space.
+    #[error("target node {target:?} not found in dock space {space}")]
+    TargetNodeNotInSpace {
+        /// The target dock space.
+        space: DockSpaceId,
+        /// The target node.
+        target: DockNodeId,
+    },
+
+    /// A split fraction update has the wrong number of fractions.
+    #[error(
+        "split node {split:?} has {children_len} children but received {fractions_len} fractions"
+    )]
+    SplitFractionsLenMismatch {
+        /// The split node.
+        split: DockNodeId,
+        /// Current split child count.
+        children_len: usize,
+        /// Provided fraction count.
+        fractions_len: usize,
+    },
+
+    /// A split fraction update targeted a split with too few children.
+    #[error("split node {split:?} has too few children: {children_len}")]
+    SplitTooFewChildren {
+        /// The split node.
+        split: DockNodeId,
+        /// Current split child count.
+        children_len: usize,
+    },
+
+    /// A split fraction is non-finite or negative.
+    #[error("split node {split:?} fraction {index} is invalid")]
+    SplitFractionInvalid {
+        /// The split node.
+        split: DockNodeId,
+        /// Invalid fraction index.
+        index: usize,
     },
 
     /// The requested operation could not be applied.

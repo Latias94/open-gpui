@@ -1,5 +1,6 @@
 use crate::*;
 use serde::Deserialize;
+use slotmap::Key;
 use std::collections::HashSet;
 
 fn space() -> DockSpaceId {
@@ -74,6 +75,156 @@ fn move_item_to_target_outside_target_space_is_transactional() {
     assert_eq!(items, &vec![item("orphan")]);
     assert_eq!(*active, 0);
     graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_reports_missing_source_item() {
+    let (mut graph, root) = root_tabs_graph(&["a"]);
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItem {
+            source_space: space(),
+            item: item("missing"),
+            target_space: space(),
+            target_tabs: root,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("missing source item should fail");
+
+    assert_eq!(
+        err,
+        DockOpApplyError::ItemNotFound {
+            space: space(),
+            item: item("missing")
+        }
+    );
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_reports_target_outside_space_without_mutation() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    let orphan = graph.insert_node(DockNode::Tabs {
+        items: vec![item("orphan")],
+        active: 0,
+    });
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItem {
+            source_space: space(),
+            item: item("b"),
+            target_space: space(),
+            target_tabs: orphan,
+            zone: DropZone::Right,
+            insert_index: None,
+        })
+        .expect_err("orphan target should fail");
+
+    assert_eq!(
+        err,
+        DockOpApplyError::TargetNodeNotInSpace {
+            space: space(),
+            target: orphan
+        }
+    );
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs should remain")
+    else {
+        panic!("expected root tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_reports_center_target_that_is_not_tabs() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+    let split = graph.root(&space()).expect("space should keep root");
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItem {
+            source_space: space(),
+            item: item("a"),
+            target_space: space(),
+            target_tabs: split,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("center target must be tabs");
+
+    assert_eq!(err, DockOpApplyError::NodeIsNotTabs { node: split });
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_resize_reports_split_errors_without_mutation() {
+    let (mut graph, split_a) = root_tabs_graph(&["a"]);
+    let tabs_b = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![split_a, tabs_b],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), split);
+
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractions {
+                split: DockNodeId::null(),
+                fractions: vec![0.5, 0.5],
+            })
+            .expect_err("missing split should fail"),
+        DockOpApplyError::SplitNodeNotFound {
+            split: DockNodeId::null()
+        }
+    );
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractions {
+                split: split_a,
+                fractions: vec![0.5, 0.5],
+            })
+            .expect_err("tabs node is not a split"),
+        DockOpApplyError::NodeIsNotSplit { node: split_a }
+    );
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractions {
+                split,
+                fractions: vec![1.0],
+            })
+            .expect_err("fraction length mismatch should fail"),
+        DockOpApplyError::SplitFractionsLenMismatch {
+            split,
+            children_len: 2,
+            fractions_len: 1,
+        }
+    );
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractions {
+                split,
+                fractions: vec![0.5, f32::NAN],
+            })
+            .expect_err("invalid fraction should fail"),
+        DockOpApplyError::SplitFractionInvalid { split, index: 1 }
+    );
+
+    let DockNode::Split { fractions, .. } = graph.node(split).expect("split should remain") else {
+        panic!("root should be split");
+    };
+    assert_eq!(fractions, &vec![0.5, 0.5]);
 }
 
 #[test]

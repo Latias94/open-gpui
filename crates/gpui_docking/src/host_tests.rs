@@ -1,7 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockHost, DockItemId,
-    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockSpaceId, DockWorkspace, DropZone,
-    SplitAxis, debug::DockDebugRegion,
+    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockPolicyError, DockSpaceId,
+    DockWorkspace, DropZone, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
@@ -91,6 +91,14 @@ fn open_host(
     window_size: open_gpui::Size<Pixels>,
 ) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
     let workspace = workspace_with_panels(cx, graph, panels);
+    open_workspace(cx, workspace, window_size)
+}
+
+fn open_workspace(
+    cx: &mut TestAppContext,
+    workspace: DockWorkspace,
+    window_size: open_gpui::Size<Pixels>,
+) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
     let window = cx.open_window(window_size, move |_, _| DockHost::from_workspace(workspace));
     let host = window.root(cx).expect("window should expose DockHost root");
     cx.run_until_parked();
@@ -187,13 +195,11 @@ fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn compatibility_constructor_delegates_to_workspace(cx: &mut TestAppContext) {
+fn compatibility_constructor_delegates_to_workspace(_cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"], 0);
-    let mut host = DockHost::new(space(), graph);
-    host.register_panel_view(item("a"), "A", test_view(cx, "A"));
+    let host = DockHost::new(space(), graph);
 
     assert_eq!(host.workspace().space(), &space());
-    assert!(host.workspace().panels().contains(&item("a")));
     assert!(host.graph().root(&space()).is_some());
 }
 
@@ -389,6 +395,148 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
+fn workspace_resize_split_action_updates_fractions(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let outcome = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split,
+            fractions: vec![0.7, 0.3],
+        })
+        .expect("resize split action should be valid");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    let DockNode::Split { fractions, .. } = workspace
+        .graph()
+        .node(split)
+        .expect("split should still exist")
+    else {
+        panic!("root should be split");
+    };
+    assert_close(fractions[0], 0.7);
+    assert_close(fractions[1], 0.3);
+}
+
+#[open_gpui::test]
+fn workspace_resize_split_action_reports_unchanged_for_same_fractions(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let outcome = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split,
+            fractions: vec![0.5, 0.5],
+        })
+        .expect("resize split action should be valid");
+
+    assert_eq!(outcome, DockActionOutcome::Unchanged);
+}
+
+#[open_gpui::test]
+fn workspace_resize_split_action_rejects_invalid_targets(cx: &mut TestAppContext) {
+    let (graph, split, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let missing = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split: DockNodeId::null(),
+            fractions: vec![0.5, 0.5],
+        })
+        .expect_err("missing split should fail");
+    assert_eq!(
+        missing,
+        DockActionApplyError::Graph(DockOpApplyError::SplitNodeNotFound {
+            split: DockNodeId::null()
+        })
+    );
+
+    let wrong_kind = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split: left_tabs,
+            fractions: vec![0.5, 0.5],
+        })
+        .expect_err("tabs node is not a split");
+    assert_eq!(
+        wrong_kind,
+        DockActionApplyError::Graph(DockOpApplyError::NodeIsNotSplit { node: left_tabs })
+    );
+
+    let mismatch = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split,
+            fractions: vec![1.0],
+        })
+        .expect_err("fraction length mismatch should fail");
+    assert_eq!(
+        mismatch,
+        DockActionApplyError::Graph(DockOpApplyError::SplitFractionsLenMismatch {
+            split,
+            children_len: 2,
+            fractions_len: 1
+        })
+    );
+}
+
+#[open_gpui::test]
+fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.policy_mut().set_allow_edge_split(false);
+
+    let err = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: left_tabs,
+            item: item("a"),
+            target_space: space(),
+            target_tabs: right_tabs,
+            zone: DropZone::Right,
+        })
+        .expect_err("edge drop should be rejected by policy");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::EdgeSplitDisabled)
+    );
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(left_tabs)
+        .expect("source tabs should remain")
+    else {
+        panic!("source should be tabs");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
+fn workspace_policy_blocks_splitter_resize_without_mutating_graph(cx: &mut TestAppContext) {
+    let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.policy_mut().set_allow_splitter_resize(false);
+
+    let err = workspace
+        .apply_action(&DockAction::ResizeSplit {
+            split,
+            fractions: vec![0.7, 0.3],
+        })
+        .expect_err("splitter resize should be rejected by policy");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::SplitterResizeDisabled)
+    );
+    let DockNode::Split { fractions, .. } =
+        workspace.graph().node(split).expect("split should remain")
+    else {
+        panic!("root should be split");
+    };
+    assert_close(fractions[0], 0.5);
+    assert_close(fractions[1], 0.5);
 }
 
 #[open_gpui::test]
@@ -809,6 +957,100 @@ fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) 
         assert_eq!(*axis, SplitAxis::Horizontal);
         assert_eq!(children.len(), 2);
     });
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        start.y,
+    );
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let preview = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::DropPreview { tabs: right_tabs },
+    )
+    .expect("drop preview selector should be emitted");
+    let preview_bounds = debug_bounds(&mut visual, &preview);
+    assert!(preview_bounds.size.width > px(0.0));
+    assert!(preview_bounds.size.height > px(0.0));
+    assert!(
+        preview_bounds.size.width < target_bounds.size.width,
+        "edge preview should occupy only an edge band"
+    );
+}
+
+#[open_gpui::test]
+fn policy_rejected_edge_hover_does_not_render_drop_preview(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_edge_split(false);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(500.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        start.y,
+    );
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropPreview { tabs: right_tabs }
+        )
+        .is_none(),
+        "policy-rejected edge hover should not render preview"
+    );
 }
 
 #[open_gpui::test]

@@ -2,12 +2,13 @@ use crate::{
     DockAction, DockHost, DockItemId, DockNode, DockNodeId, DockPanelResolution, SplitAxis,
     debug::DockDebugRegion,
     drag::{DockTabDragPayload, DockTabDragPreview},
-    drop_target, splitter,
+    drop_target::{self, DockDropResolution},
+    geometry, splitter,
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, black, canvas, div, px, relative, rgb, white,
+    StatefulInteractiveElement, Styled, Window, black, canvas, div, px, relative, rgb, rgba, white,
 };
 
 impl Render for DockHost {
@@ -250,7 +251,7 @@ impl DockHost {
                                     return;
                                 }
 
-                                let handles = splitter::handle_bounds(
+                                let handles = geometry::splitter_handle_bounds(
                                     axis,
                                     split_bounds,
                                     &shares,
@@ -344,6 +345,7 @@ impl DockHost {
         let mut tabs = div()
             .id(selector.clone())
             .debug_selector(move || selector)
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -353,8 +355,13 @@ impl DockHost {
             .bg(white())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                    let intent =
-                        drop_target::resolve_tabs_drop(node, event.bounds, event.event.position);
+                    let intent = drop_target::resolve_tabs_drop(
+                        node,
+                        event.bounds,
+                        event.event.position,
+                        this.policy(),
+                    )
+                    .and_then(DockDropResolution::intent);
                     if this.tab_drop_intent() != intent {
                         this.set_tab_drop_intent(intent);
                         cx.notify();
@@ -465,8 +472,41 @@ impl DockHost {
         }
 
         tabs = tabs.child(tab_bar);
-        tabs.child(self.render_panel(&active_item))
-            .into_any_element()
+        tabs = tabs.child(self.render_panel(&active_item));
+        if let Some(preview) = self.render_drop_preview(node) {
+            tabs = tabs.child(preview);
+        }
+        tabs.into_any_element()
+    }
+
+    fn render_drop_preview(&mut self, node: DockNodeId) -> Option<AnyElement> {
+        let intent = self
+            .tab_drop_intent()
+            .filter(|intent| intent.target_tabs == node)?;
+        let bounds = intent.preview_bounds;
+        let selector = self.record_debug_selector(
+            DockDebugRegion::DropPreview { tabs: node },
+            format!(
+                "{}:tabs:{}:drop-preview",
+                self.selector_prefix(),
+                node.as_u64()
+            ),
+        );
+
+        Some(
+            div()
+                .id(selector.clone())
+                .debug_selector(move || selector)
+                .absolute()
+                .left(bounds.origin.x)
+                .top(bounds.origin.y)
+                .w(bounds.size.width)
+                .h(bounds.size.height)
+                .border_1()
+                .border_color(rgb(0x2563eb))
+                .bg(rgba(0x60a5fa47))
+                .into_any_element(),
+        )
     }
 
     fn render_panel(&mut self, item: &DockItemId) -> AnyElement {

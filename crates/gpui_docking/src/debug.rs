@@ -1,4 +1,5 @@
 use crate::{DockItemId, DockNodeId};
+#[cfg(test)]
 use std::collections::HashMap;
 
 /// Debug-test region emitted by a dock host render pass.
@@ -32,6 +33,11 @@ pub(crate) enum DockDebugRegion {
         /// Runtime tabs node id.
         node: DockNodeId,
     },
+    /// A tab drag/drop preview overlay for one tabs container.
+    DropPreview {
+        /// Runtime tabs node id.
+        tabs: DockNodeId,
+    },
     /// A tab label for one dock item.
     Tab {
         /// Runtime tabs node id containing the item.
@@ -62,11 +68,13 @@ pub(crate) enum DockDebugRegion {
 }
 
 /// Selector instrumentation used by crate-local visual tests.
+#[cfg(test)]
 #[derive(Debug, Default)]
 pub(crate) struct DockDebugInstrumentation {
     selectors: HashMap<DockDebugRegion, String>,
 }
 
+#[cfg(test)]
 impl DockDebugInstrumentation {
     /// Clears selectors from the previous render pass.
     pub(crate) fn clear(&mut self) {

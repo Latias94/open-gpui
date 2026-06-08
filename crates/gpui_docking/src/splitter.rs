@@ -1,7 +1,6 @@
-use crate::SplitAxis;
+use open_gpui::Pixels;
 #[cfg(test)]
 use open_gpui::px;
-use open_gpui::{Bounds, Pixels, point, size};
 
 pub(crate) fn resize_adjacent_fractions(
     fractions: &[f32],
@@ -43,43 +42,6 @@ pub(crate) fn cleaned_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> 
         .collect();
     normalize_shares(&mut shares);
     shares
-}
-
-pub(crate) fn handle_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    shares: &[f32],
-    handle_thickness: Pixels,
-) -> Vec<Bounds<Pixels>> {
-    if shares.len() < 2 {
-        return Vec::new();
-    }
-
-    let half_thickness = handle_thickness / 2.0;
-    let mut cursor = 0.0_f32;
-    let mut handles = Vec::with_capacity(shares.len().saturating_sub(1));
-
-    for share in shares.iter().take(shares.len().saturating_sub(1)) {
-        cursor += *share;
-        match axis {
-            SplitAxis::Horizontal => {
-                let x = split_bounds.origin.x + split_bounds.size.width * cursor - half_thickness;
-                handles.push(Bounds::new(
-                    point(x, split_bounds.origin.y),
-                    size(handle_thickness, split_bounds.size.height),
-                ));
-            }
-            SplitAxis::Vertical => {
-                let y = split_bounds.origin.y + split_bounds.size.height * cursor - half_thickness;
-                handles.push(Bounds::new(
-                    point(split_bounds.origin.x, y),
-                    size(split_bounds.size.width, handle_thickness),
-                ));
-            }
-        }
-    }
-
-    handles
 }
 
 fn normalize_shares(shares: &mut Vec<f32>) {

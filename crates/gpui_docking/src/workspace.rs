@@ -1,6 +1,6 @@
 use crate::{
-    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelRegistry, DockSpaceId,
-    host::DockHostOptions,
+    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelRegistry, DockPolicy,
+    DockSpaceId, host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -15,6 +15,7 @@ pub struct DockWorkspace {
     space: DockSpaceId,
     panels: DockPanelRegistry,
     options: DockHostOptions,
+    policy: DockPolicy,
 }
 
 impl DockWorkspace {
@@ -34,6 +35,7 @@ impl DockWorkspace {
             space: space.into(),
             panels: DockPanelRegistry::new(),
             options,
+            policy: DockPolicy::default(),
         }
     }
 
@@ -55,11 +57,6 @@ impl DockWorkspace {
     /// Applies a docking operation with checked failure reporting.
     pub fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
         self.graph.apply_op_checked(op)
-    }
-
-    /// Applies a docking operation and returns whether it changed or preserved valid state.
-    pub fn apply_op(&mut self, op: &DockOp) -> bool {
-        self.graph.apply_op(op)
     }
 
     /// Returns the panel registry.
@@ -96,11 +93,18 @@ impl DockWorkspace {
         &mut self.options
     }
 
-    pub(crate) fn graph_mut(&mut self) -> &mut DockGraph {
-        &mut self.graph
+    /// Returns the workspace docking interaction policy.
+    pub fn policy(&self) -> &DockPolicy {
+        &self.policy
     }
 
-    pub(crate) fn panels_mut(&mut self) -> &mut DockPanelRegistry {
-        &mut self.panels
+    /// Returns mutable workspace docking interaction policy.
+    pub fn policy_mut(&mut self) -> &mut DockPolicy {
+        &mut self.policy
+    }
+
+    /// Replaces the workspace docking interaction policy.
+    pub fn set_policy(&mut self, policy: DockPolicy) {
+        self.policy = policy;
     }
 }

@@ -105,11 +105,6 @@ impl DockGraph {
         self.nodes.get(id)
     }
 
-    /// Returns a mutable node by id.
-    pub fn node_mut(&mut self, id: DockNodeId) -> Option<&mut DockNode> {
-        self.nodes.get_mut(id)
-    }
-
     /// Sets the root node for a dock space.
     pub fn set_root(&mut self, space: DockSpaceId, root: DockNodeId) {
         self.roots.insert(space, root);
@@ -183,6 +178,34 @@ impl DockGraph {
                     })
                 }
             }
+            DockOp::MoveItem {
+                source_space,
+                item,
+                target_space,
+                target_tabs,
+                zone,
+                ..
+            } => {
+                self.validate_move_item(source_space, item, target_space, *target_tabs, *zone)?;
+                Ok(self.apply_op(op))
+            }
+            DockOp::SetSplitFractions { split, fractions } => {
+                self.validate_split_fractions(*split, fractions)?;
+                Ok(self.apply_op(op))
+            }
+            DockOp::SetSplitFractionsMany { updates } => {
+                for update in updates {
+                    self.validate_split_fractions(update.split, &update.fractions)?;
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::SetSplitFractionTwo {
+                split,
+                first_fraction,
+            } => {
+                self.validate_split_fractions(*split, &[*first_fraction, 1.0 - *first_fraction])?;
+                Ok(self.apply_op(op))
+            }
             _ => {
                 let ok = self.apply_op(op);
                 if ok {
@@ -195,7 +218,7 @@ impl DockGraph {
     }
 
     /// Applies an operation and returns whether it changed or preserved a valid graph state.
-    pub fn apply_op(&mut self, op: &DockOp) -> bool {
+    pub(crate) fn apply_op(&mut self, op: &DockOp) -> bool {
         match op {
             DockOp::SetActiveTab { tabs, active } => self.set_active_tab(*tabs, *active),
             DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),
@@ -489,6 +512,71 @@ impl DockGraph {
         Some(EdgeDockDecision::WrapNewSplit)
     }
 
+    fn validate_move_item(
+        &self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+    ) -> Result<(), DockOpApplyError> {
+        if self.find_item_in_space(source_space, item).is_none() {
+            return Err(DockOpApplyError::ItemNotFound {
+                space: source_space.clone(),
+                item: item.clone(),
+            });
+        }
+        if self
+            .root_for_node_in_space(target_space, target_tabs)
+            .is_none()
+        {
+            return Err(DockOpApplyError::TargetNodeNotInSpace {
+                space: target_space.clone(),
+                target: target_tabs,
+            });
+        }
+        if zone == DropZone::Center {
+            match self.node(target_tabs) {
+                Some(DockNode::Tabs { .. }) => {}
+                Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
+                None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_split_fractions(
+        &self,
+        split: DockNodeId,
+        fractions: &[f32],
+    ) -> Result<(), DockOpApplyError> {
+        let Some(node) = self.node(split) else {
+            return Err(DockOpApplyError::SplitNodeNotFound { split });
+        };
+        let DockNode::Split { children, .. } = node else {
+            return Err(DockOpApplyError::NodeIsNotSplit { node: split });
+        };
+        if children.len() < 2 {
+            return Err(DockOpApplyError::SplitTooFewChildren {
+                split,
+                children_len: children.len(),
+            });
+        }
+        if fractions.len() != children.len() {
+            return Err(DockOpApplyError::SplitFractionsLenMismatch {
+                split,
+                children_len: children.len(),
+                fractions_len: fractions.len(),
+            });
+        }
+        for (index, fraction) in fractions.iter().copied().enumerate() {
+            if !fraction.is_finite() || fraction < 0.0 {
+                return Err(DockOpApplyError::SplitFractionInvalid { split, index });
+            }
+        }
+        Ok(())
+    }
+
     /// Simplifies every tree in one dock space into canonical form.
     pub fn simplify_space(&mut self, space: &DockSpaceId) {
         if let Some(root) = self.root(space) {
@@ -570,6 +658,14 @@ impl DockGraph {
         }
 
         normalize_shares(&mut next);
+        if fractions.len() == next.len()
+            && fractions
+                .iter()
+                .zip(next.iter())
+                .all(|(current, next)| (*current - *next).abs() <= 0.0001)
+        {
+            return false;
+        }
         *fractions = next;
         true
     }
