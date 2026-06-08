@@ -280,6 +280,43 @@ impl DockGraph {
                 }
                 Ok(self.apply_op(op))
             }
+            DockOp::FloatItemInWindow {
+                source_space, item, ..
+            } => {
+                if self.find_item_in_space(source_space, item).is_none() {
+                    return Err(DockOpApplyError::ItemNotFound {
+                        space: source_space.clone(),
+                        item: item.clone(),
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::FloatTabsInWindow {
+                source_space,
+                source_tabs,
+                ..
+            } => {
+                let Some(node) = self.node(*source_tabs) else {
+                    return Err(DockOpApplyError::TabsNodeNotFound { tabs: *source_tabs });
+                };
+                match node {
+                    DockNode::Tabs { items, .. } if items.is_empty() => {
+                        return Err(DockOpApplyError::OperationFailed);
+                    }
+                    DockNode::Tabs { .. } => {}
+                    _ => return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs }),
+                }
+                if self
+                    .root_for_node_in_space(source_space, *source_tabs)
+                    .is_none()
+                {
+                    return Err(DockOpApplyError::SourceNodeNotInSpace {
+                        space: source_space.clone(),
+                        node: *source_tabs,
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
             DockOp::SetFloatingBounds {
                 space, floating, ..
             }
@@ -289,6 +326,33 @@ impl DockGraph {
                         space: space.clone(),
                         floating: *floating,
                     });
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::MergeFloatingInto {
+                space,
+                floating,
+                target_tabs,
+            } => {
+                if self.floating_container(space, *floating).is_none() {
+                    return Err(DockOpApplyError::FloatingContainerNotFound {
+                        space: space.clone(),
+                        floating: *floating,
+                    });
+                }
+                match self.node(*target_tabs) {
+                    Some(DockNode::Tabs { .. }) => {}
+                    Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: *target_tabs }),
+                    None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: *target_tabs }),
+                }
+                let Some(target_root) = self.root_for_node_in_space(space, *target_tabs) else {
+                    return Err(DockOpApplyError::TargetNodeNotInSpace {
+                        space: space.clone(),
+                        target: *target_tabs,
+                    });
+                };
+                if target_root == *floating {
+                    return Err(DockOpApplyError::OperationFailed);
                 }
                 Ok(self.apply_op(op))
             }
@@ -308,14 +372,6 @@ impl DockGraph {
             } => {
                 self.validate_split_fractions(*split, &[*first_fraction, 1.0 - *first_fraction])?;
                 Ok(self.apply_op(op))
-            }
-            _ => {
-                let ok = self.apply_op(op);
-                if ok {
-                    Ok(true)
-                } else {
-                    Err(DockOpApplyError::OperationFailed)
-                }
             }
         }
     }
