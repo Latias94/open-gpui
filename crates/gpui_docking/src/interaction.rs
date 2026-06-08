@@ -1,7 +1,6 @@
 use crate::{
-    DockAction, DockNodeId, DockPolicy, DockSpaceId, DropZone,
-    drop_target::{self, DockDropIntent, DockDropResolution},
-    splitter,
+    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockDropIntent, splitter,
+    tab_drop_runtime::DockTabDropRuntime,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -9,7 +8,7 @@ use open_gpui::{Bounds, Pixels, Point, point};
 pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
-    tab_drop_intent: Option<DockDropIntent>,
+    tab_drop: DockTabDropRuntime,
 }
 
 #[derive(Debug, Clone)]
@@ -117,19 +116,8 @@ impl DockInteractionRuntime {
         position: Point<Pixels>,
         policy: &DockPolicy,
     ) -> bool {
-        let mut intent = drop_target::resolve_tabs_drop(target_tabs, bounds, position, policy)
-            .and_then(DockDropResolution::intent);
-        if let Some(existing) = self.tab_drop_intent
-            && existing.target_tabs == target_tabs
-            && existing.insert_index.is_some()
-            && existing.preview_bounds.contains(&position)
-            && intent.as_ref().is_some_and(|intent| {
-                intent.target_tabs == target_tabs && intent.zone == DropZone::Center
-            })
-        {
-            intent = Some(existing);
-        }
-        self.replace_tab_drop_intent(intent)
+        self.tab_drop
+            .update_tabs_drop_intent(target_tabs, bounds, position, policy)
     }
 
     pub(crate) fn update_tab_reorder_drop_intent(
@@ -140,48 +128,27 @@ impl DockInteractionRuntime {
         position: Point<Pixels>,
         policy: &DockPolicy,
     ) -> bool {
-        let Some(resolution) = drop_target::resolve_tab_reorder_drop(
+        self.tab_drop.update_tab_reorder_drop_intent(
             target_tabs,
             target_index,
             bounds,
             position,
             policy,
-        ) else {
-            return false;
-        };
-        self.replace_tab_drop_intent(resolution.intent())
+        )
     }
 
     pub(crate) fn take_tab_drop_intent(
         &mut self,
         target_tabs: DockNodeId,
     ) -> Option<DockDropIntent> {
-        let intent = self
-            .tab_drop_intent
-            .filter(|intent| intent.target_tabs == target_tabs);
-        self.tab_drop_intent = None;
-        intent
+        self.tab_drop.take_intent(target_tabs)
     }
 
     pub(crate) fn tab_drop_preview_bounds(
         &self,
         target_tabs: DockNodeId,
     ) -> Option<Bounds<Pixels>> {
-        let intent = self
-            .tab_drop_intent
-            .filter(|intent| intent.target_tabs == target_tabs)?;
-        if intent.insert_index.is_some() {
-            return None;
-        }
-        Some(intent.preview_bounds)
-    }
-
-    fn replace_tab_drop_intent(&mut self, intent: Option<DockDropIntent>) -> bool {
-        if self.tab_drop_intent == intent {
-            return false;
-        }
-        self.tab_drop_intent = intent;
-        true
+        self.tab_drop.preview_bounds(target_tabs)
     }
 
     #[cfg(test)]
@@ -193,17 +160,12 @@ impl DockInteractionRuntime {
     pub(crate) fn floating_drag(&self) -> Option<&FloatingDrag> {
         self.floating_drag.as_ref()
     }
-
-    #[cfg(test)]
-    pub(crate) fn tab_drop_intent(&self) -> Option<DockDropIntent> {
-        self.tab_drop_intent
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockNodeId, DropZone};
+    use crate::DockNodeId;
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -279,78 +241,5 @@ mod tests {
         );
         assert!(runtime.finish_floating_drag());
         assert!(!runtime.finish_floating_drag());
-    }
-
-    #[test]
-    fn tab_reorder_drop_updates_intent_only_inside_tab_bounds() {
-        let tabs = DockNodeId::null();
-        let mut runtime = DockInteractionRuntime::default();
-
-        assert!(runtime.update_tab_reorder_drop_intent(
-            tabs,
-            2,
-            bounds(10.0, 20.0, 100.0, 24.0),
-            point(px(95.0), px(28.0)),
-            &DockPolicy::default(),
-        ));
-        assert_eq!(
-            runtime.tab_drop_intent().map(|intent| intent.insert_index),
-            Some(Some(3))
-        );
-
-        assert!(!runtime.update_tab_reorder_drop_intent(
-            tabs,
-            1,
-            bounds(10.0, 20.0, 100.0, 24.0),
-            point(px(200.0), px(28.0)),
-            &DockPolicy::default(),
-        ));
-        assert_eq!(
-            runtime.tab_drop_intent().map(|intent| intent.insert_index),
-            Some(Some(3))
-        );
-    }
-
-    #[test]
-    fn tabs_drop_preserves_reorder_intent_while_pointer_stays_inside_tab() {
-        let tabs = DockNodeId::null();
-        let mut runtime = DockInteractionRuntime::default();
-
-        assert!(runtime.update_tab_reorder_drop_intent(
-            tabs,
-            2,
-            bounds(10.0, 100.0, 100.0, 24.0),
-            point(px(95.0), px(108.0)),
-            &DockPolicy::default(),
-        ));
-        assert!(!runtime.update_tabs_drop_intent(
-            tabs,
-            bounds(0.0, 0.0, 400.0, 400.0),
-            point(px(95.0), px(108.0)),
-            &DockPolicy::default(),
-        ));
-
-        let intent = runtime
-            .take_tab_drop_intent(tabs)
-            .expect("reorder intent should remain available");
-        assert_eq!(intent.zone, DropZone::Center);
-        assert_eq!(intent.insert_index, Some(3));
-        assert!(runtime.tab_drop_intent().is_none());
-    }
-
-    #[test]
-    fn reorder_intent_does_not_render_drop_preview() {
-        let tabs = DockNodeId::null();
-        let mut runtime = DockInteractionRuntime::default();
-
-        assert!(runtime.update_tab_reorder_drop_intent(
-            tabs,
-            0,
-            bounds(10.0, 20.0, 100.0, 24.0),
-            point(px(20.0), px(28.0)),
-            &DockPolicy::default(),
-        ));
-
-        assert_eq!(runtime.tab_drop_preview_bounds(tabs), None);
     }
 }

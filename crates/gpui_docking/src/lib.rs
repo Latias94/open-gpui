@@ -101,6 +101,7 @@ mod render;
 mod render_floating;
 mod render_split;
 mod splitter;
+mod tab_drop_runtime;
 mod viewport;
 mod viewport_close;
 mod viewport_close_gate;
