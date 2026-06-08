@@ -1,13 +1,15 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint,
-    CanvasNode, CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
+    CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver, CanvasNode,
+    CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError,
+    EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    connection_hit_options,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, sync::Arc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PointerButton {
@@ -302,15 +304,31 @@ pub enum CanvasToolEffect {
     SetViewport(CanvasViewport),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct CanvasToolContext<'a> {
     pub document: &'a CanvasDocument,
     pub viewport: &'a CanvasViewport,
     pub tool: &'a CanvasTool,
     pub state: &'a ToolState,
     pub runtime: &'a CanvasRuntime,
+    pub edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
     pub selection: &'a CanvasSelection,
     pub history: &'a CanvasHistory,
+}
+
+impl fmt::Debug for CanvasToolContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CanvasToolContext")
+            .field("document", self.document)
+            .field("viewport", self.viewport)
+            .field("tool", self.tool)
+            .field("state", self.state)
+            .field("runtime", self.runtime)
+            .field("edge_router", &"<dyn CanvasEdgeRouter>")
+            .field("selection", self.selection)
+            .field("history", self.history)
+            .finish()
+    }
 }
 
 impl CanvasToolContext<'_> {
@@ -505,6 +523,7 @@ pub struct CanvasEditor {
     tool: CanvasTool,
     state: ToolState,
     runtime: CanvasRuntime,
+    edge_router: Arc<dyn CanvasEdgeRouter + Send + Sync>,
     selection: CanvasSelection,
     history: CanvasHistory,
     gesture: Option<CanvasGestureSession>,
@@ -518,13 +537,22 @@ impl Default for CanvasEditor {
 
 impl CanvasEditor {
     pub fn new(document: CanvasDocument) -> Self {
-        let runtime = CanvasRuntime::rebuild(&document);
+        Self::new_with_router(document, CanvasDefaultEdgeRouter)
+    }
+
+    pub fn new_with_router<R>(document: CanvasDocument, edge_router: R) -> Self
+    where
+        R: CanvasEdgeRouter + Send + Sync + 'static,
+    {
+        let edge_router = Arc::new(edge_router);
+        let runtime = CanvasRuntime::rebuild_with_router(&document, edge_router.as_ref());
         Self {
             document,
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
             runtime,
+            edge_router,
             selection: CanvasSelection::default(),
             history: CanvasHistory::default(),
             gesture: None,
@@ -566,6 +594,10 @@ impl CanvasEditor {
         &self.runtime
     }
 
+    pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
+        self.edge_router.as_ref()
+    }
+
     pub fn selection(&self) -> &CanvasSelection {
         &self.selection
     }
@@ -593,7 +625,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         Ok(diff)
     }
 
@@ -605,7 +637,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         diff
     }
 
@@ -699,7 +731,7 @@ impl CanvasEditor {
             .push_undo(prepared.committed().inverse().clone());
         self.gesture = None;
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         diff
     }
 
@@ -723,7 +755,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         Ok(true)
     }
 
@@ -736,7 +768,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         Ok(true)
     }
 
@@ -745,7 +777,16 @@ impl CanvasEditor {
     }
 
     pub fn rebuild_runtime(&mut self) {
-        self.runtime = CanvasRuntime::rebuild(&self.document);
+        self.runtime =
+            CanvasRuntime::rebuild_with_router(&self.document, self.edge_router.as_ref());
+    }
+
+    pub fn set_edge_router<R>(&mut self, edge_router: R)
+    where
+        R: CanvasEdgeRouter + Send + Sync + 'static,
+    {
+        self.edge_router = Arc::new(edge_router);
+        self.rebuild_runtime();
     }
 
     pub fn set_tool(&mut self, tool: CanvasTool) {
@@ -768,6 +809,7 @@ impl CanvasEditor {
             tool: &self.tool,
             state: &self.state,
             runtime: &self.runtime,
+            edge_router: self.edge_router.as_ref(),
             selection: &self.selection,
             history: &self.history,
         }
@@ -1184,44 +1226,9 @@ impl CanvasEditor {
         point: Point<Pixels>,
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
-        for record in self.runtime.hit_test(
-            point,
-            HitOptions {
-                include_handles: true,
-                ..HitOptions::default()
-            },
-        ) {
-            match &record.target {
-                HitTarget::Handle { node_id, handle_id } => {
-                    return self.handle_endpoint(node_id, handle_id, role);
-                }
-                HitTarget::Node(node_id) => {
-                    return Some(CanvasEndpoint {
-                        node_id: node_id.clone(),
-                        handle_id: None,
-                    });
-                }
-                HitTarget::Edge(_) | HitTarget::Shape(_) => {}
-            }
-        }
-
-        None
-    }
-
-    fn handle_endpoint(
-        &self,
-        node_id: &NodeId,
-        handle_id: &crate::HandleId,
-        role: CanvasConnectionEndpointRole,
-    ) -> Option<CanvasEndpoint> {
-        let node = self.document.nodes.get(node_id)?;
-        let handle = node.handle(Some(handle_id))?;
-        handle
-            .is_pickable_connection_endpoint(role)
-            .then(|| CanvasEndpoint {
-                node_id: node_id.clone(),
-                handle_id: Some(handle_id.clone()),
-            })
+        let resolver = CanvasGeometryResolver::new(&self.document);
+        resolver
+            .connection_endpoint_at(self.runtime.hit_test(point, connection_hit_options()), role)
     }
 
     fn begin_gesture(&mut self) {
@@ -1258,8 +1265,13 @@ impl CanvasEditor {
         let committed = self.document.commit_transaction(transaction)?;
         let diff = committed.diff().clone();
         self.selection.retain_document(&self.document);
-        self.runtime.apply_diff(&self.document, &diff);
+        self.sync_runtime_diff(&diff);
         Ok(diff)
+    }
+
+    fn sync_runtime_diff(&mut self, diff: &CanvasDocumentDiff) {
+        self.runtime
+            .apply_diff_with_router(&self.document, diff, self.edge_router.as_ref());
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
@@ -1392,7 +1404,7 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, CanvasShape, HandleId};
+    use crate::{CanvasNode, CanvasRoutePath, CanvasRouteRequest, CanvasShape, HandleId};
     use open_gpui::{point, px, size};
 
     #[derive(Default)]
@@ -2886,5 +2898,81 @@ mod tests {
                 .next()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn editor_refreshes_runtime_geometry_with_installed_router() {
+        let mut editor =
+            CanvasEditor::new_with_router(connected_edge_document(), VerticalDetourRouter);
+
+        assert_eq!(
+            editor
+                .runtime()
+                .edge_geometry(&EdgeId::from("a-b"))
+                .unwrap()
+                .path
+                .document_points(),
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(5.0), px(80.0)),
+                point(px(25.0), px(5.0)),
+            ]
+        );
+
+        let mut target = editor.document().nodes[&NodeId::from("b")].clone();
+        target.position = point(px(40.0), px(0.0));
+        editor.apply(DocumentCommand::UpdateNode(target)).unwrap();
+
+        assert_eq!(
+            editor
+                .runtime()
+                .edge_geometry(&EdgeId::from("a-b"))
+                .unwrap()
+                .path
+                .document_points(),
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(5.0), px(80.0)),
+                point(px(45.0), px(5.0)),
+            ]
+        );
+    }
+
+    fn connected_edge_document() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+    }
+
+    struct VerticalDetourRouter;
+
+    impl CanvasEdgeRouter for VerticalDetourRouter {
+        fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath {
+            CanvasRoutePath::polyline([
+                request.source,
+                point(request.source.x, px(80.0)),
+                request.target,
+            ])
+        }
     }
 }

@@ -1,7 +1,8 @@
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint,
-    CanvasEvent, CanvasKey, CanvasKeyModifiers, CanvasRouteSegment, CanvasRuntime, CanvasSelection,
-    CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
+    CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
+    CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasViewport, HitOptions, HitTarget,
+    PointerButton, SpatialIndex, ToolState, connection_hit_options,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -20,7 +21,18 @@ pub struct CanvasPaintModel {
 
 impl CanvasPaintModel {
     pub fn new(document: CanvasDocument, viewport: CanvasViewport) -> Self {
-        let runtime = CanvasRuntime::rebuild(&document);
+        Self::new_with_router(document, viewport, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn new_with_router<R>(
+        document: CanvasDocument,
+        viewport: CanvasViewport,
+        router: &R,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let runtime = CanvasRuntime::rebuild_with_router(&document, router);
         Self {
             document: Arc::new(document),
             runtime: Arc::new(runtime),
@@ -34,7 +46,20 @@ impl CanvasPaintModel {
         index: Arc<SpatialIndex>,
         viewport: CanvasViewport,
     ) -> Self {
-        let runtime = CanvasRuntime::from_spatial_index(&document, (*index).clone());
+        Self::from_parts_with_router(document, index, viewport, &CanvasDefaultEdgeRouter)
+    }
+
+    pub fn from_parts_with_router<R>(
+        document: Arc<CanvasDocument>,
+        index: Arc<SpatialIndex>,
+        viewport: CanvasViewport,
+        router: &R,
+    ) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        let runtime =
+            CanvasRuntime::from_spatial_index_with_router(&document, (*index).clone(), router);
         Self {
             document,
             runtime: Arc::new(runtime),
@@ -495,7 +520,8 @@ fn connection_preview(
     source: &CanvasEndpoint,
     current: Point<Pixels>,
 ) -> Option<CanvasPaintConnectionPreview> {
-    let source = model.document.endpoint_position(source).ok()?;
+    let resolver = CanvasGeometryResolver::new(&model.document);
+    let source = resolver.endpoint_position(source).ok()?;
     let target = connection_preview_target_position(model, source, current).unwrap_or(current);
     Some(CanvasPaintConnectionPreview {
         source_view_position: model.viewport.document_to_view(source),
@@ -508,44 +534,12 @@ fn connection_preview_target_position(
     source: Point<Pixels>,
     current: Point<Pixels>,
 ) -> Option<Point<Pixels>> {
-    let target = connection_target_endpoint_at(model, current)?;
-    let target_position = model.document.endpoint_position(&target).ok()?;
-    (target_position != source).then_some(target_position)
-}
-
-fn connection_target_endpoint_at(
-    model: &CanvasPaintModel,
-    point: Point<Pixels>,
-) -> Option<CanvasEndpoint> {
-    for record in model.runtime.hit_test(
-        point,
-        HitOptions {
-            include_handles: true,
-            ..HitOptions::default()
-        },
-    ) {
-        match &record.target {
-            HitTarget::Handle { node_id, handle_id } => {
-                let node = model.document.nodes.get(node_id)?;
-                let handle = node.handle(Some(handle_id))?;
-                return handle
-                    .is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Target)
-                    .then(|| CanvasEndpoint {
-                        node_id: node_id.clone(),
-                        handle_id: Some(handle_id.clone()),
-                    });
-            }
-            HitTarget::Node(node_id) => {
-                return Some(CanvasEndpoint {
-                    node_id: node_id.clone(),
-                    handle_id: None,
-                });
-            }
-            HitTarget::Edge(_) | HitTarget::Shape(_) => {}
-        }
-    }
-
-    None
+    let resolver = CanvasGeometryResolver::new(&model.document);
+    resolver.connection_preview_target(
+        model.runtime.hit_test(current, connection_hit_options()),
+        source,
+        current,
+    )
 }
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
@@ -619,7 +613,16 @@ fn paint_edge(
     stroke_width: Pixels,
 ) {
     let mut builder = PathBuilder::stroke(stroke_width);
-    let Ok(path) = model.document.edge_route_path(edge) else {
+    let Some(path) = model
+        .runtime
+        .edge_geometry(&edge.id)
+        .map(|geometry| geometry.path.clone())
+        .or_else(|| {
+            CanvasGeometryResolver::new(&model.document)
+                .edge_route_path(edge)
+                .ok()
+        })
+    else {
         return;
     };
 
@@ -722,7 +725,10 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode, CanvasToolEffect, HandleRole};
+    use crate::{
+        CanvasHandle, CanvasNode, CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode,
+        CanvasToolEffect, EdgeId, HandleRole,
+    };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
     #[test]
@@ -840,6 +846,41 @@ mod tests {
                     if node_id.as_str() == "node" && handle_id.as_str() == "out"
             )
         }));
+    }
+
+    #[test]
+    fn paint_model_culls_edges_with_custom_router_geometry() {
+        let document = connected_edge_document();
+        let model = CanvasPaintModel::new_with_router(
+            document,
+            CanvasViewport::default(),
+            &VerticalDetourRouter,
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(76.0)), size(px(12.0), px(12.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert!(frame.records.iter().any(|record| {
+            record.target == HitTarget::Edge(EdgeId::from("a-b"))
+                && record.document_bounds.origin == point(px(-1.0), px(-1.0))
+                && record.document_bounds.size == size(px(32.0), px(87.0))
+        }));
+        assert_eq!(
+            model
+                .runtime
+                .edge_geometry(&EdgeId::from("a-b"))
+                .unwrap()
+                .path
+                .document_points(),
+            vec![
+                point(px(5.0), px(5.0)),
+                point(px(5.0), px(80.0)),
+                point(px(25.0), px(5.0)),
+            ]
+        );
     }
 
     #[test]
@@ -1254,5 +1295,43 @@ mod tests {
         }
 
         document
+    }
+
+    fn connected_edge_document() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+    }
+
+    struct VerticalDetourRouter;
+
+    impl CanvasEdgeRouter for VerticalDetourRouter {
+        fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath {
+            CanvasRoutePath::polyline([
+                request.source,
+                point(request.source.x, px(80.0)),
+                request.target,
+            ])
+        }
     }
 }

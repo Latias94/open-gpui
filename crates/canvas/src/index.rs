@@ -1,5 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver, CanvasRecordId,
+    EdgeId, HandleId, NodeId, ShapeId,
 };
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
@@ -66,6 +67,21 @@ pub struct SpatialIndex {
 
 impl SpatialIndex {
     pub fn rebuild(document: &CanvasDocument) -> Self {
+        Self::rebuild_with_resolver(CanvasGeometryResolver::new(document))
+    }
+
+    pub fn rebuild_with_router<R>(document: &CanvasDocument, router: &R) -> Self
+    where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router(document, router))
+    }
+
+    fn rebuild_with_resolver<R>(resolver: CanvasGeometryResolver<'_, R>) -> Self
+    where
+        R: CanvasEdgeRouter + Copy,
+    {
+        let document = resolver.document();
         let mut records = Vec::new();
 
         for node in document.nodes.values() {
@@ -102,7 +118,7 @@ impl SpatialIndex {
         }
 
         for edge in document.edges.values() {
-            if let Ok(bounds) = document.edge_bounds(edge) {
+            if let Ok(bounds) = resolver.edge_bounds(edge) {
                 records.push(HitRecord {
                     target: HitTarget::Edge(edge.id.clone()),
                     bounds,
@@ -118,6 +134,27 @@ impl SpatialIndex {
     }
 
     pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
+        self.apply_diff_with_resolver(CanvasGeometryResolver::new(document), diff);
+    }
+
+    pub fn apply_diff_with_router<R>(
+        &mut self,
+        document: &CanvasDocument,
+        diff: &CanvasDocumentDiff,
+        router: &R,
+    ) where
+        R: CanvasEdgeRouter + ?Sized,
+    {
+        self.apply_diff_with_resolver(CanvasGeometryResolver::with_router(document, router), diff);
+    }
+
+    fn apply_diff_with_resolver<R>(
+        &mut self,
+        resolver: CanvasGeometryResolver<'_, R>,
+        diff: &CanvasDocumentDiff,
+    ) where
+        R: CanvasEdgeRouter + Copy,
+    {
         if diff.is_empty() {
             return;
         }
@@ -127,7 +164,7 @@ impl SpatialIndex {
         }
 
         for record_id in diff.updated.iter().chain(&diff.inserted) {
-            self.refresh_record(document, record_id);
+            self.refresh_record_with_resolver(resolver, record_id);
         }
 
         self.records.sort_by(|a, b| a.z_index.cmp(&b.z_index));
@@ -183,7 +220,14 @@ impl SpatialIndex {
         &self.records
     }
 
-    fn refresh_record(&mut self, document: &CanvasDocument, record_id: &CanvasRecordId) {
+    fn refresh_record_with_resolver<R>(
+        &mut self,
+        resolver: CanvasGeometryResolver<'_, R>,
+        record_id: &CanvasRecordId,
+    ) where
+        R: CanvasEdgeRouter + Copy,
+    {
+        let document = resolver.document();
         self.remove_record(record_id);
 
         match record_id {
@@ -218,7 +262,10 @@ impl SpatialIndex {
                     .values()
                     .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
                 {
-                    self.refresh_record(document, &CanvasRecordId::Edge(edge.id.clone()));
+                    self.refresh_record_with_resolver(
+                        resolver,
+                        &CanvasRecordId::Edge(edge.id.clone()),
+                    );
                 }
             }
             CanvasRecordId::Edge(id) => {
@@ -226,7 +273,7 @@ impl SpatialIndex {
                     return;
                 };
 
-                if let Ok(bounds) = document.edge_bounds(edge) {
+                if let Ok(bounds) = resolver.edge_bounds(edge) {
                     self.records.push(HitRecord {
                         target: HitTarget::Edge(edge.id.clone()),
                         bounds,
@@ -294,7 +341,8 @@ impl CanvasSpatialIndex for SpatialIndex {
 mod tests {
     use super::*;
     use crate::{
-        CanvasDocument, CanvasNode, CanvasShape, CanvasTransaction,
+        CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasNode, CanvasRoutePath,
+        CanvasRouteRequest, CanvasShape, CanvasTransaction,
         test_support::{CanvasCommandGenerator, TestRng},
     };
     use open_gpui::{Bounds, point, px, size};
@@ -532,6 +580,46 @@ mod tests {
                 && record.bounds.origin == point(px(4.0), px(4.0))
                 && record.bounds.size.width == px(112.0)
                 && record.bounds.size.height == px(12.0)
+        }));
+    }
+
+    #[test]
+    fn custom_router_flows_through_edge_culling_and_hit_testing() {
+        let document = connected_document_for_router();
+        let index = SpatialIndex::rebuild_with_router(&document, &VerticalDetourRouter);
+
+        let visible = index
+            .query(Bounds::new(
+                point(px(0.0), px(76.0)),
+                size(px(12.0), px(12.0)),
+            ))
+            .map(|record| record.target.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(visible, vec![HitTarget::Edge(EdgeId::from("a-b"))]);
+
+        let hits = index
+            .hit_test(point(px(5.0), px(80.0)), HitOptions::default())
+            .map(|record| record.target.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(hits, vec![HitTarget::Edge(EdgeId::from("a-b"))]);
+    }
+
+    #[test]
+    fn custom_router_flows_through_incremental_edge_refresh() {
+        let mut document = connected_document_for_router();
+        let mut index = SpatialIndex::rebuild_with_router(&document, &VerticalDetourRouter);
+        let mut target = document.nodes[&NodeId::from("b")].clone();
+        target.position = point(px(40.0), px(0.0));
+
+        let previous = document.clone();
+        document.update_node(target).unwrap();
+        let diff = document.diff_against(&previous);
+        index.apply_diff_with_router(&document, &diff, &VerticalDetourRouter);
+
+        assert!(index.records().iter().any(|record| {
+            record.target == HitTarget::Edge(EdgeId::from("a-b"))
+                && record.bounds.origin == point(px(-1.0), px(-1.0))
+                && record.bounds.size == size(px(52.0), px(87.0))
         }));
     }
 
@@ -774,6 +862,44 @@ mod tests {
             }
             HitTarget::Shape(id) => (2, id.to_string(), String::new()),
             HitTarget::Edge(id) => (3, id.to_string(), String::new()),
+        }
+    }
+
+    fn connected_document_for_router() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+    }
+
+    struct VerticalDetourRouter;
+
+    impl CanvasEdgeRouter for VerticalDetourRouter {
+        fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath {
+            CanvasRoutePath::polyline([
+                request.source,
+                point(request.source.x, px(80.0)),
+                request.target,
+            ])
         }
     }
 }

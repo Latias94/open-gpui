@@ -6,9 +6,8 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::journal::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
-use crate::routing::{
-    CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
-};
+use crate::resolve::CanvasGeometryResolver;
+use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 
 pub type CanvasValue = Map<String, Value>;
 
@@ -841,22 +840,7 @@ impl CanvasDocument {
         &self,
         endpoint: &CanvasEndpoint,
     ) -> Result<Point<Pixels>, DocumentError> {
-        let node = self
-            .nodes
-            .get(&endpoint.node_id)
-            .ok_or_else(|| DocumentError::MissingNode(endpoint.node_id.clone()))?;
-
-        if let Some(handle_id) = &endpoint.handle_id {
-            let handle =
-                node.handle(Some(handle_id))
-                    .ok_or_else(|| DocumentError::MissingHandle {
-                        node_id: endpoint.node_id.clone(),
-                        handle_id: handle_id.clone(),
-                    })?;
-            return Ok(node.position + handle.position);
-        }
-
-        Ok(node.bounds().center())
+        CanvasGeometryResolver::new(self).endpoint_position(endpoint)
     }
 
     pub fn edge_route_path(&self, edge: &CanvasEdge) -> Result<CanvasRoutePath, DocumentError> {
@@ -871,13 +855,7 @@ impl CanvasDocument {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let source = self.endpoint_position(&edge.source)?;
-        let target = self.endpoint_position(&edge.target)?;
-        Ok(router.route_edge(CanvasRouteRequest {
-            edge,
-            source,
-            target,
-        }))
+        CanvasGeometryResolver::with_router(self, router).edge_route_path(edge)
     }
 
     pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
@@ -892,32 +870,7 @@ impl CanvasDocument {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let path = self.edge_route_path_with_router(edge, router)?;
-        let bounds = match path.bounds() {
-            Some(bounds) => bounds,
-            None => {
-                let source = self.endpoint_position(&edge.source)?;
-                let target = self.endpoint_position(&edge.target)?;
-                Bounds::from_corners(
-                    Point::new(source.x.min(target.x), source.y.min(target.y)),
-                    Point::new(source.x.max(target.x), source.y.max(target.y)),
-                )
-            }
-        };
-        let stroke_width = if edge.style.stroke_width.as_f32().is_finite()
-            && edge.style.stroke_width > Pixels::ZERO
-        {
-            edge.style.stroke_width
-        } else {
-            Pixels::ZERO
-        };
-        let interaction_width = if edge.route.interaction_width > stroke_width {
-            edge.route.interaction_width
-        } else {
-            stroke_width
-        };
-
-        Ok(bounds.dilate(interaction_width * 0.5))
+        CanvasGeometryResolver::with_router(self, router).edge_bounds(edge)
     }
 
     pub fn edge_route_points(

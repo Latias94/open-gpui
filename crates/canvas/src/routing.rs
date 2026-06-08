@@ -139,6 +139,15 @@ pub trait CanvasEdgeRouter {
     fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath;
 }
 
+impl<T> CanvasEdgeRouter for &T
+where
+    T: CanvasEdgeRouter + ?Sized,
+{
+    fn route_edge(&self, request: CanvasRouteRequest<'_>) -> CanvasRoutePath {
+        (*self).route_edge(request)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CanvasDefaultEdgeRouter;
 

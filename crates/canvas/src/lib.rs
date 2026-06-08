@@ -14,6 +14,7 @@ mod index;
 mod journal;
 mod json_canvas;
 mod persistence;
+mod resolve;
 mod routing;
 mod runtime;
 #[cfg(test)]
@@ -62,6 +63,7 @@ pub use persistence::{
     load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
     replay_canvas_log, save_canvas_checkpoint, undo_persistent_transaction,
 };
+pub use resolve::{CanvasGeometryResolver, CanvasResolvedEdgeGeometry, connection_hit_options};
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,
