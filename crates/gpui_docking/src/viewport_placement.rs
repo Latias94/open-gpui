@@ -84,6 +84,20 @@ impl DockViewportPlacementLayout {
                     space: viewport.space.clone(),
                 });
             }
+            if let Some(window_bounds) = viewport.window_bounds
+                && !window_bounds.bounds.is_finite_with_non_negative_size()
+            {
+                return Err(DockViewportPlacementValidationError::InvalidWindowBounds {
+                    space: viewport.space.clone(),
+                });
+            }
+            if let Some(host_bounds) = viewport.host_bounds
+                && !host_bounds.is_finite_with_non_negative_size()
+            {
+                return Err(DockViewportPlacementValidationError::InvalidHostBounds {
+                    space: viewport.space.clone(),
+                });
+            }
         }
 
         Ok(())
@@ -173,6 +187,18 @@ pub enum DockViewportPlacementValidationError {
     #[error("duplicate dock viewport placement space: {space}")]
     DuplicateSpace {
         /// Duplicate dock space id.
+        space: DockSpaceId,
+    },
+    /// A viewport placement has non-finite platform window coordinates or negative window size.
+    #[error("dock viewport placement space {space} has invalid window bounds")]
+    InvalidWindowBounds {
+        /// Dock space id.
+        space: DockSpaceId,
+    },
+    /// A viewport placement has non-finite host coordinates or negative host size.
+    #[error("dock viewport placement space {space} has invalid host bounds")]
+    InvalidHostBounds {
+        /// Dock space id.
         space: DockSpaceId,
     },
 }
@@ -491,5 +517,68 @@ mod tests {
             placement.validate(),
             Err(DockViewportPlacementValidationError::DuplicateSpace { space: main })
         );
+    }
+
+    #[test]
+    fn viewport_placement_validation_rejects_invalid_bounds_before_mutation() {
+        let main = space("main");
+        let invalid_window = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: main.clone(),
+            display_id: None,
+            window_bounds: Some(DockViewportWindowBounds {
+                state: DockViewportWindowState::Windowed,
+                bounds: DockLayoutRect {
+                    x: 10.0,
+                    y: 20.0,
+                    width: -1.0,
+                    height: 200.0,
+                },
+            }),
+            host_bounds: None,
+        }]);
+        assert_eq!(
+            invalid_window.validate(),
+            Err(DockViewportPlacementValidationError::InvalidWindowBounds {
+                space: main.clone()
+            })
+        );
+
+        let invalid_host = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
+            space: main.clone(),
+            display_id: None,
+            window_bounds: None,
+            host_bounds: Some(DockLayoutRect {
+                x: f32::INFINITY,
+                y: 20.0,
+                width: 300.0,
+                height: 200.0,
+            }),
+        }]);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(main.clone(), handle(1));
+        adapter.update_snapshot(
+            &main,
+            Some(DisplayId::new(7)),
+            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+
+        assert_eq!(
+            adapter
+                .apply_placement(&invalid_host)
+                .expect_err("invalid host bounds should reject before snapshot mutation"),
+            DockViewportPlacementValidationError::InvalidHostBounds {
+                space: main.clone()
+            }
+        );
+        let snapshot = adapter
+            .snapshot(&main)
+            .expect("registered viewport should remain");
+        assert_eq!(snapshot.display_id, Some(DisplayId::new(7)));
+        assert_eq!(
+            snapshot.window_bounds,
+            Some(WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)))
+        );
+        assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));
     }
 }

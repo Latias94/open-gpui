@@ -311,6 +311,38 @@ fn layout_validation_rejects_duplicate_items() {
 }
 
 #[test]
+fn layout_validation_rejects_invalid_floating_bounds() {
+    let invalid_bounds = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: None,
+            floatings: vec![DockLayoutFloatingContainer {
+                root: 1,
+                bounds: DockLayoutRect {
+                    x: 10.0,
+                    y: f32::NAN,
+                    width: 300.0,
+                    height: 200.0,
+                },
+            }],
+        }],
+        vec![DockLayoutNode::Tabs {
+            id: 1,
+            items: vec![item("a")],
+            active: 0,
+        }],
+    );
+
+    assert_eq!(
+        invalid_bounds.validate(),
+        Err(DockLayoutValidationError::InvalidFloatingBounds {
+            space: space(),
+            root: 1
+        })
+    );
+}
+
+#[test]
 fn builder_default_editor_layout_sets_root_and_roundtrips() {
     let spec = EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]);
     let graph = DockGraph::default_editor_layout(space(), spec);

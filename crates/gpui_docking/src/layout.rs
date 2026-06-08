@@ -148,6 +148,12 @@ impl DockLayout {
                         root: floating.root,
                     });
                 }
+                if !floating.bounds.is_finite_with_non_negative_size() {
+                    return Err(DockLayoutValidationError::InvalidFloatingBounds {
+                        space: space.id.clone(),
+                        root: floating.root,
+                    });
+                }
             }
         }
 
@@ -206,6 +212,16 @@ impl DockLayoutRect {
     /// Converts this rectangle into GPUI bounds.
     pub fn to_bounds(self) -> open_gpui::Bounds<open_gpui::Pixels> {
         dock_bounds(self.x, self.y, self.width, self.height)
+    }
+
+    /// Returns true when all coordinates are finite and the size is non-negative.
+    pub fn is_finite_with_non_negative_size(self) -> bool {
+        self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+            && self.width >= 0.0
+            && self.height >= 0.0
     }
 }
 
@@ -359,6 +375,14 @@ pub enum DockLayoutValidationError {
         /// Dock space id.
         space: DockSpaceId,
         /// Missing root id.
+        root: u32,
+    },
+    /// A floating container has non-finite coordinates or negative size.
+    #[error("dock space {space} floating root node {root} has invalid bounds")]
+    InvalidFloatingBounds {
+        /// Dock space id.
+        space: DockSpaceId,
+        /// Floating root id.
         root: u32,
     },
     /// A layout node is reachable from more than one parent/root.
