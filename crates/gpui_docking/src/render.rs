@@ -1,13 +1,14 @@
 use crate::{
-    DockDebugRegion, DockHost, DockItemId, DockNode, DockNodeId, DockPanelResolution, SplitAxis,
+    DockAction, DockHost, DockItemId, DockNode, DockNodeId, DockPanelResolution, SplitAxis,
+    debug::DockDebugRegion,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window,
-    black, div, relative, rgb, white,
+    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, black, div, relative, rgb, white,
 };
 
 impl Render for DockHost {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
 
         let selector = self.record_debug_selector(
@@ -26,7 +27,7 @@ impl Render for DockHost {
             .text_color(black());
 
         if let Some(root) = self.graph().root(self.space()) {
-            host = host.child(self.render_node(root));
+            host = host.child(self.render_node(root, cx));
         } else {
             host = host.child(self.render_empty_space());
         }
@@ -36,7 +37,7 @@ impl Render for DockHost {
 }
 
 impl DockHost {
-    fn render_node(&mut self, node_id: DockNodeId) -> AnyElement {
+    fn render_node(&mut self, node_id: DockNodeId, cx: &mut Context<Self>) -> AnyElement {
         let Some(node) = self.graph().node(node_id).cloned() else {
             return self.render_missing_node(node_id);
         };
@@ -46,8 +47,8 @@ impl DockHost {
                 axis,
                 children,
                 fractions,
-            } => self.render_split(node_id, axis, children, fractions),
-            DockNode::Tabs { items, active } => self.render_tabs(node_id, items, active),
+            } => self.render_split(node_id, axis, children, fractions, cx),
+            DockNode::Tabs { items, active } => self.render_tabs(node_id, items, active, cx),
             DockNode::Floating { .. } => self.render_deferred_floating(node_id),
         }
     }
@@ -119,6 +120,7 @@ impl DockHost {
         axis: SplitAxis,
         children: Vec<DockNodeId>,
         fractions: Vec<f32>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         if children.is_empty() {
             return self.render_missing_node(node);
@@ -161,7 +163,7 @@ impl DockHost {
                     .flex_shrink_1()
                     .flex_basis(relative(0.0))
                     .overflow_hidden()
-                    .child(self.render_node(child)),
+                    .child(self.render_node(child, cx)),
             );
         }
 
@@ -173,6 +175,7 @@ impl DockHost {
         node: DockNodeId,
         items: Vec<DockItemId>,
         active: usize,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         if items.is_empty() {
             return self.render_missing_node(node);
@@ -225,6 +228,10 @@ impl DockHost {
                     item
                 ),
             );
+            let action = DockAction::SelectTab {
+                tabs: node,
+                item: item.clone(),
+            };
             let tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
@@ -243,11 +250,19 @@ impl DockHost {
                 } else {
                     rgb(0xf0f3f7).into()
                 })
+                .cursor_pointer()
                 .text_color(if index == active {
                     black()
                 } else {
                     rgb(0x657083).into()
                 })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Ok(outcome) = this.apply_action(&action)
+                        && outcome.changed()
+                    {
+                        cx.notify();
+                    }
+                }))
                 .child(title);
             tab_bar = tab_bar.child(tab);
         }

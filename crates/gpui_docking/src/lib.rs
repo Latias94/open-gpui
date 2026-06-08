@@ -1,7 +1,9 @@
 #![doc = "Retained docking graph and layout primitives for Open GPUI."]
 #![warn(missing_docs)]
 
+mod action;
 mod builder;
+mod debug;
 mod graph;
 mod host;
 mod ids;
@@ -16,6 +18,7 @@ mod host_tests;
 #[cfg(test)]
 mod tests;
 
+pub use action::*;
 pub use builder::*;
 pub use graph::*;
 pub use host::*;

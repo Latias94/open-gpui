@@ -1,62 +1,10 @@
 use crate::{
-    DockGraph, DockItemId, DockNodeId, DockPanel, DockPanelRegistry, DockSpaceId,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockPanel,
+    DockPanelRegistry, DockSpaceId,
+    debug::{DockDebugInstrumentation, DockDebugRegion},
     workspace::DockWorkspace,
 };
 use open_gpui::AnyView;
-use std::collections::HashMap;
-
-/// Debug-test region emitted by a [`DockHost`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DockDebugRegion {
-    /// The whole dock host.
-    Host,
-    /// The empty dock-space placeholder.
-    EmptySpace,
-    /// A split container.
-    Split {
-        /// Runtime split node id.
-        node: DockNodeId,
-    },
-    /// A child wrapper inside a split container.
-    SplitChild {
-        /// Runtime split node id.
-        split: DockNodeId,
-        /// Child index within the split.
-        index: usize,
-    },
-    /// A tabs container.
-    Tabs {
-        /// Runtime tabs node id.
-        node: DockNodeId,
-    },
-    /// A tab label for one dock item.
-    Tab {
-        /// Runtime tabs node id containing the item.
-        tabs: DockNodeId,
-        /// Dock item id.
-        item: DockItemId,
-    },
-    /// The active panel body for one dock item.
-    Panel {
-        /// Dock item id.
-        item: DockItemId,
-    },
-    /// The missing-panel placeholder for one dock item.
-    MissingPanel {
-        /// Dock item id.
-        item: DockItemId,
-    },
-    /// A placeholder for a floating node deferred by Phase 2.
-    DeferredFloating {
-        /// Runtime floating node id.
-        node: DockNodeId,
-    },
-    /// A placeholder for a graph node that cannot be found.
-    MissingNode {
-        /// Runtime node id referenced by the graph.
-        node: DockNodeId,
-    },
-}
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -79,29 +27,58 @@ impl Default for DockHostOptions {
     }
 }
 
-/// Retained GPUI host that renders one logical dock space from a [`DockGraph`].
+/// Retained GPUI host that renders one logical dock workspace.
 #[derive(Debug)]
 pub struct DockHost {
     workspace: DockWorkspace,
-    debug_selectors: HashMap<DockDebugRegion, String>,
+    debug: DockDebugInstrumentation,
 }
 
 impl DockHost {
     /// Creates a host for one dock space and graph.
+    ///
+    /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
+    /// constructor remains as a compatibility path and delegates to workspace-backed state.
     pub fn new(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
         Self::with_options(space, graph, DockHostOptions::default())
     }
 
     /// Creates a host with explicit static rendering options.
+    ///
+    /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
+    /// constructor remains as a compatibility path and delegates to workspace-backed state.
     pub fn with_options(
         space: impl Into<DockSpaceId>,
         graph: DockGraph,
         options: DockHostOptions,
     ) -> Self {
+        Self::from_workspace(DockWorkspace::with_options(space, graph, options))
+    }
+
+    /// Creates a host that renders a configured workspace.
+    pub fn from_workspace(workspace: DockWorkspace) -> Self {
         Self {
-            workspace: DockWorkspace::with_options(space, graph, options),
-            debug_selectors: HashMap::new(),
+            workspace,
+            debug: DockDebugInstrumentation::default(),
         }
+    }
+
+    /// Returns the workspace rendered by this host.
+    pub fn workspace(&self) -> &DockWorkspace {
+        &self.workspace
+    }
+
+    /// Returns the workspace rendered by this host for owner-level mutation.
+    pub fn workspace_mut(&mut self) -> &mut DockWorkspace {
+        &mut self.workspace
+    }
+
+    /// Applies a docking action through the host's workspace.
+    pub fn apply_action(
+        &mut self,
+        action: &DockAction,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.apply_action(action)
     }
 
     /// Returns the logical dock space rendered by this host.
@@ -114,7 +91,9 @@ impl DockHost {
         self.workspace.graph()
     }
 
-    /// Returns the host graph for mutation by application code.
+    /// Returns the host graph for compatibility mutation by application code.
+    ///
+    /// Prefer applying operations or docking actions through [`DockWorkspace`].
     pub fn graph_mut(&mut self) -> &mut DockGraph {
         self.workspace.graph_mut()
     }
@@ -129,12 +108,16 @@ impl DockHost {
         self.workspace.panels()
     }
 
-    /// Returns the panel registry for mutation by application code.
+    /// Returns the panel registry for compatibility mutation by application code.
+    ///
+    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
     pub fn panels_mut(&mut self) -> &mut DockPanelRegistry {
         self.workspace.panels_mut()
     }
 
     /// Registers a panel for a dock item, returning any previous registration.
+    ///
+    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
     pub fn register_panel(
         &mut self,
         item: impl Into<DockItemId>,
@@ -144,6 +127,8 @@ impl DockHost {
     }
 
     /// Registers a GPUI view as panel content for a dock item.
+    ///
+    /// Prefer registering panels through [`DockWorkspace`] before mounting the host.
     pub fn register_panel_view(
         &mut self,
         item: impl Into<DockItemId>,
@@ -164,12 +149,13 @@ impl DockHost {
     }
 
     /// Returns a debug selector emitted for a test region during the most recent render.
-    pub fn debug_selector(&self, region: &DockDebugRegion) -> Option<&str> {
-        self.debug_selectors.get(region).map(String::as_str)
+    #[cfg(test)]
+    pub(crate) fn debug_selector(&self, region: &DockDebugRegion) -> Option<&str> {
+        self.debug.selector(region)
     }
 
     pub(crate) fn clear_debug_selectors(&mut self) {
-        self.debug_selectors.clear();
+        self.debug.clear();
     }
 
     pub(crate) fn record_debug_selector(
@@ -177,8 +163,7 @@ impl DockHost {
         region: DockDebugRegion,
         selector: String,
     ) -> String {
-        self.debug_selectors.insert(region, selector.clone());
-        selector
+        self.debug.record(region, selector)
     }
 
     pub(crate) fn selector_prefix(&self) -> String {

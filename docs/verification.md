@@ -33,6 +33,17 @@ That command runs the focused `open-gpui-wgpu` smoke test that requests a real n
 device, creates the renderer bind group layouts, and builds the core render pipelines. It is not
 part of the default `verify` gate because it depends on local GPU, driver, and session availability.
 
+Run the docking smoke surface explicitly after changing `open-gpui-docking`:
+
+```sh
+cargo nextest run -p open-gpui-docking
+cargo check -p open-gpui-docking-native
+cargo run -p open-gpui-docking-native
+```
+
+The docking native example exercises the public owner-first setup: applications configure a
+`DockWorkspace`, register panel views there, and mount it through `DockHost`.
+
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 
 ```sh

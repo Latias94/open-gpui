@@ -1,7 +1,7 @@
 ---
 title: "refactor: Complete docking owner seam"
 type: refactor
-status: active
+status: completed
 date: 2026-06-08
 ---
 

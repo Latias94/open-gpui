@@ -2,7 +2,7 @@ use open_gpui::{
     App, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, rgb, size,
 };
-use open_gpui_docking::{DockGraph, DockHost, EditorDockLayoutSpec};
+use open_gpui_docking::{DockGraph, DockHost, DockWorkspace, EditorDockLayoutSpec};
 use open_gpui_platform::application;
 
 const SPACE: &str = "docking-demo";
@@ -91,8 +91,8 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
         .with_active_indexes(0, 0, 0),
     );
 
-    let mut host = DockHost::new(SPACE, graph);
-    host.register_panel_view(
+    let mut workspace = DockWorkspace::new(SPACE, graph);
+    workspace.register_panel_view(
         "explorer",
         "Explorer",
         cx.new(|_| {
@@ -109,7 +109,7 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
             )
         }),
     );
-    host.register_panel_view(
+    workspace.register_panel_view(
         "outline",
         "Outline",
         cx.new(|_| {
@@ -126,7 +126,7 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
             )
         }),
     );
-    host.register_panel_view(
+    workspace.register_panel_view(
         "editor",
         "Editor",
         cx.new(|_| {
@@ -135,15 +135,15 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                 "Active document",
                 0x16a34a,
                 &[
-                    "Static host rendering is active.",
-                    "Tabs are visible but non-interactive.",
+                    "Workspace-backed rendering is active.",
+                    "Tabs route through DockAction.",
                     "Splits use normalized graph fractions.",
                     "Registered panel views stay outside the graph.",
                 ],
             )
         }),
     );
-    host.register_panel_view(
+    workspace.register_panel_view(
         "preview",
         "Preview",
         cx.new(|_| {
@@ -152,14 +152,15 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                 "Rendered layout notes",
                 0x9333ea,
                 &[
-                    "Phase 2 renders root tabs and nested splits.",
+                    "DockHost adapts DockWorkspace into GPUI.",
+                    "Tab selection updates graph state.",
                     "Floating overlays are deferred.",
                     "Drag/drop starts in the next phase.",
                 ],
             )
         }),
     );
-    host.register_panel_view(
+    workspace.register_panel_view(
         "terminal",
         "Terminal",
         cx.new(|_| {
@@ -169,13 +170,13 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                 0xea580c,
                 &[
                     "$ cargo nextest run -p open-gpui-docking",
-                    "20 tests passed",
+                    "Docking owner seam tests passed",
                     "$ cargo doc -p open-gpui-docking --no-deps",
                 ],
             )
         }),
     );
-    host.register_panel_view(
+    workspace.register_panel_view(
         "problems",
         "Problems",
         cx.new(|_| {
@@ -192,7 +193,7 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
         }),
     );
 
-    host
+    DockHost::from_workspace(workspace)
 }
 
 fn main() {
