@@ -1,7 +1,8 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
-    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelRegistry, DockPolicy,
-    DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelDescriptor,
+    DockPanelRegistry, DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
+    host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -69,6 +70,15 @@ impl DockController {
         self.workspace.register_panel(item, panel)
     }
 
+    /// Registers panel metadata without binding GPUI view lifecycle state.
+    pub fn register_panel_descriptor(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        descriptor: DockPanelDescriptor,
+    ) -> Option<DockPanelDescriptor> {
+        self.workspace.register_panel_descriptor(item, descriptor)
+    }
+
     /// Registers a GPUI view as panel content for a dock item.
     pub fn register_panel_view(
         &mut self,
@@ -128,6 +138,7 @@ impl DockController {
 pub struct DockControllerBuilder {
     space: DockSpaceId,
     graph: DockGraph,
+    descriptors: Vec<(DockItemId, DockPanelDescriptor)>,
     panels: Vec<(DockItemId, DockPanel)>,
     options: DockHostOptions,
     policy: DockPolicy,
@@ -139,6 +150,7 @@ impl DockControllerBuilder {
         Self {
             space: space.into(),
             graph: DockGraph::new(),
+            descriptors: Vec::new(),
             panels: Vec::new(),
             options: DockHostOptions::default(),
             policy: DockPolicy::default(),
@@ -170,6 +182,16 @@ impl DockControllerBuilder {
     /// Registers a prepared panel.
     pub fn panel(mut self, item: impl Into<DockItemId>, panel: DockPanel) -> Self {
         self.panels.push((item.into(), panel));
+        self
+    }
+
+    /// Registers descriptor-only panel metadata.
+    pub fn panel_descriptor(
+        mut self,
+        item: impl Into<DockItemId>,
+        descriptor: DockPanelDescriptor,
+    ) -> Self {
+        self.descriptors.push((item.into(), descriptor));
         self
     }
 
@@ -223,6 +245,9 @@ impl DockControllerBuilder {
     pub fn build(self) -> DockController {
         let mut workspace = DockWorkspace::with_options(self.space, self.graph, self.options);
         workspace.set_policy(self.policy);
+        for (item, descriptor) in self.descriptors {
+            workspace.register_panel_descriptor(item, descriptor);
+        }
         for (item, panel) in self.panels {
             workspace.register_panel(item, panel);
         }

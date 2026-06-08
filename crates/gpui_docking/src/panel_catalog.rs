@@ -30,6 +30,12 @@ impl DockPanelDescriptor {
     pub(crate) fn set_closable(&mut self, closable: bool) {
         self.closable = closable;
     }
+
+    /// Sets whether the panel can be closed by panel lifecycle policy.
+    pub fn closable(mut self, closable: bool) -> Self {
+        self.set_closable(closable);
+        self
+    }
 }
 
 /// Descriptor-only catalog for registered dock panels.
@@ -44,7 +50,8 @@ pub struct DockPanelCatalog {
 }
 
 impl DockPanelCatalog {
-    pub(crate) fn register(
+    /// Registers descriptor-only metadata for a dock item.
+    pub fn register(
         &mut self,
         item: DockItemId,
         descriptor: DockPanelDescriptor,

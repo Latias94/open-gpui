@@ -27,6 +27,10 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
         .panel_factory("editor", "Editor", |_| {
             unreachable!("lazy panel factories should not run during controller setup")
         })
+        .panel_descriptor(
+            "terminal",
+            DockPanelDescriptor::new("Terminal").closable(false),
+        )
         .allow_floating(true)
         .allow_platform_viewports(true)
         .options(options)
@@ -45,7 +49,16 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
     assert_eq!(explorer.title(), "Explorer");
     assert!(!explorer.has_view());
     assert!(controller.panels().contains(&item("editor")));
-    assert!(!controller.panels().contains(&item("terminal")));
+    let terminal = controller
+        .panels()
+        .descriptor(&item("terminal"))
+        .expect("builder should register descriptor-only metadata");
+    assert_eq!(terminal.title(), "Terminal");
+    assert!(!terminal.is_closable());
+    assert!(
+        controller.panels().get(&item("terminal")).is_none(),
+        "descriptor-only builder entries should not bind view lifecycle"
+    );
 }
 
 #[test]

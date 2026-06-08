@@ -1,6 +1,6 @@
 use crate::{
-    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelRegistry, DockPolicy,
-    DockSpaceId, host::DockHostOptions,
+    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelDescriptor,
+    DockPanelRegistry, DockPolicy, DockSpaceId, host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -71,6 +71,15 @@ impl DockWorkspace {
         panel: DockPanel,
     ) -> Option<DockPanel> {
         self.panels.register(item, panel)
+    }
+
+    /// Registers panel metadata without binding GPUI view lifecycle state.
+    pub fn register_panel_descriptor(
+        &mut self,
+        item: impl Into<DockItemId>,
+        descriptor: DockPanelDescriptor,
+    ) -> Option<DockPanelDescriptor> {
+        self.panels.register_descriptor(item, descriptor)
     }
 
     /// Registers a GPUI view as panel content for a dock item.

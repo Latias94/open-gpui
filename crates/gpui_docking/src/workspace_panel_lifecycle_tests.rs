@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockWorkspace,
-    host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelDescriptor,
+    DockWorkspace, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
@@ -82,6 +82,60 @@ fn workspace_close_item_action_uses_metadata_without_instantiating_lazy_panel(
         panic!("source should be tabs");
     };
     assert!(items.is_empty());
+}
+
+#[open_gpui::test]
+fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["anchor", "restored"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(
+        item("restored"),
+        DockPanelDescriptor::new("Restored").closable(false),
+    );
+
+    let err = workspace
+        .apply_action(&DockAction::CloseItem {
+            space: space(),
+            item: item("restored"),
+        })
+        .expect_err("descriptor-only close policy should still apply");
+    assert_eq!(
+        err,
+        DockActionApplyError::PanelNotClosable {
+            item: item("restored")
+        }
+    );
+
+    workspace.register_panel_descriptor(item("restored"), DockPanelDescriptor::new("Restored"));
+    let outcome = workspace
+        .apply_action(&DockAction::CloseItem {
+            space: space(),
+            item: item("restored"),
+        })
+        .expect("closable descriptor-only panel should close");
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert!(
+        workspace.panels().get(&item("restored")).is_none(),
+        "descriptor-only metadata should not create live content"
+    );
+
+    let outcome = workspace
+        .apply_action(&DockAction::OpenItem {
+            space: space(),
+            target_tabs: Some(root),
+            item: item("restored"),
+            insert_index: Some(0),
+        })
+        .expect("registered descriptor-only panel should reopen in graph state");
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(
+        workspace
+            .panels()
+            .descriptor(&item("restored"))
+            .expect("metadata should stay registered")
+            .title(),
+        "Restored"
+    );
 }
 
 #[open_gpui::test]
