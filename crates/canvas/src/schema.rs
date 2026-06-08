@@ -108,6 +108,14 @@ pub struct CanvasShapeHitTest<'a> {
     pub margin: Pixels,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanvasKindPaint {
+    pub fill: Option<String>,
+    pub stroke: Option<String>,
+    pub stroke_width: Option<Pixels>,
+    pub corner_radius: Option<Pixels>,
+}
+
 pub trait CanvasNodeKind: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
@@ -134,6 +142,10 @@ pub trait CanvasNodeKind: Send + Sync {
     }
 
     fn node_contains_point(&self, _hit: CanvasNodeHitTest<'_>) -> Option<bool> {
+        None
+    }
+
+    fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
         None
     }
 
@@ -177,6 +189,10 @@ pub trait CanvasShapeKind: Send + Sync {
     }
 
     fn shape_contains_point(&self, _hit: CanvasShapeHitTest<'_>) -> Option<bool> {
+        None
+    }
+
+    fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
         None
     }
 
@@ -410,6 +426,16 @@ impl CanvasKindRegistry {
         })
     }
 
+    pub fn node_paint(&self, node: &CanvasNode) -> Option<CanvasKindPaint> {
+        self.node_kind(&node.kind)
+            .and_then(|schema| schema.node_paint(node))
+    }
+
+    pub fn shape_paint(&self, shape: &CanvasShape) -> Option<CanvasKindPaint> {
+        self.shape_kind(&shape.kind)
+            .and_then(|schema| schema.shape_paint(shape))
+    }
+
     pub fn resize_node_bounds(
         &self,
         node: &CanvasNode,
@@ -624,6 +650,32 @@ mod tests {
         }
     }
 
+    struct PaintedNodeKind;
+
+    impl CanvasNodeKind for PaintedNodeKind {
+        fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: Some("#fff8c5".to_string()),
+                stroke: Some("#bf8700".to_string()),
+                stroke_width: Some(px(2.0)),
+                corner_radius: Some(px(10.0)),
+            })
+        }
+    }
+
+    struct PaintedShapeKind;
+
+    impl CanvasShapeKind for PaintedShapeKind {
+        fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: Some("#ddf4ff".to_string()),
+                stroke: Some("#0969da".to_string()),
+                stroke_width: Some(px(3.0)),
+                corner_radius: Some(px(4.0)),
+            })
+        }
+    }
+
     impl CanvasShapeKind for InvalidShapeResizeKind {
         fn resize_shape_bounds(
             &self,
@@ -797,6 +849,43 @@ mod tests {
             registry.node_contains_point(&node, point(px(75.0), px(20.0)), bounds, Pixels::ZERO),
             Some(true)
         );
+    }
+
+    #[test]
+    fn registered_paint_policy_supplies_renderer_neutral_defaults() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("painted-node", PaintedNodeKind);
+        registry.register_shape_kind("painted-shape", PaintedShapeKind);
+
+        let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        node.kind = "painted-node".to_string();
+        assert_eq!(
+            registry.node_paint(&node),
+            Some(CanvasKindPaint {
+                fill: Some("#fff8c5".to_string()),
+                stroke: Some("#bf8700".to_string()),
+                stroke_width: Some(px(2.0)),
+                corner_radius: Some(px(10.0)),
+            })
+        );
+
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+        );
+        shape.kind = "painted-shape".to_string();
+        assert_eq!(
+            registry.shape_paint(&shape),
+            Some(CanvasKindPaint {
+                fill: Some("#ddf4ff".to_string()),
+                stroke: Some("#0969da".to_string()),
+                stroke_width: Some(px(3.0)),
+                corner_radius: Some(px(4.0)),
+            })
+        );
+
+        node.kind = "unknown".to_string();
+        assert_eq!(registry.node_paint(&node), None);
     }
 
     #[test]

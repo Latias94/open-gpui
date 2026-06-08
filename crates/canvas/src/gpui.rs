@@ -1,9 +1,10 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasSnapAxis,
-    CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions,
-    HitTarget, PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
+    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRouteSegment, CanvasRuntime,
+    CanvasSelection, CanvasShape, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
+    CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions, HitTarget,
+    PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -411,18 +412,15 @@ pub fn paint_canvas_frame(
                 let Some(node) = model.document.nodes.get(id) else {
                     continue;
                 };
-                let fill = style_color(&node.style.fill).unwrap_or(theme.node_fill);
-                let stroke = style_color(&node.style.stroke).unwrap_or(theme.node_stroke);
-                let stroke_width =
-                    positive_pixels_or(node.style.stroke_width, theme.node_stroke_width);
+                let style = node_paint_style(model, node, theme);
                 paint_rect(
                     window,
                     canvas_bounds,
                     record.view_bounds,
-                    fill,
-                    stroke,
-                    stroke_width,
-                    theme.node_corner_radius,
+                    style.fill,
+                    style.stroke,
+                    style.stroke_width,
+                    style.corner_radius,
                 );
             }
             HitTarget::Handle { .. } => {
@@ -440,18 +438,15 @@ pub fn paint_canvas_frame(
                 let Some(shape) = model.document.shapes.get(id) else {
                     continue;
                 };
-                let fill = style_color(&shape.style.fill).unwrap_or(theme.shape_fill);
-                let stroke = style_color(&shape.style.stroke).unwrap_or(theme.shape_stroke);
-                let stroke_width =
-                    positive_pixels_or(shape.style.stroke_width, theme.shape_stroke_width);
+                let style = shape_paint_style(model, shape, theme);
                 paint_rect(
                     window,
                     canvas_bounds,
                     record.view_bounds,
-                    fill,
-                    stroke,
-                    stroke_width,
-                    px(0.0),
+                    style.fill,
+                    style.stroke,
+                    style.stroke_width,
+                    style.corner_radius,
                 );
             }
             HitTarget::Edge(id) => {
@@ -781,19 +776,110 @@ fn document_to_window_point(
     model.viewport.document_to_view(point) + canvas_bounds.origin
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CanvasResolvedPaintStyle {
+    fill: Hsla,
+    stroke: Hsla,
+    stroke_width: Pixels,
+    corner_radius: Pixels,
+}
+
+fn node_paint_style(
+    model: &CanvasPaintModel,
+    node: &CanvasNode,
+    theme: CanvasPaintTheme,
+) -> CanvasResolvedPaintStyle {
+    record_paint_style(
+        &node.style,
+        model.kind_registry.node_paint(node).as_ref(),
+        CanvasResolvedPaintStyle {
+            fill: theme.node_fill,
+            stroke: theme.node_stroke,
+            stroke_width: theme.node_stroke_width,
+            corner_radius: theme.node_corner_radius,
+        },
+    )
+}
+
+fn shape_paint_style(
+    model: &CanvasPaintModel,
+    shape: &CanvasShape,
+    theme: CanvasPaintTheme,
+) -> CanvasResolvedPaintStyle {
+    record_paint_style(
+        &shape.style,
+        model.kind_registry.shape_paint(shape).as_ref(),
+        CanvasResolvedPaintStyle {
+            fill: theme.shape_fill,
+            stroke: theme.shape_stroke,
+            stroke_width: theme.shape_stroke_width,
+            corner_radius: Pixels::ZERO,
+        },
+    )
+}
+
+fn record_paint_style(
+    style: &CanvasStyle,
+    fallback: Option<&CanvasKindPaint>,
+    theme: CanvasResolvedPaintStyle,
+) -> CanvasResolvedPaintStyle {
+    CanvasResolvedPaintStyle {
+        fill: paint_color(
+            &style.fill,
+            fallback.and_then(|paint| paint.fill.as_deref()),
+            theme.fill,
+        ),
+        stroke: paint_color(
+            &style.stroke,
+            fallback.and_then(|paint| paint.stroke.as_deref()),
+            theme.stroke,
+        ),
+        stroke_width: paint_pixels(
+            style.stroke_width,
+            fallback.and_then(|paint| paint.stroke_width),
+            theme.stroke_width,
+        ),
+        corner_radius: fallback
+            .and_then(|paint| paint.corner_radius)
+            .filter(|value| positive_pixels(*value))
+            .unwrap_or(theme.corner_radius),
+    }
+}
+
 fn positive_pixels_or(value: Pixels, fallback: Pixels) -> Pixels {
-    if value > Pixels::ZERO && value.as_f32().is_finite() {
+    if positive_pixels(value) {
         value
     } else {
         fallback
     }
 }
 
+fn positive_pixels(value: Pixels) -> bool {
+    value > Pixels::ZERO && value.as_f32().is_finite()
+}
+
+fn paint_pixels(value: Pixels, fallback: Option<Pixels>, theme: Pixels) -> Pixels {
+    if positive_pixels(value) {
+        value
+    } else {
+        fallback
+            .filter(|value| positive_pixels(*value))
+            .unwrap_or(theme)
+    }
+}
+
+fn paint_color(value: &Option<String>, fallback: Option<&str>, theme: Hsla) -> Hsla {
+    style_color(value)
+        .or_else(|| fallback.and_then(parse_color))
+        .unwrap_or(theme)
+}
+
 fn style_color(value: &Option<String>) -> Option<Hsla> {
-    value
-        .as_deref()
-        .and_then(|value| open_gpui::Rgba::try_from(value).ok())
-        .map(Hsla::from)
+    value.as_deref().and_then(parse_color)
+}
+
+fn parse_color(value: &str) -> Option<Hsla> {
+    open_gpui::Rgba::try_from(value).ok().map(Hsla::from)
 }
 
 fn pointer_button(button: MouseButton) -> Option<PointerButton> {
@@ -836,7 +922,8 @@ mod tests {
     use super::*;
     use crate::{
         CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRoutePath,
-        CanvasRouteRequest, CanvasSelectionMode, CanvasToolEffect, EdgeId, HandleRole,
+        CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind, CanvasToolEffect, EdgeId,
+        HandleRole,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
@@ -1046,6 +1133,79 @@ mod tests {
             Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
         );
         assert_eq!(record.view_bounds, record.document_bounds);
+    }
+
+    #[test]
+    fn paint_style_uses_record_style_then_kind_fallback_then_theme() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new(
+            "painted",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        node.kind = "painted-node".to_string();
+        document.insert_node(node).unwrap();
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(120.0), px(0.0)), size(px(100.0), px(80.0))),
+        );
+        shape.kind = "painted-shape".to_string();
+        document.insert_shape(shape).unwrap();
+        let model = CanvasPaintModel::new_with_kind_registry(
+            document,
+            CanvasViewport::default(),
+            paint_registry(),
+        );
+        let theme = CanvasPaintTheme::default();
+
+        let node = model
+            .document()
+            .nodes
+            .get(&crate::NodeId::from("painted"))
+            .unwrap();
+        let node_style = node_paint_style(&model, node, theme);
+        assert_eq!(node_style.fill, parse_color("#fff8c5").unwrap());
+        assert_eq!(node_style.stroke, parse_color("#bf8700").unwrap());
+        assert_eq!(node_style.stroke_width, px(2.0));
+        assert_eq!(node_style.corner_radius, px(10.0));
+
+        let shape = model
+            .document()
+            .shapes
+            .get(&crate::ShapeId::from("shape"))
+            .unwrap();
+        let shape_style = shape_paint_style(&model, shape, theme);
+        assert_eq!(shape_style.fill, parse_color("#ddf4ff").unwrap());
+        assert_eq!(shape_style.stroke, parse_color("#0969da").unwrap());
+        assert_eq!(shape_style.stroke_width, px(3.0));
+        assert_eq!(shape_style.corner_radius, px(4.0));
+
+        let mut explicit = node.clone();
+        explicit.style = CanvasStyle {
+            fill: Some("#6f42c1".to_string()),
+            stroke: Some("#1a7f37".to_string()),
+            stroke_width: px(7.0),
+        };
+        let explicit_style = node_paint_style(&model, &explicit, theme);
+        assert_eq!(explicit_style.fill, parse_color("#6f42c1").unwrap());
+        assert_eq!(explicit_style.stroke, parse_color("#1a7f37").unwrap());
+        assert_eq!(explicit_style.stroke_width, px(7.0));
+        assert_eq!(explicit_style.corner_radius, px(10.0));
+
+        let unknown = CanvasNode::new(
+            "unknown",
+            point(px(240.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        assert_eq!(
+            node_paint_style(&model, &unknown, theme),
+            CanvasResolvedPaintStyle {
+                fill: theme.node_fill,
+                stroke: theme.node_stroke,
+                stroke_width: theme.node_stroke_width,
+                corner_radius: theme.node_corner_radius,
+            }
+        );
     }
 
     #[test]
@@ -1617,6 +1777,13 @@ mod tests {
         registry
     }
 
+    fn paint_registry() -> CanvasKindRegistry {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("painted-node", PaintedNodeKind);
+        registry.register_shape_kind("painted-shape", PaintedShapeKind);
+        registry
+    }
+
     struct WideNodeKind;
 
     impl CanvasNodeKind for WideNodeKind {
@@ -1637,6 +1804,32 @@ mod tests {
                 "in" => Some(point(node.position.x - px(20.0), node.position.y + px(5.0))),
                 _ => None,
             }
+        }
+    }
+
+    struct PaintedNodeKind;
+
+    impl CanvasNodeKind for PaintedNodeKind {
+        fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: Some("#fff8c5".to_string()),
+                stroke: Some("#bf8700".to_string()),
+                stroke_width: Some(px(2.0)),
+                corner_radius: Some(px(10.0)),
+            })
+        }
+    }
+
+    struct PaintedShapeKind;
+
+    impl CanvasShapeKind for PaintedShapeKind {
+        fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: Some("#ddf4ff".to_string()),
+                stroke: Some("#0969da".to_string()),
+                stroke_width: Some(px(3.0)),
+                corner_radius: Some(px(4.0)),
+            })
         }
     }
 

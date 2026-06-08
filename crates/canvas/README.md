@@ -218,8 +218,9 @@ records, and future ecosystem extensions can still be loaded before a handler ex
 ```rust
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal,
-    CanvasRecordKind, CanvasSchemaError, CanvasTransaction, CanvasValue, DocumentCommand, NodeId,
+    CanvasDocument, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+    CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError, CanvasTransaction, CanvasValue,
+    DocumentCommand, NodeId,
 };
 use serde_json::{Value, json};
 
@@ -279,6 +280,15 @@ impl CanvasNodeKind for NoteKind {
                 proposal.bounds.size.height.max(px(64.0)),
             ),
         ))
+    }
+
+    fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
+        Some(CanvasKindPaint {
+            fill: Some("#fff8c5".to_string()),
+            stroke: Some("#bf8700".to_string()),
+            stroke_width: Some(px(2.0)),
+            corner_radius: Some(px(8.0)),
+        })
     }
 }
 

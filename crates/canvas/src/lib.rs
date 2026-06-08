@@ -77,7 +77,7 @@ pub use routing::{
 };
 pub use runtime::CanvasRuntime;
 pub use schema::{
-    CanvasEdgeKind, CanvasKindRegistry, CanvasNodeHitTest, CanvasNodeKind,
+    CanvasEdgeKind, CanvasKindPaint, CanvasKindRegistry, CanvasNodeHitTest, CanvasNodeKind,
     CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError, CanvasShapeHitTest,
     CanvasShapeKind, CanvasShapeResizeProposal,
 };
