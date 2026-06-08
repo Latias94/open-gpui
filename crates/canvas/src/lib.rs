@@ -7,6 +7,7 @@
 mod changes;
 mod document;
 mod geometry;
+mod gesture;
 mod gpui;
 mod graph;
 mod index;

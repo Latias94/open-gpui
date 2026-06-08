@@ -1,3 +1,4 @@
+use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::{
     CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint,
     CanvasNode, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError,
@@ -156,7 +157,6 @@ pub enum ToolState {
         last: Point<Pixels>,
         constraint_axis: Option<Axis>,
         node_ids: Vec<NodeId>,
-        original_nodes: Vec<CanvasNode>,
     },
     Panning {
         origin: Point<Pixels>,
@@ -286,8 +286,10 @@ impl CanvasSelection {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasToolEffect {
     ApplyTransaction(CanvasTransaction),
-    ApplyUnrecorded(CanvasTransaction),
-    PushUndo(CanvasTransaction),
+    BeginGesture,
+    UpdateGesture(CanvasTransaction),
+    CommitGesture,
+    CancelGesture,
     SetTool(CanvasTool),
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
@@ -505,6 +507,7 @@ pub struct CanvasEditor {
     index: SpatialIndex,
     selection: CanvasSelection,
     history: CanvasHistory,
+    gesture: Option<CanvasGestureSession>,
 }
 
 impl Default for CanvasEditor {
@@ -524,6 +527,7 @@ impl CanvasEditor {
             index,
             selection: CanvasSelection::default(),
             history: CanvasHistory::default(),
+            gesture: None,
         }
     }
 
@@ -621,11 +625,17 @@ impl CanvasEditor {
             CanvasToolEffect::ApplyTransaction(transaction) => {
                 self.apply_transaction(transaction)?;
             }
-            CanvasToolEffect::ApplyUnrecorded(transaction) => {
-                self.apply_unrecorded(transaction)?;
+            CanvasToolEffect::BeginGesture => {
+                self.begin_gesture();
             }
-            CanvasToolEffect::PushUndo(transaction) => {
-                self.history.push_undo(transaction);
+            CanvasToolEffect::UpdateGesture(transaction) => {
+                self.update_gesture(transaction)?;
+            }
+            CanvasToolEffect::CommitGesture => {
+                self.commit_gesture()?;
+            }
+            CanvasToolEffect::CancelGesture => {
+                self.cancel_gesture()?;
             }
             CanvasToolEffect::SetTool(tool) => {
                 self.set_tool(tool);
@@ -665,6 +675,28 @@ impl CanvasEditor {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn prepare_gesture_commit(
+        &self,
+    ) -> Result<Option<CanvasPreparedGestureCommit>, DocumentError> {
+        let Some(gesture) = &self.gesture else {
+            return Ok(None);
+        };
+        gesture.prepare_commit(&self.document)
+    }
+
+    pub(crate) fn apply_prepared_gesture_commit(
+        &mut self,
+        prepared: CanvasPreparedGestureCommit,
+    ) -> CanvasDocumentDiff {
+        let diff = prepared.committed().diff().clone();
+        self.history
+            .push_undo(prepared.committed().inverse().clone());
+        self.gesture = None;
+        self.selection.retain_document(&self.document);
+        self.index.apply_diff(&self.document, &diff);
+        diff
     }
 
     pub fn apply_tool_effects(
@@ -854,18 +886,18 @@ impl CanvasEditor {
                         if !selection.nodes.contains(&id) {
                             selection.replace_with(HitTarget::Node(id.clone()));
                         }
-                        let original_nodes = self
+                        let node_ids = self
                             .document_nodes_for_selection(&selection)
-                            .collect::<Vec<_>>();
-                        let node_ids = original_nodes.iter().map(|node| node.id.clone()).collect();
+                            .map(|node| node.id)
+                            .collect();
                         vec![
+                            CanvasToolEffect::BeginGesture,
                             CanvasToolEffect::SetSelection(selection),
                             CanvasToolEffect::SetState(ToolState::Translating {
                                 origin: document_position,
                                 last: document_position,
                                 constraint_axis: None,
                                 node_ids,
-                                original_nodes,
                             }),
                         ]
                     }
@@ -903,7 +935,6 @@ impl CanvasEditor {
                     last,
                     node_ids,
                     origin,
-                    original_nodes,
                     constraint_axis,
                 },
                 CanvasEvent::PointerMove {
@@ -938,13 +969,12 @@ impl CanvasEditor {
                 }
 
                 vec![
-                    CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::new(commands)),
+                    CanvasToolEffect::UpdateGesture(CanvasTransaction::new(commands)),
                     CanvasToolEffect::SetState(ToolState::Translating {
                         origin,
                         last: document_position,
                         constraint_axis,
                         node_ids: node_ids.clone(),
-                        original_nodes: original_nodes.clone(),
                     }),
                 ]
             }
@@ -999,21 +1029,15 @@ impl CanvasEditor {
                     }),
                 ]
             }
-            (ToolState::Translating { original_nodes, .. }, CanvasEvent::PointerUp { .. }) => {
+            (ToolState::Translating { .. }, CanvasEvent::PointerUp { .. }) => {
                 vec![
-                    CanvasToolEffect::PushUndo(self.inverse_for_changed_nodes(original_nodes)),
+                    CanvasToolEffect::CommitGesture,
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
             }
-            (ToolState::Translating { original_nodes, .. }, CanvasEvent::Cancel) => {
-                let inverse = CanvasTransaction::new(
-                    original_nodes
-                        .iter()
-                        .cloned()
-                        .map(DocumentCommand::UpdateNode),
-                );
+            (ToolState::Translating { .. }, CanvasEvent::Cancel) => {
                 vec![
-                    CanvasToolEffect::ApplyUnrecorded(inverse),
+                    CanvasToolEffect::CancelGesture,
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
             }
@@ -1192,22 +1216,58 @@ impl CanvasEditor {
             })
     }
 
-    fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
+    fn begin_gesture(&mut self) {
+        self.gesture = Some(CanvasGestureSession::begin(&self.document));
+    }
+
+    fn update_gesture(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasDocumentDiff, DocumentError> {
+        if transaction.is_empty() {
+            return Ok(CanvasDocumentDiff::default());
+        }
+
+        let implicit_gesture = self
+            .gesture
+            .is_none()
+            .then(|| CanvasGestureSession::begin(&self.document));
+        let diff = self.apply_transient_transaction(transaction)?;
+        if let Some(gesture) = implicit_gesture {
+            self.gesture = Some(gesture);
+        }
+        Ok(diff)
+    }
+
+    fn apply_transient_transaction(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasDocumentDiff, DocumentError> {
+        if transaction.is_empty() {
+            return Ok(CanvasDocumentDiff::default());
+        }
+
         let committed = self.document.commit_transaction(transaction)?;
         let diff = committed.diff().clone();
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
-        Ok(())
+        Ok(diff)
     }
 
-    fn inverse_for_changed_nodes(&self, original_nodes: &[CanvasNode]) -> CanvasTransaction {
-        CanvasTransaction::new(
-            original_nodes
-                .iter()
-                .filter(|node| self.document.nodes.get(&node.id) != Some(*node))
-                .cloned()
-                .map(DocumentCommand::UpdateNode),
-        )
+    fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
+        let Some(prepared) = self.prepare_gesture_commit()? else {
+            self.gesture = None;
+            return Ok(CanvasDocumentDiff::default());
+        };
+        Ok(self.apply_prepared_gesture_commit(prepared))
+    }
+
+    fn cancel_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
+        let Some(gesture) = self.gesture.take() else {
+            return Ok(CanvasDocumentDiff::default());
+        };
+        let transaction = gesture.cancel_transaction(&self.document);
+        self.apply_transient_transaction(transaction)
     }
 
     fn delete_selection_transaction(&self) -> CanvasTransaction {
@@ -2599,17 +2659,17 @@ mod tests {
     }
 
     #[test]
-    fn tool_effect_applies_unrecorded_transaction_without_history() {
+    fn tool_effect_updates_gesture_without_history() {
         let mut editor = CanvasEditor::default();
 
         editor
-            .apply_tool_effect(CanvasToolEffect::ApplyUnrecorded(
-                CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+            .apply_tool_effect(CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                DocumentCommand::InsertNode(CanvasNode::new(
                     "a",
                     point(px(0.0), px(0.0)),
                     size(px(100.0), px(100.0)),
-                ))),
-            ))
+                )),
+            )))
             .unwrap();
 
         assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
@@ -2621,6 +2681,59 @@ mod tests {
                 .next()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn gesture_commit_pushes_one_undo_entry() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let first = CanvasNode::new("a", point(px(12.0), px(0.0)), size(px(100.0), px(100.0)));
+        let second = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(first),
+                )),
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(second.clone()),
+                )),
+                CanvasToolEffect::CommitGesture,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.nodes[&NodeId::from("a")], second);
+        assert_eq!(editor.history.undo_depth(), 2);
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.document.nodes[&NodeId::from("a")], original);
+    }
+
+    #[test]
+    fn gesture_cancel_restores_document_without_history() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+        let undo_depth = editor.history.undo_depth();
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(moved),
+                )),
+                CanvasToolEffect::CancelGesture,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.nodes[&NodeId::from("a")], original);
+        assert_eq!(editor.history.undo_depth(), undo_depth);
     }
 
     #[test]

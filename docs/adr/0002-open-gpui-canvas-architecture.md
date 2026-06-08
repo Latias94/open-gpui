@@ -100,8 +100,8 @@ endpoints while leaving invalid handles as ordinary pointer positions.
 
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
 Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
-one path for recorded transactions, unrecorded gesture updates, undo commits, selection changes,
-viewport changes, and tool-state changes. This keeps the enum-based MVP simple while giving custom
+one path for recorded transactions, gesture sessions, selection changes, viewport changes, and
+tool-state changes. This keeps the enum-based MVP simple while giving custom
 tools and future CRDT adapters a stable mutation vocabulary.
 Selection effects include replace, add, remove, toggle, set, and clear operations. This keeps
 multi-select behavior available to custom tools and future modifier-key interactions without
@@ -237,17 +237,19 @@ Applications can connect editor mutations to persistence through `CanvasPersiste
 document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies that same
 prepared mutation through `CanvasEditor`. This keeps `CanvasEditor` free of concrete storage
 ownership while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry
-point. Unrecorded gesture updates remain outside the persistence log until committed as explicit
-transactions.
+point. Gesture updates remain outside the persistence log until the active gesture is committed as
+one explicit transaction.
 
 `save_canvas_checkpoint` complements the log hook by writing a snapshot at the current cursor
 sequence and compacting log entries through that sequence. Checkpointing is explicit rather than
 automatic so applications can choose their own durability cadence and retry policy.
 
 `apply_persistent_tool_effects` bridges the tool reducer model to the same persistence boundary.
-Recorded tool transactions are appended to the log before they are applied, transient
-`ApplyUnrecorded` gesture updates remain in-memory, and the final `PushUndo` effect commits the
-completed gesture as one forward transaction derived from the editor's current document state.
+Recorded tool transactions are appended to the log before they are applied. Gesture effects are
+explicit sessions: `BeginGesture` captures the baseline, `UpdateGesture` mutates only in memory,
+and `CommitGesture` appends one forward transaction derived from the baseline and current document
+before the editor pushes one undo entry. `CancelGesture` restores the captured baseline without
+touching history or persistence.
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, and
 `handle_persistent_event_with_tool_registry` provide the application-level convenience path over
 that same boundary. They reduce the active tool event into effects first, then apply the effects

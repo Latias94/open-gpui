@@ -351,7 +351,9 @@ store
 ```
 
 For tool reducers, use `apply_persistent_tool_effect` or `apply_persistent_tool_effects` so
-recorded transactions enter the log and unrecorded gesture updates stay transient until committed.
+recorded transactions enter the log and gesture updates stay transient until `CommitGesture`.
+Gesture sessions begin with `BeginGesture`, update the in-memory document with `UpdateGesture`,
+and commit or cancel without asking tool authors to construct inverse transactions by hand.
 Applications that want one entrypoint can dispatch normalized canvas events through
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
 `handle_persistent_event_with_tool_registry`; those helpers reduce the active tool to effects, log

@@ -312,8 +312,8 @@ where
         CanvasToolEffect::ApplyTransaction(transaction) => {
             apply_persistent_transaction(editor, store, cursor, transaction)?;
         }
-        CanvasToolEffect::PushUndo(inverse) => {
-            apply_persistent_undo_commit(editor, store, cursor, inverse)?;
+        CanvasToolEffect::CommitGesture => {
+            apply_persistent_gesture_commit(editor, store, cursor)?;
         }
         effect => {
             editor.apply_tool_effect(effect)?;
@@ -402,30 +402,30 @@ where
     Ok(checkpoint)
 }
 
-fn apply_persistent_undo_commit<S>(
+fn apply_persistent_gesture_commit<S>(
     editor: &mut CanvasEditor,
     store: &mut S,
     cursor: &mut CanvasPersistenceCursor,
-    inverse: CanvasTransaction,
 ) -> Result<(), CanvasPersistenceError<S::Error>>
 where
     S: CanvasPersistenceStore,
 {
-    if !inverse.is_empty() {
-        let committed_transaction = editor.document().invert_transaction(&inverse)?;
-        let mut document_before_gesture = editor.document().clone();
-        document_before_gesture.apply_transaction(inverse.clone())?;
-        let committed = document_before_gesture.prepare_transaction(committed_transaction)?;
-        store
-            .append_log_entry(CanvasLogEntry::from_committed_mutation(
-                cursor.next_sequence(),
-                committed.committed(),
-            ))
-            .map_err(CanvasPersistenceError::Store)?;
-        cursor.advance();
+    match editor.prepare_gesture_commit()? {
+        Some(prepared) => {
+            store
+                .append_log_entry(CanvasLogEntry::from_committed_mutation(
+                    cursor.next_sequence(),
+                    prepared.committed(),
+                ))
+                .map_err(CanvasPersistenceError::Store)?;
+            editor.apply_prepared_gesture_commit(prepared);
+            cursor.advance();
+        }
+        None => {
+            editor.apply_tool_effect(CanvasToolEffect::CommitGesture)?;
+        }
     }
 
-    editor.apply_tool_effect(CanvasToolEffect::PushUndo(inverse))?;
     Ok(())
 }
 

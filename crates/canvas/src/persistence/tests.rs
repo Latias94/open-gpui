@@ -880,7 +880,7 @@ fn persistent_tool_effects_log_recorded_transactions() {
 }
 
 #[test]
-fn persistent_tool_effects_commit_unrecorded_gesture_on_push_undo() {
+fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
     let mut document = CanvasDocument::default();
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
     document.insert_node(original.clone()).unwrap();
@@ -893,17 +893,17 @@ fn persistent_tool_effects_commit_unrecorded_gesture_on_push_undo() {
     let mut cursor = CanvasPersistenceCursor::default();
 
     let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
-    let inverse = CanvasTransaction::single(DocumentCommand::UpdateNode(original));
 
     apply_persistent_tool_effects(
         &mut editor,
         &mut store,
         &mut cursor,
         [
-            CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::single(
+            CanvasToolEffect::BeginGesture,
+            CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
                 DocumentCommand::UpdateNode(moved.clone()),
             )),
-            CanvasToolEffect::PushUndo(inverse),
+            CanvasToolEffect::CommitGesture,
         ],
     )
     .unwrap();
@@ -921,7 +921,99 @@ fn persistent_tool_effects_commit_unrecorded_gesture_on_push_undo() {
 }
 
 #[test]
-fn persistent_tool_effects_keep_unrecorded_effects_out_of_log() {
+fn persistent_gesture_commit_does_not_finish_when_store_fails() {
+    #[derive(Debug, Eq, PartialEq)]
+    struct StoreFailure;
+
+    impl fmt::Display for StoreFailure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("store failure")
+        }
+    }
+
+    struct FailingAppendStore;
+
+    impl CanvasPersistenceStore for FailingAppendStore {
+        type Error = StoreFailure;
+
+        fn load_checkpoint(&self) -> Result<Option<CanvasCheckpoint>, Self::Error> {
+            Ok(None)
+        }
+
+        fn save_checkpoint(&mut self, _: CanvasCheckpoint) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn append_log_entry(&mut self, _: CanvasLogEntry) -> Result<(), Self::Error> {
+            Err(StoreFailure)
+        }
+
+        fn load_log_entries(&self, _: u64) -> Result<Vec<CanvasLogEntry>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        fn compact_log_entries(&mut self, _: u64) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    let mut retry_store = MemoryCanvasPersistenceStore::default();
+    retry_store
+        .save_checkpoint(CanvasCheckpoint::new(4, &document))
+        .unwrap();
+    let mut editor = CanvasEditor::new(document);
+    let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
+    editor
+        .apply_tool_effects([
+            CanvasToolEffect::BeginGesture,
+            CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(moved.clone()),
+            )),
+        ])
+        .unwrap();
+
+    let mut store = FailingAppendStore;
+    let mut cursor = CanvasPersistenceCursor::new(4);
+
+    let err = apply_persistent_tool_effect(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasToolEffect::CommitGesture,
+    )
+    .unwrap_err();
+
+    assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
+    assert_eq!(cursor.sequence(), 4);
+    assert_eq!(editor.history().undo_depth(), 0);
+    assert_eq!(editor.document().nodes[&NodeId::from("a")], moved);
+
+    apply_persistent_tool_effect(
+        &mut editor,
+        &mut retry_store,
+        &mut cursor,
+        CanvasToolEffect::CommitGesture,
+    )
+    .unwrap();
+
+    assert_eq!(cursor.sequence(), 5);
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(
+        load_canvas_document(&retry_store).unwrap().nodes[&NodeId::from("a")],
+        editor.document().nodes[&NodeId::from("a")]
+    );
+}
+
+#[test]
+fn persistent_tool_effects_keep_gesture_updates_out_of_log_until_commit() {
     let mut document = CanvasDocument::default();
     document
         .insert_node(CanvasNode::new(
@@ -940,7 +1032,7 @@ fn persistent_tool_effects_keep_unrecorded_effects_out_of_log() {
         &mut editor,
         &mut store,
         &mut cursor,
-        CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::single(DocumentCommand::UpdateNode(
+        CanvasToolEffect::UpdateGesture(CanvasTransaction::single(DocumentCommand::UpdateNode(
             moved,
         ))),
     )
