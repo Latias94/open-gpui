@@ -311,7 +311,8 @@ refactors leave enough time.
 
 - Tab reorder within the same tab stack.
 - Close/reopen panel flow that keeps panel descriptors separate from graph state.
-- Viewport release polish using `DockViewportTargetContext::from_app`.
+- Viewport release polish using `DockViewportTargetContext::from_window` for pointer-event paths
+  and `DockViewportTargetContext::from_app` when only app-level signals are available.
 - Better native example controls for platform viewport close policy and placement restore.
 
 **Files:**

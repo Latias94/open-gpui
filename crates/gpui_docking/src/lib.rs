@@ -27,7 +27,9 @@
 //! veto platform closes before cleanup runs. Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
 //! restores platform-window hints for the runtime adapter. Use [`DockViewportTargetContext`] when
-//! cross-window drops need active, hovered, or front-to-back window arbitration.
+//! cross-window drops need active, hovered, or front-to-back window arbitration; pointer-event
+//! paths should prefer [`DockViewportTargetContext::from_window`] so the event window participates
+//! as the hovered-window signal.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};
