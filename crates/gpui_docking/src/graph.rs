@@ -663,11 +663,15 @@ impl DockGraph {
             return false;
         };
 
-        if items.is_empty() {
-            *current = 0;
+        let next = if items.is_empty() {
+            0
         } else {
-            *current = active.min(items.len().saturating_sub(1));
+            active.min(items.len().saturating_sub(1))
+        };
+        if *current == next {
+            return false;
         }
+        *current = next;
         true
     }
 

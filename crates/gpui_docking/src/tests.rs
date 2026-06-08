@@ -131,6 +131,42 @@ fn controller_builder_restored_layout_keeps_panel_metadata_out_of_layout() {
 }
 
 #[test]
+fn checked_set_active_tab_reports_only_real_changes() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::SetActiveTab {
+                tabs: root,
+                active: 0,
+            })
+            .expect("selecting the already-active tab should be valid")
+    );
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::SetActiveTab {
+                tabs: root,
+                active: 1,
+            })
+            .expect("selecting a different tab should be valid")
+    );
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::SetActiveTab {
+                tabs: root,
+                active: 1,
+            })
+            .expect("selecting the same new tab should stay valid")
+    );
+
+    let DockNode::Tabs { active, .. } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(*active, 1);
+}
+
+#[test]
 fn move_item_center_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
