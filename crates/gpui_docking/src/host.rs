@@ -14,8 +14,6 @@ pub struct DockHostOptions {
     pub empty_message: String,
     /// Message prefix rendered when an active panel is missing from the registry.
     pub missing_panel_prefix: String,
-    /// Message rendered for in-window floating nodes during Phase 2.
-    pub deferred_floating_message: String,
     /// Minimum rendered size for a split pane during splitter resizing.
     pub split_min_size: Pixels,
     /// Hit target and visual thickness for rendered splitter handles.
@@ -27,7 +25,6 @@ impl Default for DockHostOptions {
         Self {
             empty_message: "Empty dock space".to_string(),
             missing_panel_prefix: "Missing panel".to_string(),
-            deferred_floating_message: "Floating panels render in a later phase".to_string(),
             split_min_size: px(96.0),
             splitter_handle_size: px(6.0),
         }

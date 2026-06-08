@@ -1,7 +1,8 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
     DockGraph, DockHost, DockItemId, DockLayoutNode, DockNode, DockNodeId, DockOpApplyError,
-    DockPolicyError, DockSpaceId, DockWorkspace, DropZone, SplitAxis, debug::DockDebugRegion,
+    DockPolicyError, DockSpaceId, DockWorkspace, DropZone, EditorDockLayoutSpec, SplitAxis,
+    debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
@@ -563,6 +564,108 @@ fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
         *active
     });
     assert_eq!(active, 1);
+}
+
+#[open_gpui::test]
+fn controller_builder_mounts_host_with_lazy_panel_factories(cx: &mut TestAppContext) {
+    let editor_calls = Rc::new(Cell::new(0));
+    let preview_calls = Rc::new(Cell::new(0));
+    let editor_factory_calls = editor_calls.clone();
+    let preview_factory_calls = preview_calls.clone();
+
+    let controller = cx.new(|_| {
+        DockController::builder(space())
+            .default_editor_layout(EditorDockLayoutSpec::new(
+                ["explorer"],
+                ["editor", "preview"],
+                ["terminal"],
+            ))
+            .panel_factory("explorer", "Explorer", |cx| {
+                cx.new(|_| TestPanel { label: "explorer" }).into()
+            })
+            .panel_factory("editor", "Editor", move |cx| {
+                editor_factory_calls.set(editor_factory_calls.get() + 1);
+                cx.new(|_| TestPanel { label: "editor" }).into()
+            })
+            .panel_factory("preview", "Preview", move |cx| {
+                preview_factory_calls.set(preview_factory_calls.get() + 1);
+                cx.new(|_| TestPanel { label: "preview" }).into()
+            })
+            .panel_factory("terminal", "Terminal", |cx| {
+                cx.new(|_| TestPanel { label: "terminal" }).into()
+            })
+            .build()
+    });
+
+    let preview_tabs = cx.read_entity(&controller, |controller, _| {
+        controller
+            .graph()
+            .find_item_in_space(&space(), &item("preview"))
+            .expect("preview item should be in the builder layout")
+            .0
+    });
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(520.0), px(320.0)));
+
+    assert!(
+        cx.read_entity(&host, |host, _| host.controller().is_some()),
+        "host should be controller-backed when mounted from the builder path"
+    );
+    assert_eq!(editor_calls.get(), 1);
+    assert_eq!(
+        preview_calls.get(),
+        0,
+        "inactive lazy panel should not instantiate during initial render"
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel {
+                item: item("editor")
+            }
+        )
+        .is_some(),
+        "active builder-registered editor panel should render"
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel {
+                item: item("preview")
+            }
+        )
+        .is_none(),
+        "inactive preview panel should not render before selection"
+    );
+
+    let preview_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: preview_tabs,
+            item: item("preview"),
+        },
+    )
+    .expect("preview tab selector should be emitted");
+    let preview_tab_bounds = debug_bounds(&mut visual, &preview_tab);
+    visual.simulate_click(preview_tab_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    let visual = VisualTestContext::from_window(window.into(), cx);
+    assert_eq!(preview_calls.get(), 1);
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel {
+                item: item("preview")
+            }
+        )
+        .is_some(),
+        "selecting the preview tab should instantiate and render its lazy panel"
+    );
 }
 
 #[open_gpui::test]

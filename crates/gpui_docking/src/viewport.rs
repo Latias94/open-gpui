@@ -12,6 +12,10 @@ pub const DOCK_VIEWPORT_PLACEMENT_VERSION: u32 = 1;
 /// This type owns platform-window facts for docking: window handles, display ids, and the latest
 /// bounds snapshots used for coordinate conversion. None of this state belongs in
 /// [`DockGraph`](crate::DockGraph) or [`DockLayout`](crate::DockLayout).
+///
+/// A typical restore flow imports [`DockLayout`](crate::DockLayout) into a controller, opens or
+/// reuses GPUI windows for each logical dock space, registers those windows here, then applies a
+/// [`DockViewportPlacementLayout`] to rehydrate placement snapshots for coordinate conversion.
 #[derive(Debug, Default)]
 pub struct DockViewportAdapter {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
@@ -575,6 +579,48 @@ mod tests {
             Some(WindowBounds::Maximized(bounds(100.0, 200.0, 800.0, 600.0)))
         );
         assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));
+    }
+
+    #[test]
+    fn viewport_restore_workflow_uses_new_runtime_windows_with_saved_placement() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let secondary = space("secondary");
+        adapter.register_viewport(main.clone(), handle(1));
+        adapter.register_viewport(secondary.clone(), handle(2));
+        adapter.update_snapshot(
+            &main,
+            Some(DisplayId::new(7)),
+            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        adapter.update_snapshot(
+            &secondary,
+            Some(DisplayId::new(8)),
+            WindowBounds::Windowed(bounds(900.0, 200.0, 500.0, 400.0)),
+            bounds(30.0, 40.0, 240.0, 180.0),
+        );
+        let placement = adapter.export_placement();
+
+        let mut restored = DockViewportAdapter::new();
+        restored.register_viewport(main.clone(), handle(101));
+        restored.register_viewport(secondary.clone(), handle(102));
+
+        assert_eq!(
+            restored
+                .apply_placement(&placement)
+                .expect("saved placement should apply to registered restore windows"),
+            2
+        );
+        assert_eq!(restored.window_for_space(&main), Some(handle(101)));
+        assert_eq!(restored.space_for_window(handle(102)), Some(&secondary));
+        assert_eq!(
+            restored.hit_test_screen(point(px(935.0), px(245.0))),
+            Some(DockViewportHit {
+                space: secondary,
+                host_position: point(px(5.0), px(5.0)),
+            })
+        );
     }
 
     #[test]

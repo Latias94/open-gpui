@@ -111,106 +111,108 @@ fn restored_demo_graph() -> DockGraph {
 }
 
 fn build_host(cx: &mut Context<DockHost>) -> DockHost {
-    let mut workspace = DockWorkspace::new(SPACE, restored_demo_graph());
-    workspace.policy_mut().set_allow_floating(true);
-    workspace.register_panel_factory("explorer", "Explorer", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Explorer",
-                "Project structure",
-                0x2563eb,
-                &[
-                    "crates/gpui_docking",
-                    "examples/docking-native",
-                    "docs/plans",
-                    "target/doc",
-                ],
-            )
+    let controller = DockController::builder(SPACE)
+        .graph(restored_demo_graph())
+        .allow_floating(true)
+        .panel_factory("explorer", "Explorer", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Explorer",
+                    "Project structure",
+                    0x2563eb,
+                    &[
+                        "crates/gpui_docking",
+                        "examples/docking-native",
+                        "docs/plans",
+                        "target/doc",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
-    workspace.register_panel_factory("outline", "Outline", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Outline",
-                "Symbols in the active file",
-                0x0891b2,
-                &[
-                    "DockHost",
-                    "DockPanelRegistry",
-                    "DockGraph::default_editor_layout",
-                    "Render for DockHost",
-                ],
-            )
+        .panel_factory("outline", "Outline", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Outline",
+                    "Symbols in the active file",
+                    0x0891b2,
+                    &[
+                        "DockHost",
+                        "DockController::builder",
+                        "DockGraph::default_editor_layout",
+                        "Render for DockHost",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
-    workspace.register_panel_factory("editor", "Editor", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Editor",
-                "Active document",
-                0x16a34a,
-                &[
-                    "Workspace-backed rendering is active.",
-                    "Tabs route through DockAction.",
-                    "Splits use normalized graph fractions.",
-                    "Registered panel views stay outside the graph.",
-                ],
-            )
+        .panel_factory("editor", "Editor", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Editor",
+                    "Active document",
+                    0x16a34a,
+                    &[
+                        "Controller-backed rendering is active.",
+                        "Tabs route through DockAction.",
+                        "Splits use normalized graph fractions.",
+                        "Registered panel factories stay outside the graph.",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
-    workspace.register_panel_factory("preview", "Preview", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Preview",
-                "Rendered layout notes",
-                0x9333ea,
-                &[
-                    "DockHost adapts DockWorkspace into GPUI.",
-                    "Tab selection updates graph state.",
-                    "Layout round-trips through DockLayout.",
-                    "Splitter handles resize panes.",
-                    "Tabs can drag/drop between stacks.",
-                    "Floating bounds live in the graph layout.",
-                ],
-            )
+        .panel_factory("preview", "Preview", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Preview",
+                    "Rendered layout notes",
+                    0x9333ea,
+                    &[
+                        "DockHost observes DockController.",
+                        "Tab selection updates graph state.",
+                        "Layout round-trips through DockLayout.",
+                        "Splitter handles resize panes.",
+                        "Tabs can drag/drop between stacks.",
+                        "Floating bounds live in the graph layout.",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
-    workspace.register_panel_factory("terminal", "Terminal", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Terminal",
-                "Command output",
-                0xea580c,
-                &[
-                    "$ cargo nextest run -p open-gpui-docking",
-                    "Docking owner seam tests passed",
-                    "$ cargo doc -p open-gpui-docking --no-deps",
-                ],
-            )
+        .panel_factory("terminal", "Terminal", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Terminal",
+                    "Command output",
+                    0xea580c,
+                    &[
+                        "$ cargo nextest run -p open-gpui-docking",
+                        "Docking public API tests passed",
+                        "$ cargo doc -p open-gpui-docking --no-deps",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
-    workspace.register_panel_factory("problems", "Problems", |cx| {
-        cx.new(|_| {
-            DemoPanel::new(
-                "Problems",
-                "Diagnostics",
-                0xdc2626,
-                &[
-                    "No active diagnostics.",
-                    "Missing panels render placeholders.",
-                    "OS windows remain out of scope.",
-                ],
-            )
+        .panel_factory("problems", "Problems", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Problems",
+                    "Diagnostics",
+                    0xdc2626,
+                    &[
+                        "No active diagnostics.",
+                        "Missing panels render placeholders.",
+                        "OS windows remain adapter state.",
+                    ],
+                )
+            })
+            .into()
         })
-        .into()
-    });
+        .build();
 
-    let controller = cx.new(|_| DockController::new(workspace));
+    let controller = cx.new(|_| controller);
     DockHost::from_controller(controller, SPACE, cx)
 }
 

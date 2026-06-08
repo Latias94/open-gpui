@@ -1,6 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockPanel, DockPanelRegistry,
-    DockPolicy, DockSpaceId, DockWorkspace, host::DockHostOptions,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockLayout,
+    DockLayoutValidationError, DockPanel, DockPanelRegistry, DockPolicy, DockSpaceId,
+    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -15,6 +16,11 @@ pub struct DockController {
 }
 
 impl DockController {
+    /// Starts the recommended app-author setup path for a dock space.
+    pub fn builder(space: impl Into<DockSpaceId>) -> DockControllerBuilder {
+        DockControllerBuilder::new(space)
+    }
+
     /// Creates a controller from a configured workspace.
     pub fn new(workspace: DockWorkspace) -> Self {
         Self { workspace }
@@ -114,5 +120,109 @@ impl DockController {
         action: &DockAction,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.apply_action(action)
+    }
+}
+
+/// Builder for the common controller setup path.
+///
+/// The builder keeps the user-facing path centered on stable application concepts: one logical
+/// dock space, a graph or restored layout, panel registrations, options, and policy. Advanced
+/// callers can still construct [`DockWorkspace`] or [`DockGraph`] directly when they need lower
+/// level control.
+#[derive(Debug)]
+pub struct DockControllerBuilder {
+    space: DockSpaceId,
+    graph: DockGraph,
+    panels: Vec<(DockItemId, DockPanel)>,
+    options: DockHostOptions,
+    policy: DockPolicy,
+}
+
+impl DockControllerBuilder {
+    /// Creates a builder for a logical dock space.
+    pub fn new(space: impl Into<DockSpaceId>) -> Self {
+        Self {
+            space: space.into(),
+            graph: DockGraph::new(),
+            panels: Vec::new(),
+            options: DockHostOptions::default(),
+            policy: DockPolicy::default(),
+        }
+    }
+
+    /// Replaces the builder graph with an already constructed graph.
+    pub fn graph(mut self, graph: DockGraph) -> Self {
+        self.graph = graph;
+        self
+    }
+
+    /// Restores the builder graph from serialized dock layout data.
+    ///
+    /// The builder's logical space is unchanged. Applications can restore a layout containing
+    /// multiple logical spaces, then mount whichever space each [`DockHost`](crate::DockHost)
+    /// should render.
+    pub fn try_layout(mut self, layout: &DockLayout) -> Result<Self, DockLayoutValidationError> {
+        self.graph = DockGraph::import_layout(layout)?;
+        Ok(self)
+    }
+
+    /// Replaces the builder graph with the common editor-style layout.
+    pub fn default_editor_layout(mut self, spec: EditorDockLayoutSpec) -> Self {
+        self.graph = DockGraph::default_editor_layout(self.space.clone(), spec);
+        self
+    }
+
+    /// Registers a prepared panel.
+    pub fn panel(mut self, item: impl Into<DockItemId>, panel: DockPanel) -> Self {
+        self.panels.push((item.into(), panel));
+        self
+    }
+
+    /// Registers an eager GPUI view as panel content.
+    pub fn panel_view(
+        self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        view: impl Into<AnyView>,
+    ) -> Self {
+        self.panel(item, DockPanel::new(title, view))
+    }
+
+    /// Registers a lazy GPUI view factory as panel content.
+    pub fn panel_factory(
+        self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut open_gpui::Context<crate::DockHost>) -> AnyView + 'static,
+    ) -> Self {
+        self.panel(item, DockPanel::lazy(title, factory))
+    }
+
+    /// Replaces static host rendering options.
+    pub fn options(mut self, options: DockHostOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Replaces the docking interaction policy.
+    pub fn policy(mut self, policy: DockPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// Enables or disables in-window floating interactions.
+    pub fn allow_floating(mut self, allowed: bool) -> Self {
+        self.policy.set_allow_floating(allowed);
+        self
+    }
+
+    /// Builds the controller.
+    pub fn build(self) -> DockController {
+        let mut workspace = DockWorkspace::with_options(self.space, self.graph, self.options);
+        workspace.set_policy(self.policy);
+        for (item, panel) in self.panels {
+            workspace.register_panel(item, panel);
+        }
+        DockController::new(workspace)
     }
 }
