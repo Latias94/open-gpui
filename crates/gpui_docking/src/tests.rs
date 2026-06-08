@@ -1,0 +1,506 @@
+use crate::*;
+use serde::Deserialize;
+use std::collections::HashSet;
+
+fn space() -> DockSpaceId {
+    DockSpaceId::new("main")
+}
+
+fn item(id: &str) -> DockItemId {
+    DockItemId::new(id)
+}
+
+fn root_tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: items.iter().copied().map(item).collect(),
+        active: 0,
+    });
+    graph.set_root(space(), root);
+    (graph, root)
+}
+
+#[test]
+fn move_item_center_inserts_and_selects_item() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
+
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("c"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Center,
+        insert_index: Some(1),
+    }));
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("c"), item("b")]);
+    assert_eq!(*active, 1);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn move_item_to_target_outside_target_space_is_transactional() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    let orphan = graph.insert_node(DockNode::Tabs {
+        items: vec![item("orphan")],
+        active: 0,
+    });
+
+    assert!(!graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: orphan,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected root tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+
+    let DockNode::Tabs { items, active } =
+        graph.node(orphan).expect("orphan tabs node should exist")
+    else {
+        panic!("expected orphan tabs");
+    };
+    assert_eq!(items, &vec![item("orphan")]);
+    assert_eq!(*active, 0);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
+
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+    let target_tabs = graph
+        .find_item_in_space(&space(), &item("b"))
+        .expect("moved item should remain findable")
+        .0;
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("c"),
+        target_space: space(),
+        target_tabs,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+
+    let root = graph.root(&space()).expect("space should keep a root");
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = graph.node(root).expect("root split node should exist")
+    else {
+        panic!("expected split root");
+    };
+    assert_eq!(*axis, SplitAxis::Horizontal);
+    assert_eq!(children.len(), 3);
+    assert_eq!(children.len(), fractions.len());
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn float_item_in_window_creates_floating_container() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+    }));
+
+    assert_eq!(graph.collect_items_in_space(&space()).len(), 2);
+    assert_eq!(graph.floating_containers(&space()).len(), 1);
+    let DockNode::Tabs { items, .. } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected root tabs");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn merge_floating_into_moves_items_and_removes_floating() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+    }));
+
+    let floating = graph.floating_containers(&space())[0].node;
+    assert!(graph.apply_op(&DockOp::MergeFloatingInto {
+        space: space(),
+        floating,
+        target_tabs: root,
+    }));
+
+    assert!(graph.floating_containers(&space()).is_empty());
+    assert_eq!(
+        graph.collect_items_in_space(&space()),
+        vec![item("a"), item("b")]
+    );
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn compute_layout_repairs_mismatched_fraction_lengths_without_truncating_children() {
+    let mut graph = DockGraph::new();
+    let tabs_a = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let tabs_b = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let tabs_c = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![tabs_a, tabs_b, tabs_c],
+        fractions: vec![2.0, 1.0],
+    });
+
+    let mut layout = std::collections::HashMap::new();
+    graph.compute_layout(split, dock_bounds(0.0, 0.0, 400.0, 100.0), &mut layout);
+
+    assert_eq!(
+        layout
+            .get(&tabs_a)
+            .expect("tabs_a should receive computed bounds")
+            .size
+            .width,
+        open_gpui::px(200.0)
+    );
+    assert_eq!(
+        layout
+            .get(&tabs_b)
+            .expect("tabs_b should receive computed bounds")
+            .size
+            .width,
+        open_gpui::px(100.0)
+    );
+    assert_eq!(
+        layout
+            .get(&tabs_c)
+            .expect("tabs_c should receive computed bounds")
+            .size
+            .width,
+        open_gpui::px(100.0)
+    );
+}
+
+#[test]
+fn layout_roundtrips_roots_splits_and_floatings() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
+        source_space: space(),
+        item: item("c"),
+        target_space: space(),
+        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+    }));
+
+    let layout = graph.export_layout();
+    let json = serde_json::to_string(&layout).expect("layout should serialize");
+    let layout: DockLayout = serde_json::from_str(&json).expect("layout json should deserialize");
+    layout.validate().expect("layout should validate");
+
+    let imported = DockGraph::import_layout(&layout).expect("layout should import");
+    assert_eq!(imported.collect_items_in_space(&space()).len(), 3);
+    assert_eq!(imported.floating_containers(&space()).len(), 1);
+    assert_eq!(
+        imported.floating_containers(&space())[0].bounds,
+        dock_bounds(10.0, 20.0, 300.0, 200.0)
+    );
+    imported.assert_canonical_space(&space());
+}
+
+#[test]
+fn floating_only_space_exports_and_imports_without_root() {
+    let mut builder = DockLayoutBuilder::new();
+    let floating_tabs = builder.tabs(["floating"], 0);
+    builder.add_floating(
+        space(),
+        floating_tabs,
+        dock_bounds(10.0, 20.0, 300.0, 200.0),
+    );
+    let graph = builder.build();
+
+    assert!(graph.root(&space()).is_none());
+    assert_eq!(graph.floating_containers(&space()).len(), 1);
+
+    let layout = graph.export_layout();
+    assert_eq!(layout.spaces.len(), 1);
+    assert_eq!(layout.spaces[0].id, space());
+    assert_eq!(layout.spaces[0].root, None);
+    assert_eq!(layout.spaces[0].floatings.len(), 1);
+    layout
+        .validate()
+        .expect("floating-only layout should validate");
+
+    let imported = DockGraph::import_layout(&layout).expect("floating-only layout should import");
+    assert!(imported.root(&space()).is_none());
+    assert_eq!(imported.floating_containers(&space()).len(), 1);
+    assert_eq!(
+        imported.collect_items_in_space(&space()),
+        vec![item("floating")]
+    );
+    imported.assert_canonical_space(&space());
+}
+
+#[test]
+fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
+    let duplicate = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![
+            DockLayoutNode::Tabs {
+                id: 1,
+                items: vec![item("a")],
+                active: 0,
+            },
+            DockLayoutNode::Tabs {
+                id: 1,
+                items: vec![item("b")],
+                active: 0,
+            },
+        ],
+    );
+    assert!(matches!(
+        duplicate.validate(),
+        Err(DockLayoutValidationError::DuplicateNodeId { id: 1 })
+    ));
+
+    let cycle = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![DockLayoutNode::Split {
+            id: 1,
+            axis: SplitAxis::Horizontal,
+            children: vec![1],
+            fractions: vec![1.0],
+        }],
+    );
+    assert!(matches!(
+        cycle.validate(),
+        Err(DockLayoutValidationError::CycleDetected { id: 1 })
+    ));
+
+    let bad_active = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![DockLayoutNode::Tabs {
+            id: 1,
+            items: vec![item("a")],
+            active: 1,
+        }],
+    );
+    assert!(matches!(
+        bad_active.validate(),
+        Err(DockLayoutValidationError::TabsActiveOutOfBounds { .. })
+    ));
+}
+
+#[test]
+fn builder_default_editor_layout_sets_root_and_roundtrips() {
+    let spec = EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]);
+    let graph = DockGraph::default_editor_layout(space(), spec);
+
+    assert!(graph.root(&space()).is_some());
+    assert_eq!(graph.collect_items_in_space(&space()).len(), 4);
+    graph.assert_canonical_space(&space());
+
+    let layout = graph.export_layout();
+    layout.validate().expect("builder layout should validate");
+    let imported = DockGraph::import_layout(&layout).expect("builder layout should import");
+    assert_eq!(imported.collect_items_in_space(&space()).len(), 4);
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureSuite {
+    schema_version: u32,
+    cases: Vec<FixtureCase>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureCase {
+    id: String,
+    initial: FixtureInitial,
+    items: Vec<String>,
+    steps: Vec<FixtureStep>,
+    expect: FixtureExpect,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FixtureInitial {
+    RootTabs,
+}
+
+#[derive(Debug, Deserialize)]
+struct FixtureExpect {
+    item_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum FixtureStep {
+    MoveItem {
+        item: String,
+        target_item: String,
+        zone: FixtureZone,
+    },
+    FloatItem {
+        item: String,
+        bounds: [f32; 4],
+    },
+    MergeFirstFloating {
+        target_item: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FixtureZone {
+    Center,
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl From<FixtureZone> for DropZone {
+    fn from(zone: FixtureZone) -> Self {
+        match zone {
+            FixtureZone::Center => DropZone::Center,
+            FixtureZone::Left => DropZone::Left,
+            FixtureZone::Right => DropZone::Right,
+            FixtureZone::Top => DropZone::Top,
+            FixtureZone::Bottom => DropZone::Bottom,
+        }
+    }
+}
+
+#[test]
+fn dock_op_sequence_fixtures_hold_canonical_invariants() {
+    let raw = include_str!("fixtures/dock_op_sequences_v1.json");
+    let suite: FixtureSuite =
+        serde_json::from_str(raw).expect("dock op fixture suite should parse");
+    assert_eq!(suite.schema_version, 1);
+
+    for case in suite.cases {
+        let FixtureInitial::RootTabs = case.initial;
+        let item_refs: Vec<&str> = case.items.iter().map(String::as_str).collect();
+        let (mut graph, _root) = root_tabs_graph(&item_refs);
+
+        for step in case.steps {
+            apply_fixture_step(&mut graph, step);
+            graph.assert_canonical_space(&space());
+            assert_unique_items(&graph, &case.id);
+        }
+
+        assert_eq!(
+            graph.collect_items_in_space(&space()).len(),
+            case.expect.item_count,
+            "fixture case {} item count mismatch",
+            case.id
+        );
+    }
+}
+
+fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
+    match step {
+        FixtureStep::MoveItem {
+            item,
+            target_item,
+            zone,
+        } => {
+            let target_tabs = graph
+                .find_item_in_space(&space(), &DockItemId::new(target_item))
+                .expect("fixture target item should be findable")
+                .0;
+            assert!(graph.apply_op(&DockOp::MoveItem {
+                source_space: space(),
+                item: DockItemId::new(item),
+                target_space: space(),
+                target_tabs,
+                zone: zone.into(),
+                insert_index: None,
+            }));
+        }
+        FixtureStep::FloatItem { item, bounds } => {
+            assert!(graph.apply_op(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: DockItemId::new(item),
+                target_space: space(),
+                bounds: dock_bounds(bounds[0], bounds[1], bounds[2], bounds[3]),
+            }));
+        }
+        FixtureStep::MergeFirstFloating { target_item } => {
+            let floating = graph
+                .floating_containers(&space())
+                .first()
+                .expect("fixture should have a floating container")
+                .node;
+            let target_tabs = graph
+                .find_item_in_space(&space(), &DockItemId::new(target_item))
+                .expect("fixture merge target item should be findable")
+                .0;
+            assert!(graph.apply_op(&DockOp::MergeFloatingInto {
+                space: space(),
+                floating,
+                target_tabs,
+            }));
+        }
+    }
+}
+
+fn assert_unique_items(graph: &DockGraph, case_id: &str) {
+    let items = graph.collect_items_in_space(&space());
+    let mut unique = HashSet::new();
+    for item in &items {
+        assert!(
+            unique.insert(item.clone()),
+            "fixture case {case_id} duplicated item {item}"
+        );
+    }
+}

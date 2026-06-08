@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "root-tabs-center-and-edge-dock",
+      "initial": "root_tabs",
+      "items": ["a", "b", "c"],
+      "steps": [
+        { "type": "move_item", "item": "b", "target_item": "a", "zone": "center" },
+        { "type": "move_item", "item": "c", "target_item": "a", "zone": "right" },
+        { "type": "move_item", "item": "b", "target_item": "c", "zone": "right" }
+      ],
+      "expect": {
+        "item_count": 3
+      }
+    },
+    {
+      "id": "float-and-merge-back",
+      "initial": "root_tabs",
+      "items": ["a", "b"],
+      "steps": [
+        { "type": "float_item", "item": "b", "bounds": [20.0, 30.0, 240.0, 160.0] },
+        { "type": "merge_first_floating", "target_item": "a" }
+      ],
+      "expect": {
+        "item_count": 2
+      }
+    }
+  ]
+}
