@@ -15,7 +15,7 @@ use open_gpui::{
     Subscription, Window, WindowBounds, WindowId, WindowOptions, point,
 };
 use std::{
-    cell::{Cell, Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell},
     rc::Rc,
 };
 
@@ -346,9 +346,14 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow()
     }
 
-    /// Mutably borrows the shared runtime.
-    pub fn borrow_mut(&self) -> RefMut<'_, DockViewportRuntime> {
-        self.runtime.borrow_mut()
+    /// Returns the shared close policy used by runtime-opened viewport windows.
+    pub fn close_policy(&self) -> DockViewportClosePolicy {
+        self.runtime.borrow().close_policy()
+    }
+
+    /// Replaces the shared close policy used by runtime-opened viewport windows.
+    pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
+        self.runtime.borrow_mut().set_close_policy(close_policy);
     }
 
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
@@ -395,6 +400,19 @@ impl DockViewportRuntimeHandle {
         cx.on_window_closed(move |_, window_id| {
             runtime.handle_window_closed(window_id);
         })
+    }
+
+    /// Exports serializable placement snapshots from the shared runtime.
+    pub fn export_placement(&self) -> DockViewportPlacementLayout {
+        self.runtime.borrow().export_placement()
+    }
+
+    /// Applies saved placement snapshots through the shared runtime.
+    pub fn apply_placement(
+        &self,
+        placement: &DockViewportPlacementLayout,
+    ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
+        self.runtime.borrow_mut().apply_placement(placement)
     }
 }
 

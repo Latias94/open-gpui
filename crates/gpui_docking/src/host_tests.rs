@@ -945,8 +945,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
     let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let runtime =
-        DockViewportRuntimeHandle::with_close_policy(controller, DockViewportClosePolicy::Prevent);
+    let runtime = DockViewportRuntimeHandle::new(controller);
 
     let opened = cx
         .update(|app| {
@@ -959,9 +958,22 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
         .expect("secondary viewport should open through runtime handle");
     let mut visual = VisualTestContext::from_window(opened.window, cx);
 
+    assert_eq!(
+        runtime.close_policy(),
+        DockViewportClosePolicy::RetainLayout
+    );
+    assert_eq!(
+        runtime
+            .handle_window_should_close(opened.window.window_id())
+            .status,
+        DockViewportShouldCloseStatus::Allowed
+    );
+
+    runtime.set_close_policy(DockViewportClosePolicy::Prevent);
+    assert_eq!(runtime.close_policy(), DockViewportClosePolicy::Prevent);
     assert!(
         !visual.simulate_close(),
-        "Prevent policy should veto GPUI should-close before the window closes"
+        "updated Prevent policy should veto GPUI should-close before the window closes"
     );
     assert_eq!(
         runtime
