@@ -16,8 +16,10 @@ The gate runs:
 For focused `open-gpui-canvas` work, run:
 
 ```sh
+cargo fmt -p open-gpui-canvas
 cargo check -p open-gpui-canvas --benches
 cargo nextest run -p open-gpui-canvas
+cargo check -p open-gpui-smoke-native
 ```
 
 The canvas crate also has a large-canvas Criterion baseline:
@@ -53,6 +55,13 @@ Before publishing a crate, confirm that the packaged archive carries the expecte
 
 ```sh
 cargo package -p open-gpui --list --allow-dirty
+```
+
+For the canvas crate specifically, run:
+
+```sh
+cargo package -p open-gpui-canvas --list --allow-dirty
+cargo publish -p open-gpui-canvas --dry-run --allow-dirty
 ```
 
 Every published Open GPUI crate should include `README.md`, `LICENSE-APACHE`, and `NOTICE`. Cargo

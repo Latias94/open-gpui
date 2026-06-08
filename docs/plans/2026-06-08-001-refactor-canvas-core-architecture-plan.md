@@ -1,17 +1,42 @@
 ---
 title: "refactor: Deepen Open GPUI Canvas Core Architecture"
 type: refactor
-status: active
+status: completed
 date: 2026-06-08
+completed: 2026-06-08
 ---
 
 # Refactor Open GPUI Canvas Core Architecture
 
 ## Summary
 
-The current canvas crate has a strong MVP foundation, but several seams are still too shallow for a reusable Figma, draw.io, MarginNote, or xyflow-style ecosystem. This plan deepens the mutation journal, editor mutation path, gesture commit model, runtime caches, geometry resolution, and kind registry in that order.
+The canvas crate had a strong MVP foundation, but several seams were still too shallow for a reusable Figma, draw.io, MarginNote, or xyflow-style ecosystem. This plan deepened the mutation journal, editor mutation path, gesture commit model, runtime caches, geometry resolution, and kind registry in that order.
 
-The audit findings are valid. The most urgent issue is not naming or API polish; it is making the committed document change the single source of truth for undo, persistence, indexing, future CRDT adapters, and tests.
+The audit findings were valid. The most urgent issue was not naming or API polish; it was making the committed document change the single source of truth for undo, persistence, indexing, future CRDT adapters, and tests.
+
+## Completion Summary
+
+This plan is complete for the 0.1 alpha architecture target.
+
+- U1 introduced `CanvasCommittedMutation` and a journal path that returns the applied transaction,
+  inverse transaction, actual `CanvasDocumentDiff`, and actual semantic record operation batch.
+- U2 encapsulated `CanvasEditor` state behind accessors and mutation methods so callers cannot
+  bypass history, selection pruning, runtime cache sync, or schema validation.
+- U3 added first-class gesture sessions for transient update, commit, and cancel semantics.
+- U4 added `CanvasRuntime` as the owner for spatial, graph, and edge-geometry caches.
+- U5 centralized bounds, routes, hit geometry, endpoint picking, previews, culling, and paint
+  fallback through `CanvasGeometryResolver`.
+- U6 added `CanvasKindRegistry` for per-kind defaults, migrations, validation, and geometry hooks.
+- U7 updated the README and ADR narrative to describe committed mutations, runtime cache ownership,
+  gesture sessions, and registry-backed extensibility.
+- Follow-up review fixed persistent undo/redo atomicity by reusing the prepared mutation after log
+  append.
+- Pre-release compatibility constructors that accepted caller-supplied `SpatialIndex` values were
+  removed instead of deprecated.
+
+Deferred work remains intentionally outside this completed refactor: concrete redb, Loro, and
+`rkyv` adapters; a replacement spatial index implementation; obstacle-aware routing; collaboration
+presence; and product-level canvas UX.
 
 ---
 

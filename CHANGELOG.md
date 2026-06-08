@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `open-gpui-canvas` as a reusable pre-1.0 infinite canvas foundation with separated nodes,
+  edges, shapes, handles, viewport transforms, GPUI batched paint, JSON Canvas import/export, and a
+  native smoke example.
+- Added a document mutation journal that returns committed mutations with the applied transaction,
+  inverse transaction, actual document diff, and actual semantic record operation batch.
+- Added `CanvasEditor` as the consistency boundary for document mutation, selection, history,
+  gestures, runtime cache updates, edge router policy, and kind registry policy.
+- Added first-class gesture sessions so tools can express transient update, commit, and cancel
+  semantics without hand-rolling inverse transactions.
+- Added `CanvasRuntime` for spatial, graph, and edge-geometry runtime caches.
+- Added `CanvasGeometryResolver` so culling, hit testing, endpoint picking, connection previews,
+  routing, and GPUI paint share route and geometry semantics.
+- Added `CanvasKindRegistry` for per-kind defaults, migrations, validation, and geometry hooks over
+  the open `kind: String` plus JSON payload model.
+- Added checkpoint and transaction-log persistence boundaries, typed and byte-store adapters, and an
+  in-memory persistence store.
+- Added canvas spatial-index research covering dynamic R*-trees, packed static AABB indexes,
+  hybrid overlays, tile indexes, quadtrees, and candidate Rust crates.
+
+### Changed
+
+- Tightened pre-release canvas APIs by removing compatibility constructors that accepted
+  caller-supplied `SpatialIndex` values. Runtime cache ownership now stays centralized in
+  `CanvasRuntime`.
+- Persistent undo and redo now append the prepared mutation to the log and then apply the same
+  prepared mutation in memory, avoiding a second prepare/apply pass.
+
 ## [0.1.0] - 2026-06-07
 
 ### Added

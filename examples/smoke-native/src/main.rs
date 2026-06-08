@@ -5,10 +5,11 @@ use open_gpui::{
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor, CanvasEndpoint, CanvasEvent,
-    CanvasHandle, CanvasInputMapper, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
-    CanvasPaintTheme, CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext,
-    CanvasToolEffect, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
-    DocumentError, HandleRole, NodeId, PointerButton, collect_visible_records, paint_canvas_frame,
+    CanvasHandle, CanvasInputMapper, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection, CanvasShape,
+    CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
+    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, HandleRole, NodeId,
+    PointerButton, collect_visible_records, paint_canvas_frame,
 };
 use open_gpui_platform::application;
 
@@ -23,6 +24,14 @@ struct SmokeView {
 #[derive(Default)]
 struct StampNodeTool {
     sequence: u64,
+}
+
+struct StampNodeKind;
+
+impl CanvasNodeKind for StampNodeKind {
+    fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
+        Some(node.bounds().dilate(px(6.0)))
+    }
 }
 
 impl CanvasToolReducer for StampNodeTool {
@@ -215,6 +224,12 @@ fn demo_tools() -> CanvasToolRegistry {
     registry
 }
 
+fn demo_kind_registry() -> CanvasKindRegistry {
+    let mut registry = CanvasKindRegistry::open();
+    registry.register_node_kind("stamp", StampNodeKind);
+    registry
+}
+
 fn demo_document() -> CanvasDocument {
     let mut document = CanvasDocument::default();
 
@@ -322,7 +337,11 @@ fn main() {
             },
             |_, cx| {
                 cx.new(|cx| SmokeView {
-                    editor: CanvasEditor::new(demo_document()),
+                    editor: CanvasEditor::try_new_with_kind_registry(
+                        demo_document(),
+                        demo_kind_registry(),
+                    )
+                    .expect("failed to create canvas editor"),
                     tools: demo_tools(),
                     focus_handle: cx.focus_handle(),
                 })
