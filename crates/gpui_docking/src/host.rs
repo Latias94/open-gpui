@@ -8,6 +8,7 @@ use crate::{
     drop_target::DockDropIntent, interaction::DockInteractionRuntime, workspace::DockWorkspace,
 };
 use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Point, px};
+use thiserror::Error;
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -53,6 +54,14 @@ enum DockHostSource {
         controller: Entity<DockController>,
         space: DockSpaceId,
     },
+}
+
+/// Error returned when callers request owned workspace state from a controller-backed host.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DockHostAccessError {
+    /// The host renders from a shared controller instead of owning workspace state directly.
+    #[error("controller-backed hosts expose docking state through DockController")]
+    ControllerBackedHost,
 }
 
 impl DockHost {
@@ -104,15 +113,14 @@ impl DockHost {
         }
     }
 
-    /// Returns the workspace rendered by this host.
+    /// Returns the owned workspace rendered by this host.
     ///
     /// This accessor is available for compatibility hosts created with [`Self::from_workspace`].
-    pub fn workspace(&self) -> &DockWorkspace {
+    /// Controller-backed hosts expose shared state through [`DockController`].
+    pub fn workspace(&self) -> Result<&DockWorkspace, DockHostAccessError> {
         match &self.source {
-            DockHostSource::Owned(workspace) => workspace,
-            DockHostSource::Controller { .. } => {
-                panic!("controller-backed hosts expose workspace state through DockController")
-            }
+            DockHostSource::Owned(workspace) => Ok(workspace),
+            DockHostSource::Controller { .. } => Err(DockHostAccessError::ControllerBackedHost),
         }
     }
 
@@ -146,44 +154,32 @@ impl DockHost {
         }
     }
 
-    /// Returns the host graph.
-    pub fn graph(&self) -> &DockGraph {
-        match &self.source {
-            DockHostSource::Owned(workspace) => workspace.graph(),
-            DockHostSource::Controller { .. } => {
-                panic!("controller-backed hosts expose graph state through DockController")
-            }
-        }
+    /// Returns the graph for an owned-workspace host.
+    ///
+    /// Controller-backed hosts expose shared graph state through [`DockController::graph`].
+    pub fn graph(&self) -> Result<&DockGraph, DockHostAccessError> {
+        Ok(self.workspace()?.graph())
     }
 
-    /// Returns the panel registry.
-    pub fn panels(&self) -> &DockPanelRegistry {
-        match &self.source {
-            DockHostSource::Owned(workspace) => workspace.panels(),
-            DockHostSource::Controller { .. } => {
-                panic!("controller-backed hosts expose panels through DockController")
-            }
-        }
+    /// Returns the panel registry for an owned-workspace host.
+    ///
+    /// Controller-backed hosts expose shared panel state through [`DockController::panels`].
+    pub fn panels(&self) -> Result<&DockPanelRegistry, DockHostAccessError> {
+        Ok(self.workspace()?.panels())
     }
 
-    /// Returns the static rendering options.
-    pub fn options(&self) -> &DockHostOptions {
-        match &self.source {
-            DockHostSource::Owned(workspace) => workspace.options(),
-            DockHostSource::Controller { .. } => {
-                panic!("controller-backed hosts expose options through DockController")
-            }
-        }
+    /// Returns the static rendering options for an owned-workspace host.
+    ///
+    /// Controller-backed hosts expose shared options through [`DockController::options`].
+    pub fn options(&self) -> Result<&DockHostOptions, DockHostAccessError> {
+        Ok(self.workspace()?.options())
     }
 
-    /// Returns the docking interaction policy.
-    pub fn policy(&self) -> &DockPolicy {
-        match &self.source {
-            DockHostSource::Owned(workspace) => workspace.policy(),
-            DockHostSource::Controller { .. } => {
-                panic!("controller-backed hosts expose policy through DockController")
-            }
-        }
+    /// Returns the docking interaction policy for an owned-workspace host.
+    ///
+    /// Controller-backed hosts expose shared policy through [`DockController::policy`].
+    pub fn policy(&self) -> Result<&DockPolicy, DockHostAccessError> {
+        Ok(self.workspace()?.policy())
     }
 
     pub(crate) fn with_workspace<R>(

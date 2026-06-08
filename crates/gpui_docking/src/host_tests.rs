@@ -1,7 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
-    DockGraph, DockHost, DockItemId, DockLayoutNode, DockLayoutRect, DockNode, DockNodeId,
-    DockOpApplyError, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockGraph, DockHost, DockHostAccessError, DockItemId, DockLayoutNode, DockLayoutRect, DockNode,
+    DockNodeId, DockOpApplyError, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus,
     DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntime,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportWindowBounds,
@@ -378,7 +378,13 @@ fn lazy_panel_state_stays_out_of_layout_export(cx: &mut TestAppContext) {
 
     let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
     let json = host.read_with(&visual, |host, _| {
-        serde_json::to_string(&host.graph().export_layout()).expect("layout should serialize")
+        serde_json::to_string(
+            &host
+                .graph()
+                .expect("owned host should expose graph")
+                .export_layout(),
+        )
+        .expect("layout should serialize")
     });
 
     assert!(!json.contains("Lazy Panel"));
@@ -399,13 +405,15 @@ fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
         })
         .expect("active tab mutation should be valid");
 
-    let DockNode::Tabs { active, .. } = host.graph().node(root).expect("tabs should exist") else {
+    let graph = host.graph().expect("owned host should expose graph");
+    let DockNode::Tabs { active, .. } = graph.node(root).expect("tabs should exist") else {
         panic!("root should be tabs");
     };
     assert_eq!(outcome, DockActionOutcome::Changed);
     assert_eq!(*active, 1);
-    assert!(host.panels().contains(&item("a")));
-    assert!(host.panels().contains(&item("b")));
+    let panels = host.panels().expect("owned host should expose panels");
+    assert!(panels.contains(&item("a")));
+    assert!(panels.contains(&item("b")));
 }
 
 #[open_gpui::test]
@@ -563,8 +571,18 @@ fn compatibility_constructor_delegates_to_workspace(_cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"], 0);
     let host = DockHost::new(space(), graph);
 
-    assert_eq!(host.workspace().space(), &space());
-    assert!(host.graph().root(&space()).is_some());
+    assert_eq!(
+        host.workspace()
+            .expect("owned host should expose workspace")
+            .space(),
+        &space()
+    );
+    assert!(
+        host.graph()
+            .expect("owned host should expose graph")
+            .root(&space())
+            .is_some()
+    );
 }
 
 #[open_gpui::test]
@@ -578,6 +596,11 @@ fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
         open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
     let (window_b, host_b, visual_b) =
         open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+
+    assert!(host_a.read_with(&visual_a, |host, _| matches!(
+        host.workspace(),
+        Err(DockHostAccessError::ControllerBackedHost)
+    )));
 
     assert!(
         selector_for(
@@ -1913,7 +1936,11 @@ fn missing_active_panel_renders_placeholder(cx: &mut TestAppContext) {
 
     assert!(debug_bounds(&mut visual, &missing).size.width > px(0.0));
     assert_eq!(
-        host.read_with(&visual, |host, _| host.graph().spaces().len()),
+        host.read_with(&visual, |host, _| host
+            .graph()
+            .expect("owned host should expose graph")
+            .spaces()
+            .len()),
         1
     );
 }
@@ -1932,7 +1959,13 @@ fn empty_root_renders_placeholder(cx: &mut TestAppContext) {
         .expect("empty selector should be emitted");
 
     assert!(debug_bounds(&mut visual, &empty).size.width > px(0.0));
-    assert_eq!(host.read_with(&visual, |host, _| host.panels().len()), 1);
+    assert_eq!(
+        host.read_with(&visual, |host, _| host
+            .panels()
+            .expect("owned host should expose panels")
+            .len()),
+        1
+    );
 }
 
 #[open_gpui::test]
@@ -2033,6 +2066,7 @@ fn dragging_floating_handle_updates_graph_bounds(cx: &mut TestAppContext) {
     host.read_with(&visual, |host, _| {
         let container = host
             .graph()
+            .expect("owned host should expose graph")
             .floating_containers(&space())
             .iter()
             .find(|container| container.node == floating)
@@ -2167,8 +2201,8 @@ fn horizontal_splitter_drag_updates_width_fractions(cx: &mut TestAppContext) {
     assert_close(width(debug_bounds(&mut visual, &left)), 280.0);
     assert_close(width(debug_bounds(&mut visual, &right)), 120.0);
     host.read_with(&visual, |host, _| {
-        let DockNode::Split { fractions, .. } =
-            host.graph().node(split).expect("split should exist")
+        let graph = host.graph().expect("owned host should expose graph");
+        let DockNode::Split { fractions, .. } = graph.node(split).expect("split should exist")
         else {
             panic!("root should be split");
         };
@@ -2295,6 +2329,7 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
     host.read_with(&visual, |host, _| {
         let DockNode::Tabs { items, active } = host
             .graph()
+            .expect("owned host should expose graph")
             .node(right_tabs)
             .expect("target tabs should exist")
         else {
@@ -2353,8 +2388,8 @@ fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
         "panel A should be active after reorder"
     );
     host.read_with(&visual, |host, _| {
-        let DockNode::Tabs { items, active } =
-            host.graph().node(tabs).expect("tabs should still exist")
+        let graph = host.graph().expect("owned host should expose graph");
+        let DockNode::Tabs { items, active } = graph.node(tabs).expect("tabs should still exist")
         else {
             panic!("target should be tabs");
         };
@@ -2400,9 +2435,9 @@ fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) 
         "panel A should be visible after edge drop"
     );
     host.read_with(&visual, |host, _| {
-        let root = host.graph().root(&space()).expect("space should keep root");
-        let DockNode::Split { axis, children, .. } =
-            host.graph().node(root).expect("root should exist")
+        let graph = host.graph().expect("owned host should expose graph");
+        let root = graph.root(&space()).expect("space should keep root");
+        let DockNode::Split { axis, children, .. } = graph.node(root).expect("root should exist")
         else {
             panic!("root should be split after edge drop");
         };
