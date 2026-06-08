@@ -42,9 +42,9 @@ pub use document::{
 pub use geometry::{CanvasViewport, TransformError};
 pub use gpui::{
     CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintFrame, CanvasPaintInteraction,
-    CanvasPaintInteractionFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
-    CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle, canvas_view,
-    collect_visible_records, paint_canvas_frame,
+    CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel, CanvasPaintOptions,
+    CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle,
+    canvas_view, collect_visible_records, paint_canvas_frame,
 };
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
@@ -77,9 +77,9 @@ pub use routing::{
 };
 pub use runtime::CanvasRuntime;
 pub use schema::{
-    CanvasEdgeKind, CanvasKindPaint, CanvasKindRegistry, CanvasNodeHitTest, CanvasNodeKind,
-    CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError, CanvasShapeHitTest,
-    CanvasShapeKind, CanvasShapeResizeProposal,
+    CanvasEdgeKind, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNodeHitTest,
+    CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError,
+    CanvasShapeHitTest, CanvasShapeKind, CanvasShapeResizeProposal,
 };
 pub use snap::{
     CanvasSnapAxis, CanvasSnapGuide, CanvasSnapResult, DEFAULT_SNAP_THRESHOLD,

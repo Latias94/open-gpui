@@ -116,6 +116,40 @@ pub struct CanvasKindPaint {
     pub corner_radius: Option<Pixels>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasKindLabel {
+    pub text: String,
+    pub inset: Pixels,
+    pub color: Option<String>,
+    pub visible: bool,
+}
+
+impl CanvasKindLabel {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            inset: Pixels::ZERO,
+            color: None,
+            visible: true,
+        }
+    }
+
+    pub fn with_inset(mut self, inset: Pixels) -> Self {
+        self.inset = inset;
+        self
+    }
+
+    pub fn with_color(mut self, color: impl Into<String>) -> Self {
+        self.color = Some(color.into());
+        self
+    }
+
+    pub fn hidden(mut self) -> Self {
+        self.visible = false;
+        self
+    }
+}
+
 pub trait CanvasNodeKind: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
@@ -146,6 +180,10 @@ pub trait CanvasNodeKind: Send + Sync {
     }
 
     fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
+        None
+    }
+
+    fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
         None
     }
 
@@ -197,6 +235,10 @@ pub trait CanvasShapeKind: Send + Sync {
     }
 
     fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
+        None
+    }
+
+    fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
         None
     }
 
@@ -445,6 +487,18 @@ impl CanvasKindRegistry {
             .and_then(|schema| schema.edge_paint(edge))
     }
 
+    pub fn node_label(&self, node: &CanvasNode) -> Option<CanvasKindLabel> {
+        self.node_kind(&node.kind)
+            .and_then(|schema| schema.node_label(node))
+            .filter(|label| label.visible && !label.text.trim().is_empty())
+    }
+
+    pub fn shape_label(&self, shape: &CanvasShape) -> Option<CanvasKindLabel> {
+        self.shape_kind(&shape.kind)
+            .and_then(|schema| schema.shape_label(shape))
+            .filter(|label| label.visible && !label.text.trim().is_empty())
+    }
+
     pub fn resize_node_bounds(
         &self,
         node: &CanvasNode,
@@ -670,6 +724,14 @@ mod tests {
                 corner_radius: Some(px(10.0)),
             })
         }
+
+        fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
+            Some(
+                CanvasKindLabel::new("Node label")
+                    .with_inset(px(8.0))
+                    .with_color("#24292f"),
+            )
+        }
     }
 
     struct PaintedEdgeKind;
@@ -695,6 +757,30 @@ mod tests {
                 stroke_width: Some(px(3.0)),
                 corner_radius: Some(px(4.0)),
             })
+        }
+
+        fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
+            Some(
+                CanvasKindLabel::new("Shape label")
+                    .with_inset(px(4.0))
+                    .with_color("#0969da"),
+            )
+        }
+    }
+
+    struct HiddenLabelNodeKind;
+
+    impl CanvasNodeKind for HiddenLabelNodeKind {
+        fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
+            Some(CanvasKindLabel::new("Hidden").hidden())
+        }
+    }
+
+    struct EmptyLabelShapeKind;
+
+    impl CanvasShapeKind for EmptyLabelShapeKind {
+        fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
+            Some(CanvasKindLabel::new("   "))
         }
     }
 
@@ -879,6 +965,8 @@ mod tests {
         registry.register_node_kind("painted-node", PaintedNodeKind);
         registry.register_edge_kind("painted-edge", PaintedEdgeKind);
         registry.register_shape_kind("painted-shape", PaintedShapeKind);
+        registry.register_node_kind("hidden-label", HiddenLabelNodeKind);
+        registry.register_shape_kind("empty-label", EmptyLabelShapeKind);
 
         let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
         node.kind = "painted-node".to_string();
@@ -890,6 +978,14 @@ mod tests {
                 stroke_width: Some(px(2.0)),
                 corner_radius: Some(px(10.0)),
             })
+        );
+        assert_eq!(
+            registry.node_label(&node),
+            Some(
+                CanvasKindLabel::new("Node label")
+                    .with_inset(px(8.0))
+                    .with_color("#24292f")
+            )
         );
 
         let mut edge = CanvasEdge::new(
@@ -922,11 +1018,34 @@ mod tests {
                 corner_radius: Some(px(4.0)),
             })
         );
+        assert_eq!(
+            registry.shape_label(&shape),
+            Some(
+                CanvasKindLabel::new("Shape label")
+                    .with_inset(px(4.0))
+                    .with_color("#0969da")
+            )
+        );
+
+        let mut hidden_label_node =
+            CanvasNode::new("hidden", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        hidden_label_node.kind = "hidden-label".to_string();
+        assert_eq!(registry.node_label(&hidden_label_node), None);
+
+        let mut empty_label_shape = CanvasShape::new(
+            "empty",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+        );
+        empty_label_shape.kind = "empty-label".to_string();
+        assert_eq!(registry.shape_label(&empty_label_shape), None);
 
         node.kind = "unknown".to_string();
         assert_eq!(registry.node_paint(&node), None);
+        assert_eq!(registry.node_label(&node), None);
         edge.kind = "unknown".to_string();
         assert_eq!(registry.edge_paint(&edge), None);
+        shape.kind = "unknown".to_string();
+        assert_eq!(registry.shape_label(&shape), None);
     }
 
     #[test]

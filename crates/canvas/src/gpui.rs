@@ -1,8 +1,8 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRouteSegment, CanvasRuntime,
-    CanvasSelection, CanvasShape, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
+    CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRouteSegment,
+    CanvasRuntime, CanvasSelection, CanvasShape, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
     CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions, HitTarget,
     PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
 };
@@ -223,10 +223,19 @@ pub struct CanvasPaintRecord {
     pub target: HitTarget,
     pub document_bounds: Bounds<Pixels>,
     pub view_bounds: Bounds<Pixels>,
+    pub label: Option<CanvasPaintLabel>,
     pub z_index: i32,
     pub hidden: bool,
     pub locked: bool,
     pub selected: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintLabel {
+    pub text: String,
+    pub document_bounds: Bounds<Pixels>,
+    pub view_bounds: Bounds<Pixels>,
+    pub color: Option<Hsla>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -372,15 +381,19 @@ pub fn collect_visible_records(
     let records = model
         .runtime
         .query_with_options(visible_document_bounds, hit_options)
-        .map(|record| CanvasPaintRecord {
-            target: record.target.clone(),
-            document_bounds: record.bounds,
-            view_bounds: model.viewport.document_bounds_to_view(record.bounds),
-            z_index: record.z_index,
-            hidden: record.hidden,
-            locked: record.locked,
-            selected: options.include_interaction_feedback
-                && target_is_selected(&record.target, &model.interaction.selection),
+        .map(|record| {
+            let target = record.target.clone();
+            CanvasPaintRecord {
+                label: paint_record_label(model, &target, record.bounds),
+                target,
+                document_bounds: record.bounds,
+                view_bounds: model.viewport.document_bounds_to_view(record.bounds),
+                z_index: record.z_index,
+                hidden: record.hidden,
+                locked: record.locked,
+                selected: options.include_interaction_feedback
+                    && target_is_selected(&record.target, &model.interaction.selection),
+            }
         })
         .collect();
 
@@ -710,6 +723,51 @@ fn paint_line(
     if let Ok(path) = builder.build() {
         window.paint_path(path, stroke);
     }
+}
+
+fn paint_record_label(
+    model: &CanvasPaintModel,
+    target: &HitTarget,
+    document_bounds: Bounds<Pixels>,
+) -> Option<CanvasPaintLabel> {
+    let label = match target {
+        HitTarget::Node(id) => model
+            .document
+            .nodes
+            .get(id)
+            .and_then(|node| model.kind_registry.node_label(node)),
+        HitTarget::Shape(id) => model
+            .document
+            .shapes
+            .get(id)
+            .and_then(|shape| model.kind_registry.shape_label(shape)),
+        HitTarget::Edge(_) | HitTarget::Handle { .. } => None,
+    }?;
+
+    Some(resolve_paint_label(model, label, document_bounds))
+}
+
+fn resolve_paint_label(
+    model: &CanvasPaintModel,
+    label: CanvasKindLabel,
+    document_bounds: Bounds<Pixels>,
+) -> CanvasPaintLabel {
+    let document_bounds = label_document_bounds(document_bounds, label.inset);
+    CanvasPaintLabel {
+        text: label.text,
+        document_bounds,
+        view_bounds: model.viewport.document_bounds_to_view(document_bounds),
+        color: label.color.as_deref().and_then(parse_color),
+    }
+}
+
+fn label_document_bounds(bounds: Bounds<Pixels>, inset: Pixels) -> Bounds<Pixels> {
+    if !inset.as_f32().is_finite() || inset <= Pixels::ZERO {
+        return bounds;
+    }
+
+    let max_inset = bounds.size.width.min(bounds.size.height) * 0.5;
+    bounds.inset(inset.min(max_inset))
 }
 
 fn paint_edge(
@@ -1156,6 +1214,65 @@ mod tests {
             Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
         );
         assert_eq!(record.view_bounds, record.document_bounds);
+    }
+
+    #[test]
+    fn paint_frame_carries_kind_label_metadata_for_nodes_and_shapes() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new(
+            "painted",
+            point(px(10.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        node.kind = "painted-node".to_string();
+        document.insert_node(node).unwrap();
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(150.0), px(20.0)), size(px(90.0), px(70.0))),
+        );
+        shape.kind = "painted-shape".to_string();
+        document.insert_shape(shape).unwrap();
+        let model = CanvasPaintModel::new_with_kind_registry(
+            document,
+            CanvasViewport::new(point(px(10.0), px(10.0)), 2.0).unwrap(),
+            paint_registry(),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(1_000.0), px(1_000.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let node_label = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Node(crate::NodeId::from("painted")))
+            .and_then(|record| record.label.as_ref())
+            .unwrap();
+        assert_eq!(node_label.text, "Node label");
+        assert_eq!(
+            node_label.document_bounds,
+            Bounds::new(point(px(18.0), px(28.0)), size(px(84.0), px(64.0)))
+        );
+        assert_eq!(
+            node_label.view_bounds,
+            Bounds::new(point(px(16.0), px(36.0)), size(px(168.0), px(128.0)))
+        );
+        assert_eq!(node_label.color, parse_color("#24292f"));
+
+        let shape_label = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Shape(crate::ShapeId::from("shape")))
+            .and_then(|record| record.label.as_ref())
+            .unwrap();
+        assert_eq!(shape_label.text, "Shape label");
+        assert_eq!(
+            shape_label.document_bounds,
+            Bounds::new(point(px(154.0), px(24.0)), size(px(82.0), px(62.0)))
+        );
+        assert_eq!(shape_label.color, parse_color("#0969da"));
     }
 
     #[test]
@@ -1892,6 +2009,14 @@ mod tests {
                 corner_radius: Some(px(10.0)),
             })
         }
+
+        fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
+            Some(
+                CanvasKindLabel::new("Node label")
+                    .with_inset(px(8.0))
+                    .with_color("#24292f"),
+            )
+        }
     }
 
     struct PaintedEdgeKind;
@@ -1917,6 +2042,14 @@ mod tests {
                 stroke_width: Some(px(3.0)),
                 corner_radius: Some(px(4.0)),
             })
+        }
+
+        fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
+            Some(
+                CanvasKindLabel::new("Shape label")
+                    .with_inset(px(4.0))
+                    .with_color("#0969da"),
+            )
         }
     }
 

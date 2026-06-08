@@ -218,7 +218,7 @@ records, and future ecosystem extensions can still be loaded before a handler ex
 ```rust
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+    CanvasDocument, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
     CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError, CanvasTransaction, CanvasValue,
     DocumentCommand, NodeId,
 };
@@ -290,6 +290,15 @@ impl CanvasNodeKind for NoteKind {
             corner_radius: Some(px(8.0)),
         })
     }
+
+    fn node_label(&self, node: &CanvasNode) -> Option<CanvasKindLabel> {
+        let title = node.data.get("title")?.as_str()?;
+        Some(
+            CanvasKindLabel::new(title)
+                .with_inset(px(8.0))
+                .with_color("#24292f"),
+        )
+    }
 }
 
 let mut registry = CanvasKindRegistry::open();
@@ -319,6 +328,7 @@ interactive editor should apply the same registry to transactions, gestures, und
 runtime caches, and paint snapshots.
 
 Node, edge, and shape kind handlers can all return renderer-neutral `CanvasKindPaint` defaults.
+Node and shape kind handlers can also return `CanvasKindLabel` metadata for paint-frame snapshots.
 Record style fields still win first, then kind defaults, then the active paint theme.
 
 ## Route Edges
