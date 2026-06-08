@@ -1,6 +1,6 @@
 use crate::{
     DockDebugRegion, DockGraph, DockHost, DockItemId, DockNode, DockNodeId, DockOp, DockSpaceId,
-    SplitAxis,
+    DockWorkspace, SplitAxis,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, ParentElement,
@@ -170,6 +170,32 @@ fn host_graph_mutation_preserves_registry(cx: &mut TestAppContext) {
     assert_eq!(*active, 1);
     assert!(host.panels().contains(&item("a")));
     assert!(host.panels().contains(&item("b")));
+}
+
+#[open_gpui::test]
+fn workspace_applies_ops_and_preserves_registered_panels(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "B", test_view(cx, "B"));
+
+    workspace
+        .apply_op_checked(&DockOp::SetActiveTab {
+            tabs: root,
+            active: 1,
+        })
+        .expect("active tab mutation should be valid");
+
+    let DockNode::Tabs { active, .. } = workspace
+        .graph()
+        .node(root)
+        .expect("tabs should still exist")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(*active, 1);
+    assert!(workspace.panels().contains(&item("a")));
+    assert!(workspace.panels().contains(&item("b")));
 }
 
 #[open_gpui::test]

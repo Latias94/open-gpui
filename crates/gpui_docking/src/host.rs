@@ -1,4 +1,7 @@
-use crate::{DockGraph, DockItemId, DockNodeId, DockPanel, DockPanelRegistry, DockSpaceId};
+use crate::{
+    DockGraph, DockItemId, DockNodeId, DockPanel, DockPanelRegistry, DockSpaceId,
+    workspace::DockWorkspace,
+};
 use open_gpui::AnyView;
 use std::collections::HashMap;
 
@@ -79,10 +82,7 @@ impl Default for DockHostOptions {
 /// Retained GPUI host that renders one logical dock space from a [`DockGraph`].
 #[derive(Debug)]
 pub struct DockHost {
-    graph: DockGraph,
-    space: DockSpaceId,
-    panels: DockPanelRegistry,
-    options: DockHostOptions,
+    workspace: DockWorkspace,
     debug_selectors: HashMap<DockDebugRegion, String>,
 }
 
@@ -99,42 +99,39 @@ impl DockHost {
         options: DockHostOptions,
     ) -> Self {
         Self {
-            graph,
-            space: space.into(),
-            panels: DockPanelRegistry::new(),
-            options,
+            workspace: DockWorkspace::with_options(space, graph, options),
             debug_selectors: HashMap::new(),
         }
     }
 
     /// Returns the logical dock space rendered by this host.
     pub fn space(&self) -> &DockSpaceId {
-        &self.space
+        self.workspace.space()
     }
 
     /// Returns the host graph.
     pub fn graph(&self) -> &DockGraph {
-        &self.graph
+        self.workspace.graph()
     }
 
     /// Returns the host graph for mutation by application code.
     pub fn graph_mut(&mut self) -> &mut DockGraph {
-        &mut self.graph
+        self.workspace.graph_mut()
     }
 
     /// Replaces the host graph.
     pub fn set_graph(&mut self, graph: DockGraph) {
-        self.graph = graph;
+        self.workspace.set_graph(graph);
     }
 
     /// Returns the panel registry.
     pub fn panels(&self) -> &DockPanelRegistry {
-        &self.panels
+        self.workspace.panels()
     }
 
     /// Returns the panel registry for mutation by application code.
     pub fn panels_mut(&mut self) -> &mut DockPanelRegistry {
-        &mut self.panels
+        self.workspace.panels_mut()
     }
 
     /// Registers a panel for a dock item, returning any previous registration.
@@ -143,7 +140,7 @@ impl DockHost {
         item: impl Into<DockItemId>,
         panel: DockPanel,
     ) -> Option<DockPanel> {
-        self.panels.register(item, panel)
+        self.workspace.register_panel(item, panel)
     }
 
     /// Registers a GPUI view as panel content for a dock item.
@@ -153,17 +150,17 @@ impl DockHost {
         title: impl Into<String>,
         view: impl Into<AnyView>,
     ) -> Option<DockPanel> {
-        self.panels.register_view(item, title, view)
+        self.workspace.register_panel_view(item, title, view)
     }
 
     /// Returns the static rendering options.
     pub fn options(&self) -> &DockHostOptions {
-        &self.options
+        self.workspace.options()
     }
 
     /// Returns mutable static rendering options.
     pub fn options_mut(&mut self) -> &mut DockHostOptions {
-        &mut self.options
+        self.workspace.options_mut()
     }
 
     /// Returns a debug selector emitted for a test region during the most recent render.
@@ -185,6 +182,6 @@ impl DockHost {
     }
 
     pub(crate) fn selector_prefix(&self) -> String {
-        format!("dock:{}", self.space)
+        format!("dock:{}", self.space())
     }
 }

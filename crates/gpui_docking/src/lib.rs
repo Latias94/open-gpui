@@ -9,6 +9,7 @@ mod layout;
 mod op;
 mod panel;
 mod render;
+mod workspace;
 
 #[cfg(test)]
 mod host_tests;
@@ -22,3 +23,4 @@ pub use ids::*;
 pub use layout::*;
 pub use op::*;
 pub use panel::*;
+pub use workspace::*;
