@@ -1,0 +1,24 @@
+[package]
+name = "open-gpui-canvas-notes"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish = false
+description = "Native note-map example for open-gpui-canvas."
+
+[[bin]]
+name = "open-gpui-canvas-notes"
+path = "src/main.rs"
+
+[dependencies]
+open_gpui.workspace = true
+open_gpui_canvas.workspace = true
+open_gpui_platform.workspace = true
+
+[lints]
+workspace = true

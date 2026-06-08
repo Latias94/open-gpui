@@ -1,0 +1,110 @@
+{
+  "nodes": [
+    {
+      "id": "cluster-margin-notes",
+      "type": "group",
+      "x": 24,
+      "y": 24,
+      "width": 760,
+      "height": 430,
+      "color": "#eef2ff",
+      "label": "Margin note research map",
+      "purpose": "fixture-group"
+    },
+    {
+      "id": "research-question",
+      "type": "text",
+      "x": 72,
+      "y": 88,
+      "width": 220,
+      "height": 132,
+      "color": "#fff7ed",
+      "text": "How should Open GPUI Canvas support dense note maps without one widget per card?",
+      "tags": ["canvas", "local-first"],
+      "importance": "high"
+    },
+    {
+      "id": "source-doc",
+      "type": "file",
+      "x": 428,
+      "y": 76,
+      "width": 220,
+      "height": 112,
+      "color": "#ecfeff",
+      "file": "docs/research/canvas-spatial-index-benchmark-results.md",
+      "subpath": "#summary",
+      "label": "Spatial cache notes",
+      "role": "source"
+    },
+    {
+      "id": "xyflow-reference",
+      "type": "link",
+      "x": 432,
+      "y": 274,
+      "width": 224,
+      "height": 112,
+      "color": "#f0fdf4",
+      "url": "https://xyflow.com/",
+      "label": "xyflow data model",
+      "background": "https://xyflow.com/favicon.ico",
+      "backgroundStyle": "cover",
+      "confidence": 0.82
+    },
+    {
+      "id": "interaction-note",
+      "type": "text",
+      "x": 92,
+      "y": 284,
+      "width": 228,
+      "height": 120,
+      "color": "#fefce8",
+      "text": "Keep text and rich editors sparse: selected or active records may mount widgets, but the base canvas remains batched.",
+      "tags": ["overlay", "paint"],
+      "status": "accepted"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-question-source",
+      "fromNode": "research-question",
+      "fromSide": "right",
+      "fromEnd": "none",
+      "toNode": "source-doc",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "color": "#0891b2",
+      "label": "validated by",
+      "weight": 2
+    },
+    {
+      "id": "edge-question-overlay",
+      "fromNode": "research-question",
+      "fromSide": "bottom",
+      "toNode": "interaction-note",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "color": "#f59e0b",
+      "label": "drives"
+    },
+    {
+      "id": "edge-source-xyflow",
+      "fromNode": "source-doc",
+      "fromSide": "bottom",
+      "toNode": "xyflow-reference",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "color": "#16a34a",
+      "label": "compares with"
+    },
+    {
+      "id": "edge-overlay-xyflow",
+      "fromNode": "interaction-note",
+      "fromSide": "right",
+      "toNode": "xyflow-reference",
+      "toSide": "left",
+      "toEnd": "arrow",
+      "color": "#64748b",
+      "label": "adapts"
+    }
+  ]
+}

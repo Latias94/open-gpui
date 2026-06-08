@@ -391,6 +391,13 @@ Widget event handlers should route edits back through `CanvasEditor` APIs, `Docu
 transactions, or custom `CanvasToolEffect` values. Treat overlay placement as layout data, not as a
 second mutation path.
 
+Run the native note-map example to see JSON Canvas import, kind registry labels, resize policy,
+selection, batched paint, and sparse selected-node overlay placement together:
+
+```sh
+cargo run -p open-gpui-canvas-notes
+```
+
 ## Large Canvas Baseline
 
 The crate includes a focused stress regression for the default GPUI culling path and a Criterion
@@ -474,6 +481,9 @@ Text, file, link, and group nodes are mapped into `CanvasNode` records. Edge sid
 deterministic node handles so Obsidian-style connections remain round-trippable.
 Unknown JSON Canvas payload fields are preserved in record data when possible, and unknown canvas
 record kinds remain loadable through the open kind registry.
+
+The `examples/canvas-notes/assets/sample.canvas` fixture is used by the native notes example and by
+integration tests, so import/export expectations stay tied to a runnable example.
 
 ## Persistence
 

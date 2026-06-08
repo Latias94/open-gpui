@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-memory persistence store.
 - Added canvas spatial-index research covering dynamic R*-trees, packed static AABB indexes,
   hybrid overlays, tile indexes, quadtrees, and candidate Rust crates.
+- Added a native `open-gpui-canvas-notes` note-map example with a JSON Canvas fixture, kind
+  registry paint/label policy, selected-node overlay placement, and fixture round-trip coverage.
 
 ### Changed
 

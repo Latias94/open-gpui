@@ -59,8 +59,15 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
 - `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
+- `examples/canvas-notes`: native JSON Canvas note-map example
 - `examples/smoke-native`: native smoke example
 - `xtask`: workspace verification and import-boundary checks
+
+Run the note-map example with:
+
+```sh
+cargo run -p open-gpui-canvas-notes
+```
 
 ## Verification
 

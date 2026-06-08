@@ -4245,6 +4245,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-canvas-notes"
+version = "0.1.0"
+dependencies = [
+ "open-gpui",
+ "open-gpui-canvas",
+ "open-gpui-platform",
+]
+
+[[package]]
 name = "open-gpui-collections"
 version = "0.1.0"
 dependencies = [
