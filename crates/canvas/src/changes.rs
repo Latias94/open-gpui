@@ -1,7 +1,9 @@
 use crate::{
-    CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, DocumentCommand,
+    CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, CanvasValue,
+    DocumentCommand,
 };
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasRecord {
@@ -53,6 +55,100 @@ impl CanvasRecordChange {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanvasChangeOrigin(String);
+
+impl CanvasChangeOrigin {
+    pub fn new(origin: impl Into<String>) -> Self {
+        Self(origin.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for CanvasChangeOrigin {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for CanvasChangeOrigin {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for CanvasChangeOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRecordOperation {
+    pub transaction_sequence: u64,
+    pub operation_index: u64,
+    pub change: CanvasRecordChange,
+}
+
+impl CanvasRecordOperation {
+    pub fn new(
+        transaction_sequence: u64,
+        operation_index: u64,
+        change: CanvasRecordChange,
+    ) -> Self {
+        Self {
+            transaction_sequence,
+            operation_index,
+            change,
+        }
+    }
+
+    pub fn id(&self) -> CanvasRecordId {
+        self.change.id()
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRecordOperationBatch {
+    pub transaction_sequence: u64,
+    #[serde(default)]
+    pub origin: Option<CanvasChangeOrigin>,
+    #[serde(default)]
+    pub transaction_metadata: CanvasValue,
+    #[serde(default)]
+    pub operations: Vec<CanvasRecordOperation>,
+}
+
+impl CanvasRecordOperationBatch {
+    pub fn new(transaction_sequence: u64, transaction: &CanvasTransaction) -> Self {
+        Self {
+            transaction_sequence,
+            origin: None,
+            transaction_metadata: transaction.metadata.clone(),
+            operations: transaction
+                .record_operations(transaction_sequence)
+                .collect(),
+        }
+    }
+
+    pub fn with_origin(mut self, origin: impl Into<CanvasChangeOrigin>) -> Self {
+        self.origin = Some(origin.into());
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.operations.is_empty()
+    }
+
+    pub fn changes(&self) -> impl Iterator<Item = &CanvasRecordChange> {
+        self.operations.iter().map(|operation| &operation.change)
+    }
+}
+
 impl DocumentCommand {
     pub fn record_id(&self) -> CanvasRecordId {
         match self {
@@ -96,6 +192,21 @@ impl CanvasTransaction {
 
     pub fn record_ids(&self) -> impl Iterator<Item = CanvasRecordId> + '_ {
         self.commands.iter().map(DocumentCommand::record_id)
+    }
+
+    pub fn record_operations(
+        &self,
+        transaction_sequence: u64,
+    ) -> impl Iterator<Item = CanvasRecordOperation> + '_ {
+        self.record_changes()
+            .enumerate()
+            .map(move |(index, change)| {
+                CanvasRecordOperation::new(transaction_sequence, index as u64, change)
+            })
+    }
+
+    pub fn record_operation_batch(&self, transaction_sequence: u64) -> CanvasRecordOperationBatch {
+        CanvasRecordOperationBatch::new(transaction_sequence, self)
     }
 }
 
@@ -186,5 +297,56 @@ mod tests {
                 CanvasRecordChange::Delete(CanvasRecordId::Shape(ShapeId::from("old-shape"))),
             ]
         );
+    }
+
+    #[test]
+    fn transactions_expose_record_operation_batches() {
+        let mut transaction = CanvasTransaction::new([
+            DocumentCommand::InsertNode(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            )),
+            DocumentCommand::RemoveShape(ShapeId::from("old-shape")),
+        ]);
+        transaction
+            .metadata
+            .insert("reason".into(), serde_json::json!("sync"));
+
+        let batch = transaction
+            .record_operation_batch(42)
+            .with_origin("client-a");
+
+        assert_eq!(batch.transaction_sequence, 42);
+        assert_eq!(
+            batch.origin.as_ref().map(CanvasChangeOrigin::as_str),
+            Some("client-a")
+        );
+        assert_eq!(
+            batch.transaction_metadata.get("reason"),
+            Some(&serde_json::json!("sync"))
+        );
+        assert_eq!(
+            batch
+                .operations
+                .iter()
+                .map(|operation| (operation.transaction_sequence, operation.operation_index))
+                .collect::<Vec<_>>(),
+            vec![(42, 0), (42, 1)]
+        );
+        assert_eq!(
+            batch.changes().cloned().collect::<Vec<_>>(),
+            transaction.record_changes().collect::<Vec<_>>()
+        );
+        assert!(!batch.is_empty());
+    }
+
+    #[test]
+    fn empty_transaction_operation_batch_is_empty() {
+        let batch = CanvasTransaction::default().record_operation_batch(7);
+
+        assert_eq!(batch.transaction_sequence, 7);
+        assert!(batch.is_empty());
+        assert!(batch.transaction_metadata.is_empty());
     }
 }

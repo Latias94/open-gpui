@@ -17,7 +17,10 @@ mod routing;
 mod test_support;
 mod tool;
 
-pub use changes::{CanvasRecord, CanvasRecordChange};
+pub use changes::{
+    CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
+    CanvasRecordOperationBatch,
+};
 pub use document::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
     CANVAS_SNAPSHOT_MIGRATIONS, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,

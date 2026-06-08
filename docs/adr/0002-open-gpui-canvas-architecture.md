@@ -154,6 +154,10 @@ Document transactions also expose a record-level view for adapters. `DocumentCom
 `CanvasRecordChange::Upsert` and `CanvasRecordChange::Delete` values. This is not a replacement for
 transaction replay; it is a stable input shape for future Loro, audit-log, remote-sync, or indexing
 adapters that need record semantics without matching every command variant themselves.
+`CanvasRecordOperation` and `CanvasRecordOperationBatch` add the transaction sequence,
+operation index, optional origin, and transaction metadata around that same change stream. This
+gives persistence logs and future CRDT adapters a deterministic operation envelope without making
+the core crate depend on a concrete collaboration engine.
 
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries

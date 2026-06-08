@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent, CanvasSnapshot,
-    CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
-    CanvasTransaction, DocumentError,
+    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent, CanvasRecordOperationBatch,
+    CanvasSnapshot, CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry,
+    CanvasToolRegistryError, CanvasTransaction, DocumentError,
 };
 use std::{convert::Infallible, error::Error, fmt};
 
@@ -32,6 +32,10 @@ impl CanvasLogEntry {
             sequence,
             transaction: transaction.into(),
         }
+    }
+
+    pub fn record_operation_batch(&self) -> CanvasRecordOperationBatch {
+        self.transaction.record_operation_batch(self.sequence)
     }
 }
 

@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    CanvasDocument, CanvasEditor, CanvasEvent, CanvasNode, CanvasRecordId, CanvasSelection,
-    CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, NodeId, PointerButton,
-    ToolState,
+    CanvasDocument, CanvasEditor, CanvasEvent, CanvasNode, CanvasRecordChange, CanvasRecordId,
+    CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
+    CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError,
+    NodeId, PointerButton, ToolState,
 };
 use open_gpui::{point, px, size};
 use std::fmt;
@@ -118,6 +118,30 @@ fn replays_checkpoint_and_transaction_log() {
 
     assert!(restored.nodes.contains_key(&NodeId::from("a")));
     assert!(restored.nodes.contains_key(&NodeId::from("b")));
+}
+
+#[test]
+fn log_entries_expose_record_operation_batches() {
+    let entry = CanvasLogEntry::new(
+        9,
+        DocumentCommand::InsertNode(CanvasNode::new(
+            "node",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        )),
+    );
+
+    let batch = entry.record_operation_batch();
+
+    assert_eq!(batch.transaction_sequence, 9);
+    assert_eq!(batch.operations.len(), 1);
+    assert_eq!(batch.operations[0].transaction_sequence, 9);
+    assert_eq!(batch.operations[0].operation_index, 0);
+    assert!(matches!(
+        &batch.operations[0].change,
+        CanvasRecordChange::Upsert(record)
+            if record.id() == CanvasRecordId::Node(NodeId::from("node"))
+    ));
 }
 
 #[test]

@@ -111,16 +111,23 @@ incident edges, and can apply diffs without changing document serialization.
 ## Inspect Record Changes
 
 `DocumentCommand` remains the canonical mutation vocabulary. For sync, audit, or CRDT adapters,
-commands and transactions can also be viewed as ordered record-level changes.
+commands and transactions can also be viewed as ordered record-level changes or sequence-stamped
+operation batches.
 
 ```rust
-use open_gpui_canvas::{CanvasRecordChange, CanvasTransaction};
+use open_gpui_canvas::{CanvasRecordChange, CanvasRecordOperationBatch, CanvasTransaction};
 
 fn inspect(transaction: &CanvasTransaction) {
     for change in transaction.record_changes() {
         let id = change.id();
         let is_delete = matches!(change, CanvasRecordChange::Delete(_));
         let _ = (id, is_delete);
+    }
+
+    let batch = CanvasRecordOperationBatch::new(7, transaction).with_origin("local-client");
+    for operation in batch.operations {
+        let ordered_key = (operation.transaction_sequence, operation.operation_index);
+        let _ = (ordered_key, operation.id());
     }
 }
 ```
