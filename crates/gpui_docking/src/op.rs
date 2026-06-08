@@ -294,8 +294,4 @@ pub enum DockOpApplyError {
         /// The split node that appears more than once.
         split: DockNodeId,
     },
-
-    /// The requested operation could not be applied.
-    #[error("dock operation failed")]
-    OperationFailed,
 }
