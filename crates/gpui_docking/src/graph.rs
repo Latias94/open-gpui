@@ -195,9 +195,41 @@ impl DockGraph {
                 target_space,
                 target_tabs,
                 zone,
-                ..
+                insert_index,
             } => {
                 self.validate_move_item(source_space, item, target_space, *target_tabs, *zone)?;
+                if source_space == target_space
+                    && self
+                        .find_item_in_space(source_space, item)
+                        .is_some_and(|(source_tabs, _)| source_tabs == *target_tabs)
+                    && *zone == DropZone::Center
+                    && insert_index.is_none()
+                {
+                    return Ok(false);
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::MoveTabs {
+                source_space,
+                source_tabs,
+                target_space,
+                target_tabs,
+                zone,
+                ..
+            } => {
+                self.validate_move_tabs(
+                    source_space,
+                    *source_tabs,
+                    target_space,
+                    *target_tabs,
+                    *zone,
+                )?;
+                if source_space == target_space
+                    && *source_tabs == *target_tabs
+                    && *zone == DropZone::Center
+                {
+                    return Ok(false);
+                }
                 Ok(self.apply_op(op))
             }
             DockOp::MoveItemToEmptyDockSpace {
@@ -616,6 +648,52 @@ impl DockGraph {
         Ok(())
     }
 
+    fn validate_move_tabs(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+        zone: DropZone,
+    ) -> Result<(), DockOpApplyError> {
+        let Some(source_node) = self.node(source_tabs) else {
+            return Err(DockOpApplyError::TabsNodeNotFound { tabs: source_tabs });
+        };
+        match source_node {
+            DockNode::Tabs { items, .. } if items.is_empty() => {
+                return Err(DockOpApplyError::OperationFailed);
+            }
+            DockNode::Tabs { .. } => {}
+            _ => return Err(DockOpApplyError::NodeIsNotTabs { node: source_tabs }),
+        }
+        if self
+            .root_for_node_in_space(source_space, source_tabs)
+            .is_none()
+        {
+            return Err(DockOpApplyError::SourceNodeNotInSpace {
+                space: source_space.clone(),
+                node: source_tabs,
+            });
+        }
+        if self
+            .root_for_node_in_space(target_space, target_tabs)
+            .is_none()
+        {
+            return Err(DockOpApplyError::TargetNodeNotInSpace {
+                space: target_space.clone(),
+                target: target_tabs,
+            });
+        }
+        if zone == DropZone::Center {
+            match self.node(target_tabs) {
+                Some(DockNode::Tabs { .. }) => {}
+                Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
+                None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
+            }
+        }
+        Ok(())
+    }
+
     fn validate_split_fractions(
         &self,
         split: DockNodeId,
@@ -713,6 +791,14 @@ impl DockGraph {
         }
 
         let first = first_fraction.clamp(0.0, 1.0);
+        let next = [first, 1.0 - first];
+        if fractions
+            .iter()
+            .zip(next.iter())
+            .all(|(current, next)| (*current - *next).abs() <= 0.0001)
+        {
+            return false;
+        }
         fractions[0] = first;
         fractions[1] = 1.0 - first;
         true
@@ -775,7 +861,7 @@ impl DockGraph {
             && source_tabs == target_tabs
             && insert_index.is_none()
         {
-            return true;
+            return false;
         }
         if self
             .root_for_node_in_space(target_space, target_tabs)
@@ -880,7 +966,7 @@ impl DockGraph {
         insert_index: Option<usize>,
     ) -> bool {
         if source_space == target_space && source_tabs == target_tabs {
-            return zone == DropZone::Center;
+            return false;
         }
         if self
             .root_for_node_in_space(source_space, source_tabs)

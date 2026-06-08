@@ -167,6 +167,103 @@ fn checked_set_active_tab_reports_only_real_changes() {
 }
 
 #[test]
+fn checked_move_item_same_stack_center_reports_noop() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("a"),
+                target_space: space(),
+                target_tabs: root,
+                zone: DropZone::Center,
+                insert_index: None,
+            })
+            .expect("same-stack center move without insert index should be valid")
+    );
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_tabs_self_center_reports_noop() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::MoveTabs {
+                source_space: space(),
+                source_tabs: root,
+                target_space: space(),
+                target_tabs: root,
+                zone: DropZone::Center,
+                insert_index: None,
+            })
+            .expect("moving a tabs node onto itself should be a valid no-op")
+    );
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_set_split_fraction_two_reports_only_real_changes() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+    let split = graph.root(&space()).expect("space should keep root");
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::SetSplitFractionTwo {
+                split,
+                first_fraction: 0.5,
+            })
+            .expect("setting the same split fraction should be valid")
+    );
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::SetSplitFractionTwo {
+                split,
+                first_fraction: 0.25,
+            })
+            .expect("changing the split fraction should be valid")
+    );
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::SetSplitFractionTwo {
+                split,
+                first_fraction: 0.25,
+            })
+            .expect("setting the same changed split fraction should stay valid")
+    );
+
+    let DockNode::Split { fractions, .. } = graph.node(split).expect("split should remain") else {
+        panic!("root should be split");
+    };
+    assert_eq!(fractions, &vec![0.25, 0.75]);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn move_item_center_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
@@ -979,18 +1076,28 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
             target_item,
             zone,
         } => {
+            let item = DockItemId::new(item);
+            let (source_tabs, _) = graph
+                .find_item_in_space(&space(), &item)
+                .expect("fixture source item should be findable");
             let target_tabs = graph
                 .find_item_in_space(&space(), &DockItemId::new(target_item))
                 .expect("fixture target item should be findable")
                 .0;
-            assert!(graph.apply_op(&DockOp::MoveItem {
+            let zone: DropZone = zone.into();
+            let changed = graph.apply_op(&DockOp::MoveItem {
                 source_space: space(),
-                item: DockItemId::new(item),
+                item,
                 target_space: space(),
                 target_tabs,
-                zone: zone.into(),
+                zone,
                 insert_index: None,
-            }));
+            });
+            assert_eq!(
+                changed,
+                !(source_tabs == target_tabs && zone == DropZone::Center),
+                "fixture move_item changed-state mismatch"
+            );
         }
         FixtureStep::FloatItem { item, bounds } => {
             assert!(graph.apply_op(&DockOp::FloatItemInWindow {
