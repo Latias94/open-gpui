@@ -175,6 +175,87 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
 }
 
 #[open_gpui::test]
+fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let err = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: right_tabs,
+            item: item("a"),
+            target_space: space(),
+            target_tabs: right_tabs,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("stale source tabs should not move an item from another stack");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::ItemNotInTabs {
+            tabs: right_tabs,
+            item: item("a"),
+        }
+    );
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(left_tabs)
+        .expect("source tabs should remain unchanged")
+    else {
+        panic!("source should be tabs");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
+fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), main_tabs);
+    let secondary = DockSpaceId::from("secondary");
+    graph.set_root(secondary.clone(), secondary_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let err = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: secondary_tabs,
+            item: item("b"),
+            target_space: space(),
+            target_tabs: main_tabs,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("source tabs outside the declared source space should fail");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Graph(DockOpApplyError::SourceNodeNotInSpace {
+            space: space(),
+            node: secondary_tabs,
+        })
+    );
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(secondary_tabs)
+        .expect("secondary tabs should remain unchanged")
+    else {
+        panic!("secondary root should be tabs");
+    };
+    assert_eq!(items, &vec![item("b")]);
+    assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
 fn workspace_move_item_to_empty_space_action_creates_detached_root(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
