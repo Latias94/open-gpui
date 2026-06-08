@@ -71,6 +71,8 @@ mod geometry;
 mod graph;
 #[cfg(test)]
 mod graph_floating_tests;
+#[cfg(test)]
+mod graph_split_tests;
 mod host;
 mod host_debug;
 mod host_interactions;
