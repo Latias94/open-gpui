@@ -97,7 +97,8 @@ fn restored_demo_layout() -> DockLayout {
         )
         .allow_floating(true)
         .allow_platform_viewports(true)
-        .build();
+        .try_build()
+        .expect("demo controller setup should validate");
 
     controller
         .apply_action(&DockAction::MoveItemToEmptyDockSpace {
@@ -221,7 +222,8 @@ fn build_controller() -> DockController {
             })
             .into()
         })
-        .build()
+        .try_build()
+        .expect("demo controller setup should validate")
 }
 
 fn viewport_window_options(bounds: Bounds<open_gpui::Pixels>) -> WindowOptions {

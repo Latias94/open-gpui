@@ -38,6 +38,43 @@ fn graph_validation_accepts_reachable_canonical_graph() {
 }
 
 #[test]
+fn layout_builder_try_build_validates_finished_graph() {
+    let mut builder = DockLayoutBuilder::new();
+    let tabs = builder.tabs(["a", "a"], 0);
+    builder.set_root(space("main"), tabs);
+
+    assert_eq!(
+        builder
+            .try_build()
+            .expect_err("checked builder finish should reject duplicate items"),
+        DockGraphValidationError::DuplicateItemId {
+            item: item("a"),
+            first_tabs: tabs,
+            duplicate_tabs: tabs,
+        }
+    );
+}
+
+#[test]
+fn layout_builder_try_build_returns_canonical_valid_graph() {
+    let mut builder = DockLayoutBuilder::new();
+    let empty = builder.tabs(std::iter::empty::<&str>(), 0);
+    let tabs = builder.tabs(["a"], 0);
+    let root = builder.split_horizontal(empty, tabs, 0.5);
+    builder.set_root(space("main"), root);
+
+    let graph = builder
+        .try_build()
+        .expect("checked builder finish should simplify away empty tabs");
+
+    assert_eq!(
+        graph.collect_items_in_space(&space("main")),
+        vec![item("a")]
+    );
+    graph.validate().expect("finished graph should validate");
+}
+
+#[test]
 fn graph_validation_rejects_duplicate_reachable_items() {
     let (graph, left, right) = duplicate_item_graph();
 

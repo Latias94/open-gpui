@@ -1,5 +1,6 @@
 use crate::{
-    DockFloatingContainer, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis,
+    DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId, DockNode, DockNodeId,
+    DockSpaceId, SplitAxis,
 };
 
 /// Convenience builder for programmatic dock layouts.
@@ -91,12 +92,23 @@ impl DockLayoutBuilder {
         floating
     }
 
-    /// Finishes the builder and returns a canonical graph.
+    /// Finishes the builder and returns a canonical graph without validation.
     pub fn build(mut self) -> DockGraph {
+        self.simplify_graph();
+        self.graph
+    }
+
+    /// Finishes the builder, validates reachable graph state, and returns a canonical graph.
+    pub fn try_build(mut self) -> Result<DockGraph, DockGraphValidationError> {
+        self.simplify_graph();
+        self.graph.validate()?;
+        Ok(self.graph)
+    }
+
+    fn simplify_graph(&mut self) {
         for space in self.graph.spaces() {
             self.graph.simplify_space(&space);
         }
-        self.graph
     }
 }
 

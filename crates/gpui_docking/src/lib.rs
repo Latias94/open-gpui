@@ -52,7 +52,8 @@
 //!     .panel_factory("terminal", "Terminal", panel_factory)
 //!     .allow_floating(true)
 //!     .allow_platform_viewports(true)
-//!     .build();
+//!     .try_build()
+//!     .expect("dock controller setup should validate");
 //! # let _ = controller;
 //! ```
 #![warn(missing_docs)]
