@@ -1,10 +1,10 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::{
-    CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry,
-    CanvasNode, CanvasRuntime, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
-    connection_hit_options,
+    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
+    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver,
+    CanvasKindRegistry, CanvasNode, CanvasPasteTransaction, CanvasRuntime, CanvasTransaction,
+    CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
+    HitTarget, NodeId, ShapeId, connection_hit_options,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -179,6 +179,14 @@ pub enum CanvasSelectionMode {
     #[default]
     Replace,
     Add,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasZOrderCommand {
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -928,6 +936,59 @@ impl CanvasEditor {
         self.apply_tool_effects(effects)
     }
 
+    pub fn delete_selection(&mut self) -> Result<bool, DocumentError> {
+        let transaction = self.delete_selection_transaction();
+        if transaction.is_empty() {
+            return Ok(false);
+        }
+
+        self.apply_transaction(transaction)?;
+        Ok(true)
+    }
+
+    pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
+        let payload =
+            CanvasClipboardPayload::from_document_selection(&self.document, &self.selection);
+        (!payload.is_empty()).then_some(payload)
+    }
+
+    pub fn cut_selection(&mut self) -> Result<Option<CanvasClipboardPayload>, DocumentError> {
+        let Some(payload) = self.copy_selection() else {
+            return Ok(None);
+        };
+        self.delete_selection()?;
+        Ok(Some(payload))
+    }
+
+    pub fn paste_clipboard(
+        &mut self,
+        payload: &CanvasClipboardPayload,
+        offset: Point<Pixels>,
+    ) -> Result<bool, DocumentError> {
+        let pasted = payload.paste_transaction(&self.document, offset);
+        self.apply_paste_transaction(pasted)
+    }
+
+    pub fn duplicate_selection(&mut self, offset: Point<Pixels>) -> Result<bool, DocumentError> {
+        let Some(payload) = self.copy_selection() else {
+            return Ok(false);
+        };
+        self.paste_clipboard(&payload, offset)
+    }
+
+    pub fn reorder_selection(
+        &mut self,
+        command: CanvasZOrderCommand,
+    ) -> Result<bool, DocumentError> {
+        let transaction = self.reorder_selection_transaction(command);
+        if transaction.is_empty() {
+            return Ok(false);
+        }
+
+        self.apply_transaction(transaction)?;
+        Ok(true)
+    }
+
     pub fn event_effects(
         &self,
         event: CanvasEvent,
@@ -1453,6 +1514,79 @@ impl CanvasEditor {
         CanvasTransaction::new(commands)
     }
 
+    fn apply_paste_transaction(
+        &mut self,
+        pasted: CanvasPasteTransaction,
+    ) -> Result<bool, DocumentError> {
+        if pasted.transaction.is_empty() {
+            return Ok(false);
+        }
+
+        self.apply_transaction(pasted.transaction)?;
+        let mut selection = pasted.selection;
+        selection.retain_document(&self.document);
+        self.selection = selection;
+        Ok(true)
+    }
+
+    fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
+        let Some((min_z, max_z)) = self.document_z_range() else {
+            return CanvasTransaction::default();
+        };
+        let mut commands = Vec::new();
+
+        for id in self.selection.selected_nodes() {
+            let Some(node) = self.document.nodes.get(id) else {
+                continue;
+            };
+            if node.locked {
+                continue;
+            }
+            let mut node = node.clone();
+            node.z_index = next_z_index(node.z_index, min_z, max_z, command);
+            commands.push(DocumentCommand::UpdateNode(node));
+        }
+
+        for id in self.selection.selected_edges() {
+            let Some(edge) = self.document.edges.get(id) else {
+                continue;
+            };
+            if edge.locked {
+                continue;
+            }
+            let mut edge = edge.clone();
+            edge.z_index = next_z_index(edge.z_index, min_z, max_z, command);
+            commands.push(DocumentCommand::UpdateEdge(edge));
+        }
+
+        for id in self.selection.selected_shapes() {
+            let Some(shape) = self.document.shapes.get(id) else {
+                continue;
+            };
+            if shape.locked {
+                continue;
+            }
+            let mut shape = shape.clone();
+            shape.z_index = next_z_index(shape.z_index, min_z, max_z, command);
+            commands.push(DocumentCommand::UpdateShape(shape));
+        }
+
+        CanvasTransaction::new(commands)
+    }
+
+    fn document_z_range(&self) -> Option<(i32, i32)> {
+        self.document
+            .nodes
+            .values()
+            .map(|node| node.z_index)
+            .chain(self.document.edges.values().map(|edge| edge.z_index))
+            .chain(self.document.shapes.values().map(|shape| shape.z_index))
+            .fold(None, |range, z_index| match range {
+                None => Some((z_index, z_index)),
+                Some((min_z, max_z)) => Some((min_z.min(z_index), max_z.max(z_index))),
+            })
+    }
+
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
         for record in self
@@ -1516,6 +1650,15 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
         Axis::Horizontal
     } else {
         Axis::Vertical
+    }
+}
+
+fn next_z_index(current: i32, min_z: i32, max_z: i32, command: CanvasZOrderCommand) -> i32 {
+    match command {
+        CanvasZOrderCommand::BringToFront => max_z.saturating_add(1),
+        CanvasZOrderCommand::BringForward => current.saturating_add(1),
+        CanvasZOrderCommand::SendBackward => current.saturating_sub(1),
+        CanvasZOrderCommand::SendToBack => min_z.saturating_sub(1),
     }
 }
 
@@ -2013,6 +2156,183 @@ mod tests {
                 .contains_key(&ShapeId::from("locked-shape"))
         );
         assert_eq!(editor.history.undo_depth(), 0);
+    }
+
+    #[test]
+    fn editor_duplicate_selection_remaps_internal_edges_and_selects_paste() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "outside",
+                point(px(400.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-outside",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("outside", None::<&str>),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.selection.nodes.insert(NodeId::from("b"));
+
+        assert!(
+            editor
+                .duplicate_selection(point(px(20.0), px(30.0)))
+                .unwrap()
+        );
+
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a-copy")));
+        assert!(editor.document.nodes.contains_key(&NodeId::from("b-copy")));
+        assert!(
+            editor
+                .document
+                .edges
+                .contains_key(&EdgeId::from("a-b-copy"))
+        );
+        assert!(
+            !editor
+                .document
+                .edges
+                .contains_key(&EdgeId::from("a-outside-copy"))
+        );
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("a-copy")].position,
+            point(px(20.0), px(30.0))
+        );
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a-copy"), NodeId::from("b-copy")]
+        );
+        assert_eq!(
+            editor.selection.edges.iter().cloned().collect::<Vec<_>>(),
+            vec![EdgeId::from("a-b-copy")]
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(
+            editor
+                .runtime
+                .hit_test(point(px(25.0), px(35.0)), HitOptions::default())
+                .any(|record| record.target == HitTarget::Node(NodeId::from("a-copy")))
+        );
+
+        assert!(editor.undo().unwrap());
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("a-copy")));
+        assert!(
+            !editor
+                .document
+                .edges
+                .contains_key(&EdgeId::from("a-b-copy"))
+        );
+    }
+
+    #[test]
+    fn editor_cut_and_paste_selection_use_command_path() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.selection.shapes.insert(ShapeId::from("shape"));
+
+        let payload = editor.cut_selection().unwrap().unwrap();
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(!editor.document.shapes.contains_key(&ShapeId::from("shape")));
+        assert!(editor.selection.is_empty());
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(
+            editor
+                .paste_clipboard(&payload, point(px(10.0), px(20.0)))
+                .unwrap()
+        );
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a-copy")));
+        assert!(
+            editor
+                .document
+                .shapes
+                .contains_key(&ShapeId::from("shape-copy"))
+        );
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a-copy")]
+        );
+        assert_eq!(
+            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            vec![ShapeId::from("shape-copy")]
+        );
+        assert_eq!(editor.history.undo_depth(), 2);
+    }
+
+    #[test]
+    fn editor_reorders_selected_records_and_supports_undo() {
+        let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        back.z_index = 1;
+        let mut front = CanvasNode::new(
+            "front",
+            point(px(10.0), px(10.0)),
+            size(px(100.0), px(100.0)),
+        );
+        front.z_index = 2;
+        let mut document = CanvasDocument::default();
+        document.insert_node(back).unwrap();
+        document.insert_node(front).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("back"));
+
+        assert!(
+            editor
+                .reorder_selection(CanvasZOrderCommand::BringToFront)
+                .unwrap()
+        );
+        assert_eq!(editor.document.nodes[&NodeId::from("back")].z_index, 3);
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor
+                .runtime
+                .hit_test(point(px(20.0), px(20.0)), HitOptions::default())
+                .next()
+                .map(|record| record.target.clone()),
+            Some(HitTarget::Node(NodeId::from("back")))
+        );
+
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.document.nodes[&NodeId::from("back")].z_index, 1);
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! transitions without committing to one GPUI element per canvas object.
 
 mod changes;
+mod clipboard;
 mod document;
 mod geometry;
 mod gesture;
@@ -27,6 +28,7 @@ pub use changes::{
     CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
     CanvasRecordOperationBatch,
 };
+pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
     CANVAS_SNAPSHOT_MIGRATIONS, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff,
@@ -78,5 +80,6 @@ pub use schema::{
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
     CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
-    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton, ToolState,
+    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, CanvasZOrderCommand,
+    PointerButton, ToolState,
 };
