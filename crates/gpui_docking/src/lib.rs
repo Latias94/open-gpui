@@ -113,6 +113,7 @@ mod viewport_runtime;
 mod viewport_target;
 mod workspace;
 mod workspace_action;
+mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 
 #[cfg(test)]

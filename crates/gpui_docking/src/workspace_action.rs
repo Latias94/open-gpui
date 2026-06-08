@@ -130,7 +130,8 @@ impl DockWorkspace {
             insert_index,
         } = request;
 
-        self.validate_move_tab_source(source_space, source_tabs, item)?;
+        self.move_validation()
+            .validate_move_tab_source(source_space, source_tabs, item)?;
         self.policy().validate_drop_zone(zone)?;
         if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
             self.policy().validate_same_stack_center_drop()?;
@@ -147,39 +148,6 @@ impl DockWorkspace {
             zone,
             insert_index,
         })
-    }
-
-    fn validate_move_tab_source(
-        &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        item: &DockItemId,
-    ) -> Result<(), DockActionApplyError> {
-        let Some(node) = self.graph().node(source_tabs) else {
-            return Err(DockOpApplyError::TabsNodeNotFound { tabs: source_tabs }.into());
-        };
-        let DockNode::Tabs { items, .. } = node else {
-            return Err(DockOpApplyError::NodeIsNotTabs { node: source_tabs }.into());
-        };
-        if self
-            .graph()
-            .root_for_node_in_space(source_space, source_tabs)
-            .is_none()
-        {
-            return Err(DockOpApplyError::SourceNodeNotInSpace {
-                space: source_space.clone(),
-                node: source_tabs,
-            }
-            .into());
-        }
-        if !items.iter().any(|candidate| candidate == item) {
-            return Err(DockActionApplyError::ItemNotInTabs {
-                tabs: source_tabs,
-                item: item.clone(),
-            });
-        }
-
-        Ok(())
     }
 
     fn move_item_to_empty_dock_space(
