@@ -60,6 +60,17 @@ impl DockViewportRegistry {
         window: AnyWindowHandle,
     ) -> Vec<(DockSpaceId, DockViewportSnapshot)> {
         let window_id = window.window_id();
+        if let Some(snapshot) = self.viewports.get(&space)
+            && snapshot.window.window_id() == window_id
+            && self
+                .windows
+                .get(&window_id)
+                .is_none_or(|registered_space| registered_space == &space)
+        {
+            self.windows.insert(window_id, space);
+            return Vec::new();
+        }
+
         let mut replaced = Vec::new();
 
         if let Some(previous) = self.viewports.remove(&space) {

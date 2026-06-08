@@ -351,6 +351,36 @@ mod tests {
     }
 
     #[test]
+    fn registering_same_viewport_preserves_runtime_snapshot() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let window = handle(1);
+        let display_id = Some(DisplayId::new(7));
+        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0));
+        let host_bounds = bounds(10.0, 20.0, 300.0, 200.0);
+
+        adapter.register_viewport(main.clone(), window);
+        adapter.update_snapshot(&main, display_id, window_bounds, host_bounds);
+
+        assert!(
+            adapter.register_viewport(main.clone(), window).is_none(),
+            "re-registering the same space/window pair should be a no-op"
+        );
+        let outcome = adapter.register_viewport_with_outcome(main.clone(), window);
+        assert!(outcome.replaced.is_empty());
+        assert_eq!(outcome.space, main.clone());
+        assert_eq!(outcome.window, window);
+
+        let snapshot = adapter
+            .snapshot(&main)
+            .expect("idempotent registration should preserve the snapshot");
+        assert_eq!(snapshot.window, window);
+        assert_eq!(snapshot.display_id, display_id);
+        assert_eq!(snapshot.window_bounds, Some(window_bounds));
+        assert_eq!(snapshot.host_bounds, Some(host_bounds));
+    }
+
+    #[test]
     fn dock_layout_import_does_not_require_viewport_placement() {
         let mut graph = DockGraph::new();
         let main = space("main");
