@@ -566,6 +566,92 @@ fn workspace_close_item_action_uses_metadata_without_instantiating_lazy_panel(
 }
 
 #[open_gpui::test]
+fn workspace_open_item_action_reopens_registered_lazy_panel_without_instantiating_view(
+    _cx: &mut TestAppContext,
+) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel("a", DockPanel::lazy("A", |_| unreachable!()));
+    let instantiations = Rc::new(Cell::new(0));
+    let observed_instantiations = instantiations.clone();
+    workspace.register_panel_factory("b", "B", move |cx| {
+        instantiations.set(instantiations.get() + 1);
+        cx.new(|_| TestPanel { label: "B" }).into()
+    });
+
+    workspace
+        .apply_action(&DockAction::CloseItem {
+            space: space(),
+            item: item("b"),
+        })
+        .expect("registered panel should close");
+    let closed = workspace
+        .panels()
+        .get(&item("b"))
+        .expect("panel registration should survive close");
+    assert!(!closed.has_view());
+
+    let outcome = workspace
+        .apply_action(&DockAction::OpenItem {
+            space: space(),
+            target_tabs: Some(root),
+            item: item("b"),
+            insert_index: Some(1),
+        })
+        .expect("registered closed panel should reopen");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(observed_instantiations.get(), 0);
+    assert!(
+        !workspace
+            .panels()
+            .get(&item("b"))
+            .expect("reopened panel registration should remain lazy")
+            .has_view()
+    );
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(root)
+        .expect("source tabs should remain")
+    else {
+        panic!("source should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 1);
+}
+
+#[open_gpui::test]
+fn workspace_open_item_action_requires_registered_panel(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a"], 0);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A")]);
+
+    let err = workspace
+        .apply_action(&DockAction::OpenItem {
+            space: space(),
+            target_tabs: Some(root),
+            item: item("missing"),
+            insert_index: None,
+        })
+        .expect_err("missing panel metadata should block open policy");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::PanelNotRegistered {
+            item: item("missing")
+        }
+    );
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(root)
+        .expect("source tabs should remain")
+    else {
+        panic!("source should be tabs");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
 fn workspace_close_item_action_requires_registered_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[]);

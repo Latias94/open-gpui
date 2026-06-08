@@ -20,6 +20,18 @@ pub enum DockOp {
         item: DockItemId,
     },
 
+    /// Opens a registered item into an existing tabs node or an empty dock space.
+    OpenItem {
+        /// The dock space receiving the item.
+        space: DockSpaceId,
+        /// Existing tabs node to receive the item, or `None` to create a root in an empty space.
+        target_tabs: Option<DockNodeId>,
+        /// The item to open.
+        item: DockItemId,
+        /// Optional insertion index when opening into existing tabs.
+        insert_index: Option<usize>,
+    },
+
     /// Moves one item into an existing tabs node or split target.
     MoveItem {
         /// The source dock space.
@@ -204,6 +216,13 @@ pub enum DockOpApplyError {
         /// The source dock space.
         space: DockSpaceId,
         /// The missing item.
+        item: DockItemId,
+    },
+
+    /// The requested item is already reachable in the dock graph.
+    #[error("dock item {item} is already open")]
+    ItemAlreadyOpen {
+        /// The already-open item.
         item: DockItemId,
     },
 

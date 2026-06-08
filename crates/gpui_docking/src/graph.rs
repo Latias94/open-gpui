@@ -251,6 +251,13 @@ impl DockGraph {
         out
     }
 
+    /// Returns true when an item is reachable from any dock space.
+    pub fn contains_item(&self, item: &DockItemId) -> bool {
+        self.spaces()
+            .iter()
+            .any(|space| self.find_item_in_space(space, item).is_some())
+    }
+
     /// Finds an item in a dock space and returns its tabs node and tab index.
     pub fn find_item_in_space(
         &self,

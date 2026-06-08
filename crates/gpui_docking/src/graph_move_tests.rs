@@ -136,6 +136,82 @@ fn checked_move_tabs_reports_empty_source_tabs() {
 }
 
 #[test]
+fn checked_open_item_inserts_into_existing_tabs() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::OpenItem {
+                space: space(),
+                target_tabs: Some(root),
+                item: item("reopened"),
+                insert_index: Some(1),
+            })
+            .expect("opening a new item into existing tabs should be valid")
+    );
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("reopened"), item("b")]);
+    assert_eq!(*active, 1);
+    graph.validate().expect("opened graph should validate");
+}
+
+#[test]
+fn checked_open_item_creates_root_for_empty_space() {
+    let mut graph = DockGraph::new();
+    let detached = DockSpaceId::new("detached");
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::OpenItem {
+                space: detached.clone(),
+                target_tabs: None,
+                item: item("reopened"),
+                insert_index: None,
+            })
+            .expect("opening into an empty space should create a root")
+    );
+
+    let root = graph
+        .root(&detached)
+        .expect("detached space should get root");
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("reopened")]);
+    assert_eq!(*active, 0);
+    graph.validate().expect("opened graph should validate");
+}
+
+#[test]
+fn checked_open_item_rejects_duplicate_items_without_mutation() {
+    let (mut graph, root) = root_tabs_graph(&["a"]);
+
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::OpenItem {
+                space: space(),
+                target_tabs: Some(root),
+                item: item("a"),
+                insert_index: Some(1),
+            })
+            .expect_err("opening an already reachable item should fail"),
+        DockOpApplyError::ItemAlreadyOpen { item: item("a") }
+    );
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    assert_eq!(*active, 0);
+}
+
+#[test]
 fn move_item_center_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 

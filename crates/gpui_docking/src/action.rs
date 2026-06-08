@@ -54,6 +54,17 @@ pub enum DockAction {
         /// The item to close.
         item: DockItemId,
     },
+    /// Opens one registered dock item into an existing tabs node or empty dock space.
+    OpenItem {
+        /// The dock space receiving the item.
+        space: DockSpaceId,
+        /// Existing tabs node to receive the item, or `None` to create a root in an empty space.
+        target_tabs: Option<DockNodeId>,
+        /// The item to open.
+        item: DockItemId,
+        /// Optional insertion index when opening into existing tabs.
+        insert_index: Option<usize>,
+    },
     /// Floats one tab inside a dock space without creating a platform window.
     FloatItemInWindow {
         /// The source dock space containing the item.

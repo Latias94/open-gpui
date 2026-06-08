@@ -130,6 +130,36 @@ impl DockGraph {
         true
     }
 
+    pub(in crate::graph) fn open_item(
+        &mut self,
+        space: &DockSpaceId,
+        target_tabs: Option<DockNodeId>,
+        item: DockItemId,
+        insert_index: Option<usize>,
+    ) -> bool {
+        if self.contains_item(&item) {
+            return false;
+        }
+
+        if let Some(target_tabs) = target_tabs {
+            if self.root_for_node_in_space(space, target_tabs).is_none() {
+                return false;
+            }
+            return self.insert_item_into_tabs_at(target_tabs, item, insert_index);
+        }
+
+        if self.root(space).is_some() || !self.floating_containers(space).is_empty() {
+            return false;
+        }
+
+        let tabs = self.insert_node(DockNode::Tabs {
+            items: vec![item],
+            active: 0,
+        });
+        self.set_root(space.clone(), tabs);
+        true
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::graph) fn move_item_between_spaces(
         &mut self,

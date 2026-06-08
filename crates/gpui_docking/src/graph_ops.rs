@@ -33,6 +33,24 @@ impl DockGraph {
                     })
                 }
             }
+            DockOp::OpenItem {
+                space,
+                target_tabs,
+                item,
+                ..
+            } => {
+                if self.contains_item(item) {
+                    return Err(DockOpApplyError::ItemAlreadyOpen { item: item.clone() });
+                }
+                if let Some(target_tabs) = target_tabs {
+                    self.validate_open_item_target(space, *target_tabs)?;
+                } else if !self.target_space_is_empty_for_open(space) {
+                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                        space: space.clone(),
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
             DockOp::MoveItem {
                 source_space,
                 item,
@@ -230,6 +248,12 @@ impl DockGraph {
         match op {
             DockOp::SetActiveTab { tabs, active } => self.set_active_tab(*tabs, *active),
             DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),
+            DockOp::OpenItem {
+                space,
+                target_tabs,
+                item,
+                insert_index,
+            } => self.open_item(space, *target_tabs, item.clone(), *insert_index),
             DockOp::MoveItem {
                 source_space,
                 item,
@@ -355,6 +379,28 @@ impl DockGraph {
             }
         }
         Ok(())
+    }
+
+    fn validate_open_item_target(
+        &self,
+        space: &DockSpaceId,
+        target_tabs: DockNodeId,
+    ) -> Result<(), DockOpApplyError> {
+        if self.root_for_node_in_space(space, target_tabs).is_none() {
+            return Err(DockOpApplyError::TargetNodeNotInSpace {
+                space: space.clone(),
+                target: target_tabs,
+            });
+        }
+        match self.node(target_tabs) {
+            Some(DockNode::Tabs { .. }) => Ok(()),
+            Some(_) => Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
+            None => Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
+        }
+    }
+
+    fn target_space_is_empty_for_open(&self, space: &DockSpaceId) -> bool {
+        self.root(space).is_none() && self.floating_containers(space).is_empty()
     }
 
     fn target_space_is_empty_for_item_move(

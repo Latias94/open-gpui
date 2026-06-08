@@ -50,6 +50,12 @@ impl DockWorkspace {
                 target_space,
             } => self.move_tabs_to_empty_dock_space(source_space, *source_tabs, target_space),
             DockAction::CloseItem { space, item } => self.close_item(space, item),
+            DockAction::OpenItem {
+                space,
+                target_tabs,
+                item,
+                insert_index,
+            } => self.open_item(space, *target_tabs, item, *insert_index),
             DockAction::FloatItemInWindow {
                 source_space,
                 item,
@@ -219,6 +225,25 @@ impl DockWorkspace {
         self.commit_graph_op(DockOp::CloseItem {
             space: space.clone(),
             item: item.clone(),
+        })
+    }
+
+    fn open_item(
+        &mut self,
+        space: &DockSpaceId,
+        target_tabs: Option<DockNodeId>,
+        item: &DockItemId,
+        insert_index: Option<usize>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        if self.panels().catalog().descriptor(item).is_none() {
+            return Err(DockActionApplyError::PanelNotRegistered { item: item.clone() });
+        }
+
+        self.commit_graph_op(DockOp::OpenItem {
+            space: space.clone(),
+            target_tabs,
+            item: item.clone(),
+            insert_index,
         })
     }
 
