@@ -32,6 +32,9 @@
 //! cross-window drops need active, hovered, or front-to-back window arbitration; pointer-event
 //! paths should prefer [`DockViewportTargetContext::from_window`] so the event window participates
 //! as the hovered-window signal.
+//! Panel close/reopen flows should use [`DockAction::CloseItem`] and [`DockAction::OpenItem`]:
+//! close removes the item from the graph while the panel catalog remains available, and reopen
+//! inserts that registered item back into a target tab stack or empty dock space.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};

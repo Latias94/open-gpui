@@ -116,6 +116,27 @@ fn restored_demo_layout() -> DockLayout {
         })
         .expect("problems panel should float inside the demo dock space");
 
+    let main_space = DockSpaceId::from(SPACE);
+    let outline_item = "outline".into();
+    let (outline_tabs, _) = controller
+        .graph()
+        .find_item_in_space(&main_space, &outline_item)
+        .expect("outline panel should be in the restored demo layout");
+    controller
+        .apply_action(&DockAction::CloseItem {
+            space: main_space.clone(),
+            item: outline_item.clone(),
+        })
+        .expect("outline panel should close while its registration remains available");
+    controller
+        .apply_action(&DockAction::OpenItem {
+            space: main_space,
+            target_tabs: Some(outline_tabs),
+            item: outline_item,
+            insert_index: Some(1),
+        })
+        .expect("outline panel should reopen into its original tab stack");
+
     controller.graph().export_layout()
 }
 
