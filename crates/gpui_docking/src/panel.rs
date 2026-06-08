@@ -94,7 +94,7 @@ impl DockPanel {
 /// registry storage shape.
 #[derive(Debug, Clone)]
 pub(crate) struct DockPanelRenderRegistration {
-    entry: DockPanelEntrySnapshot,
+    view: DockPanelViewHandle,
 }
 
 #[derive(Debug, Clone)]
@@ -104,12 +104,12 @@ struct DockPanelEntrySnapshot {
 }
 
 impl DockPanelRenderRegistration {
-    fn new(entry: DockPanelEntrySnapshot) -> Self {
-        Self { entry }
+    fn new(view: DockPanelViewHandle) -> Self {
+        Self { view }
     }
 
     pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
-        self.entry.resolve_view(cx)
+        self.view.resolve_view(cx)
     }
 }
 
@@ -295,8 +295,8 @@ impl DockPanelRegistry {
         &self,
         item: &DockItemId,
     ) -> Option<DockPanelRenderRegistration> {
-        self.entry_snapshot(item)
-            .map(DockPanelRenderRegistration::new)
+        self.catalog.descriptor(item)?;
+        self.views.view(item).map(DockPanelRenderRegistration::new)
     }
 
     /// Resolves a dock item to either registered live content or a missing-content state.
