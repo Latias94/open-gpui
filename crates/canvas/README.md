@@ -23,6 +23,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasEvent` normalizes pointer, wheel, key, and cancel events; pointer and key events carry
   modifiers, and the select tool can delete editable selections with Delete or Backspace through
   the same transaction path as other edits.
+- `CanvasInputMapper` maps GPUI Escape key presses to `CanvasEvent::Cancel`, giving tools a
+  renderer-neutral cancellation path instead of treating Escape as ordinary text input.
 - `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined
   custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
 - The built-in select tool supports shift-click selection toggling through the same incremental

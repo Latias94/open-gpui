@@ -245,8 +245,13 @@ impl CanvasInputMapper {
     }
 
     pub fn key_down(&self, event: &KeyDownEvent) -> CanvasEvent {
+        let key = canvas_key(&event.keystroke);
+        if key == CanvasKey::Escape {
+            return CanvasEvent::Cancel;
+        }
+
         CanvasEvent::KeyDown {
-            key: canvas_key(&event.keystroke),
+            key,
             modifiers: Self::modifiers(event.keystroke.modifiers),
             repeat: event.is_held,
         }
@@ -1038,6 +1043,14 @@ mod tests {
                 },
                 repeat: true,
             }
+        );
+        assert_eq!(
+            mapper.key_down(&KeyDownEvent {
+                keystroke: Keystroke::parse("escape").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            CanvasEvent::Cancel
         );
     }
 }
