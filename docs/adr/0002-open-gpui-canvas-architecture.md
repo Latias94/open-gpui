@@ -145,6 +145,18 @@ single dismissal key across active gestures and passive selection states.
 Shift-constrained node translation uses pointer-move modifiers, chooses the dominant axis from the
 first shifted move, and preserves that axis while Shift remains held so graph layouts can align
 nodes without a separate transform mode.
+Product editing commands live on `CanvasEditor` for the same reason. Delete, copy, cut, paste,
+duplicate, undo, redo, and z-order changes all pass through the editor's mutation path so
+selection pruning, undo history, runtime cache sync, schema validation, persistence logging, and
+future CRDT adapters see the same committed changes. The native smoke example wires keyboard
+shortcuts to these editor commands instead of mutating `CanvasDocument` collections directly.
+
+Transform handles and snap guides are interaction feedback, not persisted records.
+`CanvasTransformHandle` and `CanvasResizeHandle` describe resize affordances derived from selected
+record bounds, while `CanvasSnapGuide` describes transient alignment overlays during move and
+resize gestures. The document stores only final positions and bounds; GPUI paint snapshots carry
+handles and guides so applications can render affordances without turning each canvas record into a
+GPUI element.
 
 ## Architecture
 

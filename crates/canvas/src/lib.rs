@@ -19,10 +19,12 @@ mod resolve;
 mod routing;
 mod runtime;
 mod schema;
+mod snap;
 mod spatial_cache;
 #[cfg(test)]
 mod test_support;
 mod tool;
+mod transform;
 
 pub use changes::{
     CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
@@ -41,8 +43,8 @@ pub use geometry::{CanvasViewport, TransformError};
 pub use gpui::{
     CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintFrame, CanvasPaintInteraction,
     CanvasPaintInteractionFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
-    CanvasPaintTheme, CanvasPaintTransformHandle, canvas_view, collect_visible_records,
-    paint_canvas_frame,
+    CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle, canvas_view,
+    collect_visible_records, paint_canvas_frame,
 };
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
@@ -78,10 +80,16 @@ pub use schema::{
     CanvasEdgeKind, CanvasKindRegistry, CanvasNodeKind, CanvasRecordKind, CanvasSchemaError,
     CanvasShapeKind,
 };
+pub use snap::{
+    CanvasSnapAxis, CanvasSnapGuide, CanvasSnapResult, DEFAULT_SNAP_THRESHOLD,
+    snap_delta_for_resize_selection, snap_delta_for_selection,
+};
 pub use tool::{
-    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasResizeHandle,
-    CanvasSelection, CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect,
-    CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
-    CanvasTransformHandle, CanvasTransformTarget, CanvasZOrderCommand, PointerButton, ToolState,
-    canvas_transform_handles,
+    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
+    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
+    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, CanvasZOrderCommand,
+    PointerButton, ToolState,
+};
+pub use transform::{
+    CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,
 };

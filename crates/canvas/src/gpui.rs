@@ -1,9 +1,9 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasTransformHandle,
-    CanvasTransformTarget, CanvasViewport, HitOptions, HitTarget, PointerButton, ToolState,
-    canvas_transform_handles, connection_hit_options,
+    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasSnapAxis,
+    CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions,
+    HitTarget, PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -181,6 +181,8 @@ pub struct CanvasPaintTheme {
     pub selection_bounds_stroke_width: Pixels,
     pub connection_preview_stroke: Hsla,
     pub connection_preview_stroke_width: Pixels,
+    pub snap_guide_stroke: Hsla,
+    pub snap_guide_stroke_width: Pixels,
 }
 
 impl Default for CanvasPaintTheme {
@@ -209,6 +211,8 @@ impl Default for CanvasPaintTheme {
             selection_bounds_stroke_width: px(1.0),
             connection_preview_stroke: Hsla::from(rgb(0x0969da)).alpha(0.7),
             connection_preview_stroke_width: px(2.0),
+            snap_guide_stroke: Hsla::from(rgb(0xbf8700)).alpha(0.9),
+            snap_guide_stroke_width: px(1.0),
         }
     }
 }
@@ -236,6 +240,7 @@ pub struct CanvasPaintInteractionFrame {
     pub selection_bounds: Option<Bounds<Pixels>>,
     pub connection_preview: Option<CanvasPaintConnectionPreview>,
     pub transform_handles: Vec<CanvasPaintTransformHandle>,
+    pub snap_guides: Vec<CanvasPaintSnapGuide>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -249,6 +254,13 @@ pub struct CanvasPaintTransformHandle {
     pub target: CanvasTransformTarget,
     pub handle: crate::CanvasResizeHandle,
     pub view_bounds: Bounds<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintSnapGuide {
+    pub axis: CanvasSnapAxis,
+    pub view_start: Point<Pixels>,
+    pub view_end: Point<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -517,6 +529,17 @@ pub fn paint_canvas_frame(
         );
     }
 
+    for guide in &frame.interaction.snap_guides {
+        paint_line(
+            window,
+            canvas_bounds,
+            guide.view_start,
+            guide.view_end,
+            theme.snap_guide_stroke,
+            theme.snap_guide_stroke_width,
+        );
+    }
+
     for handle in &frame.interaction.transform_handles {
         paint_rect(
             window,
@@ -542,18 +565,43 @@ fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
             ),
             connection_preview: None,
             transform_handles: Vec::new(),
+            snap_guides: Vec::new(),
         },
         ToolState::Connecting { source, current } => CanvasPaintInteractionFrame {
             selection_bounds: None,
             connection_preview: connection_preview(model, source, *current),
             transform_handles: Vec::new(),
+            snap_guides: Vec::new(),
         },
+        ToolState::Translating { snap_guides, .. } | ToolState::Resizing { snap_guides, .. } => {
+            CanvasPaintInteractionFrame {
+                selection_bounds: None,
+                connection_preview: None,
+                transform_handles: transform_handles_for_model(model),
+                snap_guides: paint_snap_guides(model, snap_guides),
+            }
+        }
         _ => CanvasPaintInteractionFrame {
             selection_bounds: None,
             connection_preview: None,
             transform_handles: transform_handles_for_model(model),
+            snap_guides: Vec::new(),
         },
     }
+}
+
+fn paint_snap_guides(
+    model: &CanvasPaintModel,
+    guides: &[CanvasSnapGuide],
+) -> Vec<CanvasPaintSnapGuide> {
+    guides
+        .iter()
+        .map(|guide| CanvasPaintSnapGuide {
+            axis: guide.axis,
+            view_start: model.viewport.document_to_view(guide.document_start),
+            view_end: model.viewport.document_to_view(guide.document_end),
+        })
+        .collect()
 }
 
 fn transform_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintTransformHandle> {
@@ -1050,6 +1098,53 @@ mod tests {
                 && handle.handle == crate::CanvasResizeHandle::BottomRight
                 && handle.view_bounds.contains(&point(px(50.0), px(30.0)))
         }));
+    }
+
+    #[test]
+    fn translating_state_adds_snap_guides_to_paint_frame() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "selected",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut model = CanvasPaintModel::new(
+            document,
+            CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
+        );
+        model
+            .interaction
+            .selection
+            .nodes
+            .insert(crate::NodeId::from("selected"));
+        model.interaction.state = ToolState::Translating {
+            origin: point(px(10.0), px(10.0)),
+            last: point(px(20.0), px(20.0)),
+            constraint_axis: None,
+            node_ids: vec![crate::NodeId::from("selected")],
+            snap_guides: vec![CanvasSnapGuide {
+                axis: CanvasSnapAxis::Horizontal,
+                document_start: point(px(40.0), px(10.0)),
+                document_end: point(px(40.0), px(90.0)),
+            }],
+        };
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.snap_guides,
+            vec![CanvasPaintSnapGuide {
+                axis: CanvasSnapAxis::Horizontal,
+                view_start: point(px(60.0), px(-20.0)),
+                view_end: point(px(60.0), px(140.0)),
+            }]
+        );
     }
 
     #[test]

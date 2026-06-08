@@ -4,12 +4,12 @@ use open_gpui::{
     WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor, CanvasEndpoint, CanvasEvent,
-    CanvasHandle, CanvasInputMapper, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection, CanvasShape,
-    CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, HandleRole, NodeId,
-    PointerButton, collect_visible_records, paint_canvas_frame,
+    CanvasClipboardPayload, CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor,
+    CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasInputMapper, CanvasKindRegistry, CanvasNode,
+    CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection,
+    CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
+    CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand, DocumentError,
+    HandleRole, NodeId, PointerButton, collect_visible_records, paint_canvas_frame,
 };
 use open_gpui_platform::application;
 
@@ -18,6 +18,7 @@ const STAMP_TOOL_ID: &str = "stamp-node";
 struct SmokeView {
     editor: CanvasEditor,
     tools: CanvasToolRegistry,
+    clipboard: Option<CanvasClipboardPayload>,
     focus_handle: FocusHandle,
 }
 
@@ -95,7 +96,7 @@ impl Render for SmokeView {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 cx.stop_propagation();
-                this.handle_canvas_event(Some(CanvasInputMapper::key_down_event(event)), cx);
+                this.handle_key_down(event, cx);
             }))
             .child(
                 canvas(
@@ -189,6 +190,82 @@ impl Render for SmokeView {
 }
 
 impl SmokeView {
+    fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        match self.handle_canvas_shortcut(event) {
+            Ok(true) => {
+                cx.notify();
+            }
+            Ok(false) => {
+                self.handle_canvas_event(Some(CanvasInputMapper::key_down_event(event)), cx);
+            }
+            Err(error) => {
+                eprintln!("canvas shortcut failed: {error}");
+            }
+        }
+    }
+
+    fn handle_canvas_shortcut(&mut self, event: &KeyDownEvent) -> Result<bool, DocumentError> {
+        let modifiers = event.keystroke.modifiers;
+        if !(modifiers.platform || modifiers.control) {
+            return Ok(false);
+        }
+
+        match event.keystroke.key.as_str() {
+            "c" => {
+                self.clipboard = self.editor.copy_selection();
+                Ok(true)
+            }
+            "x" => {
+                self.clipboard = self.editor.cut_selection()?;
+                Ok(true)
+            }
+            "v" => {
+                if let Some(payload) = self.clipboard.clone() {
+                    self.editor
+                        .paste_clipboard(&payload, point(px(24.0), px(24.0)))?;
+                }
+                Ok(true)
+            }
+            "d" => {
+                self.editor.duplicate_selection(point(px(24.0), px(24.0)))?;
+                Ok(true)
+            }
+            "z" if modifiers.shift => {
+                self.editor.redo()?;
+                Ok(true)
+            }
+            "z" => {
+                self.editor.undo()?;
+                Ok(true)
+            }
+            "y" => {
+                self.editor.redo()?;
+                Ok(true)
+            }
+            "]" if modifiers.shift => {
+                self.editor
+                    .reorder_selection(CanvasZOrderCommand::BringToFront)?;
+                Ok(true)
+            }
+            "]" => {
+                self.editor
+                    .reorder_selection(CanvasZOrderCommand::BringForward)?;
+                Ok(true)
+            }
+            "[" if modifiers.shift => {
+                self.editor
+                    .reorder_selection(CanvasZOrderCommand::SendToBack)?;
+                Ok(true)
+            }
+            "[" => {
+                self.editor
+                    .reorder_selection(CanvasZOrderCommand::SendBackward)?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     fn handle_canvas_event(&mut self, event: Option<CanvasEvent>, cx: &mut Context<Self>) {
         let Some(event) = event else {
             return;
@@ -343,6 +420,7 @@ fn main() {
                     )
                     .expect("failed to create canvas editor"),
                     tools: demo_tools(),
+                    clipboard: None,
                     focus_handle: cx.focus_handle(),
                 })
             },

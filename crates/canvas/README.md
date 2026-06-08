@@ -30,6 +30,12 @@ command, query, tool, and persistence boundaries over early feature breadth.
   skip them unless `HitOptions::include_locked` is enabled.
 - `CanvasEditor` owns document mutation, undo/redo, selection, gestures, runtime cache sync, edge
   router policy, and kind registry policy behind explicit methods.
+- `CanvasEditor` exposes command methods for delete, copy, cut, paste, duplicate, undo, redo, and
+  z-order changes so applications do not need to mutate document collections directly.
+- `CanvasTransformHandle` and `CanvasResizeHandle` describe selected-record resize affordances in
+  interaction snapshots. They are hit targets and paint feedback, not persisted document records.
+- `CanvasSnapGuide` records transient alignment feedback for move and resize gestures. Snapping
+  adjusts the proposed transaction while the document stores only final positions and bounds.
 - `CanvasEvent` normalizes pointer, wheel, key, and cancel events; pointer and key events carry
   modifiers, and the select tool can delete editable selections with Delete or Backspace through
   the same transaction path as other edits.
@@ -137,6 +143,30 @@ fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
 
 The index is an application-owned cache. It preserves document edge order, deduplicates self-loop
 incident edges, and can apply diffs without changing document serialization.
+
+## Edit Through Commands
+
+Applications should route product editing actions through `CanvasEditor` methods. The editor keeps
+selection pruning, undo/redo, runtime cache updates, kind validation, and future persistence hooks
+behind one mutation boundary.
+
+```rust
+use open_gpui::{point, px};
+use open_gpui_canvas::{
+    CanvasEditor, CanvasNode, CanvasSelection, CanvasZOrderCommand, DocumentError, NodeId,
+};
+
+fn edit_selection(editor: &mut CanvasEditor) -> Result<(), DocumentError> {
+    editor.duplicate_selection(point(px(24.0), px(24.0)))?;
+    editor.reorder_selection(CanvasZOrderCommand::BringToFront)?;
+
+    if let Some(payload) = editor.copy_selection() {
+        editor.paste_clipboard(&payload, point(px(48.0), px(48.0)))?;
+    }
+
+    Ok(())
+}
+```
 
 ## Inspect Record Changes
 

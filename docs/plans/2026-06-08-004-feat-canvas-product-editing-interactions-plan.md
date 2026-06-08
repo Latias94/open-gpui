@@ -1,7 +1,7 @@
 ---
 title: "feat: Add Product-Grade Canvas Editing Interactions"
 type: feat
-status: active
+status: completed
 date: 2026-06-08
 ---
 
