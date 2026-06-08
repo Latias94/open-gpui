@@ -78,6 +78,7 @@ mod render;
 mod splitter;
 mod viewport;
 mod viewport_close;
+mod viewport_coordinates;
 mod viewport_placement;
 mod viewport_registry;
 mod viewport_target;
