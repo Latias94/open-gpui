@@ -63,6 +63,7 @@ mod geometry;
 mod graph;
 mod host;
 mod ids;
+mod interaction;
 mod layout;
 mod op;
 mod panel;

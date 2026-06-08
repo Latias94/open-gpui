@@ -1,0 +1,185 @@
+use crate::{DockAction, DockNodeId, DockSpaceId, drop_target::DockDropIntent, splitter};
+use open_gpui::{Bounds, Pixels, Point, point};
+
+#[derive(Debug, Default)]
+pub(crate) struct DockInteractionRuntime {
+    splitter_drag: Option<SplitterDrag>,
+    floating_drag: Option<FloatingDrag>,
+    tab_drop_intent: Option<DockDropIntent>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SplitterDrag {
+    pub(crate) split: DockNodeId,
+    pub(crate) handle_index: usize,
+    pub(crate) start_position: Pixels,
+    pub(crate) split_extent: Pixels,
+    pub(crate) initial_fractions: Vec<f32>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FloatingDrag {
+    pub(crate) space: DockSpaceId,
+    pub(crate) floating: DockNodeId,
+    pub(crate) start_position: Point<Pixels>,
+    pub(crate) initial_bounds: Bounds<Pixels>,
+}
+
+impl DockInteractionRuntime {
+    pub(crate) fn start_splitter_drag(
+        &mut self,
+        split: DockNodeId,
+        handle_index: usize,
+        start_position: Pixels,
+        split_extent: Pixels,
+        initial_fractions: Vec<f32>,
+    ) {
+        self.splitter_drag = Some(SplitterDrag {
+            split,
+            handle_index,
+            start_position,
+            split_extent,
+            initial_fractions,
+        });
+    }
+
+    pub(crate) fn resize_split_action(
+        &self,
+        position: Pixels,
+        split_min_size: Pixels,
+    ) -> Option<DockAction> {
+        let drag = self.splitter_drag.as_ref()?;
+        let delta = position - drag.start_position;
+        let fractions = splitter::resize_adjacent_fractions(
+            &drag.initial_fractions,
+            drag.initial_fractions.len(),
+            drag.handle_index,
+            drag.split_extent,
+            delta,
+            split_min_size,
+        )?;
+
+        Some(DockAction::ResizeSplit {
+            split: drag.split,
+            fractions,
+        })
+    }
+
+    pub(crate) fn finish_splitter_drag(&mut self) {
+        self.splitter_drag = None;
+    }
+
+    pub(crate) fn start_floating_drag(
+        &mut self,
+        space: DockSpaceId,
+        floating: DockNodeId,
+        start_position: Point<Pixels>,
+        initial_bounds: Bounds<Pixels>,
+    ) {
+        self.floating_drag = Some(FloatingDrag {
+            space,
+            floating,
+            start_position,
+            initial_bounds,
+        });
+    }
+
+    pub(crate) fn set_floating_bounds_action(&self, position: Point<Pixels>) -> Option<DockAction> {
+        let drag = self.floating_drag.as_ref()?;
+        let delta = position - drag.start_position;
+        let bounds = Bounds::new(
+            point(
+                drag.initial_bounds.origin.x + delta.x,
+                drag.initial_bounds.origin.y + delta.y,
+            ),
+            drag.initial_bounds.size,
+        );
+
+        Some(DockAction::SetFloatingBounds {
+            space: drag.space.clone(),
+            floating: drag.floating,
+            bounds,
+        })
+    }
+
+    pub(crate) fn finish_floating_drag(&mut self) {
+        self.floating_drag = None;
+    }
+
+    pub(crate) fn set_tab_drop_intent(&mut self, intent: Option<DockDropIntent>) {
+        self.tab_drop_intent = intent;
+    }
+
+    pub(crate) fn tab_drop_intent(&self) -> Option<DockDropIntent> {
+        self.tab_drop_intent
+    }
+
+    pub(crate) fn clear_tab_drop_intent(&mut self) {
+        self.tab_drop_intent = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
+        self.splitter_drag.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn floating_drag(&self) -> Option<&FloatingDrag> {
+        self.floating_drag.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DockNodeId;
+    use open_gpui::{px, size};
+    use slotmap::Key;
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    #[test]
+    fn splitter_update_without_active_drag_has_no_action() {
+        let runtime = DockInteractionRuntime::default();
+
+        assert_eq!(runtime.resize_split_action(px(120.0), px(96.0)), None);
+    }
+
+    #[test]
+    fn splitter_drag_produces_resize_action() {
+        let split = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.start_splitter_drag(split, 0, px(100.0), px(400.0), vec![0.5, 0.5]);
+
+        assert_eq!(
+            runtime.resize_split_action(px(180.0), px(96.0)),
+            Some(DockAction::ResizeSplit {
+                split,
+                fractions: vec![0.7, 0.3],
+            })
+        );
+    }
+
+    #[test]
+    fn floating_drag_produces_bounds_action() {
+        let floating = DockNodeId::null();
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.start_floating_drag(
+            DockSpaceId::from("main"),
+            floating,
+            point(px(10.0), px(20.0)),
+            bounds(40.0, 50.0, 200.0, 100.0),
+        );
+
+        assert_eq!(
+            runtime.set_floating_bounds_action(point(px(25.0), px(35.0))),
+            Some(DockAction::SetFloatingBounds {
+                space: DockSpaceId::from("main"),
+                floating,
+                bounds: bounds(55.0, 65.0, 200.0, 100.0),
+            })
+        );
+    }
+}

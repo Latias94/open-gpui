@@ -2,10 +2,13 @@
 use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph, DockNodeId,
-    DockPanelRegistry, DockPolicy, DockSpaceId, debug::DockDebugRegion,
-    drop_target::DockDropIntent, splitter, workspace::DockWorkspace,
+    DockPanelRegistry, DockPolicy, DockSpaceId,
+    debug::DockDebugRegion,
+    drop_target::DockDropIntent,
+    interaction::{DockInteractionRuntime, FloatingDrag, SplitterDrag},
+    workspace::DockWorkspace,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Point, point, px};
+use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Point, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -31,32 +34,13 @@ impl Default for DockHostOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct SplitterDrag {
-    pub(crate) split: DockNodeId,
-    pub(crate) handle_index: usize,
-    pub(crate) start_position: Pixels,
-    pub(crate) split_extent: Pixels,
-    pub(crate) initial_fractions: Vec<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FloatingDrag {
-    pub(crate) space: DockSpaceId,
-    pub(crate) floating: DockNodeId,
-    pub(crate) start_position: Point<Pixels>,
-    pub(crate) initial_bounds: Bounds<Pixels>,
-}
-
 /// Retained GPUI host that renders one logical dock workspace.
 #[derive(Debug)]
 pub struct DockHost {
     source: DockHostSource,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
-    splitter_drag: Option<SplitterDrag>,
-    floating_drag: Option<FloatingDrag>,
-    tab_drop_intent: Option<DockDropIntent>,
+    interaction: DockInteractionRuntime,
 }
 
 #[derive(Debug)]
@@ -95,9 +79,7 @@ impl DockHost {
             source: DockHostSource::Owned(Box::new(workspace)),
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
-            splitter_drag: None,
-            floating_drag: None,
-            tab_drop_intent: None,
+            interaction: DockInteractionRuntime::default(),
         }
     }
 
@@ -115,9 +97,7 @@ impl DockHost {
             },
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
-            splitter_drag: None,
-            floating_drag: None,
-            tab_drop_intent: None,
+            interaction: DockInteractionRuntime::default(),
         }
     }
 
@@ -279,13 +259,13 @@ impl DockHost {
         split_extent: Pixels,
         initial_fractions: Vec<f32>,
     ) {
-        self.splitter_drag = Some(SplitterDrag {
+        self.interaction.start_splitter_drag(
             split,
             handle_index,
             start_position,
             split_extent,
             initial_fractions,
-        });
+        );
     }
 
     pub(crate) fn update_splitter_drag(
@@ -293,36 +273,22 @@ impl DockHost {
         position: Pixels,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(drag) = self.splitter_drag.as_ref() else {
-            return false;
-        };
         let split_min_size =
             self.with_workspace(cx, |workspace| workspace.options().split_min_size);
-        let delta = position - drag.start_position;
-        let Some(fractions) = splitter::resize_adjacent_fractions(
-            &drag.initial_fractions,
-            drag.initial_fractions.len(),
-            drag.handle_index,
-            drag.split_extent,
-            delta,
-            split_min_size,
-        ) else {
+        let Some(action) = self
+            .interaction
+            .resize_split_action(position, split_min_size)
+        else {
             return false;
         };
 
-        self.apply_action_from_host(
-            &DockAction::ResizeSplit {
-                split: drag.split,
-                fractions,
-            },
-            cx,
-        )
-        .map(|outcome| outcome.changed())
-        .unwrap_or(false)
+        self.apply_action_from_host(&action, cx)
+            .map(|outcome| outcome.changed())
+            .unwrap_or(false)
     }
 
     pub(crate) fn finish_splitter_drag(&mut self) {
-        self.splitter_drag = None;
+        self.interaction.finish_splitter_drag();
     }
 
     pub(crate) fn start_floating_drag(
@@ -332,12 +298,8 @@ impl DockHost {
         start_position: Point<Pixels>,
         initial_bounds: Bounds<Pixels>,
     ) {
-        self.floating_drag = Some(FloatingDrag {
-            space,
-            floating,
-            start_position,
-            initial_bounds,
-        });
+        self.interaction
+            .start_floating_drag(space, floating, start_position, initial_bounds);
     }
 
     pub(crate) fn update_floating_drag(
@@ -345,53 +307,38 @@ impl DockHost {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(drag) = self.floating_drag.as_ref() else {
+        let Some(action) = self.interaction.set_floating_bounds_action(position) else {
             return false;
         };
-        let delta = position - drag.start_position;
-        let next_bounds = Bounds::new(
-            point(
-                drag.initial_bounds.origin.x + delta.x,
-                drag.initial_bounds.origin.y + delta.y,
-            ),
-            drag.initial_bounds.size,
-        );
 
-        self.apply_action_from_host(
-            &DockAction::SetFloatingBounds {
-                space: drag.space.clone(),
-                floating: drag.floating,
-                bounds: next_bounds,
-            },
-            cx,
-        )
-        .map(|outcome| outcome.changed())
-        .unwrap_or(false)
+        self.apply_action_from_host(&action, cx)
+            .map(|outcome| outcome.changed())
+            .unwrap_or(false)
     }
 
     pub(crate) fn finish_floating_drag(&mut self) {
-        self.floating_drag = None;
+        self.interaction.finish_floating_drag();
     }
 
     pub(crate) fn set_tab_drop_intent(&mut self, intent: Option<DockDropIntent>) {
-        self.tab_drop_intent = intent;
+        self.interaction.set_tab_drop_intent(intent);
     }
 
     pub(crate) fn tab_drop_intent(&self) -> Option<DockDropIntent> {
-        self.tab_drop_intent
+        self.interaction.tab_drop_intent()
     }
 
     pub(crate) fn clear_tab_drop_intent(&mut self) {
-        self.tab_drop_intent = None;
+        self.interaction.clear_tab_drop_intent();
     }
 
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
-        self.splitter_drag.as_ref()
+        self.interaction.splitter_drag()
     }
 
     #[cfg(test)]
     pub(crate) fn floating_drag(&self) -> Option<&FloatingDrag> {
-        self.floating_drag.as_ref()
+        self.interaction.floating_drag()
     }
 }
