@@ -125,9 +125,15 @@ mod host_tests;
 #[cfg(test)]
 mod host_viewport_tests;
 #[cfg(test)]
-mod host_workspace_tests;
-#[cfg(test)]
 mod layout_tests;
+#[cfg(test)]
+mod workspace_move_tests;
+#[cfg(test)]
+mod workspace_panel_lifecycle_tests;
+#[cfg(test)]
+mod workspace_resize_policy_tests;
+#[cfg(test)]
+mod workspace_selection_tests;
 pub use action::*;
 pub use builder::*;
 pub use controller::*;
