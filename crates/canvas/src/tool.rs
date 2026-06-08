@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasTransaction,
-    CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
-    HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId,
+    HandleRole, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -177,6 +177,12 @@ pub enum CanvasSelectionMode {
     #[default]
     Replace,
     Add,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionEndpointRole {
+    Source,
+    Target,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1019,7 +1025,7 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
-                self.node_endpoint_at(document_position)
+                self.node_endpoint_at(document_position, ConnectionEndpointRole::Source)
                     .map(|source| {
                         vec![CanvasToolEffect::SetState(ToolState::Connecting {
                             source,
@@ -1045,7 +1051,8 @@ impl CanvasEditor {
             ) => {
                 let document_position = self.viewport.view_to_document(position);
                 let mut effects = Vec::new();
-                if let Some(target) = self.node_endpoint_at(document_position)
+                if let Some(target) =
+                    self.node_endpoint_at(document_position, ConnectionEndpointRole::Target)
                     && (source.node_id != target.node_id || source.handle_id != target.handle_id)
                 {
                     let edge_id = EdgeId::new(format!(
@@ -1083,26 +1090,47 @@ impl CanvasEditor {
             .cloned()
     }
 
-    fn node_endpoint_at(&self, point: Point<Pixels>) -> Option<CanvasEndpoint> {
-        self.index
-            .hit_test(
-                point,
-                HitOptions {
-                    include_handles: true,
-                    ..HitOptions::default()
-                },
-            )
-            .find_map(|record| match &record.target {
-                HitTarget::Handle { node_id, handle_id } => Some(CanvasEndpoint {
-                    node_id: node_id.clone(),
-                    handle_id: Some(handle_id.clone()),
-                }),
-                HitTarget::Node(node_id) => Some(CanvasEndpoint {
-                    node_id: node_id.clone(),
-                    handle_id: None,
-                }),
-                _ => None,
-            })
+    fn node_endpoint_at(
+        &self,
+        point: Point<Pixels>,
+        role: ConnectionEndpointRole,
+    ) -> Option<CanvasEndpoint> {
+        for record in self.index.hit_test(
+            point,
+            HitOptions {
+                include_handles: true,
+                ..HitOptions::default()
+            },
+        ) {
+            match &record.target {
+                HitTarget::Handle { node_id, handle_id } => {
+                    return self.handle_endpoint(node_id, handle_id, role);
+                }
+                HitTarget::Node(node_id) => {
+                    return Some(CanvasEndpoint {
+                        node_id: node_id.clone(),
+                        handle_id: None,
+                    });
+                }
+                HitTarget::Edge(_) | HitTarget::Shape(_) => {}
+            }
+        }
+
+        None
+    }
+
+    fn handle_endpoint(
+        &self,
+        node_id: &NodeId,
+        handle_id: &crate::HandleId,
+        role: ConnectionEndpointRole,
+    ) -> Option<CanvasEndpoint> {
+        let node = self.document.nodes.get(node_id)?;
+        let handle = node.handle(Some(handle_id))?;
+        handle_accepts_connection_role(handle, role).then(|| CanvasEndpoint {
+            node_id: node_id.clone(),
+            handle_id: Some(handle_id.clone()),
+        })
     }
 
     fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
@@ -1201,6 +1229,17 @@ impl CanvasEditor {
                 combined
             }
         }
+    }
+}
+
+fn handle_accepts_connection_role(handle: &CanvasHandle, role: ConnectionEndpointRole) -> bool {
+    if handle.hidden || !handle.connectable {
+        return false;
+    }
+
+    match role {
+        ConnectionEndpointRole::Source => handle.role != HandleRole::Target,
+        ConnectionEndpointRole::Target => handle.role != HandleRole::Source,
     }
 }
 
@@ -2126,18 +2165,18 @@ mod tests {
 
     #[test]
     fn connect_tool_uses_handles_when_available() {
-        use crate::{CanvasHandle, HandleId};
+        use crate::{CanvasHandle, HandleId, HandleRole};
 
         let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
-        source
-            .handles
-            .push(CanvasHandle::new("out", point(px(100.0), px(50.0))));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
 
         let mut target =
             CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
-        target
-            .handles
-            .push(CanvasHandle::new("in", point(px(0.0), px(50.0))));
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(50.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
 
         let mut document = CanvasDocument::default();
         document.insert_node(source).unwrap();
@@ -2163,6 +2202,83 @@ mod tests {
         let edge = editor.document.edges.values().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
+    }
+
+    #[test]
+    fn connect_tool_does_not_start_from_target_only_handle() {
+        use crate::{CanvasHandle, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut target_only = CanvasHandle::new("in", point(px(100.0), px(50.0)));
+        target_only.role = HandleRole::Target;
+        source.handles.push(target_only);
+        let target = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(editor.document.edges.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
+    }
+
+    #[test]
+    fn connect_tool_does_not_end_on_source_only_handle() {
+        use crate::{CanvasHandle, HandleRole};
+
+        let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(50.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut invalid_target_handle = CanvasHandle::new("out", point(px(0.0), px(50.0)));
+        invalid_target_handle.role = HandleRole::Source;
+        target.handles.push(invalid_target_handle);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(100.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(200.0), px(50.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(editor.document.edges.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]

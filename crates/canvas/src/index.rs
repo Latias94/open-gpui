@@ -85,7 +85,7 @@ impl SpatialIndex {
                     },
                     bounds: handle.bounds_in_document(node),
                     z_index: node.z_index,
-                    hidden: node.hidden || !handle.connectable,
+                    hidden: node.hidden || handle.hidden || !handle.connectable,
                     locked: node.locked,
                 });
             }
@@ -208,7 +208,7 @@ impl SpatialIndex {
                         },
                         bounds: handle.bounds_in_document(node),
                         z_index: node.z_index,
-                        hidden: node.hidden || !handle.connectable,
+                        hidden: node.hidden || handle.hidden || !handle.connectable,
                         locked: node.locked,
                     });
                 }
@@ -568,6 +568,52 @@ mod tests {
                 HitTarget::Handle {
                     node_id: NodeId::from("a"),
                     handle_id: HandleId::from("out"),
+                },
+                HitTarget::Node(NodeId::from("a")),
+            ]
+        );
+    }
+
+    #[test]
+    fn hidden_handles_are_only_hit_when_hidden_records_are_requested() {
+        use crate::CanvasHandle;
+
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let mut handle = CanvasHandle::new("hidden", point(px(95.0), px(50.0)));
+        handle.hidden = true;
+        node.handles.push(handle);
+        document.insert_node(node).unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        let point = point(px(95.0), px(50.0));
+        let visible_options = HitOptions {
+            include_handles: true,
+            ..HitOptions::default()
+        };
+
+        assert_eq!(
+            index
+                .hit_test(point, visible_options)
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("a"))]
+        );
+
+        let hidden_options = HitOptions {
+            include_hidden: true,
+            include_handles: true,
+            ..HitOptions::default()
+        };
+        assert_eq!(
+            index
+                .hit_test(point, hidden_options)
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                HitTarget::Handle {
+                    node_id: NodeId::from("a"),
+                    handle_id: HandleId::from("hidden"),
                 },
                 HitTarget::Node(NodeId::from("a")),
             ]

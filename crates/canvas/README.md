@@ -12,6 +12,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasDocument` stores nodes, edges, and shapes as separate record collections.
 - `CanvasNode` owns position, size, z-index, payload data, style, flags, and invisible handles.
 - `CanvasEdge` references source and target endpoints by node ID plus optional handle ID.
+- Handles can be hidden, non-connectable, source-only, target-only, or bidirectional. Hidden and
+  non-connectable handles stay out of default hit testing, and the connect tool respects source and
+  target roles while picking endpoints.
 - `CanvasGraph` provides zero-copy graph queries over the canonical document records.
 - `SpatialIndex` supports hit testing and visible-record culling without one GPUI element per
   canvas object, while `CanvasSpatialIndex` exposes the replaceable query boundary for future

@@ -89,6 +89,11 @@ paint and hit-test paths unless explicitly included. Locked records remain visib
 painting, but default hit tests, box selection, endpoint picking, and node translation skip them.
 `HitOptions::include_locked` keeps diagnostics and editor-specific inspection tools possible
 without making locked records accidentally interactive.
+Handle visibility and connection roles are enforced before the connect tool creates an edge.
+Hidden or non-connectable handles are omitted from default endpoint hit testing, source-only
+handles cannot be used as targets, and target-only handles cannot be used as sources. Invalid
+handle gestures are ignored at the picking layer rather than allowed to fail later as document
+mutation errors.
 
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
 Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
