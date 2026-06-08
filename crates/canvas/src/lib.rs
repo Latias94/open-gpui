@@ -77,8 +77,8 @@ pub use routing::{
 };
 pub use runtime::CanvasRuntime;
 pub use schema::{
-    CanvasEdgeKind, CanvasKindRegistry, CanvasNodeKind, CanvasRecordKind, CanvasSchemaError,
-    CanvasShapeKind,
+    CanvasEdgeKind, CanvasKindRegistry, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind,
+    CanvasSchemaError, CanvasShapeKind, CanvasShapeResizeProposal,
 };
 pub use snap::{
     CanvasSnapAxis, CanvasSnapGuide, CanvasSnapResult, DEFAULT_SNAP_THRESHOLD,

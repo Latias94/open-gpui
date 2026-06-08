@@ -210,10 +210,11 @@ Kind-specific behavior is registry-driven rather than stored as hidden document 
 `CanvasKindRegistry::open` leaves unknown kinds untouched, preserving imported and
 application-defined records. Applications that need stronger contracts can register
 `CanvasNodeKind`, `CanvasEdgeKind`, or `CanvasShapeKind` handlers. Registered handlers can add
-default data, migrate older payloads, validate records, and override node bounds, shape bounds, or
-handle positions. Snapshot loading, transactions, gestures, undo/redo validation, runtime cache
-rebuilds, endpoint picking, and paint snapshots can all receive the same registry, so a kind policy
-is not scattered across serializers, tools, indexes, and renderers.
+default data, migrate older payloads, validate records, override node bounds, shape bounds, or
+handle positions, and clamp or reject resize proposals. Snapshot loading, transactions, gestures,
+undo/redo validation, runtime cache rebuilds, endpoint picking, and paint snapshots can all receive
+the same registry, so a kind policy is not scattered across serializers, tools, indexes, and
+renderers.
 
 Route metadata is stored as intent, not as a renderer contract. The core model records route kind,
 manual waypoints, optional control points, route-specific options, and interaction width so that

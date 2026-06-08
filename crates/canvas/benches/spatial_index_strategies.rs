@@ -7,7 +7,7 @@ use open_gpui_canvas::{
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, time::Duration};
 
 const GRID_COLUMNS: usize = 120;
 const GRID_ROWS: usize = 80;
@@ -152,11 +152,9 @@ fn bench_workload(c: &mut Criterion, workload: &Workload) {
         });
     });
 
-    let paint_model = CanvasPaintModel::from_runtime_parts(
-        Arc::new(workload.document.clone()),
-        Arc::new(CanvasRuntime::rebuild(&workload.document)),
+    let paint_model = CanvasPaintModel::new(
+        workload.document.clone(),
         CanvasViewport::new(viewport.origin, 1.0).expect("benchmark viewport should be valid"),
-        Default::default(),
     );
     let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), viewport.size);
     let paint_options = CanvasPaintOptions {

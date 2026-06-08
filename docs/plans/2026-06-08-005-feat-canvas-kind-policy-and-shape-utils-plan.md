@@ -210,6 +210,14 @@ system instead of many local conditionals.
 
 ---
 
+## Progress
+
+- 2026-06-08: Added the first transform-constraint slice: node and shape resize proposal hooks,
+  registry-level resize validation, editor resize gesture integration, and removal of paint model
+  constructors that accepted caller-supplied runtime parts.
+
+---
+
 ## Risks & Dependencies
 
 - **Risk: The policy surface becomes too large too early.** Mitigation: use optional policy fields

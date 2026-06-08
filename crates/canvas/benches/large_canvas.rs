@@ -2,9 +2,8 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use open_gpui::{Bounds, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasPaintModel, CanvasPaintOptions,
-    CanvasRuntime, CanvasViewport, SpatialIndex, collect_visible_records,
+    CanvasViewport, SpatialIndex, collect_visible_records,
 };
-use std::sync::Arc;
 
 const GRID_COLUMNS: usize = 200;
 const GRID_ROWS: usize = 100;
@@ -16,7 +15,6 @@ const ROW_GAP: f32 = 120.0;
 fn large_canvas_benches(c: &mut Criterion) {
     let document = build_grid_document(GRID_COLUMNS, GRID_ROWS);
     let index = SpatialIndex::rebuild(&document);
-    let runtime = CanvasRuntime::rebuild(&document);
     let node_count = document.nodes.len();
     let edge_count = document.edges.len();
 
@@ -38,12 +36,10 @@ fn large_canvas_benches(c: &mut Criterion) {
     });
 
     c.bench_function("paint_frame_culling", |b| {
-        let model = CanvasPaintModel::from_runtime_parts(
-            Arc::new(document.clone()),
-            Arc::new(runtime.clone()),
+        let model = CanvasPaintModel::new(
+            document.clone(),
             CanvasViewport::new(point(px(12_000.0), px(6_000.0)), 1.0)
                 .expect("benchmark viewport should be valid"),
-            Default::default(),
         );
         let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(1_280.0), px(720.0)));
         let options = CanvasPaintOptions {

@@ -74,37 +74,6 @@ impl CanvasPaintModel {
             interaction: CanvasPaintInteraction::default(),
         }
     }
-
-    pub fn from_runtime_parts(
-        document: Arc<CanvasDocument>,
-        runtime: Arc<CanvasRuntime>,
-        viewport: CanvasViewport,
-        interaction: CanvasPaintInteraction,
-    ) -> Self {
-        Self::from_runtime_parts_with_kind_registry(
-            document,
-            runtime,
-            viewport,
-            interaction,
-            CanvasKindRegistry::open(),
-        )
-    }
-
-    pub fn from_runtime_parts_with_kind_registry(
-        document: Arc<CanvasDocument>,
-        runtime: Arc<CanvasRuntime>,
-        viewport: CanvasViewport,
-        interaction: CanvasPaintInteraction,
-        kind_registry: CanvasKindRegistry,
-    ) -> Self {
-        Self {
-            document,
-            runtime,
-            kind_registry: Arc::new(kind_registry),
-            viewport,
-            interaction,
-        }
-    }
 }
 
 impl From<&CanvasEditor> for CanvasPaintModel {

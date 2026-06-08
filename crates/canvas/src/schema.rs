@@ -80,6 +80,18 @@ impl CanvasSchemaError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasNodeResizeProposal<'a> {
+    pub node: &'a CanvasNode,
+    pub bounds: Bounds<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasShapeResizeProposal<'a> {
+    pub shape: &'a CanvasShape,
+    pub bounds: Bounds<Pixels>,
+}
+
 pub trait CanvasNodeKind: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
@@ -103,6 +115,13 @@ pub trait CanvasNodeKind: Send + Sync {
         _handle_id: &crate::HandleId,
     ) -> Option<Point<Pixels>> {
         None
+    }
+
+    fn resize_node_bounds(
+        &self,
+        proposal: CanvasNodeResizeProposal<'_>,
+    ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+        Ok(proposal.bounds)
     }
 }
 
@@ -135,6 +154,13 @@ pub trait CanvasShapeKind: Send + Sync {
 
     fn shape_bounds(&self, _shape: &CanvasShape) -> Option<Bounds<Pixels>> {
         None
+    }
+
+    fn resize_shape_bounds(
+        &self,
+        proposal: CanvasShapeResizeProposal<'_>,
+    ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+        Ok(proposal.bounds)
     }
 }
 
@@ -325,12 +351,75 @@ impl CanvasKindRegistry {
         self.shape_kind(&shape.kind)
             .and_then(|schema| schema.shape_bounds(shape))
     }
+
+    pub fn resize_node_bounds(
+        &self,
+        node: &CanvasNode,
+        proposed: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+        let Some(schema) = self.node_kind(&node.kind) else {
+            return Ok(proposed);
+        };
+
+        let bounds = schema.resize_node_bounds(CanvasNodeResizeProposal {
+            node,
+            bounds: proposed,
+        })?;
+        validate_resize_bounds(CanvasRecordKind::Node, node.id.clone(), &node.kind, bounds)?;
+        Ok(bounds)
+    }
+
+    pub fn resize_shape_bounds(
+        &self,
+        shape: &CanvasShape,
+        proposed: Bounds<Pixels>,
+    ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+        let Some(schema) = self.shape_kind(&shape.kind) else {
+            return Ok(proposed);
+        };
+
+        let bounds = schema.resize_shape_bounds(CanvasShapeResizeProposal {
+            shape,
+            bounds: proposed,
+        })?;
+        validate_resize_bounds(
+            CanvasRecordKind::Shape,
+            shape.id.clone(),
+            &shape.kind,
+            bounds,
+        )?;
+        Ok(bounds)
+    }
 }
 
 fn merge_default_data(data: &mut CanvasValue, defaults: CanvasValue) {
     for (key, value) in defaults {
         data.entry(key).or_insert(value);
     }
+}
+
+fn validate_resize_bounds(
+    record_kind: CanvasRecordKind,
+    record_id: impl Into<CanvasRecordId>,
+    kind: &str,
+    bounds: Bounds<Pixels>,
+) -> Result<(), CanvasSchemaError> {
+    if !bounds.origin.x.as_f32().is_finite()
+        || !bounds.origin.y.as_f32().is_finite()
+        || !bounds.size.width.as_f32().is_finite()
+        || !bounds.size.height.as_f32().is_finite()
+        || bounds.size.width <= Pixels::ZERO
+        || bounds.size.height <= Pixels::ZERO
+    {
+        return Err(CanvasSchemaError::invalid_data(
+            record_kind,
+            record_id,
+            kind,
+            "resize policy returned invalid bounds",
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -434,6 +523,53 @@ mod tests {
         }
     }
 
+    struct MinimumSizeNodeKind;
+
+    impl CanvasNodeKind for MinimumSizeNodeKind {
+        fn resize_node_bounds(
+            &self,
+            proposal: CanvasNodeResizeProposal<'_>,
+        ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+            Ok(Bounds::new(
+                proposal.bounds.origin,
+                size(
+                    proposal.bounds.size.width.max(px(48.0)),
+                    proposal.bounds.size.height.max(px(32.0)),
+                ),
+            ))
+        }
+    }
+
+    struct RejectingShapeResizeKind;
+
+    impl CanvasShapeKind for RejectingShapeResizeKind {
+        fn resize_shape_bounds(
+            &self,
+            proposal: CanvasShapeResizeProposal<'_>,
+        ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+            Err(CanvasSchemaError::invalid_data(
+                CanvasRecordKind::Shape,
+                proposal.shape.id.clone(),
+                &proposal.shape.kind,
+                "resize is disabled",
+            ))
+        }
+    }
+
+    struct InvalidShapeResizeKind;
+
+    impl CanvasShapeKind for InvalidShapeResizeKind {
+        fn resize_shape_bounds(
+            &self,
+            proposal: CanvasShapeResizeProposal<'_>,
+        ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+            Ok(Bounds::new(
+                proposal.bounds.origin,
+                size(px(0.0), proposal.bounds.size.height),
+            ))
+        }
+    }
+
     #[test]
     fn open_registry_leaves_unknown_kinds_unchanged() {
         let registry = CanvasKindRegistry::open();
@@ -514,6 +650,68 @@ mod tests {
             registry.shape_bounds(&shape).unwrap(),
             Bounds::new(point(px(-5.0), px(-5.0)), size(px(20.0), px(20.0)))
         );
+    }
+
+    #[test]
+    fn registered_resize_policy_can_clamp_or_reject_bounds() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("min", MinimumSizeNodeKind);
+        registry.register_shape_kind("locked-size", RejectingShapeResizeKind);
+
+        let mut node =
+            CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        node.kind = "min".to_string();
+        let bounds = registry
+            .resize_node_bounds(
+                &node,
+                Bounds::new(point(px(10.0), px(20.0)), size(px(12.0), px(8.0))),
+            )
+            .unwrap();
+        assert_eq!(
+            bounds,
+            Bounds::new(point(px(10.0), px(20.0)), size(px(48.0), px(32.0)))
+        );
+
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+        );
+        shape.kind = "locked-size".to_string();
+        assert!(matches!(
+            registry.resize_shape_bounds(&shape, shape.bounds),
+            Err(CanvasSchemaError::InvalidData {
+                record_kind: CanvasRecordKind::Shape,
+                record_id: CanvasRecordId::Shape(id),
+                kind,
+                message,
+            }) if id == ShapeId::from("shape")
+                && kind == "locked-size"
+                && message == "resize is disabled"
+        ));
+    }
+
+    #[test]
+    fn registered_resize_policy_output_is_validated() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_shape_kind("invalid-size", InvalidShapeResizeKind);
+
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+        );
+        shape.kind = "invalid-size".to_string();
+
+        assert!(matches!(
+            registry.resize_shape_bounds(&shape, shape.bounds),
+            Err(CanvasSchemaError::InvalidData {
+                record_kind: CanvasRecordKind::Shape,
+                record_id: CanvasRecordId::Shape(id),
+                kind,
+                message,
+            }) if id == ShapeId::from("shape")
+                && kind == "invalid-size"
+                && message == "resize policy returned invalid bounds"
+        ));
     }
 
     #[test]

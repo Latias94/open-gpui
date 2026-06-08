@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routing, and GPUI paint share route and geometry semantics.
 - Added `CanvasKindRegistry` for per-kind defaults, migrations, validation, and geometry hooks over
   the open `kind: String` plus JSON payload model.
+- Added per-kind resize policy hooks so registered node and shape kinds can clamp or reject
+  transform bounds through the editor mutation path.
 - Added checkpoint and transaction-log persistence boundaries, typed and byte-store adapters, and an
   in-memory persistence store.
 - Added canvas spatial-index research covering dynamic R*-trees, packed static AABB indexes,
@@ -35,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CanvasRuntime`.
 - Persistent undo and redo now append the prepared mutation to the log and then apply the same
   prepared mutation in memory, avoiding a second prepare/apply pass.
+- Removed the pre-release `CanvasPaintModel::from_runtime_parts*` constructors so paint snapshots
+  cannot pair a document with a runtime built from a different geometry policy.
 
 ## [0.1.0] - 2026-06-07
 

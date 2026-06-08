@@ -1246,7 +1246,7 @@ impl CanvasEditor {
                 let snap = self.snap_delta_for_resize(*handle, raw_delta, node_ids, shape_ids);
                 let delta = snap.delta;
                 let transaction =
-                    self.resize_selection_transaction(*handle, delta, node_ids, shape_ids);
+                    self.resize_selection_transaction(*handle, delta, node_ids, shape_ids)?;
 
                 vec![
                     CanvasToolEffect::UpdateGesture(transaction),
@@ -1656,9 +1656,9 @@ impl CanvasEditor {
         delta: Point<Pixels>,
         node_ids: &[NodeId],
         shape_ids: &[ShapeId],
-    ) -> CanvasTransaction {
+    ) -> Result<CanvasTransaction, DocumentError> {
         if delta.x == Pixels::ZERO && delta.y == Pixels::ZERO {
-            return CanvasTransaction::default();
+            return Ok(CanvasTransaction::default());
         }
 
         let mut commands = Vec::new();
@@ -1670,7 +1670,8 @@ impl CanvasEditor {
                 continue;
             }
             let mut node = node.clone();
-            let bounds = resize_bounds_by_handle(node.bounds(), handle, delta);
+            let proposed = resize_bounds_by_handle(node.bounds(), handle, delta);
+            let bounds = self.kind_registry.resize_node_bounds(&node, proposed)?;
             node.position = bounds.origin;
             node.size = bounds.size;
             commands.push(DocumentCommand::UpdateNode(node));
@@ -1684,11 +1685,12 @@ impl CanvasEditor {
                 continue;
             }
             let mut shape = shape.clone();
-            shape.bounds = resize_bounds_by_handle(shape.bounds, handle, delta);
+            let proposed = resize_bounds_by_handle(shape.bounds, handle, delta);
+            shape.bounds = self.kind_registry.resize_shape_bounds(&shape, proposed)?;
             commands.push(DocumentCommand::UpdateShape(shape));
         }
 
-        CanvasTransaction::new(commands)
+        Ok(CanvasTransaction::new(commands))
     }
 
     fn apply_paste_transaction(
@@ -1843,8 +1845,8 @@ fn next_z_index(current: i32, min_z: i32, max_z: i32, command: CanvasZOrderComma
 mod tests {
     use super::*;
     use crate::{
-        CanvasNode, CanvasNodeKind, CanvasRecordKind, CanvasRoutePath, CanvasRouteRequest,
-        CanvasSchemaError, CanvasShape, CanvasTransformTarget, HandleId,
+        CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind, CanvasRoutePath,
+        CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget, HandleId,
     };
     use open_gpui::{point, px, size};
     use serde_json::{Value, json};
@@ -1935,6 +1937,39 @@ mod tests {
                     "title",
                 )),
             }
+        }
+    }
+
+    struct MinimumResizeNodeKind;
+
+    impl CanvasNodeKind for MinimumResizeNodeKind {
+        fn resize_node_bounds(
+            &self,
+            proposal: CanvasNodeResizeProposal<'_>,
+        ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+            Ok(Bounds::new(
+                proposal.bounds.origin,
+                size(
+                    proposal.bounds.size.width.max(px(64.0)),
+                    proposal.bounds.size.height.max(px(48.0)),
+                ),
+            ))
+        }
+    }
+
+    struct RejectResizeNodeKind;
+
+    impl CanvasNodeKind for RejectResizeNodeKind {
+        fn resize_node_bounds(
+            &self,
+            proposal: CanvasNodeResizeProposal<'_>,
+        ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
+            Err(CanvasSchemaError::invalid_data(
+                CanvasRecordKind::Node,
+                proposal.node.id.clone(),
+                &proposal.node.kind,
+                "resize is disabled",
+            ))
         }
     }
 
@@ -2599,6 +2634,93 @@ mod tests {
         assert!(editor.undo().unwrap());
         let node = &editor.document.nodes[&NodeId::from("node")];
         assert_eq!(node.size, size(px(100.0), px(80.0)));
+    }
+
+    #[test]
+    fn select_tool_resize_uses_registered_kind_policy() {
+        let mut node =
+            CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        node.kind = "min-resize".to_string();
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("min-resize", MinimumResizeNodeKind);
+        let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
+        editor.selection.nodes.insert(NodeId::from("node"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(110.0), px(100.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(-100.0), px(-100.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(-100.0), px(-100.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let node = &editor.document.nodes[&NodeId::from("node")];
+        assert_eq!(node.position, point(px(10.0), px(20.0)));
+        assert_eq!(node.size, size(px(64.0), px(48.0)));
+        assert_eq!(editor.history.undo_depth(), 1);
+    }
+
+    #[test]
+    fn select_tool_resize_policy_rejection_is_atomic() {
+        let mut node =
+            CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        node.kind = "reject-resize".to_string();
+        let original = node.clone();
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("reject-resize", RejectResizeNodeKind);
+        let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
+        editor.selection.nodes.insert(NodeId::from("node"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(110.0), px(100.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        let err = editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(130.0), px(125.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            DocumentError::Schema(CanvasSchemaError::InvalidData {
+                record_kind: CanvasRecordKind::Node,
+                record_id: crate::CanvasRecordId::Node(id),
+                kind,
+                message,
+            }) if id == NodeId::from("node")
+                && kind == "reject-resize"
+                && message == "resize is disabled"
+        ));
+        assert_eq!(editor.document.nodes[&NodeId::from("node")], original);
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(
+            editor
+                .runtime
+                .hit_test(point(px(108.0), px(98.0)), HitOptions::default())
+                .any(|record| record.target == HitTarget::Node(NodeId::from("node")))
+        );
     }
 
     #[test]
