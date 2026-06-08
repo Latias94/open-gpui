@@ -791,6 +791,56 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
+fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    assert!(
+        visual.simulate_close(),
+        "default RetainLayout policy should allow the already-open window to close"
+    );
+
+    runtime.set_close_policy(DockViewportClosePolicy::Prevent);
+    assert!(
+        !visual.simulate_close(),
+        "updated Prevent policy should veto the already-open window"
+    );
+    assert_eq!(
+        runtime
+            .handle_window_should_close(opened.window.window_id())
+            .status,
+        DockViewportShouldCloseStatus::Vetoed
+    );
+
+    runtime.set_close_policy(DockViewportClosePolicy::RetainLayout);
+    assert!(
+        visual.simulate_close(),
+        "restored RetainLayout policy should allow the already-open window again"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();

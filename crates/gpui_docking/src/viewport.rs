@@ -12,7 +12,7 @@ use open_gpui::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
@@ -215,7 +215,7 @@ pub struct DockViewportRestoreOutcome {
 pub struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
-    close_policy: DockViewportClosePolicy,
+    close_policy: Rc<Cell<DockViewportClosePolicy>>,
 }
 
 impl DockViewportRuntime {
@@ -232,7 +232,7 @@ impl DockViewportRuntime {
         Self {
             controller,
             adapter: DockViewportAdapter::new(),
-            close_policy,
+            close_policy: Rc::new(Cell::new(close_policy)),
         }
     }
 
@@ -245,7 +245,7 @@ impl DockViewportRuntime {
         Self {
             controller,
             adapter,
-            close_policy,
+            close_policy: Rc::new(Cell::new(close_policy)),
         }
     }
 
@@ -271,12 +271,12 @@ impl DockViewportRuntime {
 
     /// Returns the close policy used by [`handle_window_closed`](Self::handle_window_closed).
     pub fn close_policy(&self) -> DockViewportClosePolicy {
-        self.close_policy
+        self.close_policy.get()
     }
 
     /// Replaces the close policy used by [`handle_window_closed`](Self::handle_window_closed).
     pub fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
-        self.close_policy = close_policy;
+        self.close_policy.set(close_policy);
     }
 
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
@@ -290,16 +290,16 @@ impl DockViewportRuntime {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        let close_policy = self.close_policy;
+        let close_policy = self.close_policy.clone();
         self.open_viewport_with_should_close(space, options, cx, move |_| {
-            close_policy != DockViewportClosePolicy::Prevent
+            close_policy.get() != DockViewportClosePolicy::Prevent
         })
     }
 
     /// Handles a GPUI window-closed notification by applying this runtime's close policy.
     pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         self.adapter
-            .close_viewport_mapping(window_id, self.close_policy)
+            .close_viewport_mapping(window_id, self.close_policy())
     }
 
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
@@ -308,7 +308,7 @@ impl DockViewportRuntime {
         window_id: WindowId,
     ) -> DockViewportShouldCloseOutcome {
         self.adapter
-            .should_close_viewport(window_id, self.close_policy)
+            .should_close_viewport(window_id, self.close_policy())
     }
 
     fn open_viewport_with_should_close(
