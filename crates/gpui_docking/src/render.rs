@@ -1,20 +1,16 @@
 use crate::{
-    DockAction, DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId,
-    DockPanelResolution, SplitAxis,
+    DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, SplitAxis,
     debug::DockDebugRegion,
     drag::{DockTabDragPayload, DockTabDragPreview},
-    geometry, splitter,
+    geometry,
+    host_render_session::DockHostPanelRenderResolution,
+    splitter,
 };
 use open_gpui::{
-    AnyElement, AnyView, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, black, canvas, div, px, relative, rgb, rgba, white,
 };
-
-enum PanelRenderResolution {
-    Registered(AnyView),
-    Missing { prefix: String, item: DockItemId },
-}
 
 impl Render for DockHost {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -36,17 +32,13 @@ impl Render for DockHost {
             .bg(rgb(0xf7f8fa))
             .text_color(black());
 
-        if let Some(root) =
-            self.with_workspace(cx, |workspace| workspace.graph().root(self.space()))
-        {
+        if let Some(root) = self.root_for_render(cx) {
             host = host.child(self.render_node(root, cx));
         } else {
             host = host.child(self.render_empty_space(cx));
         }
 
-        let floatings = self.with_workspace(cx, |workspace| {
-            workspace.graph().floating_containers(self.space()).to_vec()
-        });
+        let floatings = self.floating_containers_for_render(cx);
         for floating in floatings {
             host = host.child(self.render_floating_container(floating, cx));
         }
@@ -57,9 +49,7 @@ impl Render for DockHost {
 
 impl DockHost {
     fn render_node(&mut self, node_id: DockNodeId, cx: &mut Context<Self>) -> AnyElement {
-        let Some(node) =
-            self.with_workspace(cx, |workspace| workspace.graph().node(node_id).cloned())
-        else {
+        let Some(node) = self.node_for_render(node_id, cx) else {
             return self.render_missing_node(node_id);
         };
 
@@ -79,8 +69,7 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", self.selector_prefix()),
         );
-        let message =
-            self.with_workspace(cx, |workspace| workspace.options().empty_message.clone());
+        let message = self.empty_message_for_render(cx);
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -150,12 +139,10 @@ impl DockHost {
                 container.node.as_u64()
             ),
         );
-        let child = self.with_workspace(cx, |workspace| {
-            match workspace.graph().node(container.node).cloned() {
-                Some(DockNode::Floating { child }) => Some(child),
-                _ => None,
-            }
-        });
+        let child = match self.node_for_render(container.node, cx) {
+            Some(DockNode::Floating { child }) => Some(child),
+            _ => None,
+        };
         let bounds = container.bounds;
         let content = child
             .map(|child| self.render_node(child, cx))
@@ -243,26 +230,13 @@ impl DockHost {
                                 }
 
                                 entity.update(app, |host, cx| {
-                                    if !host.with_workspace(cx, |workspace| {
-                                        workspace.policy().allows_floating()
-                                    }) {
-                                        return;
-                                    }
-                                    host.start_floating_drag(
+                                    host.begin_floating_drag_from_render(
                                         space.clone(),
                                         floating,
                                         event.position,
                                         bounds,
+                                        cx,
                                     );
-                                    let action = DockAction::RaiseFloating {
-                                        space: space.clone(),
-                                        floating,
-                                    };
-                                    if let Ok(outcome) = host.apply_action_from_host(&action, cx)
-                                        && outcome.changed()
-                                    {
-                                        cx.notify();
-                                    }
                                 });
                                 app.stop_propagation();
                             }
@@ -276,9 +250,7 @@ impl DockHost {
                                 }
 
                                 entity.update(app, |host, cx| {
-                                    if host.update_floating_drag(event.position, cx) {
-                                        cx.notify();
-                                    }
+                                    host.update_floating_drag_from_render(event.position, cx);
                                 });
                             }
                         });
@@ -289,8 +261,7 @@ impl DockHost {
                             }
 
                             entity.update(app, |host, cx| {
-                                host.finish_floating_drag();
-                                cx.notify();
+                                host.finish_floating_drag_from_render(cx);
                             });
                         });
                     },
@@ -304,16 +275,13 @@ impl DockHost {
     }
 
     fn floating_title(&self, node: DockNodeId, cx: &Context<Self>) -> String {
-        let node = self.with_workspace(cx, |workspace| workspace.graph().node(node).cloned());
+        let node = self.node_for_render(node, cx);
         match node {
             Some(DockNode::Tabs { items, active }) => {
                 let Some(item) = items.get(active.min(items.len().saturating_sub(1))) else {
                     return "Floating".to_string();
                 };
-                self.with_workspace(cx, |workspace| match workspace.panels().resolve(item) {
-                    DockPanelResolution::Registered(panel) => panel.title().to_string(),
-                    DockPanelResolution::Missing { item } => item.to_string(),
-                })
+                self.panel_title_for_render(item, cx)
             }
             Some(DockNode::Split { children, .. }) => children
                 .first()
@@ -379,8 +347,7 @@ impl DockHost {
         }
 
         if shares.len() >= 2 {
-            let handle_size =
-                self.with_workspace(cx, |workspace| workspace.options().splitter_handle_size);
+            let handle_size = self.splitter_handle_size_for_render(cx);
             let handle_offset = -handle_size / 2.0;
             let mut cursor = 0.0_f32;
 
@@ -439,8 +406,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
-        let handle_size =
-            self.with_workspace(cx, |workspace| workspace.options().splitter_handle_size);
+        let handle_size = self.splitter_handle_size_for_render(cx);
 
         div()
             .absolute()
@@ -482,14 +448,14 @@ impl DockHost {
                                 };
 
                                 entity.update(app, |host, cx| {
-                                    host.start_splitter_drag(
+                                    host.begin_splitter_drag_from_render(
                                         node,
                                         handle_index,
                                         start_position,
                                         split_extent,
                                         shares.clone(),
+                                        cx,
                                     );
-                                    cx.notify();
                                 });
                                 app.stop_propagation();
                             }
@@ -507,9 +473,7 @@ impl DockHost {
                                     SplitAxis::Vertical => event.position.y,
                                 };
                                 entity.update(app, |host, cx| {
-                                    if host.update_splitter_drag(position, cx) {
-                                        cx.notify();
-                                    }
+                                    host.update_splitter_drag_from_render(position, cx);
                                 });
                             }
                         });
@@ -520,8 +484,7 @@ impl DockHost {
                             }
 
                             entity.update(app, |host, cx| {
-                                host.finish_splitter_drag();
-                                cx.notify();
+                                host.finish_splitter_drag_from_render(cx);
                             });
                         });
                     },
@@ -570,27 +533,14 @@ impl DockHost {
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
-                    let Some(intent) = this.take_tab_drop_intent(node) else {
-                        cx.notify();
-                        return;
-                    };
-
-                    let action = DockAction::MoveTab {
-                        source_space: payload.source_space.clone(),
-                        source_tabs: payload.source_tabs,
-                        item: payload.item.clone(),
-                        target_space: target_space.clone(),
-                        target_tabs: intent.target_tabs,
-                        zone: intent.zone,
-                        insert_index: intent.insert_index,
-                    };
-                    let changed = this
-                        .apply_action_from_host(&action, cx)
-                        .map(|outcome| outcome.changed())
-                        .unwrap_or(false);
-                    if changed {
-                        cx.notify();
-                    }
+                    this.drop_tab_from_render(
+                        payload.source_space.clone(),
+                        payload.source_tabs,
+                        payload.item.clone(),
+                        target_space.clone(),
+                        node,
+                        cx,
+                    );
                 }),
             );
 
@@ -607,11 +557,7 @@ impl DockHost {
             .bg(rgb(0xe7ebf0));
 
         for (index, item) in items.into_iter().enumerate() {
-            let title =
-                self.with_workspace(cx, |workspace| match workspace.panels().resolve(&item) {
-                    DockPanelResolution::Registered(panel) => panel.title().to_string(),
-                    DockPanelResolution::Missing { item } => item.to_string(),
-                });
+            let title = self.panel_title_for_render(&item, cx);
             let selector = self.record_debug_selector(
                 DockDebugRegion::Tab {
                     tabs: node,
@@ -624,13 +570,10 @@ impl DockHost {
                     item
                 ),
             );
-            let action = DockAction::SelectTab {
-                tabs: node,
-                item: item.clone(),
-            };
             let payload =
                 DockTabDragPayload::new(self.space().clone(), node, item.clone(), title.clone());
             let target_index = index;
+            let tab_item = item.clone();
             let tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
@@ -656,11 +599,7 @@ impl DockHost {
                     rgb(0x657083).into()
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if let Ok(outcome) = this.apply_action_from_host(&action, cx)
-                        && outcome.changed()
-                    {
-                        cx.notify();
-                    }
+                    this.select_tab_from_render(node, tab_item.clone(), cx);
                 }))
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
@@ -718,18 +657,9 @@ impl DockHost {
     }
 
     fn render_panel(&mut self, item: &DockItemId, cx: &mut Context<Self>) -> AnyElement {
-        let resolution = if let Some(panel) =
-            self.with_workspace(cx, |workspace| workspace.panels().get(item).cloned())
-        {
-            PanelRenderResolution::Registered(panel.resolve_view(cx))
-        } else {
-            self.with_workspace(cx, |workspace| PanelRenderResolution::Missing {
-                prefix: workspace.options().missing_panel_prefix.clone(),
-                item: item.clone(),
-            })
-        };
+        let resolution = self.panel_for_render(item, cx);
         match resolution {
-            PanelRenderResolution::Registered(panel_view) => {
+            DockHostPanelRenderResolution::Registered(panel_view) => {
                 let selector = self.record_debug_selector(
                     DockDebugRegion::Panel { item: item.clone() },
                     format!("{}:panel:{}", self.selector_prefix(), item),
@@ -744,7 +674,7 @@ impl DockHost {
                     .child(panel_view)
                     .into_any_element()
             }
-            PanelRenderResolution::Missing { prefix, item } => {
+            DockHostPanelRenderResolution::Missing { prefix, item } => {
                 let missing = item;
                 let selector = self.record_debug_selector(
                     DockDebugRegion::MissingPanel {
