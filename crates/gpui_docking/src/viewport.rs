@@ -4,6 +4,7 @@ use crate::{
     DockController, DockHost, DockItemId, DockLayoutRect, DockNodeId, DockPolicy, DockPolicyError,
     DockSpaceId, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportWindowBounds,
+    viewport_registry::{DockViewportRegistry, DockViewportSnapshot},
     viewport_target::{
         DockViewportHit, DockViewportHitCandidate, DockViewportTargetContext,
         resolve_viewport_target,
@@ -15,7 +16,6 @@ use open_gpui::{
 };
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    collections::{BTreeMap, HashMap},
     rc::Rc,
 };
 
@@ -30,33 +30,7 @@ use std::{
 /// [`DockViewportPlacementLayout`] to rehydrate placement snapshots for coordinate conversion.
 #[derive(Debug, Default)]
 pub struct DockViewportAdapter {
-    viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
-    windows: HashMap<WindowId, DockSpaceId>,
-}
-
-/// Runtime snapshot for one rendered dock viewport.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DockViewportSnapshot {
-    /// GPUI window currently rendering the logical dock space.
-    pub window: AnyWindowHandle,
-    /// Display containing the window, when the application has recorded one.
-    pub display_id: Option<DisplayId>,
-    /// Last known platform window bounds in screen coordinates.
-    pub window_bounds: Option<WindowBounds>,
-    /// Last known dock host bounds in window-local coordinates.
-    pub host_bounds: Option<Bounds<Pixels>>,
-}
-
-impl DockViewportSnapshot {
-    /// Creates a snapshot for a newly registered viewport window.
-    pub fn new(window: AnyWindowHandle) -> Self {
-        Self {
-            window,
-            display_id: None,
-            window_bounds: None,
-            host_bounds: None,
-        }
-    }
+    registry: DockViewportRegistry,
 }
 
 /// Request to open a new platform viewport for a tab released outside known dock viewports.
@@ -429,12 +403,12 @@ impl DockViewportAdapter {
 
     /// Returns true when no viewport mappings are registered.
     pub fn is_empty(&self) -> bool {
-        self.viewports.is_empty()
+        self.registry.is_empty()
     }
 
     /// Returns the number of registered logical viewports.
     pub fn len(&self) -> usize {
-        self.viewports.len()
+        self.registry.len()
     }
 
     /// Registers or replaces the window for a logical dock space.
@@ -448,20 +422,7 @@ impl DockViewportAdapter {
     ) -> Option<DockViewportSnapshot> {
         let space = space.into();
         let window = window.into();
-        let window_id = window.window_id();
-
-        if let Some(previous) = self.viewports.get(&space) {
-            self.windows.remove(&previous.window.window_id());
-        }
-        if let Some(previous_space) = self.windows.remove(&window_id)
-            && previous_space != space
-        {
-            self.viewports.remove(&previous_space);
-        }
-
-        self.windows.insert(window_id, space.clone());
-        self.viewports
-            .insert(space, DockViewportSnapshot::new(window))
+        self.registry.register(space, window)
     }
 
     /// Opens or reuses a GPUI window that renders a logical dock space.
@@ -551,9 +512,7 @@ impl DockViewportAdapter {
 
     /// Removes a viewport by logical dock space.
     pub fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
-        let snapshot = self.viewports.remove(space)?;
-        self.windows.remove(&snapshot.window.window_id());
-        Some(snapshot)
+        self.registry.unregister_space(space)
     }
 
     /// Removes a viewport by GPUI window handle.
@@ -562,9 +521,7 @@ impl DockViewportAdapter {
         window: impl Into<AnyWindowHandle>,
     ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
         let window = window.into();
-        let space = self.windows.remove(&window.window_id())?;
-        let snapshot = self.viewports.remove(&space)?;
-        Some((space, snapshot))
+        self.registry.unregister_window(window)
     }
 
     /// Removes a viewport by GPUI window id and returns a lifecycle outcome.
@@ -575,8 +532,7 @@ impl DockViewportAdapter {
         window_id: WindowId,
         reason: DockViewportUnregisterReason,
     ) -> Option<DockViewportUnregisterOutcome> {
-        let space = self.windows.remove(&window_id)?;
-        let snapshot = self.viewports.remove(&space)?;
+        let (space, snapshot) = self.registry.unregister_window_id(window_id)?;
         Some(DockViewportUnregisterOutcome {
             space,
             window: snapshot.window,
@@ -593,7 +549,11 @@ impl DockViewportAdapter {
         window_id: WindowId,
         policy: DockViewportClosePolicy,
     ) -> DockViewportCloseOutcome {
-        let Some(space) = self.windows.get(&window_id).cloned() else {
+        let Some(space) = self
+            .registry
+            .indexed_space_for_window_id(window_id)
+            .cloned()
+        else {
             return DockViewportCloseOutcome {
                 space: None,
                 window_id,
@@ -601,8 +561,8 @@ impl DockViewportAdapter {
             };
         };
 
-        if !self.viewports.contains_key(&space) {
-            self.windows.remove(&window_id);
+        if !self.registry.contains_space(&space) {
+            self.registry.remove_window_index(window_id);
             return DockViewportCloseOutcome {
                 space: None,
                 window_id,
@@ -638,12 +598,12 @@ impl DockViewportAdapter {
 
     /// Returns the snapshot for a logical dock space.
     pub fn snapshot(&self, space: &DockSpaceId) -> Option<&DockViewportSnapshot> {
-        self.viewports.get(space)
+        self.registry.snapshot(space)
     }
 
     /// Returns the window rendering a logical dock space.
     pub fn window_for_space(&self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
-        self.snapshot(space).map(|snapshot| snapshot.window)
+        self.registry.window_for_space(space)
     }
 
     /// Returns the logical dock space rendered by a window.
@@ -654,21 +614,25 @@ impl DockViewportAdapter {
 
     /// Returns the logical dock space rendered by a window id.
     pub fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
-        self.windows
-            .get(&window_id)
-            .and_then(|space| self.viewports.get_key_value(space).map(|(space, _)| space))
+        self.registry.space_for_window_id(window_id)
     }
 
     /// Returns known dock spaces in stable lexical order.
     pub fn spaces(&self) -> Vec<DockSpaceId> {
-        self.viewports.keys().cloned().collect()
+        self.registry.spaces()
+    }
+
+    #[cfg(test)]
+    fn insert_stale_window_index_for_test(&mut self, window_id: WindowId, space: DockSpaceId) {
+        self.registry
+            .insert_stale_window_index_for_test(window_id, space);
     }
 
     /// Updates the display id snapshot for a logical dock space.
     ///
     /// Returns true when the stored snapshot changed.
     pub fn set_display_id(&mut self, space: &DockSpaceId, display_id: Option<DisplayId>) -> bool {
-        let Some(snapshot) = self.viewports.get_mut(space) else {
+        let Some(snapshot) = self.registry.snapshot_mut(space) else {
             return false;
         };
         if snapshot.display_id == display_id {
@@ -683,7 +647,7 @@ impl DockViewportAdapter {
     ///
     /// Returns true when the stored snapshot changed.
     pub fn set_window_bounds(&mut self, space: &DockSpaceId, bounds: WindowBounds) -> bool {
-        let Some(snapshot) = self.viewports.get_mut(space) else {
+        let Some(snapshot) = self.registry.snapshot_mut(space) else {
             return false;
         };
         let bounds = Some(bounds);
@@ -699,7 +663,7 @@ impl DockViewportAdapter {
     ///
     /// Returns true when the stored snapshot changed.
     pub fn set_host_bounds(&mut self, space: &DockSpaceId, bounds: Bounds<Pixels>) -> bool {
-        let Some(snapshot) = self.viewports.get_mut(space) else {
+        let Some(snapshot) = self.registry.snapshot_mut(space) else {
             return false;
         };
         let bounds = Some(bounds);
@@ -721,7 +685,7 @@ impl DockViewportAdapter {
         window_bounds: WindowBounds,
         host_bounds: Bounds<Pixels>,
     ) -> bool {
-        let Some(snapshot) = self.viewports.get_mut(space) else {
+        let Some(snapshot) = self.registry.snapshot_mut(space) else {
             return false;
         };
         let window_bounds = Some(window_bounds);
@@ -818,7 +782,7 @@ impl DockViewportAdapter {
     }
 
     fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportHitCandidate> {
-        self.viewports
+        self.registry
             .iter()
             .filter_map(|(space, snapshot)| {
                 self.screen_to_host(space, position)
@@ -887,7 +851,7 @@ impl DockViewportAdapter {
     /// Exports serializable placement snapshots for all registered viewports.
     pub fn export_placement(&self) -> DockViewportPlacementLayout {
         DockViewportPlacementLayout::new(
-            self.viewports
+            self.registry
                 .iter()
                 .map(|(space, snapshot)| DockViewportPlacement {
                     space: space.clone(),
@@ -914,7 +878,7 @@ impl DockViewportAdapter {
         let mut applied = 0;
         let mut skipped = 0;
         for viewport in &placement.viewports {
-            let Some(snapshot) = self.viewports.get_mut(&viewport.space) else {
+            let Some(snapshot) = self.registry.snapshot_mut(&viewport.space) else {
                 skipped += 1;
                 continue;
             };
@@ -1119,7 +1083,7 @@ mod tests {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let window_id = WindowId::from(1);
-        adapter.windows.insert(window_id, main);
+        adapter.insert_stale_window_index_for_test(window_id, main);
 
         assert_eq!(
             adapter.close_viewport_mapping(window_id, DockViewportClosePolicy::Prevent),
@@ -1129,7 +1093,7 @@ mod tests {
                 status: DockViewportCloseStatus::UnknownWindow,
             }
         );
-        assert_eq!(adapter.windows.get(&window_id), None);
+        assert_eq!(adapter.space_for_window_id(window_id), None);
         assert!(adapter.is_empty());
     }
 

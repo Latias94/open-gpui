@@ -74,6 +74,7 @@ mod render;
 mod splitter;
 mod viewport;
 mod viewport_placement;
+mod viewport_registry;
 mod viewport_target;
 mod workspace;
 
@@ -94,5 +95,6 @@ pub use panel::*;
 pub use policy::*;
 pub use viewport::*;
 pub use viewport_placement::*;
+pub use viewport_registry::DockViewportSnapshot;
 pub use viewport_target::*;
 pub use workspace::*;
