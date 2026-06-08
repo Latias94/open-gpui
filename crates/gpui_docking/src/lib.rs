@@ -77,6 +77,8 @@ mod op;
 mod panel;
 mod policy;
 mod render;
+mod render_floating;
+mod render_split;
 mod splitter;
 mod viewport;
 mod viewport_close;
