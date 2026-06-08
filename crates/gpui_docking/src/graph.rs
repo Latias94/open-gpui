@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 #[path = "graph_canonical.rs"]
 mod graph_canonical;
+#[path = "graph_edge_dock.rs"]
+mod graph_edge_dock;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
 #[path = "graph_op_validation.rs"]
