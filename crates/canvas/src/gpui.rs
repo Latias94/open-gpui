@@ -7,9 +7,9 @@ use crate::{
     PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
-    Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point, ScrollWheelEvent, Window, canvas, px,
-    quad, rgb,
+    App, Bounds, Canvas, ContentMask, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point, ScrollWheelEvent,
+    SharedString, TextAlign, TextRun, Window, canvas, px, quad, rgb,
 };
 use std::sync::Arc;
 
@@ -177,6 +177,11 @@ pub struct CanvasPaintTheme {
     pub connection_preview_stroke_width: Pixels,
     pub snap_guide_stroke: Hsla,
     pub snap_guide_stroke_width: Pixels,
+    pub label_color: Hsla,
+    pub label_font_size: Pixels,
+    pub label_line_height: Pixels,
+    pub label_line_clamp: Option<usize>,
+    pub label_text_align: TextAlign,
 }
 
 impl Default for CanvasPaintTheme {
@@ -207,6 +212,11 @@ impl Default for CanvasPaintTheme {
             connection_preview_stroke_width: px(2.0),
             snap_guide_stroke: Hsla::from(rgb(0xbf8700)).alpha(0.9),
             snap_guide_stroke_width: px(1.0),
+            label_color: Hsla::from(rgb(0x24292f)),
+            label_font_size: px(14.0),
+            label_line_height: px(18.0),
+            label_line_clamp: Some(3),
+            label_text_align: TextAlign::Center,
         }
     }
 }
@@ -354,8 +364,8 @@ pub fn canvas_view(
     let prepaint_model = model.clone();
     canvas(
         move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
-        move |bounds, frame, window, _| {
-            paint_canvas_frame(bounds, &model, &frame, theme, window);
+        move |bounds, frame, window, cx| {
+            paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
         },
     )
 }
@@ -414,6 +424,7 @@ pub fn paint_canvas_frame(
     frame: &CanvasPaintFrame,
     theme: CanvasPaintTheme,
     window: &mut Window,
+    cx: &mut App,
 ) {
     if let Some(background) = theme.background {
         window.paint_quad(open_gpui::fill(canvas_bounds, background));
@@ -476,6 +487,10 @@ pub fn paint_canvas_frame(
                     style.stroke_width,
                 );
             }
+        }
+
+        if let Some(label) = &record.label {
+            paint_label(canvas_bounds, label, theme, window, cx);
         }
     }
 
@@ -723,6 +738,88 @@ fn paint_line(
     if let Ok(path) = builder.build() {
         window.paint_path(path, stroke);
     }
+}
+
+fn paint_label(
+    canvas_bounds: Bounds<Pixels>,
+    label: &CanvasPaintLabel,
+    theme: CanvasPaintTheme,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let text = label.text.trim();
+    let label_bounds = label.view_bounds + canvas_bounds.origin;
+    if text.is_empty()
+        || label_bounds.size.width <= Pixels::ZERO
+        || label_bounds.size.height <= Pixels::ZERO
+        || !positive_pixels(theme.label_font_size)
+        || !positive_pixels(theme.label_line_height)
+    {
+        return;
+    }
+
+    let mut text_style = window.text_style();
+    text_style.color = label.color.unwrap_or(theme.label_color);
+    let run = TextRun {
+        len: text.len(),
+        ..text_style.to_run(text.len())
+    };
+
+    let Some(lines) = window
+        .text_system()
+        .shape_text(
+            SharedString::new(text),
+            theme.label_font_size,
+            &[run],
+            Some(label_bounds.size.width),
+            label_line_clamp(theme, label_bounds),
+        )
+        .ok()
+    else {
+        return;
+    };
+
+    let text_height = lines.iter().fold(Pixels::ZERO, |height, line| {
+        height + line.size(theme.label_line_height).height
+    });
+    let vertical_offset = ((label_bounds.size.height - text_height) / 2.0).max(Pixels::ZERO);
+    let mut origin = Point::new(label_bounds.left(), label_bounds.top() + vertical_offset);
+
+    window.with_content_mask(
+        Some(ContentMask {
+            bounds: label_bounds,
+        }),
+        |window| {
+            for line in &lines {
+                if origin.y >= label_bounds.bottom() {
+                    break;
+                }
+
+                let line_height = line.size(theme.label_line_height).height;
+                line.paint(
+                    origin,
+                    theme.label_line_height,
+                    theme.label_text_align,
+                    Some(label_bounds),
+                    window,
+                    cx,
+                )
+                .ok();
+                origin.y += line_height;
+            }
+        },
+    );
+}
+
+fn label_line_clamp(theme: CanvasPaintTheme, bounds: Bounds<Pixels>) -> Option<usize> {
+    let max_lines_by_height =
+        (bounds.size.height.as_f32() / theme.label_line_height.as_f32()).floor() as usize;
+    let max_lines = max_lines_by_height.max(1);
+    Some(
+        theme
+            .label_line_clamp
+            .map_or(max_lines, |clamp| clamp.max(1).min(max_lines)),
+    )
 }
 
 fn paint_record_label(
@@ -1273,6 +1370,35 @@ mod tests {
             Bounds::new(point(px(154.0), px(24.0)), size(px(82.0), px(62.0)))
         );
         assert_eq!(shape_label.color, parse_color("#0969da"));
+    }
+
+    #[test]
+    fn paint_theme_defaults_include_bounded_label_text() {
+        let theme = CanvasPaintTheme::default();
+
+        assert_eq!(theme.label_color, parse_color("#24292f").unwrap());
+        assert_eq!(theme.label_font_size, px(14.0));
+        assert_eq!(theme.label_line_height, px(18.0));
+        assert_eq!(theme.label_line_clamp, Some(3));
+        assert_eq!(theme.label_text_align, TextAlign::Center);
+    }
+
+    #[test]
+    fn label_line_clamp_uses_theme_and_available_height() {
+        let mut theme = CanvasPaintTheme {
+            label_line_height: px(10.0),
+            label_line_clamp: Some(5),
+            ..CanvasPaintTheme::default()
+        };
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(26.0)));
+
+        assert_eq!(label_line_clamp(theme, bounds), Some(2));
+
+        theme.label_line_clamp = None;
+        assert_eq!(label_line_clamp(theme, bounds), Some(2));
+
+        theme.label_line_clamp = Some(0);
+        assert_eq!(label_line_clamp(theme, bounds), Some(1));
     }
 
     #[test]

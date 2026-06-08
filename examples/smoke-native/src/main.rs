@@ -101,7 +101,7 @@ impl Render for SmokeView {
             .child(
                 canvas(
                     move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
-                    move |bounds, frame, window, _cx| {
+                    move |bounds, frame, window, cx| {
                         let mapper = CanvasInputMapper::new(bounds);
 
                         window.on_mouse_event({
@@ -181,7 +181,7 @@ impl Render for SmokeView {
                             }
                         });
 
-                        paint_canvas_frame(bounds, &paint_model, &frame, theme, window);
+                        paint_canvas_frame(bounds, &paint_model, &frame, theme, window, cx);
                     },
                 )
                 .size_full(),
