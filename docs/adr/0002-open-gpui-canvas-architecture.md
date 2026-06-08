@@ -93,6 +93,12 @@ one path for recorded transactions, unrecorded gesture updates, undo commits, se
 viewport changes, and tool-state changes. This keeps the enum-based MVP simple while giving custom
 tools and future CRDT adapters a stable mutation vocabulary.
 
+Keyboard input uses the same reducer path as pointer input. `CanvasKey` and `CanvasKeyModifiers`
+keep key events renderer-neutral, while the GPUI adapter maps `KeyDownEvent` into `CanvasEvent`.
+The select tool's Delete/Backspace behavior emits a normal recorded transaction, skips locked
+records, and lets selection pruning, undo, persistence logging, and future CRDT operation batches
+observe the deletion through the same mutation boundary.
+
 ## Architecture
 
 ```mermaid

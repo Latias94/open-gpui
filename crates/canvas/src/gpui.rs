@@ -1,10 +1,12 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasRouteSegment,
-    CanvasSelection, CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
+    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKey,
+    CanvasKeyModifiers, CanvasRouteSegment, CanvasSelection, CanvasViewport, HitOptions, HitTarget,
+    PointerButton, SpatialIndex, ToolState,
 };
 use open_gpui::{
-    Bounds, Canvas, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
-    Pixels, Point, ScrollWheelEvent, Window, canvas, px, quad, rgb,
+    Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point, ScrollWheelEvent, Window, canvas, px,
+    quad, rgb,
 };
 use std::sync::Arc;
 
@@ -237,6 +239,14 @@ impl CanvasInputMapper {
         Some(CanvasEvent::Wheel {
             delta: event.delta.pixel_delta(self.line_height),
         })
+    }
+
+    pub fn key_down(&self, event: &KeyDownEvent) -> CanvasEvent {
+        CanvasEvent::KeyDown {
+            key: canvas_key(&event.keystroke),
+            modifiers: canvas_key_modifiers(event.keystroke.modifiers),
+            repeat: event.is_held,
+        }
     }
 
     pub fn local_position(&self, position: Point<Pixels>) -> Option<Point<Pixels>> {
@@ -608,6 +618,32 @@ fn pointer_button(button: MouseButton) -> Option<PointerButton> {
     }
 }
 
+fn canvas_key(keystroke: &Keystroke) -> CanvasKey {
+    match keystroke.key.as_str() {
+        "delete" | "del" => CanvasKey::Delete,
+        "backspace" => CanvasKey::Backspace,
+        "escape" | "esc" => CanvasKey::Escape,
+        "enter" | "return" => CanvasKey::Enter,
+        key if key.chars().count() == 1 => CanvasKey::Character(
+            keystroke
+                .key_char
+                .clone()
+                .unwrap_or_else(|| key.to_string()),
+        ),
+        key => CanvasKey::Named(key.to_string()),
+    }
+}
+
+fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
+    CanvasKeyModifiers {
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        control: modifiers.control,
+        platform: modifiers.platform,
+        function: modifiers.function,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -936,6 +972,42 @@ mod tests {
                 ..ScrollWheelEvent::default()
             }),
             None
+        );
+    }
+
+    #[test]
+    fn input_mapper_converts_key_down_events() {
+        let mapper = CanvasInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ));
+
+        assert_eq!(
+            mapper.key_down(&KeyDownEvent {
+                keystroke: Keystroke::parse("backspace").unwrap(),
+                is_held: false,
+                prefer_character_input: false,
+            }),
+            CanvasEvent::KeyDown {
+                key: CanvasKey::Backspace,
+                modifiers: CanvasKeyModifiers::default(),
+                repeat: false,
+            }
+        );
+        assert_eq!(
+            mapper.key_down(&KeyDownEvent {
+                keystroke: Keystroke::parse("ctrl-a").unwrap(),
+                is_held: true,
+                prefer_character_input: false,
+            }),
+            CanvasEvent::KeyDown {
+                key: CanvasKey::Character("a".to_string()),
+                modifiers: CanvasKeyModifiers {
+                    control: true,
+                    ..CanvasKeyModifiers::default()
+                },
+                repeat: true,
+            }
         );
     }
 }

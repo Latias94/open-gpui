@@ -15,6 +15,45 @@ pub enum PointerButton {
     Middle,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasKey {
+    Delete,
+    Backspace,
+    Escape,
+    Enter,
+    Character(String),
+    Named(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanvasKeyModifiers {
+    pub shift: bool,
+    pub alt: bool,
+    pub control: bool,
+    pub platform: bool,
+    pub function: bool,
+}
+
+impl CanvasKeyModifiers {
+    pub const NONE: Self = Self {
+        shift: false,
+        alt: false,
+        control: false,
+        platform: false,
+        function: false,
+    };
+
+    pub fn modified(self) -> bool {
+        self.shift || self.alt || self.control || self.platform || self.function
+    }
+}
+
+impl Default for CanvasKeyModifiers {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasEvent {
     PointerDown {
@@ -30,6 +69,11 @@ pub enum CanvasEvent {
     },
     Wheel {
         delta: Point<Pixels>,
+    },
+    KeyDown {
+        key: CanvasKey,
+        modifiers: CanvasKeyModifiers,
+        repeat: bool,
     },
     Cancel,
 }
@@ -163,6 +207,14 @@ impl CanvasSelection {
 
     pub fn selected_nodes(&self) -> impl Iterator<Item = &NodeId> {
         self.nodes.iter()
+    }
+
+    pub fn selected_edges(&self) -> impl Iterator<Item = &EdgeId> {
+        self.edges.iter()
+    }
+
+    pub fn selected_shapes(&self) -> impl Iterator<Item = &ShapeId> {
+        self.shapes.iter()
     }
 
     pub fn retain_document(&mut self, document: &CanvasDocument) {
@@ -620,6 +672,20 @@ impl CanvasEditor {
         let effects = match (&self.state, event) {
             (
                 ToolState::Idle,
+                CanvasEvent::KeyDown {
+                    key: CanvasKey::Delete | CanvasKey::Backspace,
+                    ..
+                },
+            ) => {
+                let transaction = self.delete_selection_transaction();
+                if transaction.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![CanvasToolEffect::ApplyTransaction(transaction)]
+                }
+            }
+            (
+                ToolState::Idle,
                 CanvasEvent::PointerDown {
                     position,
                     button: PointerButton::Primary,
@@ -911,6 +977,51 @@ impl CanvasEditor {
         )
     }
 
+    fn delete_selection_transaction(&self) -> CanvasTransaction {
+        let node_ids = self
+            .selection
+            .selected_nodes()
+            .filter(|id| {
+                self.document
+                    .nodes
+                    .get(*id)
+                    .is_some_and(|node| !node.locked)
+            })
+            .cloned()
+            .collect::<IndexSet<_>>();
+
+        let mut commands = Vec::new();
+
+        for id in self.selection.selected_edges() {
+            let Some(edge) = self.document.edges.get(id) else {
+                continue;
+            };
+            if edge.locked
+                || node_ids.contains(&edge.source.node_id)
+                || node_ids.contains(&edge.target.node_id)
+            {
+                continue;
+            }
+
+            commands.push(DocumentCommand::RemoveEdge(id.clone()));
+        }
+
+        commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
+
+        for id in self.selection.selected_shapes() {
+            let Some(shape) = self.document.shapes.get(id) else {
+                continue;
+            };
+            if shape.locked {
+                continue;
+            }
+
+            commands.push(DocumentCommand::RemoveShape(id.clone()));
+        }
+
+        CanvasTransaction::new(commands)
+    }
+
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
         for record in self.index.query_with_options(bounds, HitOptions::default()) {
@@ -941,7 +1052,7 @@ fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pix
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CanvasNode;
+    use crate::{CanvasNode, CanvasShape};
     use open_gpui::{point, px, size};
 
     #[derive(Default)]
@@ -1120,6 +1231,136 @@ mod tests {
             .unwrap();
 
         assert!(editor.selection.is_empty());
+    }
+
+    #[test]
+    fn select_tool_delete_key_removes_selected_records() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.selection.edges.insert(EdgeId::from("a-b"));
+        editor.selection.shapes.insert(ShapeId::from("shape"));
+
+        editor
+            .handle_event(CanvasEvent::KeyDown {
+                key: CanvasKey::Delete,
+                modifiers: CanvasKeyModifiers::default(),
+                repeat: false,
+            })
+            .unwrap();
+
+        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(editor.document.nodes.contains_key(&NodeId::from("b")));
+        assert!(editor.document.edges.is_empty());
+        assert!(editor.document.shapes.is_empty());
+        assert!(editor.selection.is_empty());
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(editor.document.edges.contains_key(&EdgeId::from("a-b")));
+        assert!(editor.document.shapes.contains_key(&ShapeId::from("shape")));
+    }
+
+    #[test]
+    fn select_tool_delete_key_skips_locked_selected_records() {
+        let mut document = CanvasDocument::default();
+        let mut locked_node = CanvasNode::new(
+            "locked-node",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        locked_node.locked = true;
+        document.insert_node(locked_node).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(400.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut locked_edge = CanvasEdge::new(
+            "locked-edge",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        locked_edge.locked = true;
+        document.insert_edge(locked_edge).unwrap();
+        let mut locked_shape = CanvasShape::new(
+            "locked-shape",
+            Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+        );
+        locked_shape.locked = true;
+        document.insert_shape(locked_shape).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("locked-node"));
+        editor.selection.edges.insert(EdgeId::from("locked-edge"));
+        editor
+            .selection
+            .shapes
+            .insert(ShapeId::from("locked-shape"));
+
+        editor
+            .handle_event(CanvasEvent::KeyDown {
+                key: CanvasKey::Backspace,
+                modifiers: CanvasKeyModifiers::default(),
+                repeat: false,
+            })
+            .unwrap();
+
+        assert!(
+            editor
+                .document
+                .nodes
+                .contains_key(&NodeId::from("locked-node"))
+        );
+        assert!(
+            editor
+                .document
+                .edges
+                .contains_key(&EdgeId::from("locked-edge"))
+        );
+        assert!(
+            editor
+                .document
+                .shapes
+                .contains_key(&ShapeId::from("locked-shape"))
+        );
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]
