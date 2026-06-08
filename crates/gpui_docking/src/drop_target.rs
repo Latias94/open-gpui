@@ -8,6 +8,7 @@ use open_gpui::{Bounds, Pixels, Point};
 pub(crate) struct DockDropIntent {
     pub(crate) target_tabs: DockNodeId,
     pub(crate) zone: DropZone,
+    pub(crate) insert_index: Option<usize>,
     pub(crate) preview_bounds: Bounds<Pixels>,
 }
 
@@ -60,10 +61,44 @@ pub(crate) fn resolve_tabs_drop(
     })
 }
 
+pub(crate) fn resolve_tab_reorder_drop(
+    target_tabs: DockNodeId,
+    target_index: usize,
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    policy: &DockPolicy,
+) -> Option<DockDropResolution> {
+    if !bounds.contains(&position) {
+        return None;
+    }
+
+    let insert_index = if position.x < bounds.center().x {
+        target_index
+    } else {
+        target_index.saturating_add(1)
+    };
+
+    Some(match policy.validate_drop_zone(DropZone::Center) {
+        Ok(()) => DockDropResolution::Valid(DockDropIntent {
+            target_tabs,
+            zone: DropZone::Center,
+            insert_index: Some(insert_index),
+            preview_bounds: bounds,
+        }),
+        Err(reason) => DockDropResolution::Rejected(DockDropRejection {
+            target_tabs,
+            zone: DropZone::Center,
+            preview_bounds: bounds,
+            reason,
+        }),
+    })
+}
+
 fn intent_from_geometry(target_tabs: DockNodeId, geometry: DockDropGeometry) -> DockDropIntent {
     DockDropIntent {
         target_tabs,
         zone: geometry.zone,
+        insert_index: None,
         preview_bounds: geometry.preview_bounds,
     }
 }
@@ -173,5 +208,44 @@ mod tests {
         };
         assert_eq!(rejection.zone, DropZone::Left);
         assert_eq!(rejection.reason, DockPolicyError::EdgeSplitDisabled);
+    }
+
+    #[test]
+    fn tab_reorder_drop_uses_target_tab_half_as_insert_index() {
+        let bounds = bounds(100.0, 24.0);
+
+        let before =
+            resolve_tab_reorder_drop(tabs(), 2, bounds, point(px(24.0), px(28.0)), &policy())
+                .and_then(DockDropResolution::intent)
+                .expect("left half of the tab should resolve");
+        assert_eq!(before.zone, DropZone::Center);
+        assert_eq!(before.insert_index, Some(2));
+
+        let after =
+            resolve_tab_reorder_drop(tabs(), 2, bounds, point(px(90.0), px(28.0)), &policy())
+                .and_then(DockDropResolution::intent)
+                .expect("right half of the tab should resolve");
+        assert_eq!(after.zone, DropZone::Center);
+        assert_eq!(after.insert_index, Some(3));
+    }
+
+    #[test]
+    fn tab_reorder_drop_respects_center_merge_policy() {
+        let mut policy = DockPolicy::default();
+        policy.set_allow_center_merge(false);
+
+        let DockDropResolution::Rejected(rejection) = resolve_tab_reorder_drop(
+            tabs(),
+            0,
+            bounds(100.0, 24.0),
+            point(px(24.0), px(28.0)),
+            &policy,
+        )
+        .expect("point inside the tab should resolve to a policy result") else {
+            panic!("disabled center merge should reject tab reorder intent");
+        };
+
+        assert_eq!(rejection.zone, DropZone::Center);
+        assert_eq!(rejection.reason, DockPolicyError::CenterMergeDisabled);
     }
 }

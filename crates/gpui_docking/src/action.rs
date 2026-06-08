@@ -29,6 +29,8 @@ pub enum DockAction {
         target_tabs: DockNodeId,
         /// The resolved drop zone.
         zone: DropZone,
+        /// Optional tab insertion index for center drops.
+        insert_index: Option<usize>,
     },
     /// Moves one tab into a new empty logical dock space.
     MoveItemToEmptyDockSpace {
@@ -169,6 +171,16 @@ pub enum DockActionApplyError {
     Policy(#[from] DockPolicyError),
 }
 
+struct MoveTabRequest<'a> {
+    source_space: &'a DockSpaceId,
+    source_tabs: DockNodeId,
+    item: &'a DockItemId,
+    target_space: &'a DockSpaceId,
+    target_tabs: DockNodeId,
+    zone: DropZone,
+    insert_index: Option<usize>,
+}
+
 impl DockWorkspace {
     /// Applies a docking interaction action.
     pub fn apply_action(
@@ -184,14 +196,16 @@ impl DockWorkspace {
                 target_space,
                 target_tabs,
                 zone,
-            } => self.move_tab(
+                insert_index,
+            } => self.move_tab(MoveTabRequest {
                 source_space,
-                *source_tabs,
+                source_tabs: *source_tabs,
                 item,
                 target_space,
-                *target_tabs,
-                *zone,
-            ),
+                target_tabs: *target_tabs,
+                zone: *zone,
+                insert_index: *insert_index,
+            }),
             DockAction::MoveItemToEmptyDockSpace {
                 source_space,
                 item,
@@ -261,17 +275,24 @@ impl DockWorkspace {
 
     fn move_tab(
         &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        item: &DockItemId,
-        target_space: &DockSpaceId,
-        target_tabs: DockNodeId,
-        zone: DropZone,
+        request: MoveTabRequest<'_>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let MoveTabRequest {
+            source_space,
+            source_tabs,
+            item,
+            target_space,
+            target_tabs,
+            zone,
+            insert_index,
+        } = request;
+
         self.policy().validate_drop_zone(zone)?;
         if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
             self.policy().validate_same_stack_center_drop()?;
-            return Ok(DockActionOutcome::Unchanged);
+            if insert_index.is_none() {
+                return Ok(DockActionOutcome::Unchanged);
+            }
         }
 
         self.apply_op_checked(&DockOp::MoveItem {
@@ -280,7 +301,7 @@ impl DockWorkspace {
             target_space: target_space.clone(),
             target_tabs,
             zone,
-            insert_index: None,
+            insert_index,
         })
         .map(DockActionOutcome::from_changed)
         .map_err(Into::into)

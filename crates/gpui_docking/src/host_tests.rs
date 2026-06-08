@@ -1275,6 +1275,7 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
             target_space: space(),
             target_tabs: right_tabs,
             zone: DropZone::Center,
+            insert_index: None,
         })
         .expect("move tab action should be valid");
 
@@ -1536,6 +1537,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
             target_space: space(),
             target_tabs: tabs,
             zone: DropZone::Center,
+            insert_index: None,
         })
         .expect("same-stack center drop should be valid");
 
@@ -1549,6 +1551,39 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
+fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b", "c"], 0);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+
+    let outcome = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: tabs,
+            item: item("a"),
+            target_space: space(),
+            target_tabs: tabs,
+            zone: DropZone::Center,
+            insert_index: Some(3),
+        })
+        .expect("same-stack center drop with an index should reorder");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(tabs)
+        .expect("tabs should still exist")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
+    assert_eq!(*active, 2);
 }
 
 #[open_gpui::test]
@@ -1649,6 +1684,7 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
             target_space: space(),
             target_tabs: right_tabs,
             zone: DropZone::Right,
+            insert_index: None,
         })
         .expect_err("edge drop should be rejected by policy");
 
@@ -2143,6 +2179,64 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
         assert_eq!(*active, 1);
+    });
+}
+
+#[open_gpui::test]
+fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b", "c"], 0);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+        size(px(560.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("c"),
+        },
+    )
+    .expect("target tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let target_bounds = debug_bounds(&mut visual, &target_tab);
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        target_bounds.center().y,
+    );
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "panel A should be active after reorder"
+    );
+    host.read_with(&visual, |host, _| {
+        let DockNode::Tabs { items, active } =
+            host.graph().node(tabs).expect("tabs should still exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
+        assert_eq!(*active, 2);
     });
 }
 

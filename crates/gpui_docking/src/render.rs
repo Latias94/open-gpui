@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId,
-    DockPanelResolution, SplitAxis,
+    DockPanelResolution, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::{DockTabDragPayload, DockTabDragPreview},
     drop_target::{self, DockDropResolution},
@@ -564,13 +564,23 @@ impl DockHost {
             .bg(white())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                    let intent = drop_target::resolve_tabs_drop(
+                    let mut intent = drop_target::resolve_tabs_drop(
                         node,
                         event.bounds,
                         event.event.position,
                         &this.with_workspace(cx, |workspace| *workspace.policy()),
                     )
                     .and_then(DockDropResolution::intent);
+                    if let Some(existing) = this.tab_drop_intent()
+                        && existing.target_tabs == node
+                        && existing.insert_index.is_some()
+                        && existing.preview_bounds.contains(&event.event.position)
+                        && intent.as_ref().is_some_and(|intent| {
+                            intent.target_tabs == node && intent.zone == DropZone::Center
+                        })
+                    {
+                        intent = Some(existing);
+                    }
                     if this.tab_drop_intent() != intent {
                         this.set_tab_drop_intent(intent);
                         cx.notify();
@@ -595,6 +605,7 @@ impl DockHost {
                         target_space: target_space.clone(),
                         target_tabs: intent.target_tabs,
                         zone: intent.zone,
+                        insert_index: intent.insert_index,
                     };
                     let changed = this
                         .apply_action_from_host(&action, cx)
@@ -643,6 +654,7 @@ impl DockHost {
             };
             let payload =
                 DockTabDragPayload::new(self.space().clone(), node, item.clone(), title.clone());
+            let target_index = index;
             let tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
@@ -674,6 +686,24 @@ impl DockHost {
                         cx.notify();
                     }
                 }))
+                .on_drag_move(cx.listener(
+                    move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                        let Some(resolution) = drop_target::resolve_tab_reorder_drop(
+                            node,
+                            target_index,
+                            event.bounds,
+                            event.event.position,
+                            &this.with_workspace(cx, |workspace| *workspace.policy()),
+                        ) else {
+                            return;
+                        };
+                        let intent = resolution.intent();
+                        if this.tab_drop_intent() != intent {
+                            this.set_tab_drop_intent(intent);
+                            cx.notify();
+                        }
+                    },
+                ))
                 .on_drag(payload, |payload, _, _, cx| {
                     cx.new(|_| DockTabDragPreview::new(payload.title()))
                 })
@@ -693,6 +723,9 @@ impl DockHost {
         let intent = self
             .tab_drop_intent()
             .filter(|intent| intent.target_tabs == node)?;
+        if intent.insert_index.is_some() {
+            return None;
+        }
         let bounds = intent.preview_bounds;
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview { tabs: node },
