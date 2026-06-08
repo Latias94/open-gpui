@@ -361,6 +361,36 @@ fn checked_move_tabs_to_empty_space_preserves_stack_order_and_active_tab() {
 }
 
 #[test]
+fn checked_move_floating_tabs_to_empty_same_space_removes_floating_and_creates_root() {
+    let mut builder = DockLayoutBuilder::new();
+    let source_tabs = builder.tabs(["a", "b"], 1);
+    builder.add_floating(space(), source_tabs, dock_bounds(10.0, 20.0, 300.0, 200.0));
+    let mut graph = builder.build();
+
+    assert!(graph.root(&space()).is_none());
+    assert_eq!(graph.floating_containers(&space()).len(), 1);
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+                source_space: space(),
+                source_tabs,
+                target_space: space(),
+            })
+            .expect("floating tabs should move to the empty root in the same space")
+    );
+
+    assert!(graph.floating_containers(&space()).is_empty());
+    let root = graph.root(&space()).expect("space should get a root");
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs should exist") else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 1);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn checked_empty_space_moves_reject_non_empty_target_without_mutation() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
     let detached = DockSpaceId::new("detached");
