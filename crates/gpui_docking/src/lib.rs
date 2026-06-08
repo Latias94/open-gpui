@@ -61,6 +61,8 @@ mod action;
 mod builder;
 mod controller;
 mod debug;
+#[cfg(test)]
+mod dock_op_fixture_tests;
 mod drag;
 mod drop_target;
 mod geometry;
