@@ -453,10 +453,15 @@ pub fn paint_canvas_frame(
                 let Some(edge) = model.document.edges.get(id) else {
                     continue;
                 };
-                let stroke = style_color(&edge.style.stroke).unwrap_or(theme.edge_stroke);
-                let stroke_width =
-                    positive_pixels_or(edge.style.stroke_width, theme.edge_stroke_width);
-                paint_edge(window, canvas_bounds, model, edge, stroke, stroke_width);
+                let style = edge_paint_style(model, edge, theme);
+                paint_edge(
+                    window,
+                    canvas_bounds,
+                    model,
+                    edge,
+                    style.stroke,
+                    style.stroke_width,
+                );
             }
         }
     }
@@ -784,6 +789,12 @@ struct CanvasResolvedPaintStyle {
     corner_radius: Pixels,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CanvasResolvedEdgePaintStyle {
+    stroke: Hsla,
+    stroke_width: Pixels,
+}
+
 fn node_paint_style(
     model: &CanvasPaintModel,
     node: &CanvasNode,
@@ -818,6 +829,26 @@ fn shape_paint_style(
     )
 }
 
+fn edge_paint_style(
+    model: &CanvasPaintModel,
+    edge: &CanvasEdge,
+    theme: CanvasPaintTheme,
+) -> CanvasResolvedEdgePaintStyle {
+    let fallback = model.kind_registry.edge_paint(edge);
+    CanvasResolvedEdgePaintStyle {
+        stroke: paint_color(
+            &edge.style.stroke,
+            fallback.as_ref().and_then(|paint| paint.stroke.as_deref()),
+            theme.edge_stroke,
+        ),
+        stroke_width: paint_pixels(
+            edge.style.stroke_width,
+            fallback.as_ref().and_then(|paint| paint.stroke_width),
+            theme.edge_stroke_width,
+        ),
+    }
+}
+
 fn record_paint_style(
     style: &CanvasStyle,
     fallback: Option<&CanvasKindPaint>,
@@ -843,14 +874,6 @@ fn record_paint_style(
             .and_then(|paint| paint.corner_radius)
             .filter(|value| positive_pixels(*value))
             .unwrap_or(theme.corner_radius),
-    }
-}
-
-fn positive_pixels_or(value: Pixels, fallback: Pixels) -> Pixels {
-    if positive_pixels(value) {
-        value
-    } else {
-        fallback
     }
 }
 
@@ -921,9 +944,9 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 mod tests {
     use super::*;
     use crate::{
-        CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRoutePath,
-        CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind, CanvasToolEffect, EdgeId,
-        HandleRole,
+        CanvasEdgeKind, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+        CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind,
+        CanvasToolEffect, EdgeId, HandleRole,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
@@ -1151,6 +1174,27 @@ mod tests {
         );
         shape.kind = "painted-shape".to_string();
         document.insert_shape(shape).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "source",
+                point(px(0.0), px(160.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "target",
+                point(px(180.0), px(160.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .unwrap();
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("source", None::<&str>),
+            CanvasEndpoint::new("target", None::<&str>),
+        );
+        edge.kind = "painted-edge".to_string();
+        document.insert_edge(edge).unwrap();
         let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::default(),
@@ -1180,6 +1224,15 @@ mod tests {
         assert_eq!(shape_style.stroke_width, px(3.0));
         assert_eq!(shape_style.corner_radius, px(4.0));
 
+        let edge = model
+            .document()
+            .edges
+            .get(&crate::EdgeId::from("edge"))
+            .unwrap();
+        let edge_style = edge_paint_style(&model, edge, theme);
+        assert_eq!(edge_style.stroke, parse_color("#d1242f").unwrap());
+        assert_eq!(edge_style.stroke_width, px(5.0));
+
         let mut explicit = node.clone();
         explicit.style = CanvasStyle {
             fill: Some("#6f42c1".to_string()),
@@ -1191,6 +1244,13 @@ mod tests {
         assert_eq!(explicit_style.stroke, parse_color("#1a7f37").unwrap());
         assert_eq!(explicit_style.stroke_width, px(7.0));
         assert_eq!(explicit_style.corner_radius, px(10.0));
+
+        let mut explicit_edge = edge.clone();
+        explicit_edge.style.stroke = Some("#6f42c1".to_string());
+        explicit_edge.style.stroke_width = px(9.0);
+        let explicit_edge_style = edge_paint_style(&model, &explicit_edge, theme);
+        assert_eq!(explicit_edge_style.stroke, parse_color("#6f42c1").unwrap());
+        assert_eq!(explicit_edge_style.stroke_width, px(9.0));
 
         let unknown = CanvasNode::new(
             "unknown",
@@ -1204,6 +1264,19 @@ mod tests {
                 stroke: theme.node_stroke,
                 stroke_width: theme.node_stroke_width,
                 corner_radius: theme.node_corner_radius,
+            }
+        );
+
+        let unknown_edge = CanvasEdge::new(
+            "unknown-edge",
+            CanvasEndpoint::new("source", None::<&str>),
+            CanvasEndpoint::new("target", None::<&str>),
+        );
+        assert_eq!(
+            edge_paint_style(&model, &unknown_edge, theme),
+            CanvasResolvedEdgePaintStyle {
+                stroke: theme.edge_stroke,
+                stroke_width: theme.edge_stroke_width,
             }
         );
     }
@@ -1780,6 +1853,7 @@ mod tests {
     fn paint_registry() -> CanvasKindRegistry {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("painted-node", PaintedNodeKind);
+        registry.register_edge_kind("painted-edge", PaintedEdgeKind);
         registry.register_shape_kind("painted-shape", PaintedShapeKind);
         registry
     }
@@ -1816,6 +1890,19 @@ mod tests {
                 stroke: Some("#bf8700".to_string()),
                 stroke_width: Some(px(2.0)),
                 corner_radius: Some(px(10.0)),
+            })
+        }
+    }
+
+    struct PaintedEdgeKind;
+
+    impl CanvasEdgeKind for PaintedEdgeKind {
+        fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: None,
+                stroke: Some("#d1242f".to_string()),
+                stroke_width: Some(px(5.0)),
+                corner_radius: None,
             })
         }
     }

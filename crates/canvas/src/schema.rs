@@ -169,6 +169,10 @@ pub trait CanvasEdgeKind: Send + Sync {
     fn validate_edge(&self, _edge: &CanvasEdge) -> Result<(), CanvasSchemaError> {
         Ok(())
     }
+
+    fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
+        None
+    }
 }
 
 pub trait CanvasShapeKind: Send + Sync {
@@ -436,6 +440,11 @@ impl CanvasKindRegistry {
             .and_then(|schema| schema.shape_paint(shape))
     }
 
+    pub fn edge_paint(&self, edge: &CanvasEdge) -> Option<CanvasKindPaint> {
+        self.edge_kind(&edge.kind)
+            .and_then(|schema| schema.edge_paint(edge))
+    }
+
     pub fn resize_node_bounds(
         &self,
         node: &CanvasNode,
@@ -663,6 +672,19 @@ mod tests {
         }
     }
 
+    struct PaintedEdgeKind;
+
+    impl CanvasEdgeKind for PaintedEdgeKind {
+        fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
+            Some(CanvasKindPaint {
+                fill: None,
+                stroke: Some("#d1242f".to_string()),
+                stroke_width: Some(px(5.0)),
+                corner_radius: None,
+            })
+        }
+    }
+
     struct PaintedShapeKind;
 
     impl CanvasShapeKind for PaintedShapeKind {
@@ -855,6 +877,7 @@ mod tests {
     fn registered_paint_policy_supplies_renderer_neutral_defaults() {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("painted-node", PaintedNodeKind);
+        registry.register_edge_kind("painted-edge", PaintedEdgeKind);
         registry.register_shape_kind("painted-shape", PaintedShapeKind);
 
         let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
@@ -866,6 +889,22 @@ mod tests {
                 stroke: Some("#bf8700".to_string()),
                 stroke_width: Some(px(2.0)),
                 corner_radius: Some(px(10.0)),
+            })
+        );
+
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("source", None::<&str>),
+            CanvasEndpoint::new("target", None::<&str>),
+        );
+        edge.kind = "painted-edge".to_string();
+        assert_eq!(
+            registry.edge_paint(&edge),
+            Some(CanvasKindPaint {
+                fill: None,
+                stroke: Some("#d1242f".to_string()),
+                stroke_width: Some(px(5.0)),
+                corner_radius: None,
             })
         );
 
@@ -886,6 +925,8 @@ mod tests {
 
         node.kind = "unknown".to_string();
         assert_eq!(registry.node_paint(&node), None);
+        edge.kind = "unknown".to_string();
+        assert_eq!(registry.edge_paint(&edge), None);
     }
 
     #[test]

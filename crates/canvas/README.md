@@ -318,6 +318,9 @@ time. Use `CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_
 interactive editor should apply the same registry to transactions, gestures, undo/redo validation,
 runtime caches, and paint snapshots.
 
+Node, edge, and shape kind handlers can all return renderer-neutral `CanvasKindPaint` defaults.
+Record style fields still win first, then kind defaults, then the active paint theme.
+
 ## Route Edges
 
 `CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns straight, polyline,
