@@ -130,6 +130,27 @@ impl DockHostRenderSession {
         self.nodes.get(&node_id)
     }
 
+    pub(crate) fn floating_child(&self, node_id: DockNodeId) -> Option<DockNodeId> {
+        match self.node(node_id)? {
+            DockNode::Floating { child } => Some(*child),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn floating_title(&self, node_id: DockNodeId) -> String {
+        match self.node(node_id) {
+            Some(DockNode::Tabs { items, active }) => active_tab_item(items, *active)
+                .map(|item| self.panel_title(item))
+                .unwrap_or_else(default_floating_title),
+            Some(DockNode::Split { children, .. }) => children
+                .first()
+                .map(|child| self.floating_title(*child))
+                .unwrap_or_else(default_floating_title),
+            Some(DockNode::Floating { child }) => self.floating_title(*child),
+            None => default_floating_title(),
+        }
+    }
+
     pub(crate) fn floating_containers(&self) -> &[DockFloatingContainer] {
         &self.floating_containers
     }
@@ -176,10 +197,14 @@ fn active_tab_item(items: &[DockItemId], active: usize) -> Option<&DockItemId> {
     items.get(active)
 }
 
+fn default_floating_title() -> String {
+    "Floating".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_test_support::{item, space, tabs_graph};
+    use crate::host_test_support::{floating_overlay_graph, item, space, tabs_graph};
 
     #[test]
     fn render_session_keeps_inactive_panel_views_out_of_snapshot() {
@@ -194,5 +219,18 @@ mod tests {
         assert_eq!(session.panel_title(&item("inactive")), "Inactive");
         assert!(session.panels.contains_key(&item("active")));
         assert!(!session.panels.contains_key(&item("inactive")));
+    }
+
+    #[test]
+    fn render_session_resolves_floating_title_from_snapshot() {
+        let (graph, _root, floating) = floating_overlay_graph();
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.register_panel_factory("a", "Floating A", |_| unreachable!());
+        workspace.register_panel_factory("b", "Root B", |_| unreachable!());
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert!(session.floating_child(floating).is_some());
+        assert_eq!(session.floating_title(floating), "Floating A");
     }
 }

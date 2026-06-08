@@ -1,5 +1,5 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockNode, DockNodeId, debug::DockDebugRegion,
+    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -46,16 +46,13 @@ impl DockHost {
                 container.node.as_u64()
             ),
         );
-        let child = match session.node(container.node) {
-            Some(DockNode::Floating { child }) => Some(*child),
-            _ => None,
-        };
+        let child = session.floating_child(container.node);
         let bounds = container.bounds;
         let content = child
             .map(|child| self.render_node(child, session, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
         let title = child
-            .map(|child| self.floating_title(child, session))
+            .map(|child| session.floating_title(child))
             .unwrap_or_else(|| "Floating".to_string());
 
         div()
@@ -180,23 +177,5 @@ impl DockHost {
                 .size_full(),
             )
             .into_any_element()
-    }
-
-    fn floating_title(&self, node: DockNodeId, session: &DockHostRenderSession) -> String {
-        let node = session.node(node);
-        match node {
-            Some(DockNode::Tabs { items, active }) => {
-                let Some(item) = items.get((*active).min(items.len().saturating_sub(1))) else {
-                    return "Floating".to_string();
-                };
-                session.panel_title(item)
-            }
-            Some(DockNode::Split { children, .. }) => children
-                .first()
-                .map(|child| self.floating_title(*child, session))
-                .unwrap_or_else(|| "Floating".to_string()),
-            Some(DockNode::Floating { child }) => self.floating_title(*child, session),
-            None => "Floating".to_string(),
-        }
     }
 }
