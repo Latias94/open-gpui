@@ -4,7 +4,7 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result,
-    Subscription, WindowBounds, WindowId, WindowOptions, point,
+    Subscription, Window, WindowBounds, WindowId, WindowOptions, point,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -64,6 +64,110 @@ pub struct DockViewportHit {
     pub space: DockSpaceId,
     /// Point relative to the dock host bounds.
     pub host_position: Point<Pixels>,
+}
+
+/// A viewport hit with the runtime window that produced it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportHitCandidate {
+    /// Logical dock space that contains the point.
+    pub space: DockSpaceId,
+    /// GPUI window currently rendering the logical dock space.
+    pub window: AnyWindowHandle,
+    /// Point relative to the dock host bounds.
+    pub host_position: Point<Pixels>,
+}
+
+impl DockViewportHitCandidate {
+    fn into_hit(self) -> DockViewportHit {
+        DockViewportHit {
+            space: self.space,
+            host_position: self.host_position,
+        }
+    }
+}
+
+/// Platform facts used to arbitrate overlapping viewport hits.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DockViewportTargetContext {
+    /// Window currently owning the pointer, when known.
+    pub hovered_window: Option<WindowId>,
+    /// Platform-active window, when known.
+    pub active_window: Option<WindowId>,
+    /// Front-to-back window stack, when the platform provides it.
+    pub window_stack: Vec<WindowId>,
+}
+
+impl DockViewportTargetContext {
+    /// Creates an empty target context that falls back to deterministic adapter ordering.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Builds a target context from GPUI application-level platform signals.
+    pub fn from_app(cx: &App) -> Self {
+        Self {
+            hovered_window: None,
+            active_window: cx.active_window().map(|window| window.window_id()),
+            window_stack: cx
+                .window_stack()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|window| window.window_id())
+                .collect(),
+        }
+    }
+
+    /// Adds the hovered window signal.
+    pub fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.hovered_window = Some(window.into().window_id());
+        self
+    }
+
+    /// Adds the active window signal.
+    pub fn with_active_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.active_window = Some(window.into().window_id());
+        self
+    }
+
+    /// Adds the front-to-back window stack signal.
+    pub fn with_window_stack(
+        mut self,
+        windows: impl IntoIterator<Item = impl Into<AnyWindowHandle>>,
+    ) -> Self {
+        self.window_stack = windows
+            .into_iter()
+            .map(|window| window.into().window_id())
+            .collect();
+        self
+    }
+}
+
+fn resolve_viewport_target(
+    hits: Vec<DockViewportHitCandidate>,
+    context: &DockViewportTargetContext,
+) -> Option<DockViewportHitCandidate> {
+    hits.into_iter()
+        .enumerate()
+        .min_by_key(|(index, hit)| {
+            let window_id = hit.window.window_id();
+            (
+                context
+                    .hovered_window
+                    .map(|hovered| usize::from(hovered != window_id))
+                    .unwrap_or(1),
+                context
+                    .active_window
+                    .map(|active| usize::from(active != window_id))
+                    .unwrap_or(1),
+                context
+                    .window_stack
+                    .iter()
+                    .position(|stacked| *stacked == window_id)
+                    .unwrap_or(usize::MAX),
+                *index,
+            )
+        })
+        .map(|(_, hit)| hit)
 }
 
 /// Request to open a new platform viewport for a tab released outside known dock viewports.
@@ -143,6 +247,35 @@ pub enum DockViewportCloseStatus {
     /// Policy rejected the close request before the window closed.
     Vetoed,
     /// The runtime did not know the closed window id.
+    UnknownWindow,
+}
+
+/// Runtime result of a platform should-close query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportShouldCloseOutcome {
+    /// Logical dock space associated with the queried window, when known.
+    pub space: Option<DockSpaceId>,
+    /// GPUI window id received from the should-close callback.
+    pub window_id: WindowId,
+    /// Whether the close should be allowed, vetoed, or ignored as unknown.
+    pub status: DockViewportShouldCloseStatus,
+}
+
+impl DockViewportShouldCloseOutcome {
+    /// Returns true when GPUI should continue closing the platform window.
+    pub fn allows_close(&self) -> bool {
+        !matches!(self.status, DockViewportShouldCloseStatus::Vetoed)
+    }
+}
+
+/// How a should-close query resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportShouldCloseStatus {
+    /// Runtime policy allows the platform close to continue.
+    Allowed,
+    /// Runtime policy rejects the platform close before the window closes.
+    Vetoed,
+    /// Runtime does not know this window id, so docking should not block GPUI.
     UnknownWindow,
 }
 
@@ -257,14 +390,44 @@ impl DockViewportRuntime {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        self.adapter
-            .open_viewport(self.controller.clone(), space, options, cx)
+        let close_policy = self.close_policy;
+        self.open_viewport_with_should_close(space, options, cx, move |_| {
+            close_policy != DockViewportClosePolicy::Prevent
+        })
     }
 
     /// Handles a GPUI window-closed notification by applying this runtime's close policy.
     pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         self.adapter
             .close_viewport_mapping(window_id, self.close_policy)
+    }
+
+    /// Handles a GPUI window should-close query by applying this runtime's close policy.
+    pub fn handle_window_should_close(
+        &self,
+        window_id: WindowId,
+    ) -> DockViewportShouldCloseOutcome {
+        self.adapter
+            .should_close_viewport(window_id, self.close_policy)
+    }
+
+    fn open_viewport_with_should_close(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+        should_close: impl Fn(WindowId) -> bool + 'static,
+    ) -> Result<DockViewportOpenOutcome> {
+        self.adapter.open_viewport_with_window_setup(
+            self.controller.clone(),
+            space,
+            options,
+            cx,
+            move |window, cx| {
+                let window_id = window.window_handle().window_id();
+                window.on_window_should_close(cx, move |_, _| should_close(window_id));
+            },
+        )
     }
 
     /// Exports serializable placement snapshots from the adapter.
@@ -329,12 +492,26 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        self.runtime.borrow_mut().open_viewport(space, options, cx)
+        let runtime = self.clone();
+        self.runtime.borrow_mut().open_viewport_with_should_close(
+            space,
+            options,
+            cx,
+            move |window_id| runtime.handle_window_should_close(window_id).allows_close(),
+        )
     }
 
     /// Handles a GPUI window-closed notification through the shared runtime.
     pub fn handle_window_closed(&self, window_id: WindowId) -> DockViewportCloseOutcome {
         self.runtime.borrow_mut().handle_window_closed(window_id)
+    }
+
+    /// Handles a GPUI window should-close query through the shared runtime.
+    pub fn handle_window_should_close(
+        &self,
+        window_id: WindowId,
+    ) -> DockViewportShouldCloseOutcome {
+        self.runtime.borrow().handle_window_should_close(window_id)
     }
 
     /// Registers an application-level close observer that cleans up viewport mappings by
@@ -565,6 +742,17 @@ impl DockViewportAdapter {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
+        self.open_viewport_with_window_setup(controller, space, options, cx, |_, _| {})
+    }
+
+    fn open_viewport_with_window_setup(
+        &mut self,
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+        setup_window: impl FnOnce(&mut Window, &mut App) + 'static,
+    ) -> Result<DockViewportOpenOutcome> {
         let space = space.into();
         let mut status = DockViewportOpenStatus::Opened;
 
@@ -586,7 +774,8 @@ impl DockViewportAdapter {
 
         let host_space = space.clone();
         let window = cx
-            .open_window(options, move |_, cx| {
+            .open_window(options, move |window, cx| {
+                setup_window(window, cx);
                 cx.new(move |cx| DockHost::from_controller(controller, host_space, cx))
             })?
             .into();
@@ -597,6 +786,33 @@ impl DockViewportAdapter {
             window,
             status,
         })
+    }
+
+    /// Applies viewport close policy before a GPUI platform window closes.
+    ///
+    /// Unknown windows are allowed to close because docking has no mapping to protect.
+    pub fn should_close_viewport(
+        &self,
+        window_id: WindowId,
+        policy: DockViewportClosePolicy,
+    ) -> DockViewportShouldCloseOutcome {
+        let Some(space) = self.space_for_window_id(window_id).cloned() else {
+            return DockViewportShouldCloseOutcome {
+                space: None,
+                window_id,
+                status: DockViewportShouldCloseStatus::UnknownWindow,
+            };
+        };
+
+        let status = match policy {
+            DockViewportClosePolicy::RetainLayout => DockViewportShouldCloseStatus::Allowed,
+            DockViewportClosePolicy::Prevent => DockViewportShouldCloseStatus::Vetoed,
+        };
+        DockViewportShouldCloseOutcome {
+            space: Some(space),
+            window_id,
+            status,
+        }
     }
 
     /// Removes a viewport by logical dock space.
@@ -813,13 +1029,41 @@ impl DockViewportAdapter {
 
     /// Finds the registered viewport containing a screen point.
     pub fn hit_test_screen(&self, position: Point<Pixels>) -> Option<DockViewportHit> {
-        self.viewports.iter().find_map(|(space, _)| {
-            self.screen_to_host(space, position)
-                .map(|host_position| DockViewportHit {
-                    space: space.clone(),
-                    host_position,
-                })
-        })
+        self.hit_test_screen_with_context(position, &DockViewportTargetContext::new())
+    }
+
+    /// Finds the registered viewport containing a screen point using platform arbitration inputs.
+    pub fn hit_test_screen_with_context(
+        &self,
+        position: Point<Pixels>,
+        context: &DockViewportTargetContext,
+    ) -> Option<DockViewportHit> {
+        self.resolve_viewport_target(position, context)
+            .map(DockViewportHitCandidate::into_hit)
+    }
+
+    /// Resolves a registered viewport target using explicit platform arbitration inputs.
+    pub fn resolve_viewport_target(
+        &self,
+        position: Point<Pixels>,
+        context: &DockViewportTargetContext,
+    ) -> Option<DockViewportHitCandidate> {
+        let hits = self.viewport_hits(position);
+        resolve_viewport_target(hits, context)
+    }
+
+    fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportHitCandidate> {
+        self.viewports
+            .iter()
+            .filter_map(|(space, snapshot)| {
+                self.screen_to_host(space, position)
+                    .map(|host_position| DockViewportHitCandidate {
+                        space: space.clone(),
+                        window: snapshot.window,
+                        host_position,
+                    })
+            })
+            .collect()
     }
 
     /// Resolves a tab release into either an existing viewport hit or a platform tear-off request.
@@ -835,7 +1079,29 @@ impl DockViewportAdapter {
         suggested_window_bounds: Option<WindowBounds>,
         policy: &DockPolicy,
     ) -> DockViewportTearOffOutcome {
-        if let Some(hit) = self.hit_test_screen(release_position) {
+        self.resolve_tear_off_request_with_context(
+            source_space,
+            source_tabs,
+            item,
+            release_position,
+            suggested_window_bounds,
+            policy,
+            &DockViewportTargetContext::new(),
+        )
+    }
+
+    /// Resolves a tab release using explicit viewport target arbitration inputs.
+    pub fn resolve_tear_off_request_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        item: impl Into<DockItemId>,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        policy: &DockPolicy,
+        target_context: &DockViewportTargetContext,
+    ) -> DockViewportTearOffOutcome {
+        if let Some(hit) = self.hit_test_screen_with_context(release_position, target_context) {
             return DockViewportTearOffOutcome::KnownViewport(hit);
         }
 
@@ -1177,6 +1443,101 @@ mod tests {
             adapter
                 .screen_to_host(&main, point(px(500.0), px(500.0)))
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn should_close_policy_reports_pre_close_veto_without_mutating_mapping() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let window = handle(1);
+        adapter.register_viewport(main.clone(), window);
+
+        let allowed = adapter
+            .should_close_viewport(window.window_id(), DockViewportClosePolicy::RetainLayout);
+        assert_eq!(
+            allowed,
+            DockViewportShouldCloseOutcome {
+                space: Some(main.clone()),
+                window_id: window.window_id(),
+                status: DockViewportShouldCloseStatus::Allowed,
+            }
+        );
+        assert!(allowed.allows_close());
+        assert_eq!(adapter.window_for_space(&main), Some(window));
+
+        let vetoed =
+            adapter.should_close_viewport(window.window_id(), DockViewportClosePolicy::Prevent);
+        assert_eq!(
+            vetoed,
+            DockViewportShouldCloseOutcome {
+                space: Some(main.clone()),
+                window_id: window.window_id(),
+                status: DockViewportShouldCloseStatus::Vetoed,
+            }
+        );
+        assert!(!vetoed.allows_close());
+        assert_eq!(adapter.window_for_space(&main), Some(window));
+
+        let unknown =
+            adapter.should_close_viewport(WindowId::from(99), DockViewportClosePolicy::Prevent);
+        assert_eq!(unknown.status, DockViewportShouldCloseStatus::UnknownWindow);
+        assert!(unknown.allows_close());
+    }
+
+    #[test]
+    fn overlapping_viewport_hits_prefer_hovered_active_then_window_stack() {
+        let mut adapter = DockViewportAdapter::new();
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let first = handle(1);
+        let second = handle(2);
+        adapter.register_viewport(zeta.clone(), second);
+        adapter.register_viewport(alpha.clone(), first);
+        for space in [&alpha, &zeta] {
+            adapter.update_snapshot(
+                space,
+                None,
+                WindowBounds::Windowed(bounds(100.0, 100.0, 300.0, 200.0)),
+                bounds(0.0, 0.0, 300.0, 200.0),
+            );
+        }
+        let position = point(px(125.0), px(150.0));
+
+        assert_eq!(
+            adapter.hit_test_screen(position).map(|hit| hit.space),
+            Some(alpha.clone()),
+            "default fallback should remain deterministic by registered space order"
+        );
+        assert_eq!(
+            adapter
+                .hit_test_screen_with_context(
+                    position,
+                    &DockViewportTargetContext::new().with_active_window(second),
+                )
+                .map(|hit| hit.space),
+            Some(zeta.clone())
+        );
+        assert_eq!(
+            adapter
+                .hit_test_screen_with_context(
+                    position,
+                    &DockViewportTargetContext::new().with_window_stack([second, first]),
+                )
+                .map(|hit| hit.space),
+            Some(zeta.clone())
+        );
+        assert_eq!(
+            adapter
+                .hit_test_screen_with_context(
+                    position,
+                    &DockViewportTargetContext::new()
+                        .with_hovered_window(first)
+                        .with_active_window(second)
+                        .with_window_stack([second, first]),
+                )
+                .map(|hit| hit.space),
+            Some(alpha)
         );
     }
 
