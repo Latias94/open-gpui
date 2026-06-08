@@ -12,6 +12,8 @@ mod graph_mutation;
 mod graph_op_validation;
 #[path = "graph_ops.rs"]
 mod graph_ops;
+#[path = "graph_tab_stack.rs"]
+mod graph_tab_stack;
 #[path = "graph_validation.rs"]
 mod graph_validation;
 pub use graph_validation::DockGraphValidationError;
