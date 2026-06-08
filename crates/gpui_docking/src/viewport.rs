@@ -1,20 +1,13 @@
 use crate::{
-    DockController, DockHost, DockItemId, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome,
+    DockController, DockHost, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
     DockViewportShouldCloseOutcome,
     viewport_registry::{DockViewportRegistry, DockViewportSnapshot},
-    viewport_target::{
-        DockViewportHit, DockViewportHitCandidate, DockViewportTargetContext,
-        resolve_viewport_target,
-    },
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Entity, Pixels, Point, Result, Subscription, Window,
-    WindowBounds, WindowId, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Entity, Result, Subscription, Window, WindowId,
+    WindowOptions,
 };
-#[cfg(test)]
-use open_gpui::{Bounds, DisplayId, point};
 use std::{
     cell::{Cell, Ref, RefCell},
     rc::Rc,
@@ -32,32 +25,6 @@ use std::{
 #[derive(Debug, Default)]
 pub struct DockViewportAdapter {
     registry: DockViewportRegistry,
-}
-
-/// Request to open a new platform viewport for a tab released outside known dock viewports.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffRequest {
-    /// Source dock space containing the dragged item.
-    pub source_space: DockSpaceId,
-    /// Source tabs node where the drag started.
-    pub source_tabs: DockNodeId,
-    /// Item being torn off.
-    pub item: DockItemId,
-    /// Release position in screen coordinates.
-    pub release_position: Point<Pixels>,
-    /// Suggested platform window bounds for the new viewport, when known.
-    pub suggested_window_bounds: Option<WindowBounds>,
-}
-
-/// Result of resolving a tab release against registered platform viewports.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportTearOffOutcome {
-    /// The release landed inside a known viewport; normal drop handling should continue.
-    KnownViewport(DockViewportHit),
-    /// The release can open a new platform viewport.
-    Requested(DockViewportTearOffRequest),
-    /// The request was rejected by docking policy.
-    Rejected(DockPolicyError),
 }
 
 /// Runtime result of opening or reopening a platform viewport.
@@ -475,113 +442,16 @@ impl DockViewportAdapter {
         self.registry
             .insert_stale_window_index_for_test(window_id, space);
     }
-
-    /// Finds the registered viewport containing a screen point.
-    pub fn hit_test_screen(&self, position: Point<Pixels>) -> Option<DockViewportHit> {
-        self.hit_test_screen_with_context(position, &DockViewportTargetContext::new())
-    }
-
-    /// Finds the registered viewport containing a screen point using platform arbitration inputs.
-    pub fn hit_test_screen_with_context(
-        &self,
-        position: Point<Pixels>,
-        context: &DockViewportTargetContext,
-    ) -> Option<DockViewportHit> {
-        self.resolve_viewport_target(position, context)
-            .map(DockViewportHitCandidate::into_hit)
-    }
-
-    /// Resolves a registered viewport target using explicit platform arbitration inputs.
-    pub fn resolve_viewport_target(
-        &self,
-        position: Point<Pixels>,
-        context: &DockViewportTargetContext,
-    ) -> Option<DockViewportHitCandidate> {
-        let hits = self.viewport_hits(position);
-        resolve_viewport_target(hits, context)
-    }
-
-    fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportHitCandidate> {
-        self.registry
-            .iter()
-            .filter_map(|(space, snapshot)| {
-                self.screen_to_host(space, position)
-                    .map(|host_position| DockViewportHitCandidate {
-                        space: space.clone(),
-                        window: snapshot.window,
-                        host_position,
-                    })
-            })
-            .collect()
-    }
-
-    /// Resolves a tab release into either an existing viewport hit or a platform tear-off request.
-    ///
-    /// This method never mutates the docking graph. Callers should open/register a destination
-    /// viewport first, then commit a move action after runtime setup succeeds.
-    pub fn resolve_tear_off_request(
-        &self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        item: impl Into<DockItemId>,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        policy: &DockPolicy,
-    ) -> DockViewportTearOffOutcome {
-        self.resolve_tear_off_request_with_context(
-            source_space,
-            source_tabs,
-            item,
-            release_position,
-            suggested_window_bounds,
-            policy,
-            &DockViewportTargetContext::new(),
-        )
-    }
-
-    /// Resolves a tab release using explicit viewport target arbitration inputs.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_tear_off_request_with_context(
-        &self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        item: impl Into<DockItemId>,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        policy: &DockPolicy,
-        target_context: &DockViewportTargetContext,
-    ) -> DockViewportTearOffOutcome {
-        if let Some(hit) = self.hit_test_screen_with_context(release_position, target_context) {
-            return DockViewportTearOffOutcome::KnownViewport(hit);
-        }
-
-        if let Err(reason) = policy.validate_platform_viewports() {
-            return DockViewportTearOffOutcome::Rejected(reason);
-        }
-
-        DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
-            source_space: source_space.into(),
-            source_tabs,
-            item: item.into(),
-            release_position,
-            suggested_window_bounds,
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{DockGraph, DockHost, DockItemId, DockNode};
-    use open_gpui::{WindowHandle, px, size};
-    use slotmap::Key;
+    use open_gpui::{Bounds, DisplayId, Pixels, WindowBounds, WindowHandle, point, px, size};
 
     fn space(id: &str) -> DockSpaceId {
         DockSpaceId::from(id)
-    }
-
-    fn item(id: &str) -> DockItemId {
-        DockItemId::from(id)
     }
 
     fn handle(id: u64) -> AnyWindowHandle {
@@ -641,158 +511,6 @@ mod tests {
         assert_eq!(removed_space, secondary);
         assert_eq!(removed.window, second);
         assert!(adapter.is_empty());
-    }
-
-    #[test]
-    fn overlapping_viewport_hits_prefer_hovered_active_then_window_stack() {
-        let mut adapter = DockViewportAdapter::new();
-        let alpha = space("alpha");
-        let zeta = space("zeta");
-        let first = handle(1);
-        let second = handle(2);
-        adapter.register_viewport(zeta.clone(), second);
-        adapter.register_viewport(alpha.clone(), first);
-        for space in [&alpha, &zeta] {
-            adapter.update_snapshot(
-                space,
-                None,
-                WindowBounds::Windowed(bounds(100.0, 100.0, 300.0, 200.0)),
-                bounds(0.0, 0.0, 300.0, 200.0),
-            );
-        }
-        let position = point(px(125.0), px(150.0));
-
-        assert_eq!(
-            adapter.hit_test_screen(position).map(|hit| hit.space),
-            Some(alpha.clone()),
-            "default fallback should remain deterministic by registered space order"
-        );
-        assert_eq!(
-            adapter
-                .hit_test_screen_with_context(
-                    position,
-                    &DockViewportTargetContext::new().with_active_window(second),
-                )
-                .map(|hit| hit.space),
-            Some(zeta.clone())
-        );
-        assert_eq!(
-            adapter
-                .hit_test_screen_with_context(
-                    position,
-                    &DockViewportTargetContext::new().with_window_stack([second, first]),
-                )
-                .map(|hit| hit.space),
-            Some(zeta.clone())
-        );
-        assert_eq!(
-            adapter
-                .hit_test_screen_with_context(
-                    position,
-                    &DockViewportTargetContext::new()
-                        .with_hovered_window(first)
-                        .with_active_window(second)
-                        .with_window_stack([second, first]),
-                )
-                .map(|hit| hit.space),
-            Some(alpha)
-        );
-    }
-
-    #[test]
-    fn tear_off_release_inside_known_viewport_returns_hit() {
-        let mut adapter = DockViewportAdapter::new();
-        let main = space("main");
-        adapter.register_viewport(main.clone(), handle(1));
-        adapter.update_snapshot(
-            &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
-            bounds(10.0, 20.0, 300.0, 200.0),
-        );
-
-        assert_eq!(
-            adapter.resolve_tear_off_request(
-                main.clone(),
-                DockNodeId::null(),
-                item("a"),
-                point(px(115.0), px(225.0)),
-                None,
-                &DockPolicy::default(),
-            ),
-            DockViewportTearOffOutcome::KnownViewport(DockViewportHit {
-                space: main,
-                host_position: point(px(5.0), px(5.0)),
-            })
-        );
-    }
-
-    #[test]
-    fn tear_off_release_outside_viewports_respects_platform_policy() {
-        let adapter = DockViewportAdapter::new();
-        let main = space("main");
-
-        assert_eq!(
-            adapter.resolve_tear_off_request(
-                main,
-                DockNodeId::null(),
-                item("a"),
-                point(px(900.0), px(900.0)),
-                None,
-                &DockPolicy::default(),
-            ),
-            DockViewportTearOffOutcome::Rejected(DockPolicyError::PlatformViewportsDisabled)
-        );
-    }
-
-    #[test]
-    fn tear_off_release_outside_viewports_emits_request_when_enabled() {
-        let adapter = DockViewportAdapter::new();
-        let main = space("main");
-        let item = item("a");
-        let release_position = point(px(900.0), px(900.0));
-        let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
-        let mut policy = DockPolicy::default();
-        policy.set_allow_platform_viewports(true);
-
-        assert_eq!(
-            adapter.resolve_tear_off_request(
-                main.clone(),
-                DockNodeId::null(),
-                item.clone(),
-                release_position,
-                Some(suggested_window_bounds),
-                &policy,
-            ),
-            DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
-                source_space: main,
-                source_tabs: DockNodeId::null(),
-                item,
-                release_position,
-                suggested_window_bounds: Some(suggested_window_bounds),
-            })
-        );
-    }
-
-    #[test]
-    fn stale_viewport_bounds_do_not_block_tear_off_request() {
-        let mut adapter = DockViewportAdapter::new();
-        let main = space("main");
-        adapter.register_viewport(main.clone(), handle(1));
-        let mut policy = DockPolicy::default();
-        policy.set_allow_platform_viewports(true);
-
-        assert!(matches!(
-            adapter.resolve_tear_off_request(
-                main,
-                DockNodeId::null(),
-                item("a"),
-                point(px(115.0), px(225.0)),
-                None,
-                &policy,
-            ),
-            DockViewportTearOffOutcome::Requested(_)
-        ));
     }
 
     #[test]

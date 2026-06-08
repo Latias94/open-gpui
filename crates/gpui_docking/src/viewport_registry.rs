@@ -113,10 +113,6 @@ impl DockViewportRegistry {
         self.viewports.keys().cloned().collect()
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&DockSpaceId, &DockViewportSnapshot)> + '_ {
-        self.viewports.iter()
-    }
-
     #[cfg(test)]
     pub(crate) fn insert_stale_window_index_for_test(
         &mut self,
