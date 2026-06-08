@@ -434,6 +434,101 @@ fn checked_empty_space_moves_reject_non_empty_target_without_mutation() {
 }
 
 #[test]
+fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+    let detached = DockSpaceId::new("detached");
+    let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("existing")],
+        active: 0,
+    });
+    let detached_floating = graph.insert_node(DockNode::Floating {
+        child: detached_floating_tabs,
+    });
+    graph
+        .floating_containers_mut(detached.clone())
+        .push(DockFloatingContainer {
+            node: detached_floating,
+            bounds: dock_bounds(10.0, 20.0, 240.0, 160.0),
+        });
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+            source_space: space(),
+            item: item("b"),
+            target_space: detached.clone(),
+        })
+        .expect_err("floating-only target should still be non-empty");
+    assert_eq!(
+        err,
+        DockOpApplyError::TargetSpaceNotEmpty {
+            space: detached.clone()
+        }
+    );
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            source_space: space(),
+            source_tabs: root,
+            target_space: detached.clone(),
+        })
+        .expect_err("floating-only target should reject tab-group moves too");
+    assert_eq!(
+        err,
+        DockOpApplyError::TargetSpaceNotEmpty {
+            space: detached.clone()
+        }
+    );
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("source root should remain")
+    else {
+        panic!("source root should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+    assert!(graph.root(&detached).is_none());
+    assert_eq!(graph.floating_containers(&detached).len(), 1);
+    assert_eq!(
+        graph.collect_items_in_space(&detached),
+        vec![item("existing")]
+    );
+    graph.assert_canonical_space(&space());
+    graph.assert_canonical_space(&detached);
+}
+
+#[test]
+fn checked_empty_same_space_moves_report_missing_source() {
+    let mut graph = DockGraph::new();
+
+    let item_err = graph
+        .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+            source_space: space(),
+            item: item("missing"),
+            target_space: space(),
+        })
+        .expect_err("empty same-space item move should still validate the source item");
+    assert_eq!(
+        item_err,
+        DockOpApplyError::ItemNotFound {
+            space: space(),
+            item: item("missing")
+        }
+    );
+
+    let tabs = graph.insert_node(DockNode::Tabs {
+        items: Vec::new(),
+        active: 0,
+    });
+    let tabs_err = graph
+        .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            source_space: space(),
+            source_tabs: tabs,
+            target_space: space(),
+        })
+        .expect_err("empty same-space tabs move should still validate the source tabs");
+    assert_eq!(tabs_err, DockOpApplyError::TabsNodeEmpty { tabs });
+}
+
+#[test]
 fn checked_move_tabs_to_empty_space_rejects_source_outside_space() {
     let (mut graph, _root) = root_tabs_graph(&["a"]);
     let other = DockSpaceId::new("other");

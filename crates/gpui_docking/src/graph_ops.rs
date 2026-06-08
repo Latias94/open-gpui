@@ -81,7 +81,7 @@ impl DockGraph {
                 item,
                 target_space,
             } => {
-                if self.root(target_space).is_some() {
+                if !self.target_space_is_empty_for_item_move(source_space, item, target_space) {
                     return Err(DockOpApplyError::TargetSpaceNotEmpty {
                         space: target_space.clone(),
                     });
@@ -99,7 +99,11 @@ impl DockGraph {
                 source_tabs,
                 target_space,
             } => {
-                if self.root(target_space).is_some() {
+                if !self.target_space_is_empty_for_tabs_move(
+                    source_space,
+                    *source_tabs,
+                    target_space,
+                ) {
                     return Err(DockOpApplyError::TargetSpaceNotEmpty {
                         space: target_space.clone(),
                     });
@@ -246,7 +250,7 @@ impl DockGraph {
                 item,
                 target_space,
             } => {
-                if self.root(target_space).is_some() {
+                if !self.target_space_is_empty_for_item_move(source_space, item, target_space) {
                     return false;
                 }
                 self.move_item_to_empty_space(source_space, item.clone(), target_space)
@@ -271,7 +275,11 @@ impl DockGraph {
                 source_tabs,
                 target_space,
             } => {
-                if self.root(target_space).is_some() {
+                if !self.target_space_is_empty_for_tabs_move(
+                    source_space,
+                    *source_tabs,
+                    target_space,
+                ) {
                     return false;
                 }
                 self.move_tabs_to_empty_space(source_space, *source_tabs, target_space)
@@ -347,6 +355,47 @@ impl DockGraph {
             }
         }
         Ok(())
+    }
+
+    fn target_space_is_empty_for_item_move(
+        &self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let target_items = self.collect_items_in_space(target_space);
+        if target_items.is_empty() {
+            return true;
+        }
+        matches!(target_items.as_slice(), [target_item] if target_item == item)
+    }
+
+    fn target_space_is_empty_for_tabs_move(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let target_items = self.collect_items_in_space(target_space);
+        if target_items.is_empty() {
+            return true;
+        }
+        let source_items = self.collect_items_in_subtree(source_tabs);
+        !source_items.is_empty() && target_items == source_items
     }
 
     fn validate_move_tabs(

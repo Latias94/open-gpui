@@ -1,7 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockLayoutNode, DockNode,
-    DockNodeId, DockOpApplyError, DockPanel, DockPolicyError, DockSpaceId, DockWorkspace, DropZone,
-    SplitAxis, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph,
+    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockPanel, DockPolicyError,
+    DockSpaceId, DockWorkspace, DropZone, SplitAxis, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use slotmap::Key;
@@ -385,6 +385,71 @@ fn workspace_empty_space_actions_reject_existing_target(cx: &mut TestAppContext)
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(*active, 0);
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&detached),
+        vec![item("existing")]
+    );
+}
+
+#[open_gpui::test]
+fn workspace_empty_space_actions_reject_floating_only_target(cx: &mut TestAppContext) {
+    let (mut graph, root) = tabs_graph(&["a", "b"], 0);
+    let detached = DockSpaceId::from("detached");
+    let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("existing")],
+        active: 0,
+    });
+    let detached_floating = graph.insert_node(DockNode::Floating {
+        child: detached_floating_tabs,
+    });
+    graph
+        .floating_containers_mut(detached.clone())
+        .push(DockFloatingContainer {
+            node: detached_floating,
+            bounds: floating_bounds(10.0, 20.0, 240.0, 160.0),
+        });
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let item_err = workspace
+        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
+            source_space: space(),
+            item: item("b"),
+            target_space: detached.clone(),
+        })
+        .expect_err("floating-only target should reject item moves");
+    assert_eq!(
+        item_err,
+        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+            space: detached.clone()
+        })
+    );
+
+    let tabs_err = workspace
+        .apply_action(&DockAction::MoveTabsToEmptyDockSpace {
+            source_space: space(),
+            source_tabs: root,
+            target_space: detached.clone(),
+        })
+        .expect_err("floating-only target should reject tabs moves");
+    assert_eq!(
+        tabs_err,
+        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+            space: detached.clone()
+        })
+    );
+
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(root)
+        .expect("source tabs should remain")
+    else {
+        panic!("source should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
+    assert!(workspace.graph().root(&detached).is_none());
+    assert_eq!(workspace.graph().floating_containers(&detached).len(), 1);
     assert_eq!(
         workspace.graph().collect_items_in_space(&detached),
         vec![item("existing")]
