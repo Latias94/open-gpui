@@ -113,6 +113,8 @@ mod host_viewport_tests;
 #[cfg(test)]
 mod host_workspace_tests;
 #[cfg(test)]
+mod layout_tests;
+#[cfg(test)]
 mod tests;
 
 pub use action::*;
