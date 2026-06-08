@@ -239,6 +239,34 @@ fn registry_replaces_registered_panel(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn registry_descriptor_lookup_does_not_instantiate_lazy_panel(_cx: &mut TestAppContext) {
+    let mut registry = crate::DockPanelRegistry::new();
+    let calls = Rc::new(Cell::new(0));
+    let factory_calls = calls.clone();
+    registry.register_factory("lazy", "Lazy", move |cx| {
+        factory_calls.set(factory_calls.get() + 1);
+        cx.new(|_| TestPanel { label: "lazy" }).into()
+    });
+
+    let descriptor = registry
+        .descriptor(&item("lazy"))
+        .expect("lazy panel metadata should be registered");
+    assert_eq!(descriptor.title(), "Lazy");
+    assert!(descriptor.is_closable());
+    assert_eq!(
+        calls.get(),
+        0,
+        "metadata lookup should not instantiate lazy panel view"
+    );
+    assert!(
+        !registry
+            .get(&item("lazy"))
+            .expect("lazy panel should remain registered")
+            .has_view()
+    );
+}
+
+#[open_gpui::test]
 fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut TestAppContext) {
     let calls = Rc::new(Cell::new(0));
     let (graph, _root) = tabs_graph(&["lazy"], 0);
