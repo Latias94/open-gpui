@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockPanel,
-    DockPanelResolution, DockSpaceId, DockWorkspace,
+    DockAction, DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockWorkspace, panel::DockPanelRenderRegistration,
 };
 use open_gpui::{AnyView, Bounds, Context, Pixels, Point};
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ pub(crate) struct DockHostRenderSession {
     root: Option<DockNodeId>,
     nodes: HashMap<DockNodeId, DockNode>,
     floating_containers: Vec<DockFloatingContainer>,
-    panels: HashMap<DockItemId, DockPanel>,
+    panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
     empty_message: String,
     missing_panel_prefix: String,
@@ -82,12 +82,12 @@ impl DockHostRenderSession {
             return;
         }
 
-        let title = match workspace.panels().resolve(item) {
-            DockPanelResolution::Registered(panel) => {
-                self.panels.insert(item.clone(), panel.clone());
-                panel.title().to_string()
-            }
-            DockPanelResolution::Missing { item } => item.to_string(),
+        let title = if let Some(registration) = workspace.panels().render_registration(item) {
+            let title = registration.title().to_string();
+            self.panels.insert(item.clone(), registration);
+            title
+        } else {
+            item.to_string()
         };
         self.panel_titles.insert(item.clone(), title);
     }

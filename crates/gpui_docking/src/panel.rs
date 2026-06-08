@@ -212,6 +212,34 @@ impl DockPanelViewLifecycle {
     }
 }
 
+/// Render-time registration snapshot for one dock panel.
+///
+/// This is the narrow shape render code needs: stable metadata plus a lifecycle entry point for
+/// resolving live view content. Keeping render callers on this seam avoids depending on the full
+/// registry storage shape.
+#[derive(Debug, Clone)]
+pub(crate) struct DockPanelRenderRegistration {
+    descriptor: DockPanelDescriptor,
+    panel: DockPanel,
+}
+
+impl DockPanelRenderRegistration {
+    fn from_panel(panel: &DockPanel) -> Self {
+        Self {
+            descriptor: panel.descriptor().clone(),
+            panel: panel.clone(),
+        }
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        self.descriptor.title()
+    }
+
+    pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
+        self.panel.resolve_view(cx)
+    }
+}
+
 /// Result of resolving a dock item against a panel registry.
 #[derive(Debug)]
 pub enum DockPanelResolution<'a> {
@@ -276,6 +304,13 @@ impl DockPanelRegistry {
     /// Returns panel metadata without instantiating or exposing a live view.
     pub fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
         self.get(item).map(DockPanel::descriptor)
+    }
+
+    pub(crate) fn render_registration(
+        &self,
+        item: &DockItemId,
+    ) -> Option<DockPanelRenderRegistration> {
+        self.get(item).map(DockPanelRenderRegistration::from_panel)
     }
 
     /// Resolves a dock item to either registered content or a missing-panel state.
