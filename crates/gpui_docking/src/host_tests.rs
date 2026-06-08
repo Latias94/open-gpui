@@ -1,8 +1,8 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
     DockGraph, DockHost, DockHostAccessError, DockItemId, DockLayoutNode, DockLayoutRect, DockNode,
-    DockNodeId, DockOpApplyError, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus,
+    DockNodeId, DockOpApplyError, DockPanel, DockPanelViewError, DockPolicyError, DockSpaceId,
+    DockViewportAdapter, DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus,
     DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntime,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportWindowBounds,
     DockViewportWindowState, DockWorkspace, DropZone, EditorDockLayoutSpec, SplitAxis,
@@ -264,6 +264,13 @@ fn registry_descriptor_lookup_does_not_instantiate_lazy_panel(_cx: &mut TestAppC
             .expect("lazy panel should remain registered")
             .has_view()
     );
+    assert!(matches!(
+        registry
+            .get(&item("lazy"))
+            .expect("lazy panel should remain registered")
+            .view(),
+        Err(DockPanelViewError::LazyViewNotInstantiated)
+    ));
 }
 
 #[open_gpui::test]
@@ -288,6 +295,7 @@ fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut Test
     let (window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
     assert_eq!(calls.get(), 1);
     assert!(panel.has_view());
+    assert!(panel.view().is_ok());
     assert!(
         selector_for(
             &visual,

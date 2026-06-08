@@ -1,6 +1,7 @@
 use crate::DockItemId;
 use open_gpui::{AnyView, App};
 use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
+use thiserror::Error;
 
 type DockPanelFactory = Rc<dyn Fn(&mut App) -> AnyView>;
 
@@ -100,6 +101,14 @@ impl Clone for DockPanel {
     }
 }
 
+/// Error returned when reading already-instantiated panel view state fails.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DockPanelViewError {
+    /// The panel is lazy and has not been rendered or otherwise resolved yet.
+    #[error("lazy dock panel view has not been instantiated")]
+    LazyViewNotInstantiated,
+}
+
 impl DockPanel {
     /// Creates a panel registration with the default close policy.
     pub fn new(title: impl Into<String>, view: impl Into<AnyView>) -> Self {
@@ -146,9 +155,9 @@ impl DockPanel {
 
     /// Returns the already-instantiated GPUI view used as this panel's rendered root.
     ///
-    /// Lazy panels instantiate when rendered through [`Self::resolve_view`]. Calling this before a
-    /// lazy panel has rendered will panic.
-    pub fn view(&self) -> &AnyView {
+    /// Lazy panels instantiate when rendered through [`Self::resolve_view`]. Before that happens,
+    /// this method returns [`DockPanelViewError::LazyViewNotInstantiated`].
+    pub fn view(&self) -> Result<&AnyView, DockPanelViewError> {
         self.inner.view_lifecycle.view()
     }
 
@@ -179,12 +188,12 @@ impl DockPanelViewLifecycle {
         }
     }
 
-    fn view(&self) -> &AnyView {
+    fn view(&self) -> Result<&AnyView, DockPanelViewError> {
         match &self.source {
-            DockPanelViewSource::View(view) => view,
+            DockPanelViewSource::View(view) => Ok(view),
             DockPanelViewSource::Lazy { view, .. } => view
                 .get()
-                .expect("lazy dock panel has not been instantiated"),
+                .ok_or(DockPanelViewError::LazyViewNotInstantiated),
         }
     }
 
