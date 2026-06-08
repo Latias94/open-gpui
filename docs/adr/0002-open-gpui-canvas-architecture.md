@@ -104,6 +104,8 @@ observe the deletion through the same mutation boundary.
 Pointer down and pointer up events carry the same modifier shape as key events. This avoids a
 parallel modifier model when adding shift-click, additive marquee selection, constrained dragging,
 or tool-specific modifier gestures.
+The first built-in modifier behavior is shift-click selection toggling. It uses
+`CanvasToolEffect::ToggleSelection`, does not create undo history, and does not start a drag.
 
 ## Architecture
 

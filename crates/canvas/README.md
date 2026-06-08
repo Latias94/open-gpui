@@ -25,6 +25,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   the same transaction path as other edits.
 - `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined
   custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
+- The built-in select tool supports shift-click selection toggling through the same incremental
+  selection effect path that custom tools can use.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
   redb, Loro, or rkyv into the default build.
 - `CanvasPersistenceCodec` and `CanvasPersistenceByteStore` separate typed canvas records from

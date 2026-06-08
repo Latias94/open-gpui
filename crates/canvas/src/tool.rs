@@ -740,6 +740,7 @@ impl CanvasEditor {
                 CanvasEvent::PointerDown {
                     position,
                     button: PointerButton::Primary,
+                    modifiers,
                     ..
                 },
             ) => {
@@ -749,6 +750,13 @@ impl CanvasEditor {
                     .hit_test(document_position, HitOptions::default())
                     .map(|record| record.target.clone())
                     .next();
+
+                if modifiers.shift {
+                    return Ok(hit
+                        .map(CanvasToolEffect::ToggleSelection)
+                        .into_iter()
+                        .collect());
+                }
 
                 match hit {
                     Some(HitTarget::Node(id)) => {
@@ -1320,6 +1328,63 @@ mod tests {
             .unwrap();
 
         assert!(editor.selection.is_empty());
+    }
+
+    #[test]
+    fn select_tool_shift_click_toggles_selection() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a"), NodeId::from("b")]
+        );
+        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.history.undo_depth(), 0);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]
