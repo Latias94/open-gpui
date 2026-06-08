@@ -88,7 +88,7 @@ impl DockWorkspace {
         &mut self,
         item: impl Into<DockItemId>,
         title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::Context<crate::DockHost>) -> AnyView + 'static,
+        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.panels.register_factory(item, title, factory)
     }

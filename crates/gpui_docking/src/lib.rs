@@ -30,12 +30,12 @@
 //! cross-window drops need active, hovered, or front-to-back window arbitration.
 //!
 //! ```rust,no_run
-//! use open_gpui::{AnyView, Context};
+//! use open_gpui::{AnyView, App};
 //! use open_gpui_docking::{
-//!     DockController, DockHost, EditorDockLayoutSpec,
+//!     DockController, EditorDockLayoutSpec,
 //! };
 //!
-//! fn panel_factory(_cx: &mut Context<DockHost>) -> AnyView {
+//! fn panel_factory(_cx: &mut App) -> AnyView {
 //!     unreachable!("create and return a GPUI view for the panel")
 //! }
 //!

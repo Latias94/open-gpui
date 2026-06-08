@@ -1,8 +1,8 @@
 use crate::{DockHost, DockItemId};
-use open_gpui::{AnyView, Context};
+use open_gpui::{AnyView, App, Context};
 use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
 
-type DockPanelFactory = Rc<dyn Fn(&mut Context<DockHost>) -> AnyView>;
+type DockPanelFactory = Rc<dyn Fn(&mut App) -> AnyView>;
 
 /// Metadata for one dock panel that can be read without instantiating its view.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,10 +112,7 @@ impl DockPanel {
     }
 
     /// Creates a lazily instantiated panel registration with the default close policy.
-    pub fn lazy(
-        title: impl Into<String>,
-        factory: impl Fn(&mut Context<DockHost>) -> AnyView + 'static,
-    ) -> Self {
+    pub fn lazy(title: impl Into<String>, factory: impl Fn(&mut App) -> AnyView + 'static) -> Self {
         Self {
             inner: Rc::new(DockPanelInner {
                 descriptor: DockPanelDescriptor::new(title),
@@ -173,7 +170,7 @@ impl DockPanelViewLifecycle {
         }
     }
 
-    fn lazy(factory: impl Fn(&mut Context<DockHost>) -> AnyView + 'static) -> Self {
+    fn lazy(factory: impl Fn(&mut App) -> AnyView + 'static) -> Self {
         Self {
             source: DockPanelViewSource::Lazy {
                 factory: Rc::new(factory),
@@ -257,7 +254,7 @@ impl DockPanelRegistry {
         &mut self,
         item: impl Into<DockItemId>,
         title: impl Into<String>,
-        factory: impl Fn(&mut Context<DockHost>) -> AnyView + 'static,
+        factory: impl Fn(&mut App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.register(item, DockPanel::lazy(title, factory))
     }

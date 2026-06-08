@@ -89,7 +89,7 @@ impl DockController {
         &mut self,
         item: impl Into<crate::DockItemId>,
         title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::Context<crate::DockHost>) -> AnyView + 'static,
+        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.workspace.register_panel_factory(item, title, factory)
     }
@@ -193,7 +193,7 @@ impl DockControllerBuilder {
         self,
         item: impl Into<DockItemId>,
         title: impl Into<String>,
-        factory: impl Fn(&mut open_gpui::Context<crate::DockHost>) -> AnyView + 'static,
+        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Self {
         self.panel(item, DockPanel::lazy(title, factory))
     }

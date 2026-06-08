@@ -9,8 +9,8 @@ use crate::{
     debug::DockDebugRegion,
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement,
-    Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, InteractiveElement,
+    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
     VisualTestContext, Window, WindowBounds, WindowHandle, WindowId, WindowOptions, div, point, px,
     rgb, size,
 };
@@ -301,6 +301,24 @@ fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut Test
     let _visual = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
     assert_eq!(calls.get(), 1, "lazy panel view should be reused");
+}
+
+#[open_gpui::test]
+fn panel_factory_accepts_app_context_without_host_context(cx: &mut TestAppContext) {
+    fn app_context_panel(cx: &mut App) -> AnyView {
+        cx.new(|_| TestPanel { label: "app" }).into()
+    }
+
+    let (graph, _root) = tabs_graph(&["app"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_factory("app", "App", app_context_panel);
+
+    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("app") }).is_some(),
+        "app-context panel factory should render through DockHost without depending on its context type"
+    );
 }
 
 #[open_gpui::test]
