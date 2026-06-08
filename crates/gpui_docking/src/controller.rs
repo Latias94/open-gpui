@@ -45,11 +45,6 @@ impl DockController {
         &self.workspace
     }
 
-    /// Returns mutable access to the owned workspace.
-    pub fn workspace_mut(&mut self) -> &mut DockWorkspace {
-        &mut self.workspace
-    }
-
     /// Returns the controller's default logical dock space.
     pub fn space(&self) -> &DockSpaceId {
         self.workspace.space()
