@@ -708,6 +708,31 @@ mod tests {
     }
 
     #[test]
+    fn collect_visible_records_keeps_large_canvas_frame_bounded() {
+        let document = large_grid_document(128, 96);
+        let total_records = document.nodes.len();
+        let model = CanvasPaintModel::new(
+            document,
+            CanvasViewport::new(point(px(2_400.0), px(1_800.0)), 1.0).unwrap(),
+        );
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(800.0), px(600.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(total_records, 12_288);
+        assert!(!frame.records.is_empty());
+        assert!(frame.records.len() < 80);
+        assert!(frame.records.iter().all(|record| {
+            frame
+                .visible_document_bounds
+                .intersects(&record.document_bounds)
+        }));
+    }
+
+    #[test]
     fn collect_visible_records_keeps_locked_records_visible() {
         let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(20.0), px(20.0)));
         node.locked = true;
@@ -1056,5 +1081,23 @@ mod tests {
             }),
             CanvasEvent::Cancel
         );
+    }
+
+    fn large_grid_document(columns: usize, rows: usize) -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+
+        for row in 0..rows {
+            for column in 0..columns {
+                document
+                    .insert_node(CanvasNode::new(
+                        format!("node-{row}-{column}"),
+                        point(px(column as f32 * 160.0), px(row as f32 * 120.0)),
+                        size(px(96.0), px(56.0)),
+                    ))
+                    .unwrap();
+            }
+        }
+
+        document
     }
 }

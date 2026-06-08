@@ -13,6 +13,22 @@ The gate runs:
 - `cargo check -p open-gpui-smoke-native`
 - `cargo run -p xtask -- scan-import-boundary`
 
+For focused `open-gpui-canvas` work, run:
+
+```sh
+cargo check -p open-gpui-canvas --benches
+cargo nextest run -p open-gpui-canvas
+```
+
+The canvas crate also has a large-canvas Criterion baseline:
+
+```sh
+cargo bench -p open-gpui-canvas --bench large_canvas
+```
+
+Use the benchmark to compare spatial-index, visible-query, and paint-frame culling changes. It is
+not part of the default CI gate because benchmark timing is runner-dependent.
+
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:
 
