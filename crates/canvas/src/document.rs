@@ -138,6 +138,12 @@ pub enum HandleRole {
     Target,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasConnectionEndpointRole {
+    Source,
+    Target,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasStyle {
     #[serde(default)]
@@ -191,6 +197,18 @@ impl CanvasHandle {
     pub fn bounds_in_document(&self, node: &CanvasNode) -> Bounds<Pixels> {
         let local = self.bounds_in_node();
         Bounds::new(node.position + local.origin, local.size)
+    }
+
+    pub fn accepts_connection_role(&self, role: CanvasConnectionEndpointRole) -> bool {
+        self.connectable
+            && match role {
+                CanvasConnectionEndpointRole::Source => self.role != HandleRole::Target,
+                CanvasConnectionEndpointRole::Target => self.role != HandleRole::Source,
+            }
+    }
+
+    pub fn is_pickable_connection_endpoint(&self, role: CanvasConnectionEndpointRole) -> bool {
+        !self.hidden && self.accepts_connection_role(role)
     }
 }
 
@@ -1361,6 +1379,25 @@ mod tests {
                 handle_id: HandleId::from("missing")
             }
         );
+    }
+
+    #[test]
+    fn handle_connection_role_helpers_respect_roles_and_pickability() {
+        let mut source_only = CanvasHandle::new("out", point(px(10.0), px(5.0)));
+        source_only.role = HandleRole::Source;
+        assert!(source_only.accepts_connection_role(CanvasConnectionEndpointRole::Source));
+        assert!(!source_only.accepts_connection_role(CanvasConnectionEndpointRole::Target));
+        assert!(source_only.is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Source));
+
+        source_only.hidden = true;
+        assert!(source_only.accepts_connection_role(CanvasConnectionEndpointRole::Source));
+        assert!(!source_only.is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Source));
+
+        let mut target_only = CanvasHandle::new("in", point(px(0.0), px(5.0)));
+        target_only.role = HandleRole::Target;
+        target_only.connectable = false;
+        assert!(!target_only.accepts_connection_role(CanvasConnectionEndpointRole::Target));
+        assert!(!target_only.is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Target));
     }
 
     #[test]

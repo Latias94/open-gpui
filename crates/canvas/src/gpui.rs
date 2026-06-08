@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKey,
-    CanvasKeyModifiers, CanvasRouteSegment, CanvasSelection, CanvasViewport, HitOptions, HitTarget,
-    PointerButton, SpatialIndex, ToolState,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint,
+    CanvasEvent, CanvasKey, CanvasKeyModifiers, CanvasRouteSegment, CanvasSelection,
+    CanvasViewport, HitOptions, HitTarget, PointerButton, SpatialIndex, ToolState,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -485,10 +485,56 @@ fn connection_preview(
     current: Point<Pixels>,
 ) -> Option<CanvasPaintConnectionPreview> {
     let source = model.document.endpoint_position(source).ok()?;
+    let target = connection_preview_target_position(model, source, current).unwrap_or(current);
     Some(CanvasPaintConnectionPreview {
         source_view_position: model.viewport.document_to_view(source),
-        target_view_position: model.viewport.document_to_view(current),
+        target_view_position: model.viewport.document_to_view(target),
     })
+}
+
+fn connection_preview_target_position(
+    model: &CanvasPaintModel,
+    source: Point<Pixels>,
+    current: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let target = connection_target_endpoint_at(model, current)?;
+    let target_position = model.document.endpoint_position(&target).ok()?;
+    (target_position != source).then_some(target_position)
+}
+
+fn connection_target_endpoint_at(
+    model: &CanvasPaintModel,
+    point: Point<Pixels>,
+) -> Option<CanvasEndpoint> {
+    for record in model.index.hit_test(
+        point,
+        HitOptions {
+            include_handles: true,
+            ..HitOptions::default()
+        },
+    ) {
+        match &record.target {
+            HitTarget::Handle { node_id, handle_id } => {
+                let node = model.document.nodes.get(node_id)?;
+                let handle = node.handle(Some(handle_id))?;
+                return handle
+                    .is_pickable_connection_endpoint(CanvasConnectionEndpointRole::Target)
+                    .then(|| CanvasEndpoint {
+                        node_id: node_id.clone(),
+                        handle_id: Some(handle_id.clone()),
+                    });
+            }
+            HitTarget::Node(node_id) => {
+                return Some(CanvasEndpoint {
+                    node_id: node_id.clone(),
+                    handle_id: None,
+                });
+            }
+            HitTarget::Edge(_) | HitTarget::Shape(_) => {}
+        }
+    }
+
+    None
 }
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
@@ -665,7 +711,7 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode};
+    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode, HandleRole};
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
     #[test]
@@ -916,6 +962,96 @@ mod tests {
             Some(CanvasPaintConnectionPreview {
                 source_view_position: point(px(110.0), px(60.0)),
                 target_view_position: point(px(180.0), px(120.0)),
+            })
+        );
+    }
+
+    #[test]
+    fn connecting_preview_snaps_to_valid_target_handle() {
+        let mut source = CanvasNode::new(
+            "source",
+            point(px(10.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(40.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target = CanvasNode::new(
+            "target",
+            point(px(200.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        let mut target_handle = CanvasHandle::new("in", point(px(0.0), px(40.0)));
+        target_handle.role = HandleRole::Target;
+        target.handles.push(target_handle);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.state = ToolState::Connecting {
+            source: CanvasEndpoint::new("source", Some("out")),
+            current: point(px(204.0), px(64.0)),
+        };
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(320.0), px(140.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.connection_preview,
+            Some(CanvasPaintConnectionPreview {
+                source_view_position: point(px(110.0), px(60.0)),
+                target_view_position: point(px(200.0), px(60.0)),
+            })
+        );
+    }
+
+    #[test]
+    fn connecting_preview_does_not_snap_to_invalid_target_handle() {
+        let mut source = CanvasNode::new(
+            "source",
+            point(px(10.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        let mut source_handle = CanvasHandle::new("out", point(px(100.0), px(40.0)));
+        source_handle.role = HandleRole::Source;
+        source.handles.push(source_handle);
+
+        let mut target = CanvasNode::new(
+            "target",
+            point(px(200.0), px(20.0)),
+            size(px(100.0), px(80.0)),
+        );
+        let mut invalid_target_handle = CanvasHandle::new("out", point(px(0.0), px(40.0)));
+        invalid_target_handle.role = HandleRole::Source;
+        target.handles.push(invalid_target_handle);
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(source).unwrap();
+        document.insert_node(target).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.state = ToolState::Connecting {
+            source: CanvasEndpoint::new("source", Some("out")),
+            current: point(px(204.0), px(64.0)),
+        };
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(320.0), px(140.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.connection_preview,
+            Some(CanvasPaintConnectionPreview {
+                source_view_position: point(px(110.0), px(60.0)),
+                target_view_position: point(px(204.0), px(64.0)),
             })
         );
     }

@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError, EdgeId,
-    HandleRole, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEndpoint,
+    CanvasNode, CanvasTransaction, CanvasValue, CanvasViewport, DocumentCommand, DocumentError,
+    EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -177,12 +177,6 @@ pub enum CanvasSelectionMode {
     #[default]
     Replace,
     Add,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ConnectionEndpointRole {
-    Source,
-    Target,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1025,7 +1019,7 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
-                self.node_endpoint_at(document_position, ConnectionEndpointRole::Source)
+                self.node_endpoint_at(document_position, CanvasConnectionEndpointRole::Source)
                     .map(|source| {
                         vec![CanvasToolEffect::SetState(ToolState::Connecting {
                             source,
@@ -1052,7 +1046,7 @@ impl CanvasEditor {
                 let document_position = self.viewport.view_to_document(position);
                 let mut effects = Vec::new();
                 if let Some(target) =
-                    self.node_endpoint_at(document_position, ConnectionEndpointRole::Target)
+                    self.node_endpoint_at(document_position, CanvasConnectionEndpointRole::Target)
                     && (source.node_id != target.node_id || source.handle_id != target.handle_id)
                 {
                     let edge_id = EdgeId::new(format!(
@@ -1093,7 +1087,7 @@ impl CanvasEditor {
     fn node_endpoint_at(
         &self,
         point: Point<Pixels>,
-        role: ConnectionEndpointRole,
+        role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
         for record in self.index.hit_test(
             point,
@@ -1123,14 +1117,16 @@ impl CanvasEditor {
         &self,
         node_id: &NodeId,
         handle_id: &crate::HandleId,
-        role: ConnectionEndpointRole,
+        role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
         let node = self.document.nodes.get(node_id)?;
         let handle = node.handle(Some(handle_id))?;
-        handle_accepts_connection_role(handle, role).then(|| CanvasEndpoint {
-            node_id: node_id.clone(),
-            handle_id: Some(handle_id.clone()),
-        })
+        handle
+            .is_pickable_connection_endpoint(role)
+            .then(|| CanvasEndpoint {
+                node_id: node_id.clone(),
+                handle_id: Some(handle_id.clone()),
+            })
     }
 
     fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
@@ -1229,17 +1225,6 @@ impl CanvasEditor {
                 combined
             }
         }
-    }
-}
-
-fn handle_accepts_connection_role(handle: &CanvasHandle, role: ConnectionEndpointRole) -> bool {
-    if handle.hidden || !handle.connectable {
-        return false;
-    }
-
-    match role {
-        ConnectionEndpointRole::Source => handle.role != HandleRole::Target,
-        ConnectionEndpointRole::Target => handle.role != HandleRole::Source,
     }
 }
 

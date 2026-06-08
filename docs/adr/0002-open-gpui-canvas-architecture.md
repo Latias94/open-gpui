@@ -90,10 +90,13 @@ painting, but default hit tests, box selection, endpoint picking, and node trans
 `HitOptions::include_locked` keeps diagnostics and editor-specific inspection tools possible
 without making locked records accidentally interactive.
 Handle visibility and connection roles are enforced before the connect tool creates an edge.
-Hidden or non-connectable handles are omitted from default endpoint hit testing, source-only
-handles cannot be used as targets, and target-only handles cannot be used as sources. Invalid
-handle gestures are ignored at the picking layer rather than allowed to fail later as document
-mutation errors.
+`CanvasConnectionEndpointRole` and `CanvasHandle` helpers centralize endpoint-role semantics so
+built-in tools, custom tools, and rendering adapters do not duplicate source/target rules. Hidden
+or non-connectable handles are omitted from default endpoint hit testing, source-only handles cannot
+be used as targets, and target-only handles cannot be used as sources. Invalid handle gestures are
+ignored at the picking layer rather than allowed to fail later as document mutation errors.
+Connection preview rendering uses the same target-picking semantics to snap to valid hovered
+endpoints while leaving invalid handles as ordinary pointer positions.
 
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
 Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through

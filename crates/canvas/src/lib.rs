@@ -23,11 +23,11 @@ pub use changes::{
 };
 pub use document::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
-    CANVAS_SNAPSHOT_MIGRATIONS, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,
-    CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape,
-    CanvasSnapshot, CanvasSnapshotMigration, CanvasStyle, CanvasTransaction, CanvasValue,
-    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
-    migrate_canvas_snapshot,
+    CANVAS_SNAPSHOT_MIGRATIONS, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff,
+    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasSnapshotMigration, CanvasStyle,
+    CanvasTransaction, CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole,
+    NodeId, ShapeId, migrate_canvas_snapshot,
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use gpui::{
