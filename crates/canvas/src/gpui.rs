@@ -1,8 +1,9 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasViewport,
-    HitOptions, HitTarget, PointerButton, ToolState, connection_hit_options,
+    CanvasKindRegistry, CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasTransformHandle,
+    CanvasTransformTarget, CanvasViewport, HitOptions, HitTarget, PointerButton, ToolState,
+    canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
     Bounds, Canvas, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -234,12 +235,20 @@ pub struct CanvasPaintRecord {
 pub struct CanvasPaintInteractionFrame {
     pub selection_bounds: Option<Bounds<Pixels>>,
     pub connection_preview: Option<CanvasPaintConnectionPreview>,
+    pub transform_handles: Vec<CanvasPaintTransformHandle>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintConnectionPreview {
     pub source_view_position: Point<Pixels>,
     pub target_view_position: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintTransformHandle {
+    pub target: CanvasTransformTarget,
+    pub handle: crate::CanvasResizeHandle,
+    pub view_bounds: Bounds<Pixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -507,6 +516,18 @@ pub fn paint_canvas_frame(
             theme.connection_preview_stroke_width,
         );
     }
+
+    for handle in &frame.interaction.transform_handles {
+        paint_rect(
+            window,
+            canvas_bounds,
+            handle.view_bounds,
+            theme.handle_fill,
+            theme.handle_stroke,
+            theme.handle_stroke_width,
+            theme.handle_corner_radius,
+        );
+    }
 }
 
 fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
@@ -520,13 +541,37 @@ fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
                     .document_bounds_to_view(bounds_from_points(*origin, *current)),
             ),
             connection_preview: None,
+            transform_handles: Vec::new(),
         },
         ToolState::Connecting { source, current } => CanvasPaintInteractionFrame {
             selection_bounds: None,
             connection_preview: connection_preview(model, source, *current),
+            transform_handles: Vec::new(),
         },
-        _ => CanvasPaintInteractionFrame::default(),
+        _ => CanvasPaintInteractionFrame {
+            selection_bounds: None,
+            connection_preview: None,
+            transform_handles: transform_handles_for_model(model),
+        },
     }
+}
+
+fn transform_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintTransformHandle> {
+    canvas_transform_handles(
+        model.document.as_ref(),
+        &model.interaction.selection,
+        model.viewport,
+        Some(model.kind_registry.as_ref()),
+    )
+    .into_iter()
+    .map(|handle: CanvasTransformHandle| CanvasPaintTransformHandle {
+        target: handle.target,
+        handle: handle.handle,
+        view_bounds: model
+            .viewport
+            .document_bounds_to_view(handle.document_bounds),
+    })
+    .collect()
 }
 
 fn connection_preview(
@@ -972,6 +1017,38 @@ mod tests {
         }));
         assert!(frame.records.iter().any(|record| {
             record.target == HitTarget::Node(crate::NodeId::from("plain")) && !record.selected
+        }));
+    }
+
+    #[test]
+    fn selected_records_add_transform_handles_to_paint_frame() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "selected",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("selected"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(frame.interaction.transform_handles.len(), 4);
+        assert!(frame.interaction.transform_handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Node(crate::NodeId::from("selected"))
+                && handle.handle == crate::CanvasResizeHandle::BottomRight
+                && handle.view_bounds.contains(&point(px(50.0), px(30.0)))
         }));
     }
 

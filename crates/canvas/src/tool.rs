@@ -7,7 +7,7 @@ use crate::{
     HitTarget, NodeId, ShapeId, connection_hit_options,
 };
 use indexmap::{IndexMap, IndexSet};
-use open_gpui::{Axis, Bounds, Pixels, Point};
+use open_gpui::{Axis, Bounds, Pixels, Point, Size, px};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt, sync::Arc};
 
@@ -160,6 +160,13 @@ pub enum ToolState {
         constraint_axis: Option<Axis>,
         node_ids: Vec<NodeId>,
     },
+    Resizing {
+        origin: Point<Pixels>,
+        last: Point<Pixels>,
+        handle: CanvasResizeHandle,
+        node_ids: Vec<NodeId>,
+        shape_ids: Vec<ShapeId>,
+    },
     Panning {
         origin: Point<Pixels>,
         last: Point<Pixels>,
@@ -187,6 +194,27 @@ pub enum CanvasZOrderCommand {
     BringForward,
     SendBackward,
     SendToBack,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasResizeHandle {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasTransformTarget {
+    Node(NodeId),
+    Shape(ShapeId),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasTransformHandle {
+    pub target: CanvasTransformTarget,
+    pub handle: CanvasResizeHandle,
+    pub document_bounds: Bounds<Pixels>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -1087,6 +1115,20 @@ impl CanvasEditor {
                 },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
+                if let Some(handle) = self.transform_handle_at(document_position) {
+                    let (node_ids, shape_ids) = self.resizable_selection_ids();
+                    return Ok(vec![
+                        CanvasToolEffect::BeginGesture,
+                        CanvasToolEffect::SetState(ToolState::Resizing {
+                            origin: document_position,
+                            last: document_position,
+                            handle: handle.handle,
+                            node_ids,
+                            shape_ids,
+                        }),
+                    ]);
+                }
+
                 let hit = self
                     .runtime
                     .hit_test(document_position, HitOptions::default())
@@ -1198,6 +1240,32 @@ impl CanvasEditor {
                 ]
             }
             (
+                ToolState::Resizing {
+                    last,
+                    handle,
+                    node_ids,
+                    shape_ids,
+                    origin,
+                },
+                CanvasEvent::PointerMove { position, .. },
+            ) => {
+                let document_position = self.viewport.view_to_document(position);
+                let delta = document_position - *last;
+                let transaction =
+                    self.resize_selection_transaction(*handle, delta, node_ids, shape_ids);
+
+                vec![
+                    CanvasToolEffect::UpdateGesture(transaction),
+                    CanvasToolEffect::SetState(ToolState::Resizing {
+                        origin: *origin,
+                        last: document_position,
+                        handle: *handle,
+                        node_ids: node_ids.clone(),
+                        shape_ids: shape_ids.clone(),
+                    }),
+                ]
+            }
+            (
                 ToolState::Pointing {
                     origin,
                     selection_mode,
@@ -1254,7 +1322,13 @@ impl CanvasEditor {
                     CanvasToolEffect::SetState(ToolState::Idle),
                 ]
             }
-            (ToolState::Translating { .. }, CanvasEvent::Cancel) => {
+            (ToolState::Resizing { .. }, CanvasEvent::PointerUp { .. }) => {
+                vec![
+                    CanvasToolEffect::CommitGesture,
+                    CanvasToolEffect::SetState(ToolState::Idle),
+                ]
+            }
+            (ToolState::Translating { .. } | ToolState::Resizing { .. }, CanvasEvent::Cancel) => {
                 vec![
                     CanvasToolEffect::CancelGesture,
                     CanvasToolEffect::SetState(ToolState::Idle),
@@ -1390,6 +1464,37 @@ impl CanvasEditor {
             .cloned()
     }
 
+    fn transform_handle_at(&self, point: Point<Pixels>) -> Option<CanvasTransformHandle> {
+        canvas_transform_handles(
+            &self.document,
+            &self.selection,
+            self.viewport,
+            Some(self.kind_registry.as_ref()),
+        )
+        .into_iter()
+        .rev()
+        .find(|handle| handle.document_bounds.contains(&point))
+    }
+
+    fn resizable_selection_ids(&self) -> (Vec<NodeId>, Vec<ShapeId>) {
+        let node_ids = self
+            .selection
+            .selected_nodes()
+            .filter_map(|id| self.document.nodes.get(id))
+            .filter(|node| !node.locked && !node.hidden)
+            .map(|node| node.id.clone())
+            .collect();
+        let shape_ids = self
+            .selection
+            .selected_shapes()
+            .filter_map(|id| self.document.shapes.get(id))
+            .filter(|shape| !shape.locked && !shape.hidden)
+            .map(|shape| shape.id.clone())
+            .collect();
+
+        (node_ids, shape_ids)
+    }
+
     fn node_endpoint_at(
         &self,
         point: Point<Pixels>,
@@ -1514,6 +1619,47 @@ impl CanvasEditor {
         CanvasTransaction::new(commands)
     }
 
+    fn resize_selection_transaction(
+        &self,
+        handle: CanvasResizeHandle,
+        delta: Point<Pixels>,
+        node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
+    ) -> CanvasTransaction {
+        if delta.x == Pixels::ZERO && delta.y == Pixels::ZERO {
+            return CanvasTransaction::default();
+        }
+
+        let mut commands = Vec::new();
+        for id in node_ids {
+            let Some(node) = self.document.nodes.get(id) else {
+                continue;
+            };
+            if node.locked {
+                continue;
+            }
+            let mut node = node.clone();
+            let bounds = resize_bounds_by_handle(node.bounds(), handle, delta);
+            node.position = bounds.origin;
+            node.size = bounds.size;
+            commands.push(DocumentCommand::UpdateNode(node));
+        }
+
+        for id in shape_ids {
+            let Some(shape) = self.document.shapes.get(id) else {
+                continue;
+            };
+            if shape.locked {
+                continue;
+            }
+            let mut shape = shape.clone();
+            shape.bounds = resize_bounds_by_handle(shape.bounds, handle, delta);
+            commands.push(DocumentCommand::UpdateShape(shape));
+        }
+
+        CanvasTransaction::new(commands)
+    }
+
     fn apply_paste_transaction(
         &mut self,
         pasted: CanvasPasteTransaction,
@@ -1627,10 +1773,137 @@ impl CanvasEditor {
     }
 }
 
+pub fn canvas_transform_handles(
+    document: &CanvasDocument,
+    selection: &CanvasSelection,
+    viewport: CanvasViewport,
+    kind_registry: Option<&CanvasKindRegistry>,
+) -> Vec<CanvasTransformHandle> {
+    let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+        document,
+        CanvasDefaultEdgeRouter,
+        kind_registry,
+    );
+    let handle_size = transform_handle_document_size(viewport.zoom);
+    let mut handles = Vec::new();
+
+    for id in selection.selected_nodes() {
+        let Some(node) = document.nodes.get(id) else {
+            continue;
+        };
+        if node.locked || node.hidden {
+            continue;
+        }
+        handles.extend(transform_handles_for_bounds(
+            CanvasTransformTarget::Node(node.id.clone()),
+            resolver.node_bounds(node),
+            handle_size,
+        ));
+    }
+
+    for id in selection.selected_shapes() {
+        let Some(shape) = document.shapes.get(id) else {
+            continue;
+        };
+        if shape.locked || shape.hidden {
+            continue;
+        }
+        handles.extend(transform_handles_for_bounds(
+            CanvasTransformTarget::Shape(shape.id.clone()),
+            resolver.shape_bounds(shape),
+            handle_size,
+        ));
+    }
+
+    handles
+}
+
 fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pixels> {
     Bounds::from_corners(
         Point::new(origin.x.min(current.x), origin.y.min(current.y)),
         Point::new(origin.x.max(current.x), origin.y.max(current.y)),
+    )
+}
+
+fn transform_handles_for_bounds(
+    target: CanvasTransformTarget,
+    bounds: Bounds<Pixels>,
+    handle_size: Size<Pixels>,
+) -> Vec<CanvasTransformHandle> {
+    resize_handle_centers(bounds)
+        .into_iter()
+        .map(|(handle, center)| CanvasTransformHandle {
+            target: target.clone(),
+            handle,
+            document_bounds: Bounds::centered_at(center, handle_size),
+        })
+        .collect()
+}
+
+fn resize_handle_centers(bounds: Bounds<Pixels>) -> [(CanvasResizeHandle, Point<Pixels>); 4] {
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = bounds.origin.x + bounds.size.width;
+    let bottom = bounds.origin.y + bounds.size.height;
+    [
+        (CanvasResizeHandle::TopLeft, Point::new(left, top)),
+        (CanvasResizeHandle::TopRight, Point::new(right, top)),
+        (CanvasResizeHandle::BottomLeft, Point::new(left, bottom)),
+        (CanvasResizeHandle::BottomRight, Point::new(right, bottom)),
+    ]
+}
+
+fn transform_handle_document_size(zoom: f32) -> Size<Pixels> {
+    let scale = if zoom.is_finite() && zoom > 0.0 {
+        1.0 / zoom
+    } else {
+        1.0
+    };
+    let edge = px(8.0) * scale;
+    Size::new(edge, edge)
+}
+
+fn resize_bounds_by_handle(
+    bounds: Bounds<Pixels>,
+    handle: CanvasResizeHandle,
+    delta: Point<Pixels>,
+) -> Bounds<Pixels> {
+    let min_size = Size::new(px(8.0), px(8.0));
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = bounds.origin.x + bounds.size.width;
+    let bottom = bounds.origin.y + bounds.size.height;
+
+    let (new_left, new_top, new_right, new_bottom) = match handle {
+        CanvasResizeHandle::TopLeft => (
+            (left + delta.x).min(right - min_size.width),
+            (top + delta.y).min(bottom - min_size.height),
+            right,
+            bottom,
+        ),
+        CanvasResizeHandle::TopRight => (
+            left,
+            (top + delta.y).min(bottom - min_size.height),
+            (right + delta.x).max(left + min_size.width),
+            bottom,
+        ),
+        CanvasResizeHandle::BottomLeft => (
+            (left + delta.x).min(right - min_size.width),
+            top,
+            right,
+            (bottom + delta.y).max(top + min_size.height),
+        ),
+        CanvasResizeHandle::BottomRight => (
+            left,
+            top,
+            (right + delta.x).max(left + min_size.width),
+            (bottom + delta.y).max(top + min_size.height),
+        ),
+    };
+
+    Bounds::from_corners(
+        Point::new(new_left, new_top),
+        Point::new(new_right, new_bottom),
     )
 }
 
@@ -2333,6 +2606,135 @@ mod tests {
 
         assert!(editor.undo().unwrap());
         assert_eq!(editor.document.nodes[&NodeId::from("back")].z_index, 1);
+    }
+
+    #[test]
+    fn canvas_transform_handles_follow_selected_record_bounds() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "node",
+                point(px(10.0), px(20.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(200.0), px(40.0)), size(px(50.0), px(30.0))),
+            ))
+            .unwrap();
+        let mut selection = CanvasSelection::default();
+        selection.nodes.insert(NodeId::from("node"));
+        selection.shapes.insert(ShapeId::from("shape"));
+
+        let handles =
+            canvas_transform_handles(&document, &selection, CanvasViewport::default(), None);
+
+        assert_eq!(handles.len(), 8);
+        assert!(handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Node(NodeId::from("node"))
+                && handle.handle == CanvasResizeHandle::BottomRight
+                && handle
+                    .document_bounds
+                    .contains(&point(px(110.0), px(100.0)))
+        }));
+        assert!(handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Shape(ShapeId::from("shape"))
+                && handle.handle == CanvasResizeHandle::TopLeft
+                && handle.document_bounds.contains(&point(px(200.0), px(40.0)))
+        }));
+    }
+
+    #[test]
+    fn select_tool_resizes_selected_node_with_one_undo_entry() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "node",
+                point(px(10.0), px(20.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("node"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(110.0), px(100.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(130.0), px(125.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(130.0), px(125.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let node = &editor.document.nodes[&NodeId::from("node")];
+        assert_eq!(node.position, point(px(10.0), px(20.0)));
+        assert_eq!(node.size, size(px(120.0), px(105.0)));
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(
+            editor
+                .runtime
+                .hit_test(point(px(128.0), px(123.0)), HitOptions::default())
+                .any(|record| record.target == HitTarget::Node(NodeId::from("node")))
+        );
+
+        assert!(editor.undo().unwrap());
+        let node = &editor.document.nodes[&NodeId::from("node")];
+        assert_eq!(node.size, size(px(100.0), px(80.0)));
+    }
+
+    #[test]
+    fn select_tool_cancel_restores_resize_baseline() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.shapes.insert(ShapeId::from("shape"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(20.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(30.0), px(45.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        assert_eq!(
+            editor.document.shapes[&ShapeId::from("shape")].bounds,
+            Bounds::new(point(px(30.0), px(45.0)), size(px(80.0), px(55.0)))
+        );
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(
+            editor.document.shapes[&ShapeId::from("shape")].bounds,
+            Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)))
+        );
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(matches!(editor.state, ToolState::Idle));
     }
 
     #[test]

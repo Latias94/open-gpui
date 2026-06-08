@@ -41,7 +41,8 @@ pub use geometry::{CanvasViewport, TransformError};
 pub use gpui::{
     CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintFrame, CanvasPaintInteraction,
     CanvasPaintInteractionFrame, CanvasPaintModel, CanvasPaintOptions, CanvasPaintRecord,
-    CanvasPaintTheme, canvas_view, collect_visible_records, paint_canvas_frame,
+    CanvasPaintTheme, CanvasPaintTransformHandle, canvas_view, collect_visible_records,
+    paint_canvas_frame,
 };
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
@@ -78,8 +79,9 @@ pub use schema::{
     CanvasShapeKind,
 };
 pub use tool::{
-    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
-    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
-    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, CanvasZOrderCommand,
-    PointerButton, ToolState,
+    CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasResizeHandle,
+    CanvasSelection, CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect,
+    CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError,
+    CanvasTransformHandle, CanvasTransformTarget, CanvasZOrderCommand, PointerButton, ToolState,
+    canvas_transform_handles,
 };
