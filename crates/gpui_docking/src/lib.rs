@@ -69,6 +69,8 @@ mod drag;
 mod drop_target;
 mod geometry;
 mod graph;
+#[cfg(test)]
+mod graph_floating_tests;
 mod host;
 mod host_debug;
 mod host_interactions;
