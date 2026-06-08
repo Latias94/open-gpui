@@ -92,6 +92,9 @@ Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies thos
 one path for recorded transactions, unrecorded gesture updates, undo commits, selection changes,
 viewport changes, and tool-state changes. This keeps the enum-based MVP simple while giving custom
 tools and future CRDT adapters a stable mutation vocabulary.
+Selection effects include replace, add, remove, toggle, set, and clear operations. This keeps
+multi-select behavior available to custom tools and future modifier-key interactions without
+requiring each tool to mutate `CanvasSelection` directly.
 
 Keyboard input uses the same reducer path as pointer input. `CanvasKey` and `CanvasKeyModifiers`
 keep key events renderer-neutral, while the GPUI adapter maps `KeyDownEvent` into `CanvasEvent`.

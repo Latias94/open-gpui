@@ -130,6 +130,7 @@ stop_conditions:
 | Record operation batches | Done | `CanvasRecordOperation` / `CanvasRecordOperationBatch` wrap record changes with transaction sequence, operation index, origin, and metadata for future Loro, sync, audit, and persistence adapters. |
 | Spatial query trait | Done | `CanvasSpatialIndex` provides an object-safe visitor boundary over query and hit-test traversal so future R-tree, tile, or GPU-assisted indexes can plug in without changing document records. |
 | Keyboard delete interaction | Done | `CanvasKey`, `CanvasKeyModifiers`, GPUI keydown mapping, and select-tool Delete/Backspace transactions give keyboard edits the same undo/persistence/CRDT path as pointer edits. |
+| Incremental selection effects | Done | `CanvasSelection` and `CanvasToolEffect` support add/remove/toggle/contains operations so custom tools and future modifier-key workflows can share one selection mutation path. |
 
 ## Next Implementation Slices
 

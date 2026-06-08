@@ -179,22 +179,54 @@ impl CanvasSelection {
 
     pub fn replace_with(&mut self, target: HitTarget) {
         self.clear();
+        self.insert_target(target);
+    }
+
+    pub fn contains_target(&self, target: &HitTarget) -> bool {
         match target {
-            HitTarget::Node(id) => {
-                self.nodes.insert(id);
-            }
+            HitTarget::Node(id) => self.nodes.contains(id),
+            HitTarget::Handle { node_id, handle_id } => self.handles.contains(&CanvasEndpoint {
+                node_id: node_id.clone(),
+                handle_id: Some(handle_id.clone()),
+            }),
+            HitTarget::Edge(id) => self.edges.contains(id),
+            HitTarget::Shape(id) => self.shapes.contains(id),
+        }
+    }
+
+    pub fn insert_target(&mut self, target: HitTarget) -> bool {
+        match target {
+            HitTarget::Node(id) => self.nodes.insert(id),
+            HitTarget::Handle { node_id, handle_id } => self.handles.insert(CanvasEndpoint {
+                node_id,
+                handle_id: Some(handle_id),
+            }),
+            HitTarget::Edge(id) => self.edges.insert(id),
+            HitTarget::Shape(id) => self.shapes.insert(id),
+        }
+    }
+
+    pub fn remove_target(&mut self, target: &HitTarget) -> bool {
+        match target {
+            HitTarget::Node(id) => self.nodes.shift_remove(id),
             HitTarget::Handle { node_id, handle_id } => {
-                self.handles.insert(CanvasEndpoint {
-                    node_id,
-                    handle_id: Some(handle_id),
-                });
+                self.handles.shift_remove(&CanvasEndpoint {
+                    node_id: node_id.clone(),
+                    handle_id: Some(handle_id.clone()),
+                })
             }
-            HitTarget::Edge(id) => {
-                self.edges.insert(id);
-            }
-            HitTarget::Shape(id) => {
-                self.shapes.insert(id);
-            }
+            HitTarget::Edge(id) => self.edges.shift_remove(id),
+            HitTarget::Shape(id) => self.shapes.shift_remove(id),
+        }
+    }
+
+    pub fn toggle_target(&mut self, target: HitTarget) -> bool {
+        if self.contains_target(&target) {
+            self.remove_target(&target);
+            false
+        } else {
+            self.insert_target(target);
+            true
         }
     }
 
@@ -234,6 +266,9 @@ pub enum CanvasToolEffect {
     SetTool(CanvasTool),
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
+    AddSelection(HitTarget),
+    RemoveSelection(HitTarget),
+    ToggleSelection(HitTarget),
     ClearSelection,
     SetState(ToolState),
     PanViewport(Point<Pixels>),
@@ -521,6 +556,18 @@ impl CanvasEditor {
             }
             CanvasToolEffect::ReplaceSelection(target) => {
                 self.selection.replace_with(target);
+                self.selection.retain_document(&self.document);
+            }
+            CanvasToolEffect::AddSelection(target) => {
+                self.selection.insert_target(target);
+                self.selection.retain_document(&self.document);
+            }
+            CanvasToolEffect::RemoveSelection(target) => {
+                self.selection.remove_target(&target);
+                self.selection.retain_document(&self.document);
+            }
+            CanvasToolEffect::ToggleSelection(target) => {
+                self.selection.toggle_target(target);
                 self.selection.retain_document(&self.document);
             }
             CanvasToolEffect::ClearSelection => {
@@ -1052,7 +1099,7 @@ fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pix
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, CanvasShape};
+    use crate::{CanvasNode, CanvasShape, HandleId};
     use open_gpui::{point, px, size};
 
     #[derive(Default)]
@@ -1108,6 +1155,32 @@ mod tests {
                 }),
             ])
         }
+    }
+
+    #[test]
+    fn canvas_selection_adds_removes_and_toggles_targets() {
+        let mut selection = CanvasSelection::default();
+        let node = HitTarget::Node(NodeId::from("node"));
+        let handle = HitTarget::Handle {
+            node_id: NodeId::from("node"),
+            handle_id: HandleId::from("handle"),
+        };
+        let edge = HitTarget::Edge(EdgeId::from("edge"));
+        let shape = HitTarget::Shape(ShapeId::from("shape"));
+
+        assert!(selection.insert_target(node.clone()));
+        assert!(!selection.insert_target(node.clone()));
+        assert!(selection.contains_target(&node));
+        assert!(!selection.toggle_target(node.clone()));
+        assert!(!selection.contains_target(&node));
+
+        assert!(selection.toggle_target(handle.clone()));
+        assert!(selection.insert_target(edge.clone()));
+        assert!(selection.insert_target(shape.clone()));
+        assert!(selection.contains_target(&handle));
+        assert!(selection.remove_target(&edge));
+        assert!(!selection.contains_target(&edge));
+        assert!(selection.contains_target(&shape));
     }
 
     #[test]
@@ -1973,6 +2046,57 @@ mod tests {
             }
         );
         assert_eq!(editor.viewport.origin, point(px(5.0), px(-3.0)));
+    }
+
+    #[test]
+    fn tool_effects_update_selection_incrementally() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::AddSelection(HitTarget::Node(NodeId::from("a"))),
+                CanvasToolEffect::ToggleSelection(HitTarget::Shape(ShapeId::from("shape"))),
+                CanvasToolEffect::ToggleSelection(HitTarget::Edge(EdgeId::from("a-b"))),
+                CanvasToolEffect::RemoveSelection(HitTarget::Node(NodeId::from("a"))),
+                CanvasToolEffect::ToggleSelection(HitTarget::Shape(ShapeId::from("shape"))),
+                CanvasToolEffect::AddSelection(HitTarget::Node(NodeId::from("missing"))),
+            ])
+            .unwrap();
+
+        assert!(editor.selection.nodes.is_empty());
+        assert!(editor.selection.shapes.is_empty());
+        assert_eq!(
+            editor.selection.edges.iter().cloned().collect::<Vec<_>>(),
+            vec![EdgeId::from("a-b")]
+        );
     }
 
     #[test]
