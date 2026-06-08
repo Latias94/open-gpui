@@ -1,9 +1,9 @@
 use crate::{
     DockItemId, DockPanelCatalog, DockPanelDescriptor,
-    panel_view::{DockPanelViewError, DockPanelViewHandle},
+    panel_view::{DockPanelViewError, DockPanelViewHandle, DockPanelViewStore},
 };
 use open_gpui::{AnyView, App};
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 /// Panel registration for one dock item.
 ///
@@ -89,9 +89,9 @@ impl DockPanel {
 
 /// Render-time registration snapshot for one dock panel.
 ///
-/// This is the narrow shape render code needs: stable metadata plus a lifecycle entry point for
-/// resolving live view content. Keeping render callers on this seam avoids depending on the full
-/// registry storage shape.
+/// This is the narrow shape render code needs for active content: a lifecycle entry point for
+/// resolving live view content. Tab chrome and policy read stable metadata through
+/// [`DockPanelCatalog`].
 #[derive(Debug, Clone)]
 pub(crate) struct DockPanelRenderRegistration {
     view: DockPanelViewHandle,
@@ -218,11 +218,6 @@ pub struct DockPanelRegistry {
     views: DockPanelViewStore,
 }
 
-#[derive(Debug, Default)]
-struct DockPanelViewStore {
-    views: HashMap<DockItemId, DockPanelViewHandle>,
-}
-
 impl DockPanelRegistry {
     /// Creates an empty panel registry.
     pub fn new() -> Self {
@@ -326,20 +321,6 @@ impl DockPanelRegistry {
             self.catalog.descriptor(item)?,
             self.views.view(item)?,
         ))
-    }
-}
-
-impl DockPanelViewStore {
-    fn register(
-        &mut self,
-        item: DockItemId,
-        view: DockPanelViewHandle,
-    ) -> Option<DockPanelViewHandle> {
-        self.views.insert(item, view)
-    }
-
-    fn view(&self, item: &DockItemId) -> Option<DockPanelViewHandle> {
-        self.views.get(item).cloned()
     }
 }
 

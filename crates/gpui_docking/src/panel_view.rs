@@ -1,5 +1,6 @@
+use crate::DockItemId;
 use open_gpui::{AnyView, App};
-use std::{cell::OnceCell, fmt, rc::Rc};
+use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
 use thiserror::Error;
 
 type DockPanelFactory = Rc<dyn Fn(&mut App) -> AnyView>;
@@ -15,6 +16,11 @@ pub enum DockPanelViewError {
 #[derive(Clone)]
 pub(crate) struct DockPanelViewHandle {
     inner: Rc<DockPanelViewLifecycle>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct DockPanelViewStore {
+    views: HashMap<DockItemId, DockPanelViewHandle>,
 }
 
 struct DockPanelViewLifecycle {
@@ -59,6 +65,20 @@ impl DockPanelViewHandle {
 
     pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
         self.inner.resolve_view(cx)
+    }
+}
+
+impl DockPanelViewStore {
+    pub(crate) fn register(
+        &mut self,
+        item: DockItemId,
+        view: DockPanelViewHandle,
+    ) -> Option<DockPanelViewHandle> {
+        self.views.insert(item, view)
+    }
+
+    pub(crate) fn view(&self, item: &DockItemId) -> Option<DockPanelViewHandle> {
+        self.views.get(item).cloned()
     }
 }
 
