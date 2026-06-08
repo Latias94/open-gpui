@@ -19,7 +19,50 @@ use std::{
 pub struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
+    close_gate: DockViewportCloseGate,
+}
+
+#[derive(Clone)]
+struct DockViewportCloseGate {
     close_policy: Rc<Cell<DockViewportClosePolicy>>,
+    known_windows: Rc<RefCell<Vec<WindowId>>>,
+}
+
+impl DockViewportCloseGate {
+    fn new(close_policy: DockViewportClosePolicy) -> Self {
+        Self {
+            close_policy: Rc::new(Cell::new(close_policy)),
+            known_windows: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    fn close_policy(&self) -> DockViewportClosePolicy {
+        self.close_policy.get()
+    }
+
+    fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
+        self.close_policy.set(close_policy);
+    }
+
+    fn sync_adapter(&self, adapter: &DockViewportAdapter) {
+        *self.known_windows.borrow_mut() = adapter
+            .spaces()
+            .into_iter()
+            .filter_map(|space| {
+                adapter
+                    .window_for_space(&space)
+                    .map(|window| window.window_id())
+            })
+            .collect();
+    }
+
+    fn should_allow_close(&self, window_id: WindowId) -> bool {
+        if !self.known_windows.borrow().contains(&window_id) {
+            return true;
+        }
+
+        self.close_policy() != DockViewportClosePolicy::Prevent
+    }
 }
 
 impl DockViewportRuntime {
@@ -36,7 +79,7 @@ impl DockViewportRuntime {
         Self {
             controller,
             adapter: DockViewportAdapter::new(),
-            close_policy: Rc::new(Cell::new(close_policy)),
+            close_gate: DockViewportCloseGate::new(close_policy),
         }
     }
 
@@ -46,10 +89,12 @@ impl DockViewportRuntime {
         adapter: DockViewportAdapter,
         close_policy: DockViewportClosePolicy,
     ) -> Self {
+        let close_gate = DockViewportCloseGate::new(close_policy);
+        close_gate.sync_adapter(&adapter);
         Self {
             controller,
             adapter,
-            close_policy: Rc::new(Cell::new(close_policy)),
+            close_gate,
         }
     }
 
@@ -70,12 +115,12 @@ impl DockViewportRuntime {
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub fn close_policy(&self) -> DockViewportClosePolicy {
-        self.close_policy.get()
+        self.close_gate.close_policy()
     }
 
     /// Replaces the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
-        self.close_policy.set(close_policy);
+        self.close_gate.set_close_policy(close_policy);
     }
 
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
@@ -89,9 +134,9 @@ impl DockViewportRuntime {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        let close_policy = self.close_policy.clone();
-        self.open_viewport_with_should_close(space, options, cx, move |_| {
-            close_policy.get() != DockViewportClosePolicy::Prevent
+        let close_gate = self.close_gate.clone();
+        self.open_viewport_with_should_close(space, options, cx, move |window_id| {
+            close_gate.should_allow_close(window_id)
         })
     }
 
@@ -101,7 +146,9 @@ impl DockViewportRuntime {
     /// Once a closed notification arrives, the platform window is already gone and docking must
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
-        self.adapter.handle_window_closed(window_id)
+        let outcome = self.adapter.handle_window_closed(window_id);
+        self.close_gate.sync_adapter(&self.adapter);
+        outcome
     }
 
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
@@ -120,7 +167,7 @@ impl DockViewportRuntime {
         cx: &mut App,
         should_close: impl Fn(WindowId) -> bool + 'static,
     ) -> Result<DockViewportOpenOutcome> {
-        self.adapter.open_viewport_with_window_setup(
+        let outcome = self.adapter.open_viewport_with_window_setup(
             self.controller.clone(),
             space,
             options,
@@ -129,7 +176,9 @@ impl DockViewportRuntime {
                 let window_id = window.window_handle().window_id();
                 window.on_window_should_close(cx, move |_, _| should_close(window_id));
             },
-        )
+        );
+        self.close_gate.sync_adapter(&self.adapter);
+        outcome
     }
 
     /// Exports serializable placement snapshots from the adapter.

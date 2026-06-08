@@ -278,6 +278,53 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
 }
 
 #[open_gpui::test]
+fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    runtime.set_close_policy(DockViewportClosePolicy::Prevent);
+    assert!(
+        !visual.simulate_close(),
+        "Prevent should veto a close while the window still belongs to a runtime mapping"
+    );
+
+    let cleanup = runtime.handle_window_closed(opened.window.window_id());
+    assert_eq!(cleanup.status, DockViewportCloseStatus::Closed);
+    assert_eq!(runtime.adapter().window_for_space(&secondary_space), None);
+    assert_eq!(
+        runtime
+            .handle_window_should_close(opened.window.window_id())
+            .status,
+        DockViewportShouldCloseStatus::UnknownWindow
+    );
+    assert!(
+        visual.simulate_close(),
+        "Prevent should not veto once docking no longer owns the window mapping"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
