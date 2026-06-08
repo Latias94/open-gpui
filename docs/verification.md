@@ -13,6 +13,24 @@ The gate runs:
 - `cargo check -p open-gpui-smoke-native`
 - `cargo run -p xtask -- scan-import-boundary`
 
+For focused `open-gpui-canvas` work, run:
+
+```sh
+cargo fmt -p open-gpui-canvas
+cargo check -p open-gpui-canvas --benches
+cargo nextest run -p open-gpui-canvas
+cargo check -p open-gpui-smoke-native
+```
+
+The canvas crate also has a large-canvas Criterion baseline:
+
+```sh
+cargo bench -p open-gpui-canvas --bench large_canvas
+```
+
+Use the benchmark to compare spatial-index, visible-query, and paint-frame culling changes. It is
+not part of the default CI gate because benchmark timing is runner-dependent.
+
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:
 
@@ -37,6 +55,13 @@ Before publishing a crate, confirm that the packaged archive carries the expecte
 
 ```sh
 cargo package -p open-gpui --list --allow-dirty
+```
+
+For the canvas crate specifically, run:
+
+```sh
+cargo package -p open-gpui-canvas --list --allow-dirty
+cargo publish -p open-gpui-canvas --dry-run --allow-dirty
 ```
 
 Every published Open GPUI crate should include `README.md`, `LICENSE-APACHE`, and `NOTICE`. Cargo

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/canvas",
     "crates/collections",
     "crates/gpui",
     "crates/gpui_linux",
@@ -42,6 +43,7 @@ publish = false
 
 [workspace.dependencies]
 open_gpui = { package = "open-gpui", version = "0.1.0", path = "crates/gpui", default-features = false }
+open_gpui_canvas = { package = "open-gpui-canvas", version = "0.1.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }
 open_gpui_http_client = { package = "open-gpui-http-client", version = "0.1.0", path = "crates/http_client" }

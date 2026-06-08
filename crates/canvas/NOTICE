@@ -1,0 +1,19 @@
+Open GPUI Canvas
+
+Open GPUI Canvas is part of Open GPUI, an independent fork of the Apache-2.0
+GPUI framework code originally developed in the Zed repository by Zed
+Industries.
+
+Portions derived from Zed GPUI:
+  Copyright 2022 - 2025 Zed Industries, Inc.
+  Licensed under the Apache License, Version 2.0.
+
+Open GPUI modifications and canvas-specific work:
+  Copyright 2026 Mingzhen Zhuang and Open GPUI contributors.
+  Licensed under the Apache License, Version 2.0, unless a file explicitly
+  states otherwise.
+
+The JSON Canvas adapter follows the public JSON Canvas interchange format.
+JSON Canvas and all other third-party dependencies retain their own copyright
+notices and license terms. A release distribution should include the applicable
+third-party notices generated from the resolved dependency graph.
