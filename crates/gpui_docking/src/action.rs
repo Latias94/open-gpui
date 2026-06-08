@@ -344,7 +344,7 @@ impl DockWorkspace {
         space: &DockSpaceId,
         item: &DockItemId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let Some(panel) = self.panels().get(item) else {
+        let Some(panel) = self.panels().descriptor(item) else {
             return Err(DockActionApplyError::PanelNotRegistered { item: item.clone() });
         };
         if !panel.is_closable() {
