@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 use std::collections::HashMap;
 
+#[path = "graph_canonical.rs"]
+mod graph_canonical;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
 #[path = "graph_ops.rs"]
