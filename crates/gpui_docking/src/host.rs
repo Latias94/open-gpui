@@ -1,12 +1,11 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
+#[cfg(test)]
+use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph, DockNodeId,
-    DockPanelRegistry, DockPolicy, DockSpaceId,
-    debug::DockDebugRegion,
-    drop_target::DockDropIntent,
-    interaction::{DockInteractionRuntime, FloatingDrag, SplitterDrag},
-    workspace::DockWorkspace,
+    DockPanelRegistry, DockPolicy, DockSpaceId, debug::DockDebugRegion,
+    drop_target::DockDropIntent, interaction::DockInteractionRuntime, workspace::DockWorkspace,
 };
 use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Point, px};
 
@@ -35,6 +34,10 @@ impl Default for DockHostOptions {
 }
 
 /// Retained GPUI host that renders one logical dock workspace.
+///
+/// `DockHost` is the GPUI render adapter for a dock space. Durable graph state belongs to
+/// [`DockWorkspace`] or [`DockController`], while transient pointer sessions are kept behind the
+/// crate's interaction runtime.
 #[derive(Debug)]
 pub struct DockHost {
     source: DockHostSource,

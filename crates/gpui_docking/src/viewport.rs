@@ -225,6 +225,11 @@ pub enum DockViewportClosePolicy {
     #[default]
     RetainLayout,
     /// Reject the close request and leave the runtime mapping intact.
+    ///
+    /// This policy prevents platform closes only when viewports are opened through
+    /// [`DockViewportRuntime`] or [`DockViewportRuntimeHandle`], which install GPUI
+    /// should-close hooks. Adapter-level cleanup methods can report a veto outcome, but they run
+    /// after the platform close decision has already happened.
     Prevent,
 }
 
@@ -384,6 +389,10 @@ impl DockViewportRuntime {
     }
 
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
+    ///
+    /// Runtime-opened windows install a GPUI should-close hook so
+    /// [`DockViewportClosePolicy::Prevent`] can veto a platform close before
+    /// [`Self::handle_window_closed`] performs post-close cleanup.
     pub fn open_viewport(
         &mut self,
         space: impl Into<DockSpaceId>,
@@ -486,6 +495,9 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Opens or reuses a controller-backed viewport window for a logical dock space.
+    ///
+    /// The handle installs a should-close hook that consults the shared runtime at close time, so
+    /// later close-policy changes are observed by already-open windows.
     pub fn open_viewport(
         &self,
         space: impl Into<DockSpaceId>,
@@ -516,6 +528,9 @@ impl DockViewportRuntimeHandle {
 
     /// Registers an application-level close observer that cleans up viewport mappings by
     /// [`WindowId`].
+    ///
+    /// This observer runs after a close has been accepted. It complements the should-close hook
+    /// installed by [`Self::open_viewport`].
     ///
     /// Keep or detach the returned subscription according to the application's lifetime policy.
     pub fn observe_window_closed(&self, cx: &mut App) -> Subscription {
@@ -1091,6 +1106,7 @@ impl DockViewportAdapter {
     }
 
     /// Resolves a tab release using explicit viewport target arbitration inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_tear_off_request_with_context(
         &self,
         source_space: impl Into<DockSpaceId>,

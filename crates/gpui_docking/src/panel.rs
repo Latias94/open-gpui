@@ -35,7 +35,11 @@ impl DockPanelDescriptor {
     }
 }
 
-/// Renderable content and metadata for one dock item.
+/// Panel registration for one dock item.
+///
+/// Metadata is available through [`DockPanelDescriptor`] without instantiating lazy GPUI views.
+/// Live view creation and caching stay behind this registration and outside graph/layout
+/// persistence.
 pub struct DockPanel {
     inner: Rc<DockPanelInner>,
 }

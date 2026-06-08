@@ -1,7 +1,7 @@
 ---
 title: "refactor: Deepen docking lifecycle seams"
 type: refactor
-status: active
+status: completed
 date: 2026-06-08
 ---
 

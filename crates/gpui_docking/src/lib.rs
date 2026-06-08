@@ -6,8 +6,10 @@
 //! - [`DockLayout`] serializes that graph state without views or platform-window handles.
 //! - [`DockController`] owns a mutable [`DockWorkspace`] and is the preferred shared owner for
 //!   rendered hosts.
-//! - [`DockHost`] renders one logical [`DockSpaceId`] and forwards UI actions to either its owned
-//!   workspace or a shared controller.
+//! - [`DockHost`] renders one logical [`DockSpaceId`], with transient splitter, floating, and
+//!   drop-preview sessions kept in the crate's interaction runtime.
+//! - [`DockPanelRegistry`] maps item ids to [`DockPanelDescriptor`] metadata and GPUI view
+//!   lifecycle state without storing either in the graph.
 //! - [`DockViewportAdapter`] stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
 //! - [`DockViewportRuntime`] owns the controller-backed viewport lifecycle while
@@ -20,10 +22,12 @@
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockController`] as the graph and panel owner, wrap
 //! it in a [`DockViewportRuntimeHandle`], open controller-backed viewport windows through the
-//! runtime, and install [`DockViewportRuntimeHandle::observe_window_closed`] to clean up callbacks
-//! that report a [`WindowId`](open_gpui::WindowId). Persist [`DockLayout`] and
+//! runtime, and install [`DockViewportRuntimeHandle::observe_window_closed`] for post-close cleanup.
+//! Runtime-opened windows install a should-close hook so [`DockViewportClosePolicy::Prevent`] can
+//! veto platform closes before cleanup runs. Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
-//! restores platform-window hints for the runtime adapter.
+//! restores platform-window hints for the runtime adapter. Use [`DockViewportTargetContext`] when
+//! cross-window drops need active, hovered, or front-to-back window arbitration.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, Context};
