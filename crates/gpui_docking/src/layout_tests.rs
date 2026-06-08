@@ -197,6 +197,58 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
 }
 
 #[test]
+fn layout_validation_rejects_shared_and_unreachable_nodes() {
+    let shared_child = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![
+            DockLayoutNode::Split {
+                id: 1,
+                axis: SplitAxis::Horizontal,
+                children: vec![2, 2],
+                fractions: vec![0.5, 0.5],
+            },
+            DockLayoutNode::Tabs {
+                id: 2,
+                items: vec![item("a")],
+                active: 0,
+            },
+        ],
+    );
+    assert_eq!(
+        shared_child.validate(),
+        Err(DockLayoutValidationError::DuplicateNodeReference { id: 2 })
+    );
+
+    let unreachable = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+        }],
+        vec![
+            DockLayoutNode::Tabs {
+                id: 1,
+                items: vec![item("a")],
+                active: 0,
+            },
+            DockLayoutNode::Tabs {
+                id: 2,
+                items: vec![item("unused")],
+                active: 0,
+            },
+        ],
+    );
+    assert_eq!(
+        unreachable.validate(),
+        Err(DockLayoutValidationError::UnreachableNodeId { id: 2 })
+    );
+}
+
+#[test]
 fn builder_default_editor_layout_sets_root_and_roundtrips() {
     let spec = EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]);
     let graph = DockGraph::default_editor_layout(space(), spec);

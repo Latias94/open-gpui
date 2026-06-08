@@ -3,7 +3,7 @@ use crate::{
     dock_bounds,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use thiserror::Error;
 
 /// Current docking layout serialization version.
@@ -126,6 +126,8 @@ impl DockLayout {
                 }
             }
         }
+
+        validate_forest_ownership(&by_id, &self.spaces)?;
 
         Ok(())
     }
@@ -316,6 +318,18 @@ pub enum DockLayoutValidationError {
         space: DockSpaceId,
         /// Missing root id.
         root: u32,
+    },
+    /// A layout node is reachable from more than one parent/root.
+    #[error("dock layout node {id} is referenced more than once")]
+    DuplicateNodeReference {
+        /// Shared node id.
+        id: u32,
+    },
+    /// A layout node is not reachable from any dock space root or floating root.
+    #[error("dock layout node {id} is not reachable from any dock space")]
+    UnreachableNodeId {
+        /// Unreachable node id.
+        id: u32,
     },
 }
 
@@ -532,6 +546,47 @@ fn detect_cycles(by_id: &HashMap<u32, &DockLayoutNode>) -> Result<(), DockLayout
                     marks.insert(id, Mark::Done);
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_forest_ownership(
+    by_id: &HashMap<u32, &DockLayoutNode>,
+    spaces: &[DockLayoutSpace],
+) -> Result<(), DockLayoutValidationError> {
+    let mut seen = HashSet::new();
+    for root in spaces.iter().filter_map(|space| space.root).chain(
+        spaces
+            .iter()
+            .flat_map(|space| space.floatings.iter().map(|floating| floating.root)),
+    ) {
+        mark_reachable_once(root, by_id, &mut seen)?;
+    }
+
+    for id in by_id.keys().copied() {
+        if !seen.contains(&id) {
+            return Err(DockLayoutValidationError::UnreachableNodeId { id });
+        }
+    }
+
+    Ok(())
+}
+
+fn mark_reachable_once(
+    root: u32,
+    by_id: &HashMap<u32, &DockLayoutNode>,
+    seen: &mut HashSet<u32>,
+) -> Result<(), DockLayoutValidationError> {
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            return Err(DockLayoutValidationError::DuplicateNodeReference { id });
+        }
+
+        if let Some(DockLayoutNode::Split { children, .. }) = by_id.get(&id) {
+            stack.extend(children.iter().rev().copied());
         }
     }
 
