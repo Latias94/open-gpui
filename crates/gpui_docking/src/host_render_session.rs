@@ -64,10 +64,8 @@ impl DockHostRenderSession {
                     self.collect_subtree(workspace, *child);
                 }
             }
-            DockNode::Tabs { items, .. } => {
-                for item in items {
-                    self.collect_panel(workspace, item);
-                }
+            DockNode::Tabs { items, active } => {
+                self.collect_tab_stack(workspace, items, *active);
             }
             DockNode::Floating { child } => {
                 self.collect_subtree(workspace, *child);
@@ -77,19 +75,43 @@ impl DockHostRenderSession {
         self.nodes.insert(node_id, node);
     }
 
-    fn collect_panel(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
+    fn collect_tab_stack(
+        &mut self,
+        workspace: &DockWorkspace,
+        items: &[DockItemId],
+        active: usize,
+    ) {
+        for item in items {
+            self.collect_panel_title(workspace, item);
+        }
+
+        if let Some(active_item) = active_tab_item(items, active) {
+            self.collect_panel_registration(workspace, active_item);
+        }
+    }
+
+    fn collect_panel_title(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
         if self.panel_titles.contains_key(item) {
             return;
         }
 
-        let title = if let Some(registration) = workspace.panels().render_registration(item) {
-            let title = registration.title().to_string();
-            self.panels.insert(item.clone(), registration);
-            title
-        } else {
-            item.to_string()
-        };
+        let title = workspace
+            .panels()
+            .catalog()
+            .descriptor(item)
+            .map(|descriptor| descriptor.title().to_string())
+            .unwrap_or_else(|| item.to_string());
         self.panel_titles.insert(item.clone(), title);
+    }
+
+    fn collect_panel_registration(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
+        if self.panels.contains_key(item) {
+            return;
+        }
+
+        if let Some(registration) = workspace.panels().render_registration(item) {
+            self.panels.insert(item.clone(), registration);
+        }
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
@@ -146,5 +168,31 @@ impl DockHost {
     pub(crate) fn render_session(&self, cx: &Context<Self>) -> DockHostRenderSession {
         let space = self.space().clone();
         self.with_workspace(cx, |workspace| DockHostRenderSession::new(space, workspace))
+    }
+}
+
+fn active_tab_item(items: &[DockItemId], active: usize) -> Option<&DockItemId> {
+    let active = active.min(items.len().checked_sub(1)?);
+    items.get(active)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host_test_support::{item, space, tabs_graph};
+
+    #[test]
+    fn render_session_keeps_inactive_panel_views_out_of_snapshot() {
+        let (graph, _root) = tabs_graph(&["active", "inactive"], 0);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.register_panel_factory("active", "Active", |_| unreachable!());
+        workspace.register_panel_factory("inactive", "Inactive", |_| unreachable!());
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert_eq!(session.panel_title(&item("active")), "Active");
+        assert_eq!(session.panel_title(&item("inactive")), "Inactive");
+        assert!(session.panels.contains_key(&item("active")));
+        assert!(!session.panels.contains_key(&item("inactive")));
     }
 }

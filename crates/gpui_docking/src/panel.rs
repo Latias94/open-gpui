@@ -139,10 +139,6 @@ impl DockPanelRenderRegistration {
         Self { entry }
     }
 
-    pub(crate) fn title(&self) -> &str {
-        self.entry.title()
-    }
-
     pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
         self.entry.resolve_view(cx)
     }
@@ -253,8 +249,14 @@ pub struct DockPanelRegistry {
     views: DockPanelViewStore,
 }
 
+/// Descriptor-only catalog for registered dock panels.
+///
+/// This catalog is the metadata seam for restore, policy, and tab chrome paths that must not touch
+/// GPUI view lifecycle state. Rendering can still resolve live views through
+/// [`DockPanelRegistry`], but callers that only need titles or close policy should read this
+/// catalog instead.
 #[derive(Debug, Default)]
-struct DockPanelCatalog {
+pub struct DockPanelCatalog {
     descriptors: HashMap<DockItemId, DockPanelDescriptor>,
 }
 
@@ -306,9 +308,14 @@ impl DockPanelRegistry {
         self.entry_snapshot(item).map(DockPanelRegistration::new)
     }
 
+    /// Returns descriptor-only panel metadata.
+    pub fn catalog(&self) -> &DockPanelCatalog {
+        &self.catalog
+    }
+
     /// Returns panel metadata without instantiating or exposing a live view.
     pub fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
-        self.catalog.descriptor(item)
+        self.catalog().descriptor(item)
     }
 
     pub(crate) fn render_registration(
@@ -328,17 +335,17 @@ impl DockPanelRegistry {
 
     /// Returns true when a dock item has registered content.
     pub fn contains(&self, item: &DockItemId) -> bool {
-        self.catalog.contains(item)
+        self.catalog().contains(item)
     }
 
     /// Returns the number of registered panels.
     pub fn len(&self) -> usize {
-        self.catalog.len()
+        self.catalog().len()
     }
 
     /// Returns true when no panels are registered.
     pub fn is_empty(&self) -> bool {
-        self.catalog.is_empty()
+        self.catalog().is_empty()
     }
 
     fn entry_snapshot(&self, item: &DockItemId) -> Option<DockPanelEntrySnapshot> {
@@ -358,19 +365,23 @@ impl DockPanelCatalog {
         self.descriptors.insert(item, descriptor)
     }
 
-    fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
+    /// Returns panel metadata without instantiating or exposing a live view.
+    pub fn descriptor(&self, item: &DockItemId) -> Option<&DockPanelDescriptor> {
         self.descriptors.get(item)
     }
 
-    fn contains(&self, item: &DockItemId) -> bool {
+    /// Returns true when a dock item has registered metadata.
+    pub fn contains(&self, item: &DockItemId) -> bool {
         self.descriptors.contains_key(item)
     }
 
-    fn len(&self) -> usize {
+    /// Returns the number of registered panel descriptors.
+    pub fn len(&self) -> usize {
         self.descriptors.len()
     }
 
-    fn is_empty(&self) -> bool {
+    /// Returns true when no panel descriptors are registered.
+    pub fn is_empty(&self) -> bool {
         self.descriptors.is_empty()
     }
 }

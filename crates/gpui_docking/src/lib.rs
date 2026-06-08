@@ -10,6 +10,8 @@
 //!   drop-preview sessions kept in the crate's interaction runtime.
 //! - [`DockPanelRegistry`] maps item ids to [`DockPanelDescriptor`] metadata and GPUI view
 //!   lifecycle state without storing either in the graph.
+//! - [`DockPanelCatalog`] exposes descriptor-only metadata for policy, restore, and tab chrome
+//!   paths that should not touch live GPUI view state.
 //! - [`DockViewportAdapter`] stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
 //! - [`DockViewportRuntime`] owns the controller-backed viewport lifecycle while
