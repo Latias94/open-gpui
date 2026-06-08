@@ -1,9 +1,8 @@
 use crate::{
     DockAction, DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId,
-    DockPanelResolution, DropZone, SplitAxis,
+    DockPanelResolution, SplitAxis,
     debug::DockDebugRegion,
     drag::{DockTabDragPayload, DockTabDragPreview},
-    drop_target::{self, DockDropResolution},
     geometry, splitter,
 };
 use open_gpui::{
@@ -564,36 +563,14 @@ impl DockHost {
             .bg(white())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                    let mut intent = drop_target::resolve_tabs_drop(
-                        node,
-                        event.bounds,
-                        event.event.position,
-                        &this.with_workspace(cx, |workspace| *workspace.policy()),
-                    )
-                    .and_then(DockDropResolution::intent);
-                    if let Some(existing) = this.tab_drop_intent()
-                        && existing.target_tabs == node
-                        && existing.insert_index.is_some()
-                        && existing.preview_bounds.contains(&event.event.position)
-                        && intent.as_ref().is_some_and(|intent| {
-                            intent.target_tabs == node && intent.zone == DropZone::Center
-                        })
-                    {
-                        intent = Some(existing);
-                    }
-                    if this.tab_drop_intent() != intent {
-                        this.set_tab_drop_intent(intent);
+                    if this.update_tabs_drop_intent(node, event.bounds, event.event.position, cx) {
                         cx.notify();
                     }
                 },
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
-                    let Some(intent) = this
-                        .tab_drop_intent()
-                        .filter(|intent| intent.target_tabs == node)
-                    else {
-                        this.clear_tab_drop_intent();
+                    let Some(intent) = this.take_tab_drop_intent(node) else {
                         cx.notify();
                         return;
                     };
@@ -611,7 +588,6 @@ impl DockHost {
                         .apply_action_from_host(&action, cx)
                         .map(|outcome| outcome.changed())
                         .unwrap_or(false);
-                    this.clear_tab_drop_intent();
                     if changed {
                         cx.notify();
                     }
@@ -688,18 +664,13 @@ impl DockHost {
                 }))
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                        let Some(resolution) = drop_target::resolve_tab_reorder_drop(
+                        if this.update_tab_reorder_drop_intent(
                             node,
                             target_index,
                             event.bounds,
                             event.event.position,
-                            &this.with_workspace(cx, |workspace| *workspace.policy()),
-                        ) else {
-                            return;
-                        };
-                        let intent = resolution.intent();
-                        if this.tab_drop_intent() != intent {
-                            this.set_tab_drop_intent(intent);
+                            cx,
+                        ) {
                             cx.notify();
                         }
                     },
@@ -720,13 +691,7 @@ impl DockHost {
     }
 
     fn render_drop_preview(&mut self, node: DockNodeId) -> Option<AnyElement> {
-        let intent = self
-            .tab_drop_intent()
-            .filter(|intent| intent.target_tabs == node)?;
-        if intent.insert_index.is_some() {
-            return None;
-        }
-        let bounds = intent.preview_bounds;
+        let bounds = self.tab_drop_preview_bounds(node)?;
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview { tabs: node },
             format!(

@@ -323,16 +323,48 @@ impl DockHost {
         self.interaction.finish_floating_drag();
     }
 
-    pub(crate) fn set_tab_drop_intent(&mut self, intent: Option<DockDropIntent>) {
-        self.interaction.set_tab_drop_intent(intent);
+    pub(crate) fn update_tabs_drop_intent(
+        &mut self,
+        target_tabs: DockNodeId,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        cx: &Context<Self>,
+    ) -> bool {
+        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
+        self.interaction
+            .update_tabs_drop_intent(target_tabs, bounds, position, &policy)
     }
 
-    pub(crate) fn tab_drop_intent(&self) -> Option<DockDropIntent> {
-        self.interaction.tab_drop_intent()
+    pub(crate) fn update_tab_reorder_drop_intent(
+        &mut self,
+        target_tabs: DockNodeId,
+        target_index: usize,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        cx: &Context<Self>,
+    ) -> bool {
+        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
+        self.interaction.update_tab_reorder_drop_intent(
+            target_tabs,
+            target_index,
+            bounds,
+            position,
+            &policy,
+        )
     }
 
-    pub(crate) fn clear_tab_drop_intent(&mut self) {
-        self.interaction.clear_tab_drop_intent();
+    pub(crate) fn take_tab_drop_intent(
+        &mut self,
+        target_tabs: DockNodeId,
+    ) -> Option<DockDropIntent> {
+        self.interaction.take_tab_drop_intent(target_tabs)
+    }
+
+    pub(crate) fn tab_drop_preview_bounds(
+        &self,
+        target_tabs: DockNodeId,
+    ) -> Option<Bounds<Pixels>> {
+        self.interaction.tab_drop_preview_bounds(target_tabs)
     }
 
     #[cfg(test)]
