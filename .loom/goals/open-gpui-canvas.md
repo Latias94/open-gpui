@@ -125,6 +125,7 @@ stop_conditions:
 | Persistence byte codec boundary | Done | `CanvasPersistenceCodec`, `CanvasJsonPersistenceCodec`, `CanvasPersistenceByteStore`, and `CanvasPersistenceByteStoreAdapter` separate typed checkpoint/log records from encoded bytes before redb/rkyv adapters land. |
 | Persistent undo/redo helpers | Done | `undo_persistent_transaction` and `redo_persistent_transaction` append replayable history transactions before mutating the editor so persistence failures do not desynchronize memory from the log. |
 | Persistence module split | Done | Persistence codec, byte-store adapter, typed store helpers, memory stores, and tests are split into submodules while preserving the crate root public exports. |
+| Record change view | Done | `CanvasRecord` / `CanvasRecordChange` and transaction helpers expose ordered upsert/delete record changes for future Loro, sync, audit, and indexing adapters without replacing command replay. |
 
 ## Next Implementation Slices
 

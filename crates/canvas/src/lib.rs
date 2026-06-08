@@ -4,6 +4,7 @@
 //! nodes, edges, shapes, handles, viewport transforms, hit testing, and tool state
 //! transitions without committing to one GPUI element per canvas object.
 
+mod changes;
 mod document;
 mod geometry;
 mod gpui;
@@ -16,6 +17,7 @@ mod routing;
 mod test_support;
 mod tool;
 
+pub use changes::{CanvasRecord, CanvasRecordChange};
 pub use document::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
     CANVAS_SNAPSHOT_MIGRATIONS, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,

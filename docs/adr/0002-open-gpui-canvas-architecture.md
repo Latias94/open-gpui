@@ -142,6 +142,13 @@ preserves document edge order, deduplicates self-loop incident edges, and can ap
 `edges` data model while giving xyflow-style graph applications a scalable query path without
 putting hidden cache state inside `CanvasDocument`.
 
+Document transactions also expose a record-level view for adapters. `DocumentCommand::record_id`,
+`DocumentCommand::record_change`, `CanvasTransaction::record_ids`, and
+`CanvasTransaction::record_changes` translate the canonical command stream into ordered
+`CanvasRecordChange::Upsert` and `CanvasRecordChange::Delete` values. This is not a replacement for
+transaction replay; it is a stable input shape for future Loro, audit-log, remote-sync, or indexing
+adapters that need record semantics without matching every command variant themselves.
+
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
 after a checkpoint sequence, and compact entries once a newer checkpoint is durable. Replay rejects

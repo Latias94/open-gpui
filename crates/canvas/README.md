@@ -106,6 +106,23 @@ fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
 The index is an application-owned cache. It preserves document edge order, deduplicates self-loop
 incident edges, and can apply diffs without changing document serialization.
 
+## Inspect Record Changes
+
+`DocumentCommand` remains the canonical mutation vocabulary. For sync, audit, or CRDT adapters,
+commands and transactions can also be viewed as ordered record-level changes.
+
+```rust
+use open_gpui_canvas::{CanvasRecordChange, CanvasTransaction};
+
+fn inspect(transaction: &CanvasTransaction) {
+    for change in transaction.record_changes() {
+        let id = change.id();
+        let is_delete = matches!(change, CanvasRecordChange::Delete(_));
+        let _ = (id, is_delete);
+    }
+}
+```
+
 ## Route Edges
 
 `CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns that intent into
