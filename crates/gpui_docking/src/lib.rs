@@ -66,6 +66,8 @@ mod drop_target;
 mod geometry;
 mod graph;
 mod host;
+mod host_debug;
+mod host_interactions;
 mod host_render_actions;
 mod host_render_session;
 mod ids;
