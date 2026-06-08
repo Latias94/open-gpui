@@ -60,6 +60,8 @@
 mod action;
 mod builder;
 mod controller;
+#[cfg(test)]
+mod controller_builder_tests;
 mod debug;
 #[cfg(test)]
 mod dock_op_fixture_tests;
