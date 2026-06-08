@@ -8,8 +8,9 @@ use open_gpui_canvas::{
     CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasInputMapper, CanvasKindRegistry, CanvasNode,
     CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection,
     CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand, DocumentError,
-    HandleRole, NodeId, PointerButton, paint_canvas_frame, prepaint_canvas_frame,
+    CanvasToolRegistry, CanvasTransaction, CanvasWidgetOverlayOptions, CanvasZOrderCommand,
+    DocumentCommand, DocumentError, HandleRole, NodeId, PointerButton, paint_canvas_frame,
+    prepaint_canvas_frame,
 };
 use open_gpui_platform::application;
 
@@ -183,6 +184,8 @@ impl Render for SmokeView {
                             }
                         });
 
+                        let _overlay_frame = frame
+                            .widget_overlay_frame(CanvasWidgetOverlayOptions::selected_nodes());
                         paint_canvas_frame(bounds, &paint_model, &frame, theme, window, cx);
                     },
                 )

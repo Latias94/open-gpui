@@ -228,6 +228,15 @@ pub struct CanvasPaintFrame {
     pub interaction: CanvasPaintInteractionFrame,
 }
 
+impl CanvasPaintFrame {
+    pub fn widget_overlay_frame(
+        &self,
+        options: CanvasWidgetOverlayOptions,
+    ) -> CanvasWidgetOverlayFrame {
+        collect_widget_overlay_frame(self, options)
+    }
+}
+
 #[derive(Debug)]
 pub struct CanvasPreparedPaintFrame {
     frame: CanvasPaintFrame,
@@ -256,6 +265,13 @@ impl CanvasPreparedPaintFrame {
         self.label_indices
             .get(record_index)
             .is_some_and(Option::is_some)
+    }
+
+    pub fn widget_overlay_frame(
+        &self,
+        options: CanvasWidgetOverlayOptions,
+    ) -> CanvasWidgetOverlayFrame {
+        self.frame.widget_overlay_frame(options)
     }
 }
 
@@ -312,6 +328,78 @@ pub struct CanvasPaintSnapGuide {
     pub axis: CanvasSnapAxis,
     pub view_start: Point<Pixels>,
     pub view_end: Point<Pixels>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanvasWidgetOverlayFrame {
+    pub placements: Vec<CanvasWidgetOverlayPlacement>,
+}
+
+impl CanvasWidgetOverlayFrame {
+    pub fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.placements.len()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasWidgetOverlayPlacement {
+    pub target: HitTarget,
+    pub document_bounds: Bounds<Pixels>,
+    pub view_bounds: Bounds<Pixels>,
+    pub z_index: i32,
+    pub hit_priority: CanvasWidgetOverlayHitPriority,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CanvasWidgetOverlayOptions {
+    pub include_selected_nodes: bool,
+    pub include_selected_shapes: bool,
+    pub include_hidden: bool,
+    pub include_locked: bool,
+    pub hit_priority: CanvasWidgetOverlayHitPriority,
+}
+
+impl CanvasWidgetOverlayOptions {
+    pub fn selected_nodes() -> Self {
+        Self {
+            include_selected_nodes: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn selected_records() -> Self {
+        Self {
+            include_selected_nodes: true,
+            include_selected_shapes: true,
+            ..Self::default()
+        }
+    }
+
+    pub fn with_locked(mut self, include_locked: bool) -> Self {
+        self.include_locked = include_locked;
+        self
+    }
+
+    pub fn with_hidden(mut self, include_hidden: bool) -> Self {
+        self.include_hidden = include_hidden;
+        self
+    }
+
+    pub fn with_hit_priority(mut self, hit_priority: CanvasWidgetOverlayHitPriority) -> Self {
+        self.hit_priority = hit_priority;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CanvasWidgetOverlayHitPriority {
+    CanvasFirst,
+    #[default]
+    WidgetFirst,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -456,6 +544,26 @@ pub fn collect_visible_records(
             CanvasPaintInteractionFrame::default()
         },
     }
+}
+
+pub fn collect_widget_overlay_frame(
+    frame: &CanvasPaintFrame,
+    options: CanvasWidgetOverlayOptions,
+) -> CanvasWidgetOverlayFrame {
+    let placements = frame
+        .records
+        .iter()
+        .filter(|record| record_requests_widget_overlay(record, options))
+        .map(|record| CanvasWidgetOverlayPlacement {
+            target: record.target.clone(),
+            document_bounds: record.document_bounds,
+            view_bounds: record.view_bounds,
+            z_index: record.z_index,
+            hit_priority: options.hit_priority,
+        })
+        .collect();
+
+    CanvasWidgetOverlayFrame { placements }
 }
 
 pub fn prepaint_canvas_frame(
@@ -768,6 +876,24 @@ fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
         }),
         HitTarget::Edge(id) => selection.edges.contains(id),
         HitTarget::Shape(id) => selection.shapes.contains(id),
+    }
+}
+
+fn record_requests_widget_overlay(
+    record: &CanvasPaintRecord,
+    options: CanvasWidgetOverlayOptions,
+) -> bool {
+    if !record.selected
+        || (record.hidden && !options.include_hidden)
+        || (record.locked && !options.include_locked)
+    {
+        return false;
+    }
+
+    match &record.target {
+        HitTarget::Node(_) => options.include_selected_nodes,
+        HitTarget::Shape(_) => options.include_selected_shapes,
+        HitTarget::Edge(_) | HitTarget::Handle { .. } => false,
     }
 }
 
@@ -1687,6 +1813,135 @@ mod tests {
         assert!(frame.records.iter().any(|record| {
             record.target == HitTarget::Node(crate::NodeId::from("plain")) && !record.selected
         }));
+    }
+
+    #[test]
+    fn widget_overlay_frame_uses_selected_visible_record_placements() {
+        let mut selected = CanvasNode::new(
+            "selected",
+            point(px(10.0), px(10.0)),
+            size(px(40.0), px(20.0)),
+        );
+        selected.z_index = 5;
+        let mut locked = CanvasNode::new(
+            "locked",
+            point(px(70.0), px(10.0)),
+            size(px(40.0), px(20.0)),
+        );
+        locked.locked = true;
+        let mut hidden = CanvasNode::new(
+            "hidden",
+            point(px(130.0), px(10.0)),
+            size(px(40.0), px(20.0)),
+        );
+        hidden.hidden = true;
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(10.0), px(60.0)), size(px(60.0), px(30.0))),
+        );
+        shape.z_index = 4;
+
+        let mut document = CanvasDocument::default();
+        document.insert_node(selected).unwrap();
+        document.insert_node(locked).unwrap();
+        document.insert_node(hidden).unwrap();
+        document.insert_shape(shape).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::AddSelection(HitTarget::Node(crate::NodeId::from("selected"))),
+                CanvasToolEffect::AddSelection(HitTarget::Node(crate::NodeId::from("locked"))),
+                CanvasToolEffect::AddSelection(HitTarget::Node(crate::NodeId::from("hidden"))),
+                CanvasToolEffect::AddSelection(HitTarget::Shape(crate::ShapeId::from("shape"))),
+            ])
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(120.0))),
+            CanvasPaintOptions {
+                include_hidden: true,
+                ..CanvasPaintOptions::default()
+            },
+        );
+
+        let overlay = frame.widget_overlay_frame(
+            CanvasWidgetOverlayOptions::selected_records()
+                .with_hit_priority(CanvasWidgetOverlayHitPriority::CanvasFirst),
+        );
+
+        assert_eq!(overlay.len(), 2);
+        assert_eq!(
+            overlay.placements[0],
+            CanvasWidgetOverlayPlacement {
+                target: HitTarget::Shape(crate::ShapeId::from("shape")),
+                document_bounds: Bounds::new(point(px(10.0), px(60.0)), size(px(60.0), px(30.0))),
+                view_bounds: Bounds::new(point(px(10.0), px(60.0)), size(px(60.0), px(30.0))),
+                z_index: 4,
+                hit_priority: CanvasWidgetOverlayHitPriority::CanvasFirst,
+            }
+        );
+        assert_eq!(
+            overlay.placements[1],
+            CanvasWidgetOverlayPlacement {
+                target: HitTarget::Node(crate::NodeId::from("selected")),
+                document_bounds: Bounds::new(point(px(10.0), px(10.0)), size(px(40.0), px(20.0))),
+                view_bounds: Bounds::new(point(px(10.0), px(10.0)), size(px(40.0), px(20.0))),
+                z_index: 5,
+                hit_priority: CanvasWidgetOverlayHitPriority::CanvasFirst,
+            }
+        );
+
+        let including_locked = frame.widget_overlay_frame(
+            CanvasWidgetOverlayOptions::selected_nodes()
+                .with_locked(true)
+                .with_hit_priority(CanvasWidgetOverlayHitPriority::WidgetFirst),
+        );
+        assert_eq!(including_locked.len(), 2);
+        assert!(including_locked.placements.iter().any(|placement| {
+            placement.target == HitTarget::Node(crate::NodeId::from("locked"))
+                && placement.hit_priority == CanvasWidgetOverlayHitPriority::WidgetFirst
+        }));
+    }
+
+    #[test]
+    fn widget_overlay_bounds_come_from_paint_frame_geometry() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("wide", point(px(10.0), px(10.0)), size(px(20.0), px(20.0)));
+        node.kind = "wide".to_string();
+        document.insert_node(node).unwrap();
+        let mut editor =
+            CanvasEditor::try_new_with_kind_registry(document, geometry_registry()).unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("wide"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+        let paint_record = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Node(crate::NodeId::from("wide")))
+            .unwrap();
+
+        let overlay =
+            collect_widget_overlay_frame(&frame, CanvasWidgetOverlayOptions::selected_nodes());
+
+        assert_eq!(overlay.len(), 1);
+        assert_eq!(
+            overlay.placements[0].document_bounds,
+            paint_record.document_bounds
+        );
+        assert_eq!(overlay.placements[0].view_bounds, paint_record.view_bounds);
+        assert_eq!(
+            overlay.placements[0].document_bounds,
+            Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
+        );
     }
 
     #[test]

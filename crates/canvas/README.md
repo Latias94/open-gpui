@@ -371,6 +371,26 @@ fn view(document: open_gpui_canvas::CanvasDocument) {
 Applications may still layer selected node widgets or text editors on top of this batched base
 renderer. The core path does not require one GPUI element per canvas record.
 
+For rich node content, derive a sparse widget overlay frame from the same paint frame instead of
+querying the document a second time. Overlay placements carry only target identity, document/view
+bounds, z-order, and hit priority; application widget state stays outside the canvas document.
+
+```rust
+use open_gpui_canvas::{
+    CanvasPaintFrame, CanvasWidgetOverlayOptions, CanvasWidgetOverlayPlacement,
+};
+
+fn selected_note_widgets(frame: &CanvasPaintFrame) -> Vec<CanvasWidgetOverlayPlacement> {
+    frame
+        .widget_overlay_frame(CanvasWidgetOverlayOptions::selected_nodes())
+        .placements
+}
+```
+
+Widget event handlers should route edits back through `CanvasEditor` APIs, `DocumentCommand`
+transactions, or custom `CanvasToolEffect` values. Treat overlay placement as layout data, not as a
+second mutation path.
+
 ## Large Canvas Baseline
 
 The crate includes a focused stress regression for the default GPUI culling path and a Criterion
