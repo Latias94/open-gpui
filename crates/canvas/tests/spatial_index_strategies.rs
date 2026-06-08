@@ -1,11 +1,12 @@
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasRoutePath, CanvasRouteRequest, CanvasShape, HitOptions,
-    HitRecord, HitTarget, SpatialIndex,
+    CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasShape,
+    HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
+use std::collections::HashSet;
 
 #[test]
 fn candidate_query_results_match_spatial_index() {
@@ -104,6 +105,78 @@ fn candidates_preserve_hit_options_for_hidden_locked_handles_and_margin() {
     );
 }
 
+#[test]
+fn hybrid_overlay_matches_oracle_during_drag_frames() {
+    let base_document = grid_document(12, 10);
+    let base_index = SpatialIndex::rebuild(&base_document);
+    let base_records = base_index.records().to_vec();
+    let viewports = [
+        bounds(0.0, 0.0, 640.0, 420.0),
+        bounds(420.0, 0.0, 760.0, 500.0),
+        bounds(1_080.0, 360.0, 760.0, 560.0),
+    ];
+    let points = [
+        point(px(56.0), px(32.0)),
+        point(px(510.0), px(124.0)),
+        point(px(1_180.0), px(430.0)),
+    ];
+    let options = hit_options();
+
+    for selected_count in [1, 10, 100] {
+        let selected_nodes = base_document
+            .nodes
+            .keys()
+            .take(selected_count)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale_records = stale_record_ids_for_nodes(&base_document, &selected_nodes);
+        let mut document = base_document.clone();
+
+        for frame in [1, 60, 120] {
+            move_selected_nodes(&mut document, &selected_nodes, frame as f32);
+            let oracle = SpatialIndex::rebuild(&document);
+            let overlay_records = indexed_overlay_records(&oracle, &stale_records);
+            let hybrid = HybridOverlayCandidate::new(
+                base_records.clone(),
+                overlay_records,
+                stale_records.clone(),
+            );
+
+            assert_hybrid_parity(
+                &format!("hybrid_drag_{selected_count}_frame_{frame}"),
+                &oracle,
+                &hybrid,
+                &viewports,
+                &points,
+                &options,
+            );
+        }
+    }
+}
+
+#[test]
+fn hybrid_overlay_suppresses_deleted_node_and_incident_edges() {
+    let base_document = grid_document(4, 2);
+    let base_index = SpatialIndex::rebuild(&base_document);
+    let mut document = base_document.clone();
+    let removed = NodeId::from("node-0-1");
+    let stale_records = stale_record_ids_for_node_removal(&base_document, &removed);
+
+    document.remove_node(&removed).unwrap();
+    let oracle = SpatialIndex::rebuild(&document);
+    let hybrid =
+        HybridOverlayCandidate::new(base_index.records().to_vec(), Vec::new(), stale_records);
+
+    assert_hybrid_parity(
+        "hybrid_delete_node",
+        &oracle,
+        &hybrid,
+        &[bounds(0.0, 0.0, 640.0, 320.0)],
+        &[point(px(148.0), px(28.0)), point(px(286.0), px(28.0))],
+        &hit_options(),
+    );
+}
+
 struct MaterializedFixture {
     index: SpatialIndex,
     candidates: CandidateIndexes,
@@ -180,9 +253,20 @@ struct RStarCandidate {
 
 impl RStarCandidate {
     fn new(records: &[HitRecord]) -> Self {
+        Self::new_indexed(indexed_records(records))
+    }
+
+    fn new_indexed(records: Vec<IndexedRecord>) -> Self {
         Self {
-            tree: RTree::bulk_load(indexed_records(records)),
+            tree: RTree::bulk_load(records),
         }
+    }
+
+    fn query_records(&self, viewport: Bounds<Pixels>) -> Vec<IndexedRecord> {
+        self.tree
+            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .cloned()
+            .collect()
     }
 }
 
@@ -197,8 +281,8 @@ impl RTreeObject for IndexedRecord {
 impl CandidateSpatialIndex for RStarCandidate {
     fn query_targets(&self, viewport: Bounds<Pixels>, options: HitOptions) -> Vec<HitTarget> {
         let mut records = self
-            .tree
-            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .query_records(viewport)
+            .into_iter()
             .filter(|record| query_matches(&record.record, viewport, options))
             .collect::<Vec<_>>();
         records.sort_by(|left, right| {
@@ -209,15 +293,15 @@ impl CandidateSpatialIndex for RStarCandidate {
         });
         records
             .into_iter()
-            .map(|record| record.record.target.clone())
+            .map(|record| record.record.target)
             .collect()
     }
 
     fn hit_test_targets(&self, point: Point<Pixels>, options: HitOptions) -> Vec<HitTarget> {
         let viewport = point_query_bounds(point, options.margin);
         let mut records = self
-            .tree
-            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .query_records(viewport)
+            .into_iter()
             .filter(|record| hit_matches(&record.record, point, options))
             .collect::<Vec<_>>();
         records.sort_by(|left, right| {
@@ -229,7 +313,7 @@ impl CandidateSpatialIndex for RStarCandidate {
         });
         records
             .into_iter()
-            .map(|record| record.record.target.clone())
+            .map(|record| record.record.target)
             .collect()
     }
 }
@@ -269,6 +353,82 @@ impl StaticAabbCandidate {
 }
 
 impl CandidateSpatialIndex for StaticAabbCandidate {
+    fn query_targets(&self, viewport: Bounds<Pixels>, options: HitOptions) -> Vec<HitTarget> {
+        let mut records = self
+            .query_records(viewport)
+            .into_iter()
+            .filter(|record| query_matches(&record.record, viewport, options))
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.record
+                .z_index
+                .cmp(&right.record.z_index)
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+        records
+            .into_iter()
+            .map(|record| record.record.target)
+            .collect()
+    }
+
+    fn hit_test_targets(&self, point: Point<Pixels>, options: HitOptions) -> Vec<HitTarget> {
+        let viewport = point_query_bounds(point, options.margin);
+        let mut records = self
+            .query_records(viewport)
+            .into_iter()
+            .filter(|record| hit_matches(&record.record, point, options))
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            right
+                .record
+                .z_index
+                .cmp(&left.record.z_index)
+                .then_with(|| right.ordinal.cmp(&left.ordinal))
+        });
+        records
+            .into_iter()
+            .map(|record| record.record.target)
+            .collect()
+    }
+}
+
+struct HybridOverlayCandidate {
+    base: StaticAabbCandidate,
+    overlay: RStarCandidate,
+    stale_records: HashSet<CanvasRecordId>,
+}
+
+impl HybridOverlayCandidate {
+    fn new(
+        base_records: Vec<HitRecord>,
+        overlay_records: Vec<IndexedRecord>,
+        stale_records: HashSet<CanvasRecordId>,
+    ) -> Self {
+        Self {
+            base: StaticAabbCandidate::new(base_records),
+            overlay: RStarCandidate::new_indexed(overlay_records),
+            stale_records,
+        }
+    }
+
+    fn query_records(&self, viewport: Bounds<Pixels>) -> Vec<IndexedRecord> {
+        let mut records = self
+            .base
+            .query_records(viewport)
+            .into_iter()
+            .filter(|record| !self.is_stale(record))
+            .collect::<Vec<_>>();
+        records.extend(self.overlay.query_records(viewport));
+        records
+    }
+
+    fn is_stale(&self, record: &IndexedRecord) -> bool {
+        self.stale_records
+            .contains(&record_id_for_target(&record.record.target))
+    }
+}
+
+impl CandidateSpatialIndex for HybridOverlayCandidate {
     fn query_targets(&self, viewport: Bounds<Pixels>, options: HitOptions) -> Vec<HitTarget> {
         let mut records = self
             .query_records(viewport)
@@ -358,6 +518,41 @@ fn assert_hit_test_parity(
     }
 }
 
+fn assert_hybrid_parity(
+    fixture_name: &str,
+    oracle: &SpatialIndex,
+    hybrid: &HybridOverlayCandidate,
+    viewports: &[Bounds<Pixels>],
+    points: &[Point<Pixels>],
+    option_sets: &[HitOptions],
+) {
+    for viewport in viewports {
+        for options in option_sets {
+            assert_eq!(
+                hybrid.query_targets(*viewport, *options),
+                oracle
+                    .query_with_options(*viewport, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "hybrid query mismatch in {fixture_name} for {viewport:?} {options:?}",
+            );
+        }
+    }
+
+    for point in points {
+        for options in option_sets {
+            assert_eq!(
+                hybrid.hit_test_targets(*point, *options),
+                oracle
+                    .hit_test(*point, *options)
+                    .map(|record| record.target.clone())
+                    .collect::<Vec<_>>(),
+                "hybrid hit-test mismatch in {fixture_name} for {point:?} {options:?}",
+            );
+        }
+    }
+}
+
 fn indexed_records(records: &[HitRecord]) -> Vec<IndexedRecord> {
     records
         .iter()
@@ -365,6 +560,73 @@ fn indexed_records(records: &[HitRecord]) -> Vec<IndexedRecord> {
         .enumerate()
         .map(|(ordinal, record)| IndexedRecord { ordinal, record })
         .collect()
+}
+
+fn indexed_overlay_records(
+    index: &SpatialIndex,
+    stale_records: &HashSet<CanvasRecordId>,
+) -> Vec<IndexedRecord> {
+    index
+        .records()
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(_, record)| stale_records.contains(&record_id_for_target(&record.target)))
+        .map(|(ordinal, record)| IndexedRecord { ordinal, record })
+        .collect()
+}
+
+fn stale_record_ids_for_nodes(
+    document: &CanvasDocument,
+    selected_nodes: &[NodeId],
+) -> HashSet<CanvasRecordId> {
+    let selected = selected_nodes.iter().cloned().collect::<HashSet<_>>();
+    let mut stale_records = selected
+        .iter()
+        .cloned()
+        .map(CanvasRecordId::Node)
+        .collect::<HashSet<_>>();
+
+    for edge in document.edges.values() {
+        if selected.contains(&edge.source.node_id) || selected.contains(&edge.target.node_id) {
+            stale_records.insert(CanvasRecordId::Edge(edge.id.clone()));
+        }
+    }
+
+    stale_records
+}
+
+fn stale_record_ids_for_node_removal(
+    document: &CanvasDocument,
+    removed_node: &NodeId,
+) -> HashSet<CanvasRecordId> {
+    let mut stale_records = HashSet::from([CanvasRecordId::Node(removed_node.clone())]);
+
+    for edge in document.edges.values() {
+        if edge.source.node_id == *removed_node || edge.target.node_id == *removed_node {
+            stale_records.insert(CanvasRecordId::Edge(edge.id.clone()));
+        }
+    }
+
+    stale_records
+}
+
+fn move_selected_nodes(document: &mut CanvasDocument, selected_nodes: &[NodeId], frame: f32) {
+    for (index, id) in selected_nodes.iter().enumerate() {
+        let mut node = document.nodes[id].clone();
+        node.position.x += px(frame * 0.75 + index as f32 * 0.01);
+        node.position.y += px(frame * 0.25);
+        document.update_node(node).unwrap();
+    }
+}
+
+fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
+    match target {
+        HitTarget::Node(id) => CanvasRecordId::Node(id.clone()),
+        HitTarget::Handle { node_id, .. } => CanvasRecordId::Node(node_id.clone()),
+        HitTarget::Shape(id) => CanvasRecordId::Shape(id.clone()),
+        HitTarget::Edge(id) => CanvasRecordId::Edge(id.clone()),
+    }
 }
 
 fn query_matches(record: &HitRecord, viewport: Bounds<Pixels>, options: HitOptions) -> bool {

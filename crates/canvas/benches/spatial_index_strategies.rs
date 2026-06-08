@@ -2,12 +2,12 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasPaintModel,
-    CanvasPaintOptions, CanvasRuntime, CanvasShape, CanvasViewport, HitOptions, HitRecord,
-    HitTarget, SpatialIndex, collect_visible_records,
+    CanvasPaintOptions, CanvasRecordId, CanvasRuntime, CanvasShape, CanvasViewport, HitOptions,
+    HitRecord, HitTarget, NodeId, SpatialIndex, collect_visible_records,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 const GRID_COLUMNS: usize = 120;
 const GRID_ROWS: usize = 80;
@@ -170,6 +170,16 @@ fn bench_workload(c: &mut Criterion, workload: &Workload) {
                 ))
             });
         });
+        group.bench_function(format!("drag_overlay/hybrid/{selected_nodes}"), |b| {
+            b.iter(|| {
+                black_box(simulate_drag_hybrid_overlay(
+                    black_box(&workload.document),
+                    black_box(&workload.records),
+                    selected_nodes,
+                    viewport,
+                ))
+            });
+        });
     }
 
     group.finish();
@@ -220,22 +230,33 @@ struct RStarCandidate {
 
 impl RStarCandidate {
     fn new(records: &[HitRecord]) -> Self {
+        Self::new_indexed(indexed_records(records))
+    }
+
+    fn new_indexed(records: Vec<IndexedRecord>) -> Self {
         Self {
-            tree: RTree::bulk_load(indexed_records(records)),
+            tree: RTree::bulk_load(records),
         }
     }
 
-    fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
+    fn query_records(&self, viewport: Bounds<Pixels>) -> Vec<IndexedRecord> {
         self.tree
             .locate_in_envelope_intersecting(rstar_envelope(viewport))
+            .cloned()
+            .collect()
+    }
+
+    fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
+        self.query_records(viewport)
+            .into_iter()
             .filter(|record| query_matches(&record.record, viewport, options))
             .count()
     }
 
     fn hit_test_count(&self, point: Point<Pixels>, options: HitOptions) -> usize {
         let viewport = point_query_bounds(point, options.margin);
-        self.tree
-            .locate_in_envelope_intersecting(rstar_envelope(viewport))
+        self.query_records(viewport)
+            .into_iter()
             .filter(|record| hit_matches(&record.record, point, options))
             .count()
     }
@@ -271,22 +292,71 @@ impl StaticAabbCandidate {
     }
 
     fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
-        let [min_x, min_y, max_x, max_y] = aabb_extents(viewport);
-        self.index
-            .query_iter(min_x, min_y, max_x, max_y)
-            .map(|ordinal| &self.records[ordinal])
-            .filter(|record| query_matches(record, viewport, options))
+        self.query_records(viewport)
+            .into_iter()
+            .filter(|record| query_matches(&record.record, viewport, options))
             .count()
     }
 
     fn hit_test_count(&self, point: Point<Pixels>, options: HitOptions) -> usize {
         let viewport = point_query_bounds(point, options.margin);
+        self.query_records(viewport)
+            .into_iter()
+            .filter(|record| hit_matches(&record.record, point, options))
+            .count()
+    }
+
+    fn query_records(&self, viewport: Bounds<Pixels>) -> Vec<IndexedRecord> {
         let [min_x, min_y, max_x, max_y] = aabb_extents(viewport);
         self.index
             .query_iter(min_x, min_y, max_x, max_y)
-            .map(|ordinal| &self.records[ordinal])
-            .filter(|record| hit_matches(record, point, options))
+            .map(|ordinal| IndexedRecord {
+                record: self.records[ordinal].clone(),
+            })
+            .collect()
+    }
+}
+
+struct HybridOverlayCandidate<'a> {
+    base: &'a StaticAabbCandidate,
+    overlay: RStarCandidate,
+    stale_records: HashSet<CanvasRecordId>,
+}
+
+impl<'a> HybridOverlayCandidate<'a> {
+    fn new(
+        base: &'a StaticAabbCandidate,
+        overlay_records: Vec<IndexedRecord>,
+        stale_records: HashSet<CanvasRecordId>,
+    ) -> Self {
+        Self {
+            base,
+            stale_records,
+            overlay: RStarCandidate::new_indexed(overlay_records),
+        }
+    }
+
+    fn query_count(&self, viewport: Bounds<Pixels>, options: HitOptions) -> usize {
+        self.query_records(viewport)
+            .into_iter()
+            .filter(|record| query_matches(&record.record, viewport, options))
             .count()
+    }
+
+    fn query_records(&self, viewport: Bounds<Pixels>) -> Vec<IndexedRecord> {
+        let mut records = self
+            .base
+            .query_records(viewport)
+            .into_iter()
+            .filter(|record| !self.is_stale(record))
+            .collect::<Vec<_>>();
+        records.extend(self.overlay.query_records(viewport));
+        records
+    }
+
+    fn is_stale(&self, record: &IndexedRecord) -> bool {
+        self.stale_records
+            .contains(&record_id_for_target(&record.record.target))
     }
 }
 
@@ -361,11 +431,92 @@ fn simulate_drag_candidate(
     count
 }
 
+fn simulate_drag_hybrid_overlay(
+    document: &CanvasDocument,
+    base_records: &[HitRecord],
+    selected_nodes: usize,
+    viewport: Bounds<Pixels>,
+) -> usize {
+    let selected = selected_node_ids(document, selected_nodes);
+    let base = StaticAabbCandidate::new(base_records.to_vec());
+    let stale_records = stale_record_ids_for_nodes(document, &selected);
+    let mut document = document.clone();
+    let mut count = 0;
+
+    for frame in 0..DRAG_FRAMES {
+        for id in &selected {
+            let mut node = document.nodes[id].clone();
+            node.position.x += px(1.0 + frame as f32 * 0.01);
+            document.update_node(node).unwrap();
+        }
+
+        let oracle = SpatialIndex::rebuild(&document);
+        let overlay_records = overlay_records_for_stale_ids(&oracle, &stale_records);
+        let hybrid = HybridOverlayCandidate::new(&base, overlay_records, stale_records.clone());
+        count += hybrid.query_count(viewport, HitOptions::default());
+    }
+
+    count
+}
+
 fn indexed_records(records: &[HitRecord]) -> Vec<IndexedRecord> {
     records
         .iter()
         .cloned()
         .map(|record| IndexedRecord { record })
+        .collect()
+}
+
+fn overlay_records_for_stale_ids(
+    index: &SpatialIndex,
+    stale_records: &HashSet<CanvasRecordId>,
+) -> Vec<IndexedRecord> {
+    index
+        .records()
+        .iter()
+        .cloned()
+        .enumerate()
+        .filter(|(_, record)| stale_records.contains(&record_id_for_target(&record.target)))
+        .map(|(_, record)| IndexedRecord { record })
+        .collect()
+}
+
+fn stale_record_ids_for_nodes(
+    document: &CanvasDocument,
+    selected_nodes: &HashSet<NodeId>,
+) -> HashSet<CanvasRecordId> {
+    let mut stale_records = HashSet::new();
+
+    for node_id in selected_nodes {
+        stale_records.insert(CanvasRecordId::Node(node_id.clone()));
+    }
+
+    for edge in document.edges.values() {
+        if selected_nodes.contains(&edge.source.node_id)
+            || selected_nodes.contains(&edge.target.node_id)
+        {
+            stale_records.insert(CanvasRecordId::Edge(edge.id.clone()));
+        }
+    }
+
+    stale_records
+}
+
+fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
+    match target {
+        HitTarget::Node(id) => CanvasRecordId::Node(id.clone()),
+        HitTarget::Handle { node_id, .. } => CanvasRecordId::Node(node_id.clone()),
+        HitTarget::Shape(id) => CanvasRecordId::Shape(id.clone()),
+        HitTarget::Edge(id) => CanvasRecordId::Edge(id.clone()),
+    }
+}
+
+fn selected_node_ids(document: &CanvasDocument, selected_nodes: usize) -> HashSet<NodeId> {
+    document
+        .nodes
+        .keys()
+        .take(selected_nodes)
+        .cloned()
         .collect()
 }
 
