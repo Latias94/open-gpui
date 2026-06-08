@@ -222,6 +222,7 @@ impl CanvasInputMapper {
     pub fn mouse_move(&self, event: &MouseMoveEvent) -> Option<CanvasEvent> {
         Some(CanvasEvent::PointerMove {
             position: self.local_position(event.position)?,
+            modifiers: Self::modifiers(event.modifiers),
         })
     }
 
@@ -935,10 +936,18 @@ mod tests {
         assert_eq!(
             mapper.mouse_move(&MouseMoveEvent {
                 position: point(px(150.0), px(95.0)),
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
                 ..MouseMoveEvent::default()
             }),
             Some(CanvasEvent::PointerMove {
                 position: point(px(50.0), px(45.0)),
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
             })
         );
     }

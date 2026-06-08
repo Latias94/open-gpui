@@ -101,14 +101,17 @@ keep key events renderer-neutral, while the GPUI adapter maps `KeyDownEvent` int
 The select tool's Delete/Backspace behavior emits a normal recorded transaction, skips locked
 records, and lets selection pruning, undo, persistence logging, and future CRDT operation batches
 observe the deletion through the same mutation boundary.
-Pointer down and pointer up events carry the same modifier shape as key events. This avoids a
-parallel modifier model when adding shift-click, additive marquee selection, constrained dragging,
-or tool-specific modifier gestures.
+Pointer down, pointer move, and pointer up events carry the same modifier shape as key events.
+This avoids a parallel modifier model when adding shift-click, additive marquee selection,
+constrained dragging, or tool-specific modifier gestures.
 The first built-in modifier behavior is shift-click selection toggling. It uses
 `CanvasToolEffect::ToggleSelection`, does not create undo history, and does not start a drag.
 Shift-drag on blank canvas is additive rather than cumulative: the tool snapshots the base
 selection at pointer-down time, unions intersection hits with that baseline while the marquee
 moves, and preserves the baseline selection even when the pointer crosses back over empty space.
+Shift-constrained node translation uses pointer-move modifiers, chooses the dominant axis from the
+first shifted move, and preserves that axis while Shift remains held so graph layouts can align
+nodes without a separate transform mode.
 
 ## Architecture
 

@@ -4,7 +4,7 @@ use crate::{
     HitTarget, NodeId, ShapeId, SpatialIndex,
 };
 use indexmap::{IndexMap, IndexSet};
-use open_gpui::{Bounds, Pixels, Point};
+use open_gpui::{Axis, Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 
@@ -64,6 +64,8 @@ pub enum CanvasEvent {
     },
     PointerMove {
         position: Point<Pixels>,
+        #[serde(default)]
+        modifiers: CanvasKeyModifiers,
     },
     PointerUp {
         position: Point<Pixels>,
@@ -152,6 +154,7 @@ pub enum ToolState {
     Translating {
         origin: Point<Pixels>,
         last: Point<Pixels>,
+        constraint_axis: Option<Axis>,
         node_ids: Vec<NodeId>,
         original_nodes: Vec<CanvasNode>,
     },
@@ -790,6 +793,7 @@ impl CanvasEditor {
                             CanvasToolEffect::SetState(ToolState::Translating {
                                 origin: document_position,
                                 last: document_position,
+                                constraint_axis: None,
                                 node_ids,
                                 original_nodes,
                             }),
@@ -830,10 +834,26 @@ impl CanvasEditor {
                     node_ids,
                     origin,
                     original_nodes,
+                    constraint_axis,
                 },
-                CanvasEvent::PointerMove { position },
+                CanvasEvent::PointerMove {
+                    position,
+                    modifiers,
+                },
             ) => {
                 let document_position = self.viewport.view_to_document(position);
+                let origin = *origin;
+                let constraint_axis = if modifiers.shift {
+                    Some(
+                        constraint_axis
+                            .unwrap_or_else(|| drag_constraint_axis(document_position - origin)),
+                    )
+                } else {
+                    None
+                };
+                let document_position = constraint_axis
+                    .map(|axis| constrained_drag_position(origin, document_position, axis))
+                    .unwrap_or(document_position);
                 let delta = document_position - *last;
                 let mut commands = Vec::new();
                 for id in node_ids {
@@ -850,8 +870,9 @@ impl CanvasEditor {
                 vec![
                     CanvasToolEffect::ApplyUnrecorded(CanvasTransaction::new(commands)),
                     CanvasToolEffect::SetState(ToolState::Translating {
-                        origin: *origin,
+                        origin,
                         last: document_position,
+                        constraint_axis,
                         node_ids: node_ids.clone(),
                         original_nodes: original_nodes.clone(),
                     }),
@@ -863,7 +884,7 @@ impl CanvasEditor {
                     selection_mode,
                     base_selection,
                 },
-                CanvasEvent::PointerMove { position },
+                CanvasEvent::PointerMove { position, .. },
             ) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
@@ -889,7 +910,7 @@ impl CanvasEditor {
                     base_selection,
                     ..
                 },
-                CanvasEvent::PointerMove { position },
+                CanvasEvent::PointerMove { position, .. },
             ) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
@@ -956,7 +977,7 @@ impl CanvasEditor {
                     last: position,
                 })]
             }
-            (ToolState::Panning { last, origin }, CanvasEvent::PointerMove { position }) => {
+            (ToolState::Panning { last, origin }, CanvasEvent::PointerMove { position, .. }) => {
                 let delta = position - *last;
                 vec![
                     CanvasToolEffect::PanViewport(delta * -1.0),
@@ -993,7 +1014,7 @@ impl CanvasEditor {
                     })
                     .unwrap_or_default()
             }
-            (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position }) => {
+            (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position, .. }) => {
                 let document_position = self.viewport.view_to_document(position);
                 vec![CanvasToolEffect::SetState(ToolState::Connecting {
                     source: source.clone(),
@@ -1176,6 +1197,25 @@ fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pix
     )
 }
 
+fn constrained_drag_position(
+    origin: Point<Pixels>,
+    current: Point<Pixels>,
+    axis: Axis,
+) -> Point<Pixels> {
+    match axis {
+        Axis::Horizontal => Point::new(current.x, origin.y),
+        Axis::Vertical => Point::new(origin.x, current.y),
+    }
+}
+
+fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
+    if delta.x.abs() >= delta.y.abs() {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1286,6 +1326,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(20.0), px(25.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1337,6 +1378,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(30.0), px(30.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1617,6 +1659,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(50.0), px(50.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1665,6 +1708,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(20.0), px(30.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1682,6 +1726,68 @@ mod tests {
         assert_eq!(
             editor.document.nodes[&NodeId::from("b")].position,
             point(px(210.0), px(20.0))
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
+    }
+
+    #[test]
+    fn translating_selected_node_with_shift_locks_to_dominant_axis() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("a"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(20.0), px(30.0)),
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("a")].position,
+            point(px(0.0), px(20.0))
+        );
+
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(80.0), px(35.0)),
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(80.0), px(35.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("a")].position,
+            point(px(0.0), px(25.0))
         );
         assert_eq!(editor.history.undo_depth(), 1);
     }
@@ -1726,6 +1832,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(40.0), px(40.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1737,6 +1844,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(-40.0), px(-40.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 
@@ -1777,6 +1885,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(20.0), px(30.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
         editor
@@ -1813,6 +1922,7 @@ mod tests {
         editor
             .handle_event(CanvasEvent::PointerMove {
                 position: point(px(20.0), px(25.0)),
+                modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
 

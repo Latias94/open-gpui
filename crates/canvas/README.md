@@ -30,6 +30,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - The built-in select tool also supports shift-drag additive marquee selection, seeded from the
   drag start selection so box selection can grow a baseline set without accumulating during move
   events.
+- The built-in select tool uses pointer-move modifiers for shift-constrained node translation,
+  locking to the first shifted move's dominant axis while the modifier remains held.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
   redb, Loro, or rkyv into the default build.
 - `CanvasPersistenceCodec` and `CanvasPersistenceByteStore` separate typed canvas records from
@@ -200,6 +202,7 @@ impl CanvasToolReducer for StampTool {
         let CanvasEvent::PointerDown {
             position,
             button: PointerButton::Primary,
+            ..
         } = event
         else {
             return Ok(Vec::new());

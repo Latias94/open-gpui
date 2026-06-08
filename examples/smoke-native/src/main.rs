@@ -109,6 +109,7 @@ impl Render for SmokeView {
                                 let event = if this.is_pointer_interacting() {
                                     Some(CanvasEvent::PointerMove {
                                         position: event.position - mapper.bounds.origin,
+                                        modifiers: CanvasInputMapper::modifiers(event.modifiers),
                                     })
                                 } else {
                                     mapper.mouse_move(event)
