@@ -22,15 +22,7 @@ impl DockDropResolution {
     pub(crate) fn intent(self) -> Option<DockDropIntent> {
         match self {
             Self::Valid(intent) => Some(intent),
-            Self::Rejected(rejection) => {
-                let _ = (
-                    rejection.target_tabs,
-                    rejection.zone,
-                    rejection.preview_bounds,
-                    rejection.reason,
-                );
-                None
-            }
+            Self::Rejected(_) => None,
         }
     }
 }
