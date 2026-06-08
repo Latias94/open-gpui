@@ -30,6 +30,31 @@ pub enum DockAction {
         /// The resolved drop zone.
         zone: DropZone,
     },
+    /// Moves one tab into a new empty logical dock space.
+    MoveItemToEmptyDockSpace {
+        /// The source dock space containing the item.
+        source_space: DockSpaceId,
+        /// The item being moved.
+        item: DockItemId,
+        /// The empty target dock space that will receive a root tabs node.
+        target_space: DockSpaceId,
+    },
+    /// Moves an entire tabs node into a new empty logical dock space.
+    MoveTabsToEmptyDockSpace {
+        /// The source dock space containing the tabs node.
+        source_space: DockSpaceId,
+        /// The tabs node being moved.
+        source_tabs: DockNodeId,
+        /// The empty target dock space that will receive the tabs node contents.
+        target_space: DockSpaceId,
+    },
+    /// Closes one dock item through panel lifecycle policy.
+    CloseItem {
+        /// The dock space containing the item.
+        space: DockSpaceId,
+        /// The item to close.
+        item: DockItemId,
+    },
     /// Floats one tab inside a dock space without creating a platform window.
     FloatItemInWindow {
         /// The source dock space containing the item.
@@ -124,6 +149,18 @@ pub enum DockActionApplyError {
         /// The item that was requested.
         item: DockItemId,
     },
+    /// The item has no registered panel metadata to drive close policy.
+    #[error("dock item {item} has no registered panel")]
+    PanelNotRegistered {
+        /// The item that was requested.
+        item: DockItemId,
+    },
+    /// The panel is registered but not closable.
+    #[error("dock item {item} is not closable")]
+    PanelNotClosable {
+        /// The item that was requested.
+        item: DockItemId,
+    },
     /// The underlying graph operation failed.
     #[error(transparent)]
     Graph(#[from] DockOpApplyError),
@@ -155,6 +192,17 @@ impl DockWorkspace {
                 *target_tabs,
                 *zone,
             ),
+            DockAction::MoveItemToEmptyDockSpace {
+                source_space,
+                item,
+                target_space,
+            } => self.move_item_to_empty_dock_space(source_space, item, target_space),
+            DockAction::MoveTabsToEmptyDockSpace {
+                source_space,
+                source_tabs,
+                target_space,
+            } => self.move_tabs_to_empty_dock_space(source_space, *source_tabs, target_space),
+            DockAction::CloseItem { space, item } => self.close_item(space, item),
             DockAction::FloatItemInWindow {
                 source_space,
                 item,
@@ -233,6 +281,58 @@ impl DockWorkspace {
             target_tabs,
             zone,
             insert_index: None,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn move_item_to_empty_dock_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_platform_viewports()?;
+        self.apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+            source_space: source_space.clone(),
+            item: item.clone(),
+            target_space: target_space.clone(),
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn move_tabs_to_empty_dock_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_platform_viewports()?;
+        self.apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            source_space: source_space.clone(),
+            source_tabs,
+            target_space: target_space.clone(),
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn close_item(
+        &mut self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let Some(panel) = self.panels().get(item) else {
+            return Err(DockActionApplyError::PanelNotRegistered { item: item.clone() });
+        };
+        if !panel.is_closable() {
+            return Err(DockActionApplyError::PanelNotClosable { item: item.clone() });
+        }
+
+        self.apply_op_checked(&DockOp::CloseItem {
+            space: space.clone(),
+            item: item.clone(),
         })
         .map(DockActionOutcome::from_changed)
         .map_err(Into::into)

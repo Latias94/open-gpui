@@ -216,6 +216,22 @@ pub enum DockOpApplyError {
         target: DockNodeId,
     },
 
+    /// The source node is not contained by the source dock space.
+    #[error("source node {node:?} not found in dock space {space}")]
+    SourceNodeNotInSpace {
+        /// The source dock space.
+        space: DockSpaceId,
+        /// The source node.
+        node: DockNodeId,
+    },
+
+    /// The target dock space already has a root node.
+    #[error("target dock space {space} is not empty")]
+    TargetSpaceNotEmpty {
+        /// The target dock space.
+        space: DockSpaceId,
+    },
+
     /// A split fraction update has the wrong number of fractions.
     #[error(
         "split node {split:?} has {children_len} children but received {fractions_len} fractions"

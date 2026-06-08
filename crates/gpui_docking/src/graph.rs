@@ -189,6 +189,54 @@ impl DockGraph {
                 self.validate_move_item(source_space, item, target_space, *target_tabs, *zone)?;
                 Ok(self.apply_op(op))
             }
+            DockOp::MoveItemToEmptyDockSpace {
+                source_space,
+                item,
+                target_space,
+            } => {
+                if self.root(target_space).is_some() {
+                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                        space: target_space.clone(),
+                    });
+                }
+                if self.find_item_in_space(source_space, item).is_none() {
+                    return Err(DockOpApplyError::ItemNotFound {
+                        space: source_space.clone(),
+                        item: item.clone(),
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::MoveTabsToEmptyDockSpace {
+                source_space,
+                source_tabs,
+                target_space,
+            } => {
+                if self.root(target_space).is_some() {
+                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                        space: target_space.clone(),
+                    });
+                }
+                let Some(node) = self.node(*source_tabs) else {
+                    return Err(DockOpApplyError::TabsNodeNotFound { tabs: *source_tabs });
+                };
+                let DockNode::Tabs { items, .. } = node else {
+                    return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs });
+                };
+                if items.is_empty() {
+                    return Err(DockOpApplyError::OperationFailed);
+                }
+                if self
+                    .root_for_node_in_space(source_space, *source_tabs)
+                    .is_none()
+                {
+                    return Err(DockOpApplyError::SourceNodeNotInSpace {
+                        space: source_space.clone(),
+                        node: *source_tabs,
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
             DockOp::SetSplitFractions { split, fractions } => {
                 self.validate_split_fractions(*split, fractions)?;
                 Ok(self.apply_op(op))
