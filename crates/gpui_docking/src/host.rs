@@ -2,6 +2,7 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockNodeId, DockOp,
     DockPanel, DockPanelRegistry, DockSpaceId,
     debug::{DockDebugInstrumentation, DockDebugRegion},
+    drop_target::DockDropIntent,
     splitter,
     workspace::DockWorkspace,
 };
@@ -49,6 +50,7 @@ pub struct DockHost {
     workspace: DockWorkspace,
     debug: DockDebugInstrumentation,
     splitter_drag: Option<SplitterDrag>,
+    tab_drop_intent: Option<DockDropIntent>,
 }
 
 impl DockHost {
@@ -78,6 +80,7 @@ impl DockHost {
             workspace,
             debug: DockDebugInstrumentation::default(),
             splitter_drag: None,
+            tab_drop_intent: None,
         }
     }
 
@@ -231,6 +234,18 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag(&mut self) {
         self.splitter_drag = None;
+    }
+
+    pub(crate) fn set_tab_drop_intent(&mut self, intent: Option<DockDropIntent>) {
+        self.tab_drop_intent = intent;
+    }
+
+    pub(crate) fn tab_drop_intent(&self) -> Option<DockDropIntent> {
+        self.tab_drop_intent
+    }
+
+    pub(crate) fn clear_tab_drop_intent(&mut self) {
+        self.tab_drop_intent = None;
     }
 
     #[cfg(test)]

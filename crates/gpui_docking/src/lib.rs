@@ -4,6 +4,8 @@
 mod action;
 mod builder;
 mod debug;
+mod drag;
+mod drop_target;
 mod graph;
 mod host;
 mod ids;

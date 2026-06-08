@@ -155,8 +155,8 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "DockHost adapts DockWorkspace into GPUI.",
                     "Tab selection updates graph state.",
                     "Splitter handles resize panes.",
+                    "Tabs can drag/drop between stacks.",
                     "Floating overlays are deferred.",
-                    "Drag/drop starts after splitter resize.",
                 ],
             )
         }),

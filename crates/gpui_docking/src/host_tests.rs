@@ -1,7 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockHost, DockItemId,
-    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockSpaceId, DockWorkspace, SplitAxis,
-    debug::DockDebugRegion,
+    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockSpaceId, DockWorkspace, DropZone,
+    SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
@@ -127,6 +127,22 @@ fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() <= 2.0,
         "expected {actual} to be within 2px of {expected}"
     );
+}
+
+fn simulate_left_drag(
+    visual: &mut VisualTestContext,
+    start: open_gpui::Point<Pixels>,
+    end: open_gpui::Point<Pixels>,
+) {
+    let threshold_point = if end.x >= start.x {
+        point(start.x + px(24.0), start.y)
+    } else {
+        point(start.x - px(24.0), start.y)
+    };
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold_point, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
 }
 
 #[open_gpui::test]
@@ -317,6 +333,62 @@ fn workspace_action_layout_export_remains_graph_only(cx: &mut TestAppContext) {
     };
     assert_eq!(*active, 1);
     assert_eq!(items, &vec![item("a"), item("b")]);
+}
+
+#[open_gpui::test]
+fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let outcome = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: left_tabs,
+            item: item("a"),
+            target_space: space(),
+            target_tabs: right_tabs,
+            zone: DropZone::Center,
+        })
+        .expect("move tab action should be valid");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(right_tabs)
+        .expect("target tabs should still exist")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(items, &vec![item("b"), item("a")]);
+    assert_eq!(*active, 1);
+}
+
+#[open_gpui::test]
+fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b"], 0);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+
+    let outcome = workspace
+        .apply_action(&DockAction::MoveTab {
+            source_space: space(),
+            source_tabs: tabs,
+            item: item("a"),
+            target_space: space(),
+            target_tabs: tabs,
+            zone: DropZone::Center,
+        })
+        .expect("same-stack center drop should be valid");
+
+    assert_eq!(outcome, DockActionOutcome::Unchanged);
+    let DockNode::Tabs { items, active } = workspace
+        .graph()
+        .node(tabs)
+        .expect("tabs should still exist")
+    else {
+        panic!("target should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(*active, 0);
 }
 
 #[open_gpui::test]
@@ -644,6 +716,99 @@ fn splitter_drag_clamps_to_minimum_pane_size(cx: &mut TestAppContext) {
 
     assert_close(width(debug_bounds(&mut visual, &left)), 96.0);
     assert_close(width(debug_bounds(&mut visual, &right)), 304.0);
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let end = debug_bounds(&mut visual, &target_tabs).center();
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "panel A should be visible after center drop"
+    );
+    host.read_with(&visual, |host, _| {
+        let DockNode::Tabs { items, active } = host
+            .graph()
+            .node(right_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(*active, 1);
+    });
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        start.y,
+    );
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "panel A should be visible after edge drop"
+    );
+    host.read_with(&visual, |host, _| {
+        let root = host.graph().root(&space()).expect("space should keep root");
+        let DockNode::Split { axis, children, .. } =
+            host.graph().node(root).expect("root should exist")
+        else {
+            panic!("root should be split after edge drop");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children.len(), 2);
+    });
 }
 
 #[open_gpui::test]

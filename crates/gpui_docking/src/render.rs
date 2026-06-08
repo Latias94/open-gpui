@@ -1,11 +1,13 @@
 use crate::{
     DockAction, DockHost, DockItemId, DockNode, DockNodeId, DockPanelResolution, SplitAxis,
-    debug::DockDebugRegion, splitter,
+    debug::DockDebugRegion,
+    drag::{DockTabDragPayload, DockTabDragPreview},
+    drop_target, splitter,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, black, canvas, div, px, relative, rgb, white,
+    AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, black, canvas, div, px, relative, rgb, white,
 };
 
 impl Render for DockHost {
@@ -337,6 +339,7 @@ impl DockHost {
         );
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
+        let target_space = self.space().clone();
 
         let mut tabs = div()
             .id(selector.clone())
@@ -347,7 +350,46 @@ impl DockHost {
             .overflow_hidden()
             .border_1()
             .border_color(rgb(0xd8dde6))
-            .bg(white());
+            .bg(white())
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    let intent =
+                        drop_target::resolve_tabs_drop(node, event.bounds, event.event.position);
+                    if this.tab_drop_intent() != intent {
+                        this.set_tab_drop_intent(intent);
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(
+                cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
+                    let Some(intent) = this
+                        .tab_drop_intent()
+                        .filter(|intent| intent.target_tabs == node)
+                    else {
+                        this.clear_tab_drop_intent();
+                        cx.notify();
+                        return;
+                    };
+
+                    let action = DockAction::MoveTab {
+                        source_space: payload.source_space.clone(),
+                        source_tabs: payload.source_tabs,
+                        item: payload.item.clone(),
+                        target_space: target_space.clone(),
+                        target_tabs: intent.target_tabs,
+                        zone: intent.zone,
+                    };
+                    let changed = this
+                        .apply_action(&action)
+                        .map(|outcome| outcome.changed())
+                        .unwrap_or(false);
+                    this.clear_tab_drop_intent();
+                    if changed {
+                        cx.notify();
+                    }
+                }),
+            );
 
         let mut tab_bar = div()
             .id(format!(
@@ -382,6 +424,8 @@ impl DockHost {
                 tabs: node,
                 item: item.clone(),
             };
+            let payload =
+                DockTabDragPayload::new(self.space().clone(), node, item.clone(), title.clone());
             let tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
@@ -413,6 +457,9 @@ impl DockHost {
                         cx.notify();
                     }
                 }))
+                .on_drag(payload, |payload, _, _, cx| {
+                    cx.new(|_| DockTabDragPreview::new(payload.title()))
+                })
                 .child(title);
             tab_bar = tab_bar.child(tab);
         }
