@@ -103,6 +103,7 @@ mod render_split;
 mod splitter;
 mod viewport;
 mod viewport_close;
+mod viewport_close_gate;
 mod viewport_coordinates;
 mod viewport_placement;
 mod viewport_registry;

@@ -2,11 +2,11 @@ use crate::{
     DockController, DockSpaceId, DockViewportAdapter, DockViewportCloseOutcome,
     DockViewportClosePolicy, DockViewportOpenOutcome, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportRestoreOutcome,
-    DockViewportShouldCloseOutcome,
+    DockViewportShouldCloseOutcome, viewport_close_gate::DockViewportCloseGate,
 };
 use open_gpui::{AnyWindowHandle, App, Entity, Result, Subscription, WindowId, WindowOptions};
 use std::{
-    cell::{Cell, Ref, RefCell},
+    cell::{Ref, RefCell},
     rc::Rc,
 };
 
@@ -20,49 +20,6 @@ pub struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_gate: DockViewportCloseGate,
-}
-
-#[derive(Clone)]
-struct DockViewportCloseGate {
-    close_policy: Rc<Cell<DockViewportClosePolicy>>,
-    known_windows: Rc<RefCell<Vec<WindowId>>>,
-}
-
-impl DockViewportCloseGate {
-    fn new(close_policy: DockViewportClosePolicy) -> Self {
-        Self {
-            close_policy: Rc::new(Cell::new(close_policy)),
-            known_windows: Rc::new(RefCell::new(Vec::new())),
-        }
-    }
-
-    fn close_policy(&self) -> DockViewportClosePolicy {
-        self.close_policy.get()
-    }
-
-    fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
-        self.close_policy.set(close_policy);
-    }
-
-    fn sync_adapter(&self, adapter: &DockViewportAdapter) {
-        *self.known_windows.borrow_mut() = adapter
-            .spaces()
-            .into_iter()
-            .filter_map(|space| {
-                adapter
-                    .window_for_space(&space)
-                    .map(|window| window.window_id())
-            })
-            .collect();
-    }
-
-    fn should_allow_close(&self, window_id: WindowId) -> bool {
-        if !self.known_windows.borrow().contains(&window_id) {
-            return true;
-        }
-
-        self.close_policy() != DockViewportClosePolicy::Prevent
-    }
 }
 
 fn install_should_close_hook(
