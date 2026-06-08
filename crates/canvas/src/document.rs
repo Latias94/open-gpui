@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use thiserror::Error;
 
+use crate::journal::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
 use crate::routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
 };
@@ -693,14 +694,22 @@ impl CanvasDocument {
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<CanvasDocumentDiff, DocumentError> {
-        let previous = self.clone();
-        let mut draft = previous.clone();
-        for command in transaction.commands {
-            draft.apply(command)?;
-        }
-        let diff = draft.diff_against(&previous);
-        *self = draft;
-        Ok(diff)
+        self.commit_transaction(transaction)
+            .map(CanvasCommittedMutation::into_diff)
+    }
+
+    pub fn commit_transaction(
+        &mut self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasCommittedMutation, DocumentError> {
+        CanvasMutationJournal::commit(self, transaction)
+    }
+
+    pub(crate) fn prepare_transaction(
+        &self,
+        transaction: CanvasTransaction,
+    ) -> Result<CanvasPreparedMutation, DocumentError> {
+        CanvasMutationJournal::prepare(self, transaction)
     }
 
     pub fn invert_transaction(

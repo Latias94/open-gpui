@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    CanvasDocument, CanvasEditor, CanvasEvent, CanvasKeyModifiers, CanvasNode, CanvasRecordChange,
-    CanvasRecordId, CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
-    CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError,
-    NodeId, PointerButton, ToolState,
+    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
+    CanvasNode, CanvasRecordChange, CanvasRecordId, CanvasSelection, CanvasTool, CanvasToolContext,
+    CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
+    DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton, ToolState,
 };
 use open_gpui::{point, px, size};
 use std::fmt;
@@ -143,6 +143,57 @@ fn log_entries_expose_record_operation_batches() {
         CanvasRecordChange::Upsert(record)
             if record.id() == CanvasRecordId::Node(NodeId::from("node"))
     ));
+}
+
+#[test]
+fn committed_log_entries_expose_actual_record_operation_batches() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_node(CanvasNode::new(
+            "b",
+            point(px(20.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_edge(CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        ))
+        .unwrap();
+    let mut transaction = CanvasTransaction::single(DocumentCommand::RemoveNode(NodeId::from("a")));
+    transaction
+        .metadata
+        .insert("reason".into(), serde_json::json!("delete-node"));
+    let committed = document.commit_transaction(transaction).unwrap();
+    let entry = CanvasLogEntry::from_committed_mutation(11, &committed);
+
+    let batch = entry.record_operation_batch();
+
+    assert_eq!(batch.transaction_sequence, 11);
+    assert_eq!(
+        batch.transaction_metadata.get("reason"),
+        Some(&serde_json::json!("delete-node"))
+    );
+    assert_eq!(
+        batch
+            .operations
+            .iter()
+            .map(|operation| (operation.operation_index, operation.id()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, CanvasRecordId::Node(NodeId::from("a"))),
+            (1, CanvasRecordId::Edge(EdgeId::from("a-b"))),
+        ]
+    );
 }
 
 #[test]
@@ -462,7 +513,17 @@ fn persistent_transaction_appends_successful_editor_transaction() {
     );
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
-    assert_eq!(store.log_entries()[0], CanvasLogEntry::new(1, transaction));
+    assert_eq!(store.log_entries()[0].sequence, 1);
+    assert_eq!(store.log_entries()[0].transaction, transaction);
+    assert_eq!(
+        store.log_entries()[0]
+            .record_operation_batch()
+            .operations
+            .iter()
+            .map(|operation| operation.id())
+            .collect::<Vec<_>>(),
+        vec![CanvasRecordId::Node(NodeId::from("a"))]
+    );
 
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.nodes.contains_key(&NodeId::from("a")));

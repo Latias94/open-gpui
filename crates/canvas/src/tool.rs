@@ -553,12 +553,24 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
-        let inverse = self.document.invert_transaction(&transaction)?;
-        let diff = self.document.apply_transaction_with_diff(transaction)?;
-        self.history.push_undo(inverse);
+        let committed = self.document.commit_transaction(transaction)?;
+        let diff = committed.diff().clone();
+        self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
         Ok(diff)
+    }
+
+    pub(crate) fn apply_prepared_document_mutation(
+        &mut self,
+        prepared: crate::journal::CanvasPreparedMutation,
+    ) -> CanvasDocumentDiff {
+        let committed = prepared.apply_to(&mut self.document);
+        let diff = committed.diff().clone();
+        self.history.push_undo(committed.inverse().clone());
+        self.selection.retain_document(&self.document);
+        self.index.apply_diff(&self.document, &diff);
+        diff
     }
 
     pub fn apply_tool_effect(&mut self, effect: CanvasToolEffect) -> Result<(), DocumentError> {
@@ -628,9 +640,9 @@ impl CanvasEditor {
             return Ok(false);
         };
 
-        let redo = self.document.invert_transaction(&transaction)?;
-        let diff = self.document.apply_transaction_with_diff(transaction)?;
-        self.history.push_redo(redo);
+        let committed = self.document.commit_transaction(transaction)?;
+        let diff = committed.diff().clone();
+        self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
         Ok(true)
@@ -641,9 +653,9 @@ impl CanvasEditor {
             return Ok(false);
         };
 
-        let undo = self.document.invert_transaction(&transaction)?;
-        let diff = self.document.apply_transaction_with_diff(transaction)?;
-        self.history.push_undo(undo);
+        let committed = self.document.commit_transaction(transaction)?;
+        let diff = committed.diff().clone();
+        self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
         Ok(true)
@@ -1130,7 +1142,8 @@ impl CanvasEditor {
     }
 
     fn apply_unrecorded(&mut self, transaction: CanvasTransaction) -> Result<(), DocumentError> {
-        let diff = self.document.apply_transaction_with_diff(transaction)?;
+        let committed = self.document.commit_transaction(transaction)?;
+        let diff = committed.diff().clone();
         self.selection.retain_document(&self.document);
         self.index.apply_diff(&self.document, &diff);
         Ok(())

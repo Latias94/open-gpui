@@ -136,12 +136,16 @@ incident edges, and can apply diffs without changing document serialization.
 
 ## Inspect Record Changes
 
-`DocumentCommand` remains the canonical mutation vocabulary. For sync, audit, or CRDT adapters,
-commands and transactions can also be viewed as ordered record-level changes or sequence-stamped
-operation batches.
+`DocumentCommand` remains the canonical replay vocabulary. Commands and transactions still expose
+an ordered intent view, but sync, audit, and CRDT adapters should prefer committed mutations when
+they need the actual semantic changes produced by document rules such as incident edge removal.
 
 ```rust
-use open_gpui_canvas::{CanvasRecordChange, CanvasRecordOperationBatch, CanvasTransaction};
+use open_gpui_canvas::{
+    CanvasDocument, CanvasNode, CanvasRecordChange, CanvasRecordOperationBatch, CanvasTransaction,
+    DocumentCommand,
+};
+use open_gpui::{point, px, size};
 
 fn inspect(transaction: &CanvasTransaction) {
     for change in transaction.record_changes() {
@@ -156,6 +160,15 @@ fn inspect(transaction: &CanvasTransaction) {
         let _ = (ordered_key, operation.id());
     }
 }
+
+let mut document = CanvasDocument::default();
+let committed = document
+    .commit_transaction(CanvasTransaction::single(DocumentCommand::InsertNode(
+        CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(120.0), px(64.0))),
+    )))
+    .unwrap();
+let actual_batch = committed.record_operation_batch(8);
+assert_eq!(actual_batch.operations.len(), 1);
 ```
 
 ## Route Edges

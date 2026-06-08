@@ -195,16 +195,18 @@ preserves document edge order, deduplicates self-loop incident edges, and can ap
 `edges` data model while giving xyflow-style graph applications a scalable query path without
 putting hidden cache state inside `CanvasDocument`.
 
-Document transactions also expose a record-level view for adapters. `DocumentCommand::record_id`,
+Document transactions expose two record-level views. `DocumentCommand::record_id`,
 `DocumentCommand::record_change`, `CanvasTransaction::record_ids`, and
-`CanvasTransaction::record_changes` translate the canonical command stream into ordered
-`CanvasRecordChange::Upsert` and `CanvasRecordChange::Delete` values. This is not a replacement for
-transaction replay; it is a stable input shape for future Loro, audit-log, remote-sync, or indexing
-adapters that need record semantics without matching every command variant themselves.
+`CanvasTransaction::record_changes` translate the canonical command stream into ordered intent
+changes. `CanvasCommittedMutation` is the semantic view produced by the document mutation journal:
+it carries the applied transaction, inverse transaction, actual `CanvasDocumentDiff`, and actual
+record changes after document rules have run. A node deletion that removes incident edges therefore
+produces node and edge delete changes in the committed mutation, even when the original command
+stream only named the node.
 `CanvasRecordOperation` and `CanvasRecordOperationBatch` add the transaction sequence,
-operation index, optional origin, and transaction metadata around that same change stream. This
-gives persistence logs and future CRDT adapters a deterministic operation envelope without making
-the core crate depend on a concrete collaboration engine.
+operation index, optional origin, and transaction metadata around either view. Persistence logs and
+future CRDT adapters should consume committed mutation batches when they need actual document
+semantics, while command-derived batches remain useful for intent inspection and legacy log entries.
 
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
@@ -231,9 +233,9 @@ an adapter feature is not treated as proof that a concrete backend exists. This 
 honest while leaving a stable place to attach optional dependencies later.
 
 Applications can connect editor mutations to persistence through `CanvasPersistenceCursor` and
-`apply_persistent_transaction`. The helper validates a recorded transaction against the current
-editor document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies the
-same transaction through `CanvasEditor`. This keeps `CanvasEditor` free of concrete storage
+`apply_persistent_transaction`. The helper prepares a committed mutation against the current editor
+document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies that same
+prepared mutation through `CanvasEditor`. This keeps `CanvasEditor` free of concrete storage
 ownership while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry
 point. Unrecorded gesture updates remain outside the persistence log until committed as explicit
 transactions.

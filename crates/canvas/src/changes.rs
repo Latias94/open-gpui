@@ -125,12 +125,28 @@ pub struct CanvasRecordOperationBatch {
 
 impl CanvasRecordOperationBatch {
     pub fn new(transaction_sequence: u64, transaction: &CanvasTransaction) -> Self {
+        Self::from_record_changes(
+            transaction_sequence,
+            transaction.metadata.clone(),
+            transaction.record_changes(),
+        )
+    }
+
+    pub fn from_record_changes(
+        transaction_sequence: u64,
+        transaction_metadata: CanvasValue,
+        changes: impl IntoIterator<Item = CanvasRecordChange>,
+    ) -> Self {
         Self {
             transaction_sequence,
             origin: None,
-            transaction_metadata: transaction.metadata.clone(),
-            operations: transaction
-                .record_operations(transaction_sequence)
+            transaction_metadata,
+            operations: changes
+                .into_iter()
+                .enumerate()
+                .map(|(index, change)| {
+                    CanvasRecordOperation::new(transaction_sequence, index as u64, change)
+                })
                 .collect(),
         }
     }

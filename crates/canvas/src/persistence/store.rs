@@ -1,7 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent, CanvasRecordOperationBatch,
-    CanvasSnapshot, CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry,
-    CanvasToolRegistryError, CanvasTransaction, DocumentError,
+    CanvasCommittedMutation, CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent,
+    CanvasRecordOperationBatch, CanvasSnapshot, CanvasToolEffect, CanvasToolId, CanvasToolReducer,
+    CanvasToolRegistry, CanvasToolRegistryError, CanvasTransaction, DocumentError,
 };
 use std::{convert::Infallible, error::Error, fmt};
 
@@ -24,6 +24,8 @@ impl CanvasCheckpoint {
 pub struct CanvasLogEntry {
     pub sequence: u64,
     pub transaction: CanvasTransaction,
+    #[serde(default)]
+    pub record_operation_batch: Option<CanvasRecordOperationBatch>,
 }
 
 impl CanvasLogEntry {
@@ -31,11 +33,22 @@ impl CanvasLogEntry {
         Self {
             sequence,
             transaction: transaction.into(),
+            record_operation_batch: None,
+        }
+    }
+
+    pub fn from_committed_mutation(sequence: u64, committed: &CanvasCommittedMutation) -> Self {
+        Self {
+            sequence,
+            transaction: committed.transaction().clone(),
+            record_operation_batch: Some(committed.record_operation_batch(sequence)),
         }
     }
 
     pub fn record_operation_batch(&self) -> CanvasRecordOperationBatch {
-        self.transaction.record_operation_batch(self.sequence)
+        self.record_operation_batch
+            .clone()
+            .unwrap_or_else(|| self.transaction.record_operation_batch(self.sequence))
     }
 }
 
@@ -226,12 +239,14 @@ where
         return Ok(CanvasDocumentDiff::default());
     }
 
-    editor.document.invert_transaction(&transaction)?;
-    let log_transaction = transaction.clone();
+    let prepared = editor.document.prepare_transaction(transaction)?;
     store
-        .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), log_transaction))
+        .append_log_entry(CanvasLogEntry::from_committed_mutation(
+            cursor.next_sequence(),
+            prepared.committed(),
+        ))
         .map_err(CanvasPersistenceError::Store)?;
-    let diff = editor.apply_transaction_with_diff(transaction)?;
+    let diff = editor.apply_prepared_document_mutation(prepared);
     cursor.advance();
     Ok(diff)
 }
@@ -248,9 +263,12 @@ where
         return Ok(false);
     };
     let transaction = transaction.clone();
-    editor.document.invert_transaction(&transaction)?;
+    let prepared = editor.document.prepare_transaction(transaction.clone())?;
     store
-        .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), transaction))
+        .append_log_entry(CanvasLogEntry::from_committed_mutation(
+            cursor.next_sequence(),
+            prepared.committed(),
+        ))
         .map_err(CanvasPersistenceError::Store)?;
     editor.undo()?;
     cursor.advance();
@@ -269,9 +287,12 @@ where
         return Ok(false);
     };
     let transaction = transaction.clone();
-    editor.document.invert_transaction(&transaction)?;
+    let prepared = editor.document.prepare_transaction(transaction.clone())?;
     store
-        .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), transaction))
+        .append_log_entry(CanvasLogEntry::from_committed_mutation(
+            cursor.next_sequence(),
+            prepared.committed(),
+        ))
         .map_err(CanvasPersistenceError::Store)?;
     editor.redo()?;
     cursor.advance();
@@ -391,9 +412,15 @@ where
     S: CanvasPersistenceStore,
 {
     if !inverse.is_empty() {
-        let committed = editor.document.invert_transaction(&inverse)?;
+        let committed_transaction = editor.document.invert_transaction(&inverse)?;
+        let mut document_before_gesture = editor.document.clone();
+        document_before_gesture.apply_transaction(inverse.clone())?;
+        let committed = document_before_gesture.prepare_transaction(committed_transaction)?;
         store
-            .append_log_entry(CanvasLogEntry::new(cursor.next_sequence(), committed))
+            .append_log_entry(CanvasLogEntry::from_committed_mutation(
+                cursor.next_sequence(),
+                committed.committed(),
+            ))
             .map_err(CanvasPersistenceError::Store)?;
         cursor.advance();
     }
