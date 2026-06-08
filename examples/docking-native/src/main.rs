@@ -3,9 +3,9 @@ use open_gpui::{
     WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockGraph, DockPolicy, DockSpaceId, DockViewportPlacement,
+    DockAction, DockController, DockLayout, DockSpaceId, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
-    DockWorkspace, EditorDockLayoutSpec,
+    EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -84,31 +84,29 @@ impl Render for DemoPanel {
     }
 }
 
-fn default_graph() -> DockGraph {
-    DockGraph::default_editor_layout(
-        SPACE,
-        EditorDockLayoutSpec::new(
-            ["explorer", "outline"],
-            ["editor", "preview"],
-            ["terminal", "problems"],
+fn restored_demo_layout() -> DockLayout {
+    let mut controller = DockController::builder(SPACE)
+        .default_editor_layout(
+            EditorDockLayoutSpec::new(
+                ["explorer", "outline"],
+                ["editor", "preview"],
+                ["terminal", "problems"],
+            )
+            .with_fractions(0.24, 0.68)
+            .with_active_indexes(0, 0, 0),
         )
-        .with_fractions(0.24, 0.68)
-        .with_active_indexes(0, 0, 0),
-    )
-}
+        .allow_floating(true)
+        .allow_platform_viewports(true)
+        .build();
 
-fn restored_demo_graph() -> DockGraph {
-    let mut workspace = DockWorkspace::new(SPACE, default_graph());
-    workspace.policy_mut().set_allow_floating(true);
-    workspace.policy_mut().set_allow_platform_viewports(true);
-    workspace
+    controller
         .apply_action(&DockAction::MoveItemToEmptyDockSpace {
             source_space: SPACE.into(),
             item: "preview".into(),
             target_space: SECONDARY_SPACE.into(),
         })
         .expect("preview panel should move into the secondary demo dock space");
-    workspace
+    controller
         .apply_action(&DockAction::FloatItemInWindow {
             source_space: SPACE.into(),
             item: "problems".into(),
@@ -117,18 +115,15 @@ fn restored_demo_graph() -> DockGraph {
         })
         .expect("problems panel should float inside the demo dock space");
 
-    let layout = workspace.graph().export_layout();
-    DockGraph::import_layout(&layout).expect("demo dock layout should restore")
+    controller.graph().export_layout()
 }
 
 fn build_controller() -> DockController {
-    let mut policy = DockPolicy::default();
-    policy.set_allow_floating(true);
-    policy.set_allow_platform_viewports(true);
-
     DockController::builder(SPACE)
-        .graph(restored_demo_graph())
-        .policy(policy)
+        .try_layout(&restored_demo_layout())
+        .expect("demo dock layout should restore")
+        .allow_floating(true)
+        .allow_platform_viewports(true)
         .panel_factory("explorer", "Explorer", |cx| {
             cx.new(|_| {
                 DemoPanel::new(
@@ -205,6 +200,7 @@ fn build_controller() -> DockController {
                         "$ cargo nextest run -p open-gpui-docking",
                         "Docking public API tests passed",
                         "$ cargo doc -p open-gpui-docking --no-deps",
+                        "DockController::builder restores DockLayout.",
                     ],
                 )
             })

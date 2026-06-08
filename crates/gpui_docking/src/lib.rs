@@ -32,15 +32,12 @@
 //! ```rust,no_run
 //! use open_gpui::{AnyView, Context};
 //! use open_gpui_docking::{
-//!     DockController, DockHost, DockPolicy, EditorDockLayoutSpec,
+//!     DockController, DockHost, EditorDockLayoutSpec,
 //! };
 //!
 //! fn panel_factory(_cx: &mut Context<DockHost>) -> AnyView {
 //!     unreachable!("create and return a GPUI view for the panel")
 //! }
-//!
-//! let mut policy = DockPolicy::default();
-//! policy.set_allow_floating(true);
 //!
 //! let controller = DockController::builder("main")
 //!     .default_editor_layout(EditorDockLayoutSpec::new(
@@ -51,7 +48,8 @@
 //!     .panel_factory("explorer", "Explorer", panel_factory)
 //!     .panel_factory("editor", "Editor", panel_factory)
 //!     .panel_factory("terminal", "Terminal", panel_factory)
-//!     .policy(policy)
+//!     .allow_floating(true)
+//!     .allow_platform_viewports(true)
 //!     .build();
 //! # let _ = controller;
 //! ```

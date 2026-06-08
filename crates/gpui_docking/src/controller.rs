@@ -216,6 +216,12 @@ impl DockControllerBuilder {
         self
     }
 
+    /// Enables or disables platform viewport interactions.
+    pub fn allow_platform_viewports(mut self, allowed: bool) -> Self {
+        self.policy.set_allow_platform_viewports(allowed);
+        self
+    }
+
     /// Builds the controller.
     pub fn build(self) -> DockController {
         let mut workspace = DockWorkspace::with_options(self.space, self.graph, self.options);

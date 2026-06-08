@@ -1,7 +1,7 @@
 ---
 title: "refactor: Stabilize docking public API and docs"
 type: refactor
-status: active
+status: completed
 date: 2026-06-08
 ---
 
