@@ -1,5 +1,8 @@
-use crate::{DockNode, SplitAxis, debug::DockDebugRegion, host_test_support::*};
-use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size};
+use crate::{DockNode, DockNodeId, SplitAxis, debug::DockDebugRegion, host_test_support::*};
+use open_gpui::{
+    AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
+};
+use slotmap::Key;
 
 #[open_gpui::test]
 fn dragging_floating_handle_updates_graph_bounds(cx: &mut TestAppContext) {
@@ -36,6 +39,28 @@ fn dragging_floating_handle_updates_graph_bounds(cx: &mut TestAppContext) {
         assert_close(f32::from(container.bounds.origin.y), 50.0);
         assert!(host.floating_drag().is_none());
     });
+}
+
+#[open_gpui::test]
+fn stale_floating_drag_begin_does_not_leave_transient_drag(cx: &mut TestAppContext) {
+    let (graph, _root, _floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(320.0), px(220.0)));
+
+    let began = cx.update_entity(&host, |host, cx| {
+        host.begin_floating_drag_from_render(
+            space(),
+            DockNodeId::null(),
+            point(px(10.0), px(20.0)),
+            floating_bounds(10.0, 20.0, 220.0, 140.0),
+            cx,
+        )
+    });
+
+    assert!(!began);
+    assert!(cx.read_entity(&host, |host, _| host.floating_drag().is_none()));
 }
 
 #[open_gpui::test]

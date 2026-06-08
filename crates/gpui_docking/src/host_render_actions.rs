@@ -1,4 +1,4 @@
-use crate::{DockAction, DockHost, DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockAction, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId};
 use open_gpui::{Bounds, Context, Pixels, Point};
 
 impl DockHost {
@@ -51,10 +51,18 @@ impl DockHost {
             return false;
         }
 
-        self.start_floating_drag(space.clone(), floating, start_position, initial_bounds);
-        let changed =
-            self.commit_action_from_render(DockAction::RaiseFloating { space, floating }, cx);
-        if !changed {
+        let Some(outcome) = self.try_commit_action_from_render(
+            DockAction::RaiseFloating {
+                space: space.clone(),
+                floating,
+            },
+            cx,
+        ) else {
+            return false;
+        };
+
+        self.start_floating_drag(space, floating, start_position, initial_bounds);
+        if !outcome.changed() {
             cx.notify();
         }
         true
@@ -120,14 +128,20 @@ impl DockHost {
     }
 
     fn commit_action_from_render(&mut self, action: DockAction, cx: &mut Context<Self>) -> bool {
-        let Ok(outcome) = self.apply_action_from_host(&action, cx) else {
-            return false;
-        };
+        self.try_commit_action_from_render(action, cx)
+            .map(|outcome| outcome.changed())
+            .unwrap_or(false)
+    }
+
+    fn try_commit_action_from_render(
+        &mut self,
+        action: DockAction,
+        cx: &mut Context<Self>,
+    ) -> Option<DockActionOutcome> {
+        let outcome = self.apply_action_from_host(&action, cx).ok()?;
         if outcome.changed() {
             cx.notify();
-            true
-        } else {
-            false
         }
+        Some(outcome)
     }
 }
