@@ -246,10 +246,6 @@ impl DockHost {
         }
     }
 
-    pub(crate) fn selector_prefix(&self) -> String {
-        format!("dock:{}", self.space())
-    }
-
     pub(crate) fn start_splitter_drag(
         &mut self,
         split: DockNodeId,
@@ -272,7 +268,8 @@ impl DockHost {
         position: Pixels,
         cx: &mut Context<Self>,
     ) -> bool {
-        let split_min_size = self.split_min_size_for_render(cx);
+        let split_min_size =
+            self.with_workspace(cx, |workspace| workspace.options().split_min_size);
         let Some(action) = self
             .interaction
             .resize_split_action(position, split_min_size)

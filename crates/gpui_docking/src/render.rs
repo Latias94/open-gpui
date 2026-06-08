@@ -3,22 +3,23 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockTabDragPayload, DockTabDragPreview},
     geometry,
-    host_render_session::DockHostPanelRenderResolution,
+    host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     splitter,
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
     StatefulInteractiveElement, Styled, Window, black, canvas, div, px, relative, rgb, rgba, white,
 };
 
 impl Render for DockHost {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
+        let session = self.render_session(cx);
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
-            format!("{}:host", self.selector_prefix()),
+            format!("{}:host", session.selector_prefix()),
         );
 
         let mut host = div()
@@ -32,15 +33,14 @@ impl Render for DockHost {
             .bg(rgb(0xf7f8fa))
             .text_color(black());
 
-        if let Some(root) = self.root_for_render(cx) {
-            host = host.child(self.render_node(root, cx));
+        if let Some(root) = session.root() {
+            host = host.child(self.render_node(root, &session, cx));
         } else {
-            host = host.child(self.render_empty_space(cx));
+            host = host.child(self.render_empty_space(&session));
         }
 
-        let floatings = self.floating_containers_for_render(cx);
-        for floating in floatings {
-            host = host.child(self.render_floating_container(floating, cx));
+        for floating in session.floating_containers() {
+            host = host.child(self.render_floating_container(*floating, &session, cx));
         }
 
         host
@@ -48,9 +48,14 @@ impl Render for DockHost {
 }
 
 impl DockHost {
-    fn render_node(&mut self, node_id: DockNodeId, cx: &mut Context<Self>) -> AnyElement {
-        let Some(node) = self.node_for_render(node_id, cx) else {
-            return self.render_missing_node(node_id);
+    fn render_node(
+        &mut self,
+        node_id: DockNodeId,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(node) = session.node(node_id).cloned() else {
+            return self.render_missing_node(node_id, session);
         };
 
         match node {
@@ -58,18 +63,19 @@ impl DockHost {
                 axis,
                 children,
                 fractions,
-            } => self.render_split(node_id, axis, children, fractions, cx),
-            DockNode::Tabs { items, active } => self.render_tabs(node_id, items, active, cx),
-            DockNode::Floating { child } => self.render_floating_node(node_id, child, cx),
+            } => self.render_split(node_id, axis, children, fractions, session, cx),
+            DockNode::Tabs { items, active } => {
+                self.render_tabs(node_id, items, active, session, cx)
+            }
+            DockNode::Floating { child } => self.render_floating_node(node_id, child, session, cx),
         }
     }
 
-    fn render_empty_space(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_empty_space(&mut self, session: &DockHostRenderSession) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::EmptySpace,
-            format!("{}:empty", self.selector_prefix()),
+            format!("{}:empty", session.selector_prefix()),
         );
-        let message = self.empty_message_for_render(cx);
         div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -80,14 +86,22 @@ impl DockHost {
             .border_1()
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x657083))
-            .child(message)
+            .child(session.empty_message().to_string())
             .into_any_element()
     }
 
-    fn render_missing_node(&mut self, node: DockNodeId) -> AnyElement {
+    fn render_missing_node(
+        &mut self,
+        node: DockNodeId,
+        session: &DockHostRenderSession,
+    ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::MissingNode { node },
-            format!("{}:missing-node:{}", self.selector_prefix(), node.as_u64()),
+            format!(
+                "{}:missing-node:{}",
+                session.selector_prefix(),
+                node.as_u64()
+            ),
         );
         div()
             .id(selector.clone())
@@ -107,11 +121,12 @@ impl DockHost {
         &mut self,
         node: DockNodeId,
         child: DockNodeId,
+        session: &DockHostRenderSession,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::Floating { node },
-            format!("{}:floating:{}", self.selector_prefix(), node.as_u64()),
+            format!("{}:floating:{}", session.selector_prefix(), node.as_u64()),
         );
         div()
             .id(selector.clone())
@@ -120,13 +135,14 @@ impl DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .child(self.render_node(child, cx))
+            .child(self.render_node(child, session, cx))
             .into_any_element()
     }
 
     fn render_floating_container(
         &mut self,
         container: DockFloatingContainer,
+        session: &DockHostRenderSession,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -135,20 +151,20 @@ impl DockHost {
             },
             format!(
                 "{}:floating:{}",
-                self.selector_prefix(),
+                session.selector_prefix(),
                 container.node.as_u64()
             ),
         );
-        let child = match self.node_for_render(container.node, cx) {
-            Some(DockNode::Floating { child }) => Some(child),
+        let child = match session.node(container.node) {
+            Some(DockNode::Floating { child }) => Some(*child),
             _ => None,
         };
         let bounds = container.bounds;
         let content = child
-            .map(|child| self.render_node(child, cx))
-            .unwrap_or_else(|| self.render_missing_node(container.node));
+            .map(|child| self.render_node(child, session, cx))
+            .unwrap_or_else(|| self.render_missing_node(container.node, session));
         let title = child
-            .map(|child| self.floating_title(child, cx))
+            .map(|child| self.floating_title(child, session))
             .unwrap_or_else(|| "Floating".to_string());
 
         div()
@@ -166,7 +182,7 @@ impl DockHost {
             .border_color(rgb(0x4b5563))
             .bg(white())
             .shadow_md()
-            .child(self.render_floating_handle(container, title, cx))
+            .child(self.render_floating_handle(container, title, session, cx))
             .child(
                 div()
                     .flex()
@@ -182,6 +198,7 @@ impl DockHost {
         &mut self,
         container: DockFloatingContainer,
         title: String,
+        session: &DockHostRenderSession,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -190,11 +207,11 @@ impl DockHost {
             },
             format!(
                 "{}:floating:{}:handle",
-                self.selector_prefix(),
+                session.selector_prefix(),
                 container.node.as_u64()
             ),
         );
-        let space = self.space().clone();
+        let space = session.space().clone();
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
@@ -274,20 +291,20 @@ impl DockHost {
             .into_any_element()
     }
 
-    fn floating_title(&self, node: DockNodeId, cx: &Context<Self>) -> String {
-        let node = self.node_for_render(node, cx);
+    fn floating_title(&self, node: DockNodeId, session: &DockHostRenderSession) -> String {
+        let node = session.node(node);
         match node {
             Some(DockNode::Tabs { items, active }) => {
-                let Some(item) = items.get(active.min(items.len().saturating_sub(1))) else {
+                let Some(item) = items.get((*active).min(items.len().saturating_sub(1))) else {
                     return "Floating".to_string();
                 };
-                self.panel_title_for_render(item, cx)
+                session.panel_title(item)
             }
             Some(DockNode::Split { children, .. }) => children
                 .first()
-                .map(|child| self.floating_title(*child, cx))
+                .map(|child| self.floating_title(*child, session))
                 .unwrap_or_else(|| "Floating".to_string()),
-            Some(DockNode::Floating { child }) => self.floating_title(child, cx),
+            Some(DockNode::Floating { child }) => self.floating_title(*child, session),
             None => "Floating".to_string(),
         }
     }
@@ -298,15 +315,16 @@ impl DockHost {
         axis: SplitAxis,
         children: Vec<DockNodeId>,
         fractions: Vec<f32>,
+        session: &DockHostRenderSession,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if children.is_empty() {
-            return self.render_missing_node(node);
+            return self.render_missing_node(node, session);
         }
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Split { node },
-            format!("{}:split:{}", self.selector_prefix(), node.as_u64()),
+            format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
         let shares = splitter::cleaned_shares(children.len(), &fractions);
         let mut split = div()
@@ -327,7 +345,7 @@ impl DockHost {
                 DockDebugRegion::SplitChild { split: node, index },
                 format!(
                     "{}:split:{}:child:{}",
-                    self.selector_prefix(),
+                    session.selector_prefix(),
                     node.as_u64(),
                     index
                 ),
@@ -342,12 +360,12 @@ impl DockHost {
                     .flex_shrink_1()
                     .flex_basis(relative(0.0))
                     .overflow_hidden()
-                    .child(self.render_node(child, cx)),
+                    .child(self.render_node(child, session, cx)),
             );
         }
 
         if shares.len() >= 2 {
-            let handle_size = self.splitter_handle_size_for_render(cx);
+            let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
             let mut cursor = 0.0_f32;
 
@@ -361,7 +379,7 @@ impl DockHost {
                     DockDebugRegion::SplitterHandle { split: node, index },
                     format!(
                         "{}:split:{}:handle:{}",
-                        self.selector_prefix(),
+                        session.selector_prefix(),
                         node.as_u64(),
                         index
                     ),
@@ -393,7 +411,13 @@ impl DockHost {
             }
         }
 
-        split = split.child(self.render_splitter_event_layer(node, axis, shares, cx));
+        split = split.child(self.render_splitter_event_layer(
+            node,
+            axis,
+            shares,
+            session.splitter_handle_size(),
+            cx,
+        ));
 
         split.into_any_element()
     }
@@ -403,10 +427,10 @@ impl DockHost {
         node: DockNodeId,
         axis: SplitAxis,
         shares: Vec<f32>,
+        handle_size: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entity = cx.entity();
-        let handle_size = self.splitter_handle_size_for_render(cx);
 
         div()
             .absolute()
@@ -499,19 +523,20 @@ impl DockHost {
         node: DockNodeId,
         items: Vec<DockItemId>,
         active: usize,
+        session: &DockHostRenderSession,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if items.is_empty() {
-            return self.render_missing_node(node);
+            return self.render_missing_node(node, session);
         }
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Tabs { node },
-            format!("{}:tabs:{}", self.selector_prefix(), node.as_u64()),
+            format!("{}:tabs:{}", session.selector_prefix(), node.as_u64()),
         );
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
-        let target_space = self.space().clone();
+        let target_space = session.space().clone();
 
         let mut tabs = div()
             .id(selector.clone())
@@ -547,7 +572,7 @@ impl DockHost {
         let mut tab_bar = div()
             .id(format!(
                 "{}:tabs:{}:bar",
-                self.selector_prefix(),
+                session.selector_prefix(),
                 node.as_u64()
             ))
             .flex()
@@ -557,7 +582,7 @@ impl DockHost {
             .bg(rgb(0xe7ebf0));
 
         for (index, item) in items.into_iter().enumerate() {
-            let title = self.panel_title_for_render(&item, cx);
+            let title = session.panel_title(&item);
             let selector = self.record_debug_selector(
                 DockDebugRegion::Tab {
                     tabs: node,
@@ -565,13 +590,13 @@ impl DockHost {
                 },
                 format!(
                     "{}:tabs:{}:tab:{}",
-                    self.selector_prefix(),
+                    session.selector_prefix(),
                     node.as_u64(),
                     item
                 ),
             );
             let payload =
-                DockTabDragPayload::new(self.space().clone(), node, item.clone(), title.clone());
+                DockTabDragPayload::new(session.space().clone(), node, item.clone(), title.clone());
             let target_index = index;
             let tab_item = item.clone();
             let tab = div()
@@ -622,20 +647,24 @@ impl DockHost {
         }
 
         tabs = tabs.child(tab_bar);
-        tabs = tabs.child(self.render_panel(&active_item, cx));
-        if let Some(preview) = self.render_drop_preview(node) {
+        tabs = tabs.child(self.render_panel(&active_item, session, cx));
+        if let Some(preview) = self.render_drop_preview(node, session) {
             tabs = tabs.child(preview);
         }
         tabs.into_any_element()
     }
 
-    fn render_drop_preview(&mut self, node: DockNodeId) -> Option<AnyElement> {
+    fn render_drop_preview(
+        &mut self,
+        node: DockNodeId,
+        session: &DockHostRenderSession,
+    ) -> Option<AnyElement> {
         let bounds = self.tab_drop_preview_bounds(node)?;
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview { tabs: node },
             format!(
                 "{}:tabs:{}:drop-preview",
-                self.selector_prefix(),
+                session.selector_prefix(),
                 node.as_u64()
             ),
         );
@@ -656,13 +685,18 @@ impl DockHost {
         )
     }
 
-    fn render_panel(&mut self, item: &DockItemId, cx: &mut Context<Self>) -> AnyElement {
-        let resolution = self.panel_for_render(item, cx);
+    fn render_panel(
+        &mut self,
+        item: &DockItemId,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let resolution = session.panel_for_render(item, cx);
         match resolution {
             DockHostPanelRenderResolution::Registered(panel_view) => {
                 let selector = self.record_debug_selector(
                     DockDebugRegion::Panel { item: item.clone() },
-                    format!("{}:panel:{}", self.selector_prefix(), item),
+                    format!("{}:panel:{}", session.selector_prefix(), item),
                 );
                 div()
                     .id(selector.clone())
@@ -680,7 +714,7 @@ impl DockHost {
                     DockDebugRegion::MissingPanel {
                         item: missing.clone(),
                     },
-                    format!("{}:panel:{}:missing", self.selector_prefix(), missing),
+                    format!("{}:panel:{}:missing", session.selector_prefix(), missing),
                 );
                 div()
                     .id(selector.clone())
