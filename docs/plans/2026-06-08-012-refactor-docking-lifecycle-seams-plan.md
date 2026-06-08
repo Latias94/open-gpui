@@ -271,11 +271,11 @@ This change affects the core GPUI docking layering rather than a single feature.
 - `examples/docking-native/src/main.rs`
 - `crates/gpui_docking/src/lib.rs`
 
-**Approach:** Add a runtime installation path for `Window::on_window_should_close` when opening controller-backed viewport windows. The should-close hook should consult the runtime close policy and return `false` for `Prevent`. `App::on_window_closed` remains responsible for unregistering mappings after accepted closes. Adapter-level `close_viewport_mapping` can remain as the cleanup primitive, but its docs and tests should no longer claim it can veto a platform close by itself.
+**Approach:** Add a runtime installation path for `Window::on_window_should_close` when opening controller-backed viewport windows. The should-close hook should consult the runtime close policy and return `false` for `Prevent`. `App::on_window_closed` remains responsible for unregistering mappings after accepted closes. Adapter-level cleanup should use post-close window-id handling and must not expose a second veto path.
 
 **Technical design:** The close path has two callbacks: the per-window should-close hook makes the pre-close decision, while the application-level closed observer cleans stale mappings by `WindowId` after GPUI confirms the window is gone.
 
-**Patterns to follow:** `DockViewportRuntimeHandle::observe_window_closed`, `DockViewportAdapter::close_viewport_mapping`, `DockViewportClosePolicy`, `Window::on_window_should_close`, and `App::on_window_closed`.
+**Patterns to follow:** `DockViewportRuntimeHandle::observe_window_closed`, `DockViewportAdapter::handle_window_closed`, `DockViewportClosePolicy`, `Window::on_window_should_close`, and `App::on_window_closed`.
 
 **Test scenarios:**
 

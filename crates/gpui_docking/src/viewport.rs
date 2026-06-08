@@ -112,8 +112,6 @@ pub struct DockViewportCloseOutcome {
 pub enum DockViewportCloseStatus {
     /// The window closed and its runtime mapping was removed.
     Closed,
-    /// Policy rejected the close request before the window closed.
-    Vetoed,
     /// The runtime did not know the closed window id.
     UnknownWindow,
 }
@@ -580,62 +578,6 @@ impl DockViewportAdapter {
         }
     }
 
-    /// Applies viewport close policy to the adapter mapping for a window id.
-    ///
-    /// `RetainLayout` removes only the runtime mapping. It does not mutate the docking graph.
-    /// `Prevent` returns a veto outcome and leaves the mapping intact.
-    pub fn close_viewport_mapping(
-        &mut self,
-        window_id: WindowId,
-        policy: DockViewportClosePolicy,
-    ) -> DockViewportCloseOutcome {
-        let Some(space) = self
-            .registry
-            .indexed_space_for_window_id(window_id)
-            .cloned()
-        else {
-            return DockViewportCloseOutcome {
-                space: None,
-                window_id,
-                status: DockViewportCloseStatus::UnknownWindow,
-            };
-        };
-
-        if !self.registry.contains_space(&space) {
-            self.registry.remove_window_index(window_id);
-            return DockViewportCloseOutcome {
-                space: None,
-                window_id,
-                status: DockViewportCloseStatus::UnknownWindow,
-            };
-        }
-
-        match policy {
-            DockViewportClosePolicy::Prevent => DockViewportCloseOutcome {
-                space: Some(space),
-                window_id,
-                status: DockViewportCloseStatus::Vetoed,
-            },
-            DockViewportClosePolicy::RetainLayout => {
-                if let Some(outcome) =
-                    self.unregister_window_id(window_id, DockViewportUnregisterReason::Closed)
-                {
-                    DockViewportCloseOutcome {
-                        space: Some(outcome.space),
-                        window_id,
-                        status: DockViewportCloseStatus::Closed,
-                    }
-                } else {
-                    DockViewportCloseOutcome {
-                        space: None,
-                        window_id,
-                        status: DockViewportCloseStatus::UnknownWindow,
-                    }
-                }
-            }
-        }
-    }
-
     /// Returns the snapshot for a logical dock space.
     pub fn snapshot(&self, space: &DockSpaceId) -> Option<&DockViewportSnapshot> {
         self.registry.snapshot(space)
@@ -1036,7 +978,7 @@ mod tests {
     }
 
     #[test]
-    fn close_policy_retain_layout_removes_only_runtime_mapping() {
+    fn window_closed_cleanup_removes_only_runtime_mapping() {
         let mut graph = DockGraph::new();
         let main = space("main");
         let tabs = graph.insert_node(DockNode::Tabs {
@@ -1049,8 +991,7 @@ mod tests {
         let window = handle(1);
         adapter.register_viewport(main.clone(), window);
 
-        let outcome = adapter
-            .close_viewport_mapping(window.window_id(), DockViewportClosePolicy::RetainLayout);
+        let outcome = adapter.handle_window_closed(window.window_id());
         assert_eq!(
             outcome,
             DockViewportCloseOutcome {
@@ -1075,41 +1016,12 @@ mod tests {
     }
 
     #[test]
-    fn close_policy_prevent_vetoes_and_preserves_mapping() {
-        let mut adapter = DockViewportAdapter::new();
-        let main = space("main");
-        let window = handle(1);
-        adapter.register_viewport(main.clone(), window);
-
-        let outcome =
-            adapter.close_viewport_mapping(window.window_id(), DockViewportClosePolicy::Prevent);
-        assert_eq!(
-            outcome,
-            DockViewportCloseOutcome {
-                space: Some(main.clone()),
-                window_id: window.window_id(),
-                status: DockViewportCloseStatus::Vetoed,
-            }
-        );
-        assert_eq!(adapter.window_for_space(&main), Some(window));
-        assert_eq!(adapter.space_for_window_id(window.window_id()), Some(&main));
-    }
-
-    #[test]
-    fn close_mapping_unknown_window_is_not_reported_as_vetoed() {
+    fn window_closed_unknown_window_reports_unknown() {
         let mut adapter = DockViewportAdapter::new();
         let unknown = WindowId::from(99);
 
         assert_eq!(
-            adapter.close_viewport_mapping(unknown, DockViewportClosePolicy::Prevent),
-            DockViewportCloseOutcome {
-                space: None,
-                window_id: unknown,
-                status: DockViewportCloseStatus::UnknownWindow,
-            }
-        );
-        assert_eq!(
-            adapter.close_viewport_mapping(unknown, DockViewportClosePolicy::RetainLayout),
+            adapter.handle_window_closed(unknown),
             DockViewportCloseOutcome {
                 space: None,
                 window_id: unknown,
@@ -1119,14 +1031,14 @@ mod tests {
     }
 
     #[test]
-    fn close_mapping_discards_stale_window_index() {
+    fn window_closed_discards_stale_window_index() {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let window_id = WindowId::from(1);
         adapter.insert_stale_window_index_for_test(window_id, main);
 
         assert_eq!(
-            adapter.close_viewport_mapping(window_id, DockViewportClosePolicy::Prevent),
+            adapter.handle_window_closed(window_id),
             DockViewportCloseOutcome {
                 space: None,
                 window_id,

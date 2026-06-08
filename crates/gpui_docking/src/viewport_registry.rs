@@ -109,18 +109,6 @@ impl DockViewportRegistry {
             .and_then(|space| self.viewports.get_key_value(space).map(|(space, _)| space))
     }
 
-    pub(crate) fn indexed_space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
-        self.windows.get(&window_id)
-    }
-
-    pub(crate) fn remove_window_index(&mut self, window_id: WindowId) -> Option<DockSpaceId> {
-        self.windows.remove(&window_id)
-    }
-
-    pub(crate) fn contains_space(&self, space: &DockSpaceId) -> bool {
-        self.viewports.contains_key(space)
-    }
-
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.viewports.keys().cloned().collect()
     }
@@ -179,18 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn valid_window_lookup_ignores_and_can_discard_stale_indexes() {
+    fn valid_window_lookup_ignores_and_cleanup_discards_stale_indexes() {
         let mut registry = DockViewportRegistry::default();
         let window_id = WindowId::from(7);
-        let missing = space("missing");
-        registry.insert_stale_window_index_for_test(window_id, missing.clone());
+        registry.insert_stale_window_index_for_test(window_id, space("missing"));
 
         assert_eq!(registry.space_for_window_id(window_id), None);
-        assert_eq!(
-            registry.indexed_space_for_window_id(window_id),
-            Some(&missing)
-        );
-        assert_eq!(registry.remove_window_index(window_id), Some(missing));
-        assert_eq!(registry.indexed_space_for_window_id(window_id), None);
+        assert_eq!(registry.unregister_window_id(window_id), None);
+        assert_eq!(registry.space_for_window_id(window_id), None);
     }
 }
