@@ -1,5 +1,6 @@
 use crate::{
-    DockController, DockHost, DockSpaceId,
+    DockController, DockHost, DockSpaceId, DockViewportUnregisterOutcome,
+    DockViewportUnregisterReason,
     viewport_registry::{DockViewportRegistry, DockViewportSnapshot},
 };
 use open_gpui::{AnyWindowHandle, App, AppContext as _, Entity, Result, WindowId, WindowOptions};
@@ -41,6 +42,17 @@ pub enum DockViewportOpenStatus {
     Replaced,
 }
 
+/// Runtime result of registering or replacing a platform viewport mapping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportRegisterOutcome {
+    /// Logical dock space now rendered by the registered window.
+    pub space: DockSpaceId,
+    /// GPUI window now rendering the logical dock space.
+    pub window: AnyWindowHandle,
+    /// Runtime mappings removed to preserve one-to-one space/window ownership.
+    pub replaced: Vec<DockViewportUnregisterOutcome>,
+}
+
 impl DockViewportAdapter {
     /// Creates an empty viewport adapter.
     pub fn new() -> Self {
@@ -69,6 +81,35 @@ impl DockViewportAdapter {
         let space = space.into();
         let window = window.into();
         self.registry.register(space, window)
+    }
+
+    /// Registers or replaces the window for a logical dock space and reports every removed mapping.
+    ///
+    /// A single registration can replace two mappings: the previous window for `space`, and the
+    /// previous space that already owned `window`.
+    pub fn register_viewport_with_outcome(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        window: impl Into<AnyWindowHandle>,
+    ) -> DockViewportRegisterOutcome {
+        let space = space.into();
+        let window = window.into();
+        let replaced = self
+            .registry
+            .register_with_replacements(space.clone(), window)
+            .into_iter()
+            .map(|(space, snapshot)| DockViewportUnregisterOutcome {
+                space,
+                window: snapshot.window,
+                reason: DockViewportUnregisterReason::Replaced,
+            })
+            .collect();
+
+        DockViewportRegisterOutcome {
+            space,
+            window,
+            replaced,
+        }
     }
 
     /// Opens or reuses a GPUI window that renders a logical dock space.
@@ -249,6 +290,64 @@ mod tests {
         assert_eq!(removed_space, secondary);
         assert_eq!(removed.window, second);
         assert!(adapter.is_empty());
+    }
+
+    #[test]
+    fn registering_with_outcome_reports_replaced_window_mapping() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let secondary = space("secondary");
+        let first = handle(1);
+
+        adapter.register_viewport(main.clone(), first);
+        let outcome = adapter.register_viewport_with_outcome(secondary.clone(), first);
+
+        assert_eq!(outcome.space, secondary.clone());
+        assert_eq!(outcome.window, first);
+        assert_eq!(
+            outcome.replaced,
+            vec![DockViewportUnregisterOutcome {
+                space: main.clone(),
+                window: first,
+                reason: DockViewportUnregisterReason::Replaced,
+            }]
+        );
+        assert_eq!(adapter.window_for_space(&main), None);
+        assert_eq!(adapter.window_for_space(&secondary), Some(first));
+        assert_eq!(adapter.space_for_window(first), Some(&secondary));
+    }
+
+    #[test]
+    fn registering_with_outcome_reports_all_replaced_mappings() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let secondary = space("secondary");
+        let first = handle(1);
+        let second = handle(2);
+
+        adapter.register_viewport(main.clone(), first);
+        adapter.register_viewport(secondary.clone(), second);
+        let outcome = adapter.register_viewport_with_outcome(main.clone(), second);
+
+        assert_eq!(
+            outcome.replaced,
+            vec![
+                DockViewportUnregisterOutcome {
+                    space: main.clone(),
+                    window: first,
+                    reason: DockViewportUnregisterReason::Replaced,
+                },
+                DockViewportUnregisterOutcome {
+                    space: secondary.clone(),
+                    window: second,
+                    reason: DockViewportUnregisterReason::Replaced,
+                },
+            ]
+        );
+        assert_eq!(adapter.window_for_space(&main), Some(second));
+        assert_eq!(adapter.window_for_space(&secondary), None);
+        assert_eq!(adapter.space_for_window(first), None);
+        assert_eq!(adapter.space_for_window(second), Some(&main));
     }
 
     #[test]

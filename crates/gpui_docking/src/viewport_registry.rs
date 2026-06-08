@@ -48,20 +48,35 @@ impl DockViewportRegistry {
         space: DockSpaceId,
         window: AnyWindowHandle,
     ) -> Option<DockViewportSnapshot> {
-        let window_id = window.window_id();
+        self.register_with_replacements(space.clone(), window)
+            .into_iter()
+            .find(|(removed_space, _)| *removed_space == space)
+            .map(|(_, snapshot)| snapshot)
+    }
 
-        if let Some(previous) = self.viewports.get(&space) {
+    pub(crate) fn register_with_replacements(
+        &mut self,
+        space: DockSpaceId,
+        window: AnyWindowHandle,
+    ) -> Vec<(DockSpaceId, DockViewportSnapshot)> {
+        let window_id = window.window_id();
+        let mut replaced = Vec::new();
+
+        if let Some(previous) = self.viewports.remove(&space) {
             self.windows.remove(&previous.window.window_id());
+            replaced.push((space.clone(), previous));
         }
         if let Some(previous_space) = self.windows.remove(&window_id)
             && previous_space != space
+            && let Some(previous) = self.viewports.remove(&previous_space)
         {
-            self.viewports.remove(&previous_space);
+            replaced.push((previous_space, previous));
         }
 
         self.windows.insert(window_id, space.clone());
         self.viewports
-            .insert(space, DockViewportSnapshot::new(window))
+            .insert(space, DockViewportSnapshot::new(window));
+        replaced
     }
 
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
