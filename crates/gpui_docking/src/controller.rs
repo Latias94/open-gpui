@@ -1,7 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockItemId, DockLayout,
-    DockLayoutValidationError, DockPanel, DockPanelRegistry, DockPolicy, DockSpaceId,
-    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
+    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelRegistry, DockPolicy,
+    DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -217,7 +217,9 @@ impl DockControllerBuilder {
         self
     }
 
-    /// Builds the controller.
+    /// Builds the controller without validating a custom graph.
+    ///
+    /// Use [`Self::try_build`] when accepting restored or user-authored graph state.
     pub fn build(self) -> DockController {
         let mut workspace = DockWorkspace::with_options(self.space, self.graph, self.options);
         workspace.set_policy(self.policy);
@@ -225,5 +227,11 @@ impl DockControllerBuilder {
             workspace.register_panel(item, panel);
         }
         DockController::new(workspace)
+    }
+
+    /// Validates reachable graph state and builds the controller.
+    pub fn try_build(self) -> Result<DockController, DockGraphValidationError> {
+        self.graph.validate()?;
+        Ok(self.build())
     }
 }

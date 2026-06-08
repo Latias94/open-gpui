@@ -75,6 +75,8 @@ mod graph_floating_tests;
 mod graph_move_tests;
 #[cfg(test)]
 mod graph_split_tests;
+#[cfg(test)]
+mod graph_validation_tests;
 mod host;
 mod host_debug;
 mod host_interactions;
