@@ -69,96 +69,6 @@ impl CanvasRuntime {
         }
     }
 
-    /// Builds a runtime from a caller-supplied spatial index without rebuilding the index.
-    ///
-    /// The supplied index must match the document, router, and kind registry used to build the
-    /// runtime. Debug builds verify that contract by rebuilding the expected index.
-    pub fn from_unchecked_spatial_index(
-        document: &CanvasDocument,
-        spatial_index: SpatialIndex,
-    ) -> Self {
-        Self::from_unchecked_spatial_index_with_router(
-            document,
-            spatial_index,
-            &CanvasDefaultEdgeRouter,
-        )
-    }
-
-    /// Builds a runtime from a caller-supplied spatial index without rebuilding the index.
-    ///
-    /// The supplied index must match the document and kind registry. Debug builds verify that
-    /// contract by rebuilding the expected index.
-    pub fn from_unchecked_spatial_index_with_kind_registry(
-        document: &CanvasDocument,
-        spatial_index: SpatialIndex,
-        kind_registry: &CanvasKindRegistry,
-    ) -> Self {
-        Self::from_unchecked_spatial_index_with_router_and_kind_registry(
-            document,
-            spatial_index,
-            &CanvasDefaultEdgeRouter,
-            kind_registry,
-        )
-    }
-
-    /// Builds a runtime from a caller-supplied spatial index without rebuilding the index.
-    ///
-    /// The supplied index must match the document and router. Debug builds verify that contract by
-    /// rebuilding the expected index.
-    pub fn from_unchecked_spatial_index_with_router<R>(
-        document: &CanvasDocument,
-        spatial_index: SpatialIndex,
-        router: &R,
-    ) -> Self
-    where
-        R: CanvasEdgeRouter + ?Sized,
-    {
-        Self::from_unchecked_spatial_index_with_router_and_optional_kind_registry(
-            document,
-            spatial_index,
-            router,
-            None,
-        )
-    }
-
-    /// Builds a runtime from a caller-supplied spatial index without rebuilding the index.
-    ///
-    /// The supplied index must match the document, router, and kind registry. Debug builds verify
-    /// that contract by rebuilding the expected index.
-    pub fn from_unchecked_spatial_index_with_router_and_kind_registry<R>(
-        document: &CanvasDocument,
-        spatial_index: SpatialIndex,
-        router: &R,
-        kind_registry: &CanvasKindRegistry,
-    ) -> Self
-    where
-        R: CanvasEdgeRouter + ?Sized,
-    {
-        Self::from_unchecked_spatial_index_with_router_and_optional_kind_registry(
-            document,
-            spatial_index,
-            router,
-            Some(kind_registry),
-        )
-    }
-
-    fn from_unchecked_spatial_index_with_router_and_optional_kind_registry<R>(
-        document: &CanvasDocument,
-        spatial_index: SpatialIndex,
-        router: &R,
-        kind_registry: Option<&CanvasKindRegistry>,
-    ) -> Self
-    where
-        R: CanvasEdgeRouter + ?Sized,
-    {
-        debug_assert_spatial_index_matches(document, &spatial_index, router, kind_registry);
-        Self {
-            spatial_index,
-            graph_index: CanvasGraphIndex::rebuild(document),
-            edge_geometries: resolve_edge_geometries(document, router, kind_registry),
-        }
-    }
-
     pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
         self.apply_diff_with_router(document, diff, &CanvasDefaultEdgeRouter);
     }
@@ -380,31 +290,6 @@ where
         .collect()
 }
 
-fn debug_assert_spatial_index_matches<R>(
-    _document: &CanvasDocument,
-    _spatial_index: &SpatialIndex,
-    _router: &R,
-    _kind_registry: Option<&CanvasKindRegistry>,
-) where
-    R: CanvasEdgeRouter + ?Sized,
-{
-    #[cfg(debug_assertions)]
-    {
-        let expected = match _kind_registry {
-            Some(kind_registry) => SpatialIndex::rebuild_with_router_and_kind_registry(
-                _document,
-                _router,
-                kind_registry,
-            ),
-            None => SpatialIndex::rebuild_with_router(_document, _router),
-        };
-        debug_assert_eq!(
-            _spatial_index, &expected,
-            "unchecked spatial index does not match document, router, and kind registry"
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,31 +310,6 @@ mod tests {
                 .hit_test(point(px(1.0), px(1.0)), HitOptions::default())
                 .any(|record| matches!(&record.target, crate::HitTarget::Node(id) if id == &NodeId::from("a")))
         );
-    }
-
-    #[test]
-    fn runtime_accepts_matching_unchecked_spatial_index() {
-        let document = connected_document();
-        let runtime = CanvasRuntime::from_unchecked_spatial_index(
-            &document,
-            SpatialIndex::rebuild(&document),
-        );
-
-        assert!(runtime.graph_index().contains_edge(&EdgeId::from("a-b")));
-        assert!(
-            runtime
-                .hit_test(point(px(1.0), px(1.0)), HitOptions::default())
-                .any(|record| matches!(&record.target, crate::HitTarget::Node(id) if id == &NodeId::from("a")))
-        );
-    }
-
-    #[cfg(debug_assertions)]
-    #[test]
-    #[should_panic(expected = "unchecked spatial index does not match document")]
-    fn runtime_rejects_mismatched_unchecked_spatial_index_in_debug() {
-        let document = connected_document();
-        let _runtime =
-            CanvasRuntime::from_unchecked_spatial_index(&document, SpatialIndex::default());
     }
 
     #[test]
