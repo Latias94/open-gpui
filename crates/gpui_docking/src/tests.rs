@@ -268,6 +268,61 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
 }
 
 #[test]
+fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
+
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("b"),
+        target_space: space(),
+        target_tabs: root,
+        zone: DropZone::Right,
+        insert_index: None,
+    }));
+    let left_tabs = graph
+        .find_item_in_space(&space(), &item("a"))
+        .expect("left item should remain findable")
+        .0;
+
+    assert!(graph.apply_op(&DockOp::MoveItem {
+        source_space: space(),
+        item: item("c"),
+        target_space: space(),
+        target_tabs: left_tabs,
+        zone: DropZone::Top,
+        insert_index: None,
+    }));
+
+    let root = graph.root(&space()).expect("space should keep a root");
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = graph.node(root).expect("root split node should exist")
+    else {
+        panic!("expected horizontal root split");
+    };
+    assert_eq!(*axis, SplitAxis::Horizontal);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children.len(), fractions.len());
+
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = graph
+        .node(children[0])
+        .expect("left child should become cross-axis split")
+    else {
+        panic!("expected vertical child split");
+    };
+    assert_eq!(*axis, SplitAxis::Vertical);
+    assert_eq!(children.len(), 2);
+    assert_eq!(children.len(), fractions.len());
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn float_item_in_window_creates_floating_container() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 

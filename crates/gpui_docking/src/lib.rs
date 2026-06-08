@@ -3,6 +3,7 @@
 
 mod action;
 mod builder;
+mod controller;
 mod debug;
 mod drag;
 mod drop_target;
@@ -16,6 +17,7 @@ mod panel;
 mod policy;
 mod render;
 mod splitter;
+mod viewport;
 mod workspace;
 
 #[cfg(test)]
@@ -25,6 +27,7 @@ mod tests;
 
 pub use action::*;
 pub use builder::*;
+pub use controller::*;
 pub use graph::*;
 pub use host::*;
 pub use ids::*;
@@ -32,4 +35,5 @@ pub use layout::*;
 pub use op::*;
 pub use panel::*;
 pub use policy::*;
+pub use viewport::*;
 pub use workspace::*;

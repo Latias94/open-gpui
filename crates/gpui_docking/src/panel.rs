@@ -1,44 +1,132 @@
-use crate::DockItemId;
-use open_gpui::AnyView;
-use std::collections::HashMap;
+use crate::{DockHost, DockItemId};
+use open_gpui::{AnyView, Context};
+use std::{cell::OnceCell, collections::HashMap, fmt, rc::Rc};
+
+type DockPanelFactory = Rc<dyn Fn(&mut Context<DockHost>) -> AnyView>;
 
 /// Renderable content and metadata for one dock item.
-#[derive(Clone, Debug)]
 pub struct DockPanel {
+    inner: Rc<DockPanelInner>,
+}
+
+#[derive(Clone)]
+struct DockPanelInner {
     title: String,
     closable: bool,
-    view: AnyView,
+    content: DockPanelContent,
+}
+
+#[derive(Clone)]
+enum DockPanelContent {
+    View(AnyView),
+    Lazy {
+        factory: DockPanelFactory,
+        view: OnceCell<AnyView>,
+    },
+}
+
+impl fmt::Debug for DockPanel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DockPanel")
+            .field("title", &self.title())
+            .field("closable", &self.is_closable())
+            .field("content", &self.inner.content)
+            .finish()
+    }
+}
+
+impl fmt::Debug for DockPanelContent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::View(_) => f.write_str("View"),
+            Self::Lazy { view, .. } => f
+                .debug_struct("Lazy")
+                .field("instantiated", &view.get().is_some())
+                .finish(),
+        }
+    }
+}
+
+impl Clone for DockPanel {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl DockPanel {
     /// Creates a panel registration with the default close policy.
     pub fn new(title: impl Into<String>, view: impl Into<AnyView>) -> Self {
         Self {
-            title: title.into(),
-            closable: true,
-            view: view.into(),
+            inner: Rc::new(DockPanelInner {
+                title: title.into(),
+                closable: true,
+                content: DockPanelContent::View(view.into()),
+            }),
+        }
+    }
+
+    /// Creates a lazily instantiated panel registration with the default close policy.
+    pub fn lazy(
+        title: impl Into<String>,
+        factory: impl Fn(&mut Context<DockHost>) -> AnyView + 'static,
+    ) -> Self {
+        Self {
+            inner: Rc::new(DockPanelInner {
+                title: title.into(),
+                closable: true,
+                content: DockPanelContent::Lazy {
+                    factory: Rc::new(factory),
+                    view: OnceCell::new(),
+                },
+            }),
         }
     }
 
     /// Sets whether the panel can be closed by future interaction layers.
     pub fn closable(mut self, closable: bool) -> Self {
-        self.closable = closable;
+        Rc::make_mut(&mut self.inner).closable = closable;
         self
     }
 
     /// Returns the panel title shown in tab chrome.
     pub fn title(&self) -> &str {
-        &self.title
+        &self.inner.title
     }
 
     /// Returns whether the panel can be closed by future interaction layers.
     pub fn is_closable(&self) -> bool {
-        self.closable
+        self.inner.closable
     }
 
-    /// Returns the GPUI view used as this panel's rendered root.
+    /// Returns the already-instantiated GPUI view used as this panel's rendered root.
+    ///
+    /// Lazy panels instantiate when rendered through [`Self::resolve_view`]. Calling this before a
+    /// lazy panel has rendered will panic.
     pub fn view(&self) -> &AnyView {
-        &self.view
+        match &self.inner.content {
+            DockPanelContent::View(view) => view,
+            DockPanelContent::Lazy { view, .. } => view
+                .get()
+                .expect("lazy dock panel has not been instantiated"),
+        }
+    }
+
+    /// Returns true when this panel has an instantiated view.
+    pub fn has_view(&self) -> bool {
+        match &self.inner.content {
+            DockPanelContent::View(_) => true,
+            DockPanelContent::Lazy { view, .. } => view.get().is_some(),
+        }
+    }
+
+    /// Returns the panel view, instantiating lazy panels on first render.
+    pub fn resolve_view(&self, cx: &mut Context<DockHost>) -> AnyView {
+        match &self.inner.content {
+            DockPanelContent::View(view) => view.clone(),
+            DockPanelContent::Lazy { factory, view } => view.get_or_init(|| factory(cx)).clone(),
+        }
     }
 }
 
@@ -86,6 +174,16 @@ impl DockPanelRegistry {
         view: impl Into<AnyView>,
     ) -> Option<DockPanel> {
         self.register(item, DockPanel::new(title, view))
+    }
+
+    /// Registers a lazily created view factory for a dock item.
+    pub fn register_factory(
+        &mut self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut Context<DockHost>) -> AnyView + 'static,
+    ) -> Option<DockPanel> {
+        self.register(item, DockPanel::lazy(title, factory))
     }
 
     /// Returns a registered panel by dock item id.

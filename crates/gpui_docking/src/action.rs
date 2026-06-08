@@ -2,6 +2,7 @@ use crate::{
     DockItemId, DockNode, DockNodeId, DockOp, DockOpApplyError, DockPolicyError, DockSpaceId,
     DockWorkspace, DropZone,
 };
+use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
 /// Docking interaction emitted by GPUI render adapters.
@@ -28,6 +29,53 @@ pub enum DockAction {
         target_tabs: DockNodeId,
         /// The resolved drop zone.
         zone: DropZone,
+    },
+    /// Floats one tab inside a dock space without creating a platform window.
+    FloatItemInWindow {
+        /// The source dock space containing the item.
+        source_space: DockSpaceId,
+        /// The item to float.
+        item: DockItemId,
+        /// The target dock space that will own the floating container.
+        target_space: DockSpaceId,
+        /// Bounds for the floating container, relative to the host.
+        bounds: Bounds<Pixels>,
+    },
+    /// Floats an entire tabs node inside a dock space without creating a platform window.
+    FloatTabsInWindow {
+        /// The source dock space containing the tabs node.
+        source_space: DockSpaceId,
+        /// The tabs node to float.
+        source_tabs: DockNodeId,
+        /// The target dock space that will own the floating container.
+        target_space: DockSpaceId,
+        /// Bounds for the floating container, relative to the host.
+        bounds: Bounds<Pixels>,
+    },
+    /// Updates the bounds of an in-window floating container.
+    SetFloatingBounds {
+        /// The dock space containing the floating container.
+        space: DockSpaceId,
+        /// The floating container node.
+        floating: DockNodeId,
+        /// Bounds for the floating container, relative to the host.
+        bounds: Bounds<Pixels>,
+    },
+    /// Raises an in-window floating container above other floating containers.
+    RaiseFloating {
+        /// The dock space containing the floating container.
+        space: DockSpaceId,
+        /// The floating container node.
+        floating: DockNodeId,
+    },
+    /// Merges an in-window floating container into an existing tabs node.
+    MergeFloatingInto {
+        /// The dock space containing the floating container.
+        space: DockSpaceId,
+        /// The floating container node.
+        floating: DockNodeId,
+        /// The target tabs node.
+        target_tabs: DockNodeId,
     },
     /// Resizes one split node by replacing its normalized fractions.
     ResizeSplit {
@@ -65,6 +113,9 @@ impl DockActionOutcome {
 /// Error returned when a docking action cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockActionApplyError {
+    /// The action was sent directly to a controller-backed host.
+    #[error("controller-backed hosts apply actions through DockController")]
+    ControllerBackedHost,
     /// The selected item was not found in the target tabs node.
     #[error("dock item {item} not found in tabs node {tabs:?}")]
     ItemNotInTabs {
@@ -104,6 +155,29 @@ impl DockWorkspace {
                 *target_tabs,
                 *zone,
             ),
+            DockAction::FloatItemInWindow {
+                source_space,
+                item,
+                target_space,
+                bounds,
+            } => self.float_item_in_window(source_space, item, target_space, *bounds),
+            DockAction::FloatTabsInWindow {
+                source_space,
+                source_tabs,
+                target_space,
+                bounds,
+            } => self.float_tabs_in_window(source_space, *source_tabs, target_space, *bounds),
+            DockAction::SetFloatingBounds {
+                space,
+                floating,
+                bounds,
+            } => self.set_floating_bounds(space, *floating, *bounds),
+            DockAction::RaiseFloating { space, floating } => self.raise_floating(space, *floating),
+            DockAction::MergeFloatingInto {
+                space,
+                floating,
+                target_tabs,
+            } => self.merge_floating_into(space, *floating, *target_tabs),
             DockAction::ResizeSplit { split, fractions } => self.resize_split(*split, fractions),
         }
     }
@@ -159,6 +233,88 @@ impl DockWorkspace {
             target_tabs,
             zone,
             insert_index: None,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn float_item_in_window(
+        &mut self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+        bounds: Bounds<Pixels>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_floating()?;
+        self.apply_op_checked(&DockOp::FloatItemInWindow {
+            source_space: source_space.clone(),
+            item: item.clone(),
+            target_space: target_space.clone(),
+            bounds,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn float_tabs_in_window(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+        bounds: Bounds<Pixels>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_floating()?;
+        self.apply_op_checked(&DockOp::FloatTabsInWindow {
+            source_space: source_space.clone(),
+            source_tabs,
+            target_space: target_space.clone(),
+            bounds,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn set_floating_bounds(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        bounds: Bounds<Pixels>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_floating()?;
+        self.apply_op_checked(&DockOp::SetFloatingBounds {
+            space: space.clone(),
+            floating,
+            bounds,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn raise_floating(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_floating()?;
+        self.apply_op_checked(&DockOp::RaiseFloating {
+            space: space.clone(),
+            floating,
+        })
+        .map(DockActionOutcome::from_changed)
+        .map_err(Into::into)
+    }
+
+    fn merge_floating_into(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        target_tabs: DockNodeId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_floating()?;
+        self.apply_op_checked(&DockOp::MergeFloatingInto {
+            space: space.clone(),
+            floating,
+            target_tabs,
         })
         .map(DockActionOutcome::from_changed)
         .map_err(Into::into)

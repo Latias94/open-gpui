@@ -55,8 +55,13 @@ pub(crate) enum DockDebugRegion {
         /// Dock item id.
         item: DockItemId,
     },
-    /// A placeholder for a floating node deferred by Phase 2.
-    DeferredFloating {
+    /// An in-window floating container frame.
+    Floating {
+        /// Runtime floating node id.
+        node: DockNodeId,
+    },
+    /// The drag handle for an in-window floating container.
+    FloatingHandle {
         /// Runtime floating node id.
         node: DockNodeId,
     },

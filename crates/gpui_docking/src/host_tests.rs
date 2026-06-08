@@ -1,7 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockHost, DockItemId,
-    DockLayoutNode, DockNode, DockNodeId, DockOpApplyError, DockPolicyError, DockSpaceId,
-    DockWorkspace, DropZone, SplitAxis, debug::DockDebugRegion,
+    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
+    DockGraph, DockHost, DockItemId, DockLayoutNode, DockNode, DockNodeId, DockOpApplyError,
+    DockPolicyError, DockSpaceId, DockWorkspace, DropZone, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
@@ -9,6 +9,7 @@ use open_gpui::{
     WindowHandle, div, point, px, rgb, size,
 };
 use slotmap::Key;
+use std::{cell::Cell, rc::Rc};
 
 const SPACE: &str = "main";
 
@@ -68,6 +69,33 @@ fn split_graph(
     (graph, root, first, second)
 }
 
+fn floating_bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+    Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+}
+
+fn floating_overlay_graph() -> (DockGraph, DockNodeId, DockNodeId) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), root);
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 220.0, 140.0),
+        });
+    (graph, root, floating)
+}
+
 fn test_view(cx: &mut TestAppContext, label: &'static str) -> Entity<TestPanel> {
     cx.new(|_| TestPanel { label })
 }
@@ -100,6 +128,29 @@ fn open_workspace(
     window_size: open_gpui::Size<Pixels>,
 ) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
     let window = cx.open_window(window_size, move |_, _| DockHost::from_workspace(workspace));
+    let host = window.root(cx).expect("window should expose DockHost root");
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+    (window, host, visual)
+}
+
+fn open_controller_workspace(
+    cx: &mut TestAppContext,
+    controller: Entity<DockController>,
+    window_size: open_gpui::Size<Pixels>,
+) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
+    open_controller_space(cx, controller, space(), window_size)
+}
+
+fn open_controller_space(
+    cx: &mut TestAppContext,
+    controller: Entity<DockController>,
+    dock_space: DockSpaceId,
+    window_size: open_gpui::Size<Pixels>,
+) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
+    let window = cx.open_window(window_size, move |_, cx| {
+        DockHost::from_controller(controller.clone(), dock_space, cx)
+    });
     let host = window.root(cx).expect("window should expose DockHost root");
     cx.run_until_parked();
     let visual = VisualTestContext::from_window(window.into(), cx);
@@ -173,6 +224,108 @@ fn registry_replaces_registered_panel(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut TestAppContext) {
+    let calls = Rc::new(Cell::new(0));
+    let (graph, _root) = tabs_graph(&["lazy"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    let factory_calls = calls.clone();
+    workspace.register_panel_factory("lazy", "Lazy", move |cx| {
+        factory_calls.set(factory_calls.get() + 1);
+        cx.new(|_| TestPanel { label: "lazy" }).into()
+    });
+    let panel = workspace
+        .panels()
+        .get(&item("lazy"))
+        .expect("panel should be registered")
+        .clone();
+
+    assert!(!panel.has_view());
+    assert_eq!(calls.get(), 0);
+
+    let (window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    assert_eq!(calls.get(), 1);
+    assert!(panel.has_view());
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel { item: item("lazy") }
+        )
+        .is_some(),
+        "lazy panel should render after first instantiation"
+    );
+
+    let _visual = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    assert_eq!(calls.get(), 1, "lazy panel view should be reused");
+}
+
+#[open_gpui::test]
+fn inactive_lazy_panel_title_does_not_instantiate_view(cx: &mut TestAppContext) {
+    let active_calls = Rc::new(Cell::new(0));
+    let inactive_calls = Rc::new(Cell::new(0));
+    let (graph, _root) = tabs_graph(&["active", "inactive"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    let active_factory_calls = active_calls.clone();
+    workspace.register_panel_factory("active", "Active", move |cx| {
+        active_factory_calls.set(active_factory_calls.get() + 1);
+        cx.new(|_| TestPanel { label: "active" }).into()
+    });
+    let inactive_factory_calls = inactive_calls.clone();
+    workspace.register_panel_factory("inactive", "Inactive", move |cx| {
+        inactive_factory_calls.set(inactive_factory_calls.get() + 1);
+        cx.new(|_| TestPanel { label: "inactive" }).into()
+    });
+
+    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    assert_eq!(active_calls.get(), 1);
+    assert_eq!(
+        inactive_calls.get(),
+        0,
+        "inactive tab title lookup should not instantiate panel view"
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel {
+                item: item("active")
+            }
+        )
+        .is_some()
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Panel {
+                item: item("inactive")
+            }
+        )
+        .is_none()
+    );
+}
+
+#[open_gpui::test]
+fn lazy_panel_state_stays_out_of_layout_export(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph(&["lazy"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_factory("lazy", "Lazy Panel", |cx| {
+        cx.new(|_| TestPanel { label: "lazy" }).into()
+    });
+
+    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+    let json = host.read_with(&visual, |host, _| {
+        serde_json::to_string(&host.graph().export_layout()).expect("layout should serialize")
+    });
+
+    assert!(!json.contains("Lazy Panel"));
+    assert!(!json.contains("TestPanel"));
+    assert!(!json.contains("AnyView"));
+}
+
+#[open_gpui::test]
 fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
     let workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
@@ -195,12 +348,327 @@ fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn floating_action_respects_workspace_policy(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+
+    let result = workspace.apply_action(&DockAction::FloatItemInWindow {
+        source_space: space(),
+        item: item("a"),
+        target_space: space(),
+        bounds: floating_bounds(20.0, 30.0, 200.0, 120.0),
+    });
+
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::Policy(
+            DockPolicyError::FloatingDisabled
+        ))
+    );
+    assert!(workspace.graph().floating_containers(&space()).is_empty());
+    let DockNode::Tabs { items, .. } = workspace
+        .graph()
+        .node(root)
+        .expect("root tabs should still exist")
+    else {
+        panic!("root should remain tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+}
+
+#[open_gpui::test]
+fn floating_actions_create_move_raise_and_merge_containers(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b", "c"], 0);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+
+    let first_bounds = floating_bounds(20.0, 30.0, 200.0, 120.0);
+    let second_bounds = floating_bounds(60.0, 80.0, 180.0, 100.0);
+    assert_eq!(
+        workspace
+            .apply_action(&DockAction::FloatItemInWindow {
+                source_space: space(),
+                item: item("a"),
+                target_space: space(),
+                bounds: first_bounds,
+            })
+            .expect("floating should be enabled"),
+        DockActionOutcome::Changed
+    );
+    workspace
+        .apply_action(&DockAction::FloatItemInWindow {
+            source_space: space(),
+            item: item("b"),
+            target_space: space(),
+            bounds: second_bounds,
+        })
+        .expect("second floating should be valid");
+
+    let first = workspace.graph().floating_containers(&space())[0].node;
+    let second = workspace.graph().floating_containers(&space())[1].node;
+    assert_eq!(
+        workspace
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .map(|container| container.node)
+            .collect::<Vec<_>>(),
+        vec![first, second]
+    );
+
+    workspace
+        .apply_action(&DockAction::RaiseFloating {
+            space: space(),
+            floating: first,
+        })
+        .expect("raising a floating container should be valid");
+    assert_eq!(
+        workspace
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .map(|container| container.node)
+            .collect::<Vec<_>>(),
+        vec![second, first]
+    );
+
+    let moved_bounds = floating_bounds(90.0, 100.0, 200.0, 120.0);
+    workspace
+        .apply_action(&DockAction::SetFloatingBounds {
+            space: space(),
+            floating: first,
+            bounds: moved_bounds,
+        })
+        .expect("floating bounds update should be valid");
+    assert_eq!(
+        workspace
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .find(|container| container.node == first)
+            .expect("first floating should remain present")
+            .bounds,
+        moved_bounds
+    );
+
+    workspace
+        .apply_action(&DockAction::MergeFloatingInto {
+            space: space(),
+            floating: first,
+            target_tabs: root,
+        })
+        .expect("floating merge should be valid");
+    assert_eq!(workspace.graph().floating_containers(&space()).len(), 1);
+    let DockNode::Tabs { items, .. } = workspace
+        .graph()
+        .node(root)
+        .expect("root tabs should remain present")
+    else {
+        panic!("root should remain tabs");
+    };
+    assert_eq!(items, &vec![item("c"), item("a")]);
+}
+
+#[open_gpui::test]
 fn compatibility_constructor_delegates_to_workspace(_cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"], 0);
     let host = DockHost::new(space(), graph);
 
     assert_eq!(host.workspace().space(), &space());
     assert!(host.graph().root(&space()).is_some());
+}
+
+#[open_gpui::test]
+fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (window_a, host_a, mut visual_a) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+    let (window_b, host_b, visual_b) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+
+    assert!(
+        selector_for(
+            &visual_a,
+            &host_a,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should be active in host A before mutation"
+    );
+    assert!(
+        selector_for(
+            &visual_b,
+            &host_b,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should be active in host B before mutation"
+    );
+
+    let tab_b = selector_for(
+        &visual_a,
+        &host_a,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("tab B selector should be emitted");
+    let tab_b_bounds = debug_bounds(&mut visual_a, &tab_b);
+    visual_a.simulate_click(tab_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+
+    let visual_a = VisualTestContext::from_window(window_a.into(), cx);
+    let visual_b = VisualTestContext::from_window(window_b.into(), cx);
+
+    assert!(
+        selector_for(
+            &visual_a,
+            &host_a,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should be active in host A after mutation"
+    );
+    assert!(
+        selector_for(
+            &visual_b,
+            &host_b,
+            DockDebugRegion::Panel { item: item("b") }
+        )
+        .is_some(),
+        "panel B should be active in host B after shared-owner mutation"
+    );
+    let active = cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { active, .. } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should still exist")
+        else {
+            panic!("root should be tabs");
+        };
+        *active
+    });
+    assert_eq!(active, 1);
+}
+
+#[open_gpui::test]
+fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        target_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let target = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let preview = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::DropPreview { tabs: target_tabs },
+    )
+    .expect("target host should render a drop preview for cross-window drag");
+    assert!(debug_bounds(&mut target_visual, &preview).size.width > px(0.0));
+
+    target_visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the target window after cross-window drop"
+    );
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_none(),
+        "panel A should leave the source window after cross-window drop"
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should remain present")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(*active, 1);
+    });
 }
 
 #[open_gpui::test]
@@ -623,30 +1091,111 @@ fn empty_root_renders_placeholder(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn floating_node_renders_deferred_placeholder(cx: &mut TestAppContext) {
-    let mut graph = DockGraph::new();
-    let tabs = graph.insert_node(DockNode::Tabs {
-        items: vec![item("a")],
-        active: 0,
-    });
-    let floating = graph.insert_node(DockNode::Floating { child: tabs });
-    graph.set_root(space(), floating);
-
+fn floating_container_renders_panel_inside_overlay_bounds(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
     let (_window, host, mut visual) = open_host(
         cx,
         graph,
-        &[("a", "Panel A", "A")],
-        size(px(320.0), px(200.0)),
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(320.0), px(220.0)),
     );
 
-    let deferred = selector_for(
+    let frame = selector_for(&visual, &host, DockDebugRegion::Floating { node: floating })
+        .expect("floating frame selector should be emitted");
+    let handle = selector_for(
         &visual,
         &host,
-        DockDebugRegion::DeferredFloating { node: floating },
+        DockDebugRegion::FloatingHandle { node: floating },
     )
-    .expect("deferred floating selector should be emitted");
+    .expect("floating handle selector should be emitted");
 
-    assert!(debug_bounds(&mut visual, &deferred).size.width > px(0.0));
+    let frame_bounds = debug_bounds(&mut visual, &frame);
+    assert_close(width(frame_bounds), 220.0);
+    assert_close(height(frame_bounds), 140.0);
+    assert!(debug_bounds(&mut visual, &handle).size.height > px(0.0));
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "floating panel should render"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
+        "root panel should still render behind the overlay"
+    );
+}
+
+#[open_gpui::test]
+fn missing_floating_child_renders_missing_node_placeholder(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), root);
+    let missing_child = DockNodeId::null();
+    let floating = graph.insert_node(DockNode::Floating {
+        child: missing_child,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 220.0, 140.0),
+        });
+
+    let (_window, host, visual) = open_host(
+        cx,
+        graph,
+        &[("b", "Panel B", "B")],
+        size(px(320.0), px(220.0)),
+    );
+
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::MissingNode {
+                node: missing_child
+            }
+        )
+        .is_some(),
+        "missing floating child should render a test-visible placeholder"
+    );
+}
+
+#[open_gpui::test]
+fn dragging_floating_handle_updates_graph_bounds(cx: &mut TestAppContext) {
+    let (graph, _root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(320.0), px(220.0)));
+
+    let handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("floating handle selector should be emitted");
+    let start = debug_bounds(&mut visual, &handle).center();
+    let end = point(start.x + px(40.0), start.y + px(30.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    host.read_with(&visual, |host, _| {
+        let container = host
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .find(|container| container.node == floating)
+            .expect("floating container should remain present");
+        assert_close(f32::from(container.bounds.origin.x), 50.0);
+        assert_close(f32::from(container.bounds.origin.y), 50.0);
+        assert!(host.floating_drag().is_none());
+    });
 }
 
 #[open_gpui::test]

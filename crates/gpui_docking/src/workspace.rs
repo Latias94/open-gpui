@@ -83,6 +83,16 @@ impl DockWorkspace {
         self.panels.register_view(item, title, view)
     }
 
+    /// Registers a GPUI view factory as lazy panel content for a dock item.
+    pub fn register_panel_factory(
+        &mut self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut open_gpui::Context<crate::DockHost>) -> AnyView + 'static,
+    ) -> Option<DockPanel> {
+        self.panels.register_factory(item, title, factory)
+    }
+
     /// Returns the workspace rendering options.
     pub fn options(&self) -> &DockHostOptions {
         &self.options

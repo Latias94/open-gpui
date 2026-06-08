@@ -1,8 +1,10 @@
 use open_gpui::{
     App, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, rgb, size,
+    WindowOptions, div, point, prelude::*, px, rgb, size,
 };
-use open_gpui_docking::{DockGraph, DockHost, DockWorkspace, EditorDockLayoutSpec};
+use open_gpui_docking::{
+    DockAction, DockController, DockGraph, DockHost, DockWorkspace, EditorDockLayoutSpec,
+};
 use open_gpui_platform::application;
 
 const SPACE: &str = "docking-demo";
@@ -79,8 +81,8 @@ impl Render for DemoPanel {
     }
 }
 
-fn build_host(cx: &mut Context<DockHost>) -> DockHost {
-    let graph = DockGraph::default_editor_layout(
+fn default_graph() -> DockGraph {
+    DockGraph::default_editor_layout(
         SPACE,
         EditorDockLayoutSpec::new(
             ["explorer", "outline"],
@@ -89,12 +91,29 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
         )
         .with_fractions(0.24, 0.68)
         .with_active_indexes(0, 0, 0),
-    );
+    )
+}
 
-    let mut workspace = DockWorkspace::new(SPACE, graph);
-    workspace.register_panel_view(
-        "explorer",
-        "Explorer",
+fn restored_demo_graph() -> DockGraph {
+    let mut workspace = DockWorkspace::new(SPACE, default_graph());
+    workspace.policy_mut().set_allow_floating(true);
+    workspace
+        .apply_action(&DockAction::FloatItemInWindow {
+            source_space: SPACE.into(),
+            item: "preview".into(),
+            target_space: SPACE.into(),
+            bounds: Bounds::new(point(px(620.0), px(72.0)), size(px(300.0), px(220.0))),
+        })
+        .expect("preview panel should float inside the demo dock space");
+
+    let layout = workspace.graph().export_layout();
+    DockGraph::import_layout(&layout).expect("demo dock layout should restore")
+}
+
+fn build_host(cx: &mut Context<DockHost>) -> DockHost {
+    let mut workspace = DockWorkspace::new(SPACE, restored_demo_graph());
+    workspace.policy_mut().set_allow_floating(true);
+    workspace.register_panel_factory("explorer", "Explorer", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Explorer",
@@ -107,11 +126,10 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "target/doc",
                 ],
             )
-        }),
-    );
-    workspace.register_panel_view(
-        "outline",
-        "Outline",
+        })
+        .into()
+    });
+    workspace.register_panel_factory("outline", "Outline", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Outline",
@@ -124,11 +142,10 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "Render for DockHost",
                 ],
             )
-        }),
-    );
-    workspace.register_panel_view(
-        "editor",
-        "Editor",
+        })
+        .into()
+    });
+    workspace.register_panel_factory("editor", "Editor", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Editor",
@@ -141,11 +158,10 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "Registered panel views stay outside the graph.",
                 ],
             )
-        }),
-    );
-    workspace.register_panel_view(
-        "preview",
-        "Preview",
+        })
+        .into()
+    });
+    workspace.register_panel_factory("preview", "Preview", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Preview",
@@ -154,16 +170,16 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                 &[
                     "DockHost adapts DockWorkspace into GPUI.",
                     "Tab selection updates graph state.",
+                    "Layout round-trips through DockLayout.",
                     "Splitter handles resize panes.",
                     "Tabs can drag/drop between stacks.",
-                    "Floating overlays are deferred.",
+                    "Floating bounds live in the graph layout.",
                 ],
             )
-        }),
-    );
-    workspace.register_panel_view(
-        "terminal",
-        "Terminal",
+        })
+        .into()
+    });
+    workspace.register_panel_factory("terminal", "Terminal", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Terminal",
@@ -175,11 +191,10 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "$ cargo doc -p open-gpui-docking --no-deps",
                 ],
             )
-        }),
-    );
-    workspace.register_panel_view(
-        "problems",
-        "Problems",
+        })
+        .into()
+    });
+    workspace.register_panel_factory("problems", "Problems", |cx| {
         cx.new(|_| {
             DemoPanel::new(
                 "Problems",
@@ -191,10 +206,12 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                     "OS windows remain out of scope.",
                 ],
             )
-        }),
-    );
+        })
+        .into()
+    });
 
-    DockHost::from_workspace(workspace)
+    let controller = cx.new(|_| DockController::new(workspace));
+    DockHost::from_controller(controller, SPACE, cx)
 }
 
 fn main() {
