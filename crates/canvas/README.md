@@ -25,6 +25,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   the same transaction path as other edits.
 - `CanvasInputMapper` maps GPUI Escape key presses to `CanvasEvent::Cancel`, giving tools a
   renderer-neutral cancellation path instead of treating Escape as ordinary text input.
+- `CanvasInputMapper::key_down_event` lets focus-owning widgets dispatch keyboard input without a
+  canvas-local bounds mapper; the native smoke example forwards Delete, Backspace, and Escape this
+  way.
 - `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined
   custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
 - The built-in select tool supports shift-click selection toggling through the same incremental

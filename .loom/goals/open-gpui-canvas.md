@@ -116,6 +116,7 @@ stop_conditions:
 | Persistence adapter feature boundary | Done | `redb-store`, `loro-crdt`, and `rkyv-snapshot` features plus adapter capability statuses reserve future adapter names without pulling optional dependencies into the default core build. |
 | Tool registry ergonomics | Done | `CanvasToolRegistry` maps custom tool IDs to reducers and lets applications dispatch registered tools while keeping builtin tools on the same editor event entrypoint. |
 | Example custom tools | Done | `open-gpui-smoke-native` registers a custom stamp tool through `CanvasToolRegistry` and dispatches right-click pointer events through the same editor effect path as builtin tools. |
+| Smoke keyboard bridge | Done | `open-gpui-smoke-native` tracks focus on the canvas container and dispatches GPUI key-down events through `CanvasInputMapper::key_down_event`. |
 | Crate README/API examples | Done | `crates/canvas/README.md` documents the model, graph queries, GPUI rendering path, custom tools, JSON Canvas, and persistence boundaries with copyable API snippets. |
 | Package README verification | Done | `cargo package -p open-gpui-canvas --locked --allow-dirty` verifies the crate README is packaged with the future publish artifact. |
 | Editor persistence hook | Done | `CanvasPersistenceCursor` and `apply_persistent_transaction` connect successful recorded editor transactions to monotonic store log entries without binding `CanvasEditor` to a concrete backend. |

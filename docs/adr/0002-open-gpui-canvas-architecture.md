@@ -74,6 +74,9 @@ surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintM
 render, and registers GPUI pointer and wheel listeners from the canvas paint callback where the
 actual canvas bounds are known. `CanvasInputMapper` converts window-space GPUI events into
 canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor.
+The same example tracks focus on the canvas container and dispatches key-down events through
+`CanvasInputMapper::key_down_event`, so Delete, Backspace, and Escape use the same reducer path as
+application-owned keyboard integrations.
 
 Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
 copy of selection and tool state, `CanvasPaintFrame` marks selected records and computes transient

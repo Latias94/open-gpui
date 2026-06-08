@@ -1,7 +1,7 @@
 use open_gpui::{
-    App, Bounds, Context, DispatchPhase, Hsla, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ScrollWheelEvent, Window, WindowBounds, WindowOptions, canvas, div, point,
-    prelude::*, px, rgb, size,
+    App, Bounds, Context, DispatchPhase, FocusHandle, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Window, WindowBounds,
+    WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor, CanvasEndpoint, CanvasEvent,
@@ -18,6 +18,7 @@ const STAMP_TOOL_ID: &str = "stamp-node";
 struct SmokeView {
     editor: CanvasEditor,
     tools: CanvasToolRegistry,
+    focus_handle: FocusHandle,
 }
 
 #[derive(Default)]
@@ -70,6 +71,7 @@ impl Render for SmokeView {
         let model = CanvasPaintModel::from(&self.editor);
         let prepaint_model = model.clone();
         let paint_model = model;
+        let focus_handle = self.focus_handle.clone();
         let options = CanvasPaintOptions {
             include_handles: true,
             ..CanvasPaintOptions::default()
@@ -79,90 +81,102 @@ impl Render for SmokeView {
             ..CanvasPaintTheme::default()
         };
 
-        div().size_full().bg(rgb(0xf8fafc)).child(
-            canvas(
-                move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
-                move |bounds, frame, window, _cx| {
-                    let mapper = CanvasInputMapper::new(bounds);
+        div()
+            .size_full()
+            .bg(rgb(0xf8fafc))
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                cx.stop_propagation();
+                this.handle_canvas_event(Some(CanvasInputMapper::key_down_event(event)), cx);
+            }))
+            .child(
+                canvas(
+                    move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
+                    move |bounds, frame, window, _cx| {
+                        let mapper = CanvasInputMapper::new(bounds);
 
-                    window.on_mouse_event({
-                        let entity = entity.clone();
-                        move |event: &MouseDownEvent, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            let focus_handle = focus_handle.clone();
+                            move |event: &MouseDownEvent, phase, window, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
+
+                                window.focus(&focus_handle, cx);
+                                entity.update(cx, |this, cx| {
+                                    this.handle_canvas_event(mapper.mouse_down(event), cx);
+                                });
                             }
+                        });
 
-                            entity.update(cx, |this, cx| {
-                                this.handle_canvas_event(mapper.mouse_down(event), cx);
-                            });
-                        }
-                    });
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |event: &MouseMoveEvent, phase, _, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
 
-                    window.on_mouse_event({
-                        let entity = entity.clone();
-                        move |event: &MouseMoveEvent, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-
-                            entity.update(cx, |this, cx| {
-                                let event = if this.is_pointer_interacting() {
-                                    Some(CanvasEvent::PointerMove {
-                                        position: event.position - mapper.bounds.origin,
-                                        modifiers: CanvasInputMapper::modifiers(event.modifiers),
-                                    })
-                                } else {
-                                    mapper.mouse_move(event)
-                                };
-                                this.handle_canvas_event(event, cx);
-                            });
-                        }
-                    });
-
-                    window.on_mouse_event({
-                        let entity = entity.clone();
-                        move |event: &MouseUpEvent, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-
-                            entity.update(cx, |this, cx| {
-                                let event = if this.is_pointer_interacting() {
-                                    pointer_button(event.button).map(|button| {
-                                        CanvasEvent::PointerUp {
+                                entity.update(cx, |this, cx| {
+                                    let event = if this.is_pointer_interacting() {
+                                        Some(CanvasEvent::PointerMove {
                                             position: event.position - mapper.bounds.origin,
-                                            button,
                                             modifiers: CanvasInputMapper::modifiers(
                                                 event.modifiers,
                                             ),
-                                        }
-                                    })
-                                } else {
-                                    mapper.mouse_up(event)
-                                };
-                                this.handle_canvas_event(event, cx);
-                            });
-                        }
-                    });
-
-                    window.on_mouse_event({
-                        let entity = entity.clone();
-                        move |event: &ScrollWheelEvent, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
+                                        })
+                                    } else {
+                                        mapper.mouse_move(event)
+                                    };
+                                    this.handle_canvas_event(event, cx);
+                                });
                             }
+                        });
 
-                            entity.update(cx, |this, cx| {
-                                this.handle_canvas_event(mapper.scroll_wheel(event), cx);
-                            });
-                        }
-                    });
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |event: &MouseUpEvent, phase, _, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
 
-                    paint_canvas_frame(bounds, &paint_model, &frame, theme, window);
-                },
+                                entity.update(cx, |this, cx| {
+                                    let event = if this.is_pointer_interacting() {
+                                        pointer_button(event.button).map(|button| {
+                                            CanvasEvent::PointerUp {
+                                                position: event.position - mapper.bounds.origin,
+                                                button,
+                                                modifiers: CanvasInputMapper::modifiers(
+                                                    event.modifiers,
+                                                ),
+                                            }
+                                        })
+                                    } else {
+                                        mapper.mouse_up(event)
+                                    };
+                                    this.handle_canvas_event(event, cx);
+                                });
+                            }
+                        });
+
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |event: &ScrollWheelEvent, phase, _, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
+
+                                entity.update(cx, |this, cx| {
+                                    this.handle_canvas_event(mapper.scroll_wheel(event), cx);
+                                });
+                            }
+                        });
+
+                        paint_canvas_frame(bounds, &paint_model, &frame, theme, window);
+                    },
+                )
+                .size_full(),
             )
-            .size_full(),
-        )
     }
 }
 
@@ -308,9 +322,10 @@ fn main() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| SmokeView {
+                cx.new(|cx| SmokeView {
                     editor: CanvasEditor::new(demo_document()),
                     tools: demo_tools(),
+                    focus_handle: cx.focus_handle(),
                 })
             },
         )
