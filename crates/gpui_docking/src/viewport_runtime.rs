@@ -4,7 +4,7 @@ use crate::{
     DockViewportPlacementValidationError, DockViewportRestoreOutcome,
     DockViewportShouldCloseOutcome,
 };
-use open_gpui::{App, Entity, Result, Subscription, WindowId, WindowOptions};
+use open_gpui::{AnyWindowHandle, App, Entity, Result, Subscription, WindowId, WindowOptions};
 use std::{
     cell::{Cell, Ref, RefCell},
     rc::Rc,
@@ -63,6 +63,17 @@ impl DockViewportCloseGate {
 
         self.close_policy() != DockViewportClosePolicy::Prevent
     }
+}
+
+fn install_should_close_hook(
+    window: AnyWindowHandle,
+    cx: &mut App,
+    should_close: Rc<dyn Fn(WindowId) -> bool>,
+) -> Result<()> {
+    let window_id = window.window_id();
+    window.update(cx, move |_, window, cx| {
+        window.on_window_should_close(cx, move |_, _| should_close(window_id));
+    })
 }
 
 impl DockViewportRuntime {
@@ -167,18 +178,20 @@ impl DockViewportRuntime {
         cx: &mut App,
         should_close: impl Fn(WindowId) -> bool + 'static,
     ) -> Result<DockViewportOpenOutcome> {
-        let outcome = self.adapter.open_viewport_with_window_setup(
-            self.controller.clone(),
-            space,
-            options,
-            cx,
-            move |window, cx| {
-                let window_id = window.window_handle().window_id();
-                window.on_window_should_close(cx, move |_, _| should_close(window_id));
-            },
-        );
+        let should_close = Rc::new(should_close);
+        let outcome = self
+            .adapter
+            .open_viewport(self.controller.clone(), space, options, cx);
         self.close_gate.sync_adapter(&self.adapter);
-        outcome
+        let outcome = outcome?;
+        if let Err(error) = install_should_close_hook(outcome.window, cx, should_close) {
+            self.adapter
+                .handle_window_closed(outcome.window.window_id());
+            self.close_gate.sync_adapter(&self.adapter);
+            return Err(error);
+        }
+
+        Ok(outcome)
     }
 
     /// Exports serializable placement snapshots from the adapter.

@@ -2,9 +2,7 @@ use crate::{
     DockController, DockHost, DockSpaceId,
     viewport_registry::{DockViewportRegistry, DockViewportSnapshot},
 };
-use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Entity, Result, Window, WindowId, WindowOptions,
-};
+use open_gpui::{AnyWindowHandle, App, AppContext as _, Entity, Result, WindowId, WindowOptions};
 
 /// Runtime adapter state that maps logical dock spaces to GPUI windows.
 ///
@@ -85,17 +83,6 @@ impl DockViewportAdapter {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        self.open_viewport_with_window_setup(controller, space, options, cx, |_, _| {})
-    }
-
-    pub(crate) fn open_viewport_with_window_setup(
-        &mut self,
-        controller: Entity<DockController>,
-        space: impl Into<DockSpaceId>,
-        options: WindowOptions,
-        cx: &mut App,
-        setup_window: impl FnOnce(&mut Window, &mut App) + 'static,
-    ) -> Result<DockViewportOpenOutcome> {
         let space = space.into();
         let mut status = DockViewportOpenStatus::Opened;
 
@@ -117,8 +104,7 @@ impl DockViewportAdapter {
 
         let host_space = space.clone();
         let window = cx
-            .open_window(options, move |window, cx| {
-                setup_window(window, cx);
+            .open_window(options, move |_, cx| {
                 cx.new(move |cx| DockHost::from_controller(controller, host_space, cx))
             })?
             .into();

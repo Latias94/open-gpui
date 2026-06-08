@@ -325,6 +325,50 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
 }
 
 #[open_gpui::test]
+fn viewport_runtime_installs_should_close_hook_when_reusing_registered_window(
+    cx: &mut TestAppContext,
+) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, _host, mut visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        secondary_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let window: AnyWindowHandle = window.into();
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(secondary_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let reused = cx
+        .update(|app| {
+            runtime.open_viewport(secondary_space, viewport_window_options(480.0, 260.0), app)
+        })
+        .expect("registered live viewport should be reused through runtime");
+
+    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window, window);
+    assert!(
+        visual.simulate_close(),
+        "runtime should install a RetainLayout should-close hook when it reuses a registered window"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
