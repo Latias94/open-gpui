@@ -111,6 +111,7 @@ mod viewport_runtime;
 mod viewport_target;
 mod workspace;
 mod workspace_action;
+mod workspace_panel_lifecycle;
 
 #[cfg(test)]
 mod host_floating_tests;

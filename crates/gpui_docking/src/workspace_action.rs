@@ -215,12 +215,7 @@ impl DockWorkspace {
         space: &DockSpaceId,
         item: &DockItemId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let Some(panel) = self.panels().catalog().descriptor(item) else {
-            return Err(DockActionApplyError::PanelNotRegistered { item: item.clone() });
-        };
-        if !panel.is_closable() {
-            return Err(DockActionApplyError::PanelNotClosable { item: item.clone() });
-        }
+        self.panel_lifecycle().validate_close(item)?;
 
         self.commit_graph_op(DockOp::CloseItem {
             space: space.clone(),
@@ -235,9 +230,7 @@ impl DockWorkspace {
         item: &DockItemId,
         insert_index: Option<usize>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        if self.panels().catalog().descriptor(item).is_none() {
-            return Err(DockActionApplyError::PanelNotRegistered { item: item.clone() });
-        }
+        self.panel_lifecycle().validate_open(item)?;
 
         self.commit_graph_op(DockOp::OpenItem {
             space: space.clone(),
