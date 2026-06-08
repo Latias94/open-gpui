@@ -39,6 +39,15 @@ impl DockLayout {
             });
         }
 
+        let mut space_ids = HashSet::new();
+        for space in &self.spaces {
+            if !space_ids.insert(space.id.clone()) {
+                return Err(DockLayoutValidationError::DuplicateSpaceId {
+                    space: space.id.clone(),
+                });
+            }
+        }
+
         let mut by_id = HashMap::new();
         for node in &self.nodes {
             let id = node.id();
@@ -232,6 +241,12 @@ pub enum DockLayoutValidationError {
         expected: u32,
         /// Found version.
         found: u32,
+    },
+    /// A dock space id appears more than once.
+    #[error("duplicate dock layout space id: {space}")]
+    DuplicateSpaceId {
+        /// Duplicate dock space id.
+        space: DockSpaceId,
     },
     /// A layout node id appears more than once.
     #[error("duplicate dock layout node id: {id}")]

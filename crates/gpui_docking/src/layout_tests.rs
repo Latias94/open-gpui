@@ -249,6 +249,30 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
 }
 
 #[test]
+fn layout_validation_rejects_duplicate_spaces() {
+    let duplicate_spaces = DockLayout::new(
+        vec![
+            DockLayoutSpace {
+                id: space(),
+                root: None,
+                floatings: Vec::new(),
+            },
+            DockLayoutSpace {
+                id: space(),
+                root: None,
+                floatings: Vec::new(),
+            },
+        ],
+        Vec::new(),
+    );
+
+    assert_eq!(
+        duplicate_spaces.validate(),
+        Err(DockLayoutValidationError::DuplicateSpaceId { space: space() })
+    );
+}
+
+#[test]
 fn builder_default_editor_layout_sets_root_and_roundtrips() {
     let spec = EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]);
     let graph = DockGraph::default_editor_layout(space(), spec);
