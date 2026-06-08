@@ -95,6 +95,8 @@ mod workspace_action;
 #[cfg(test)]
 mod host_panel_tests;
 #[cfg(test)]
+mod host_render_tests;
+#[cfg(test)]
 mod host_test_support;
 #[cfg(test)]
 mod host_tests;
