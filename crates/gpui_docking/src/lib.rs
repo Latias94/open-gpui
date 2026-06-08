@@ -83,6 +83,7 @@ mod viewport_close;
 mod viewport_coordinates;
 mod viewport_placement;
 mod viewport_registry;
+mod viewport_runtime;
 mod viewport_target;
 mod workspace;
 
@@ -105,5 +106,6 @@ pub use viewport::*;
 pub use viewport_close::*;
 pub use viewport_placement::*;
 pub use viewport_registry::DockViewportSnapshot;
+pub use viewport_runtime::*;
 pub use viewport_target::*;
 pub use workspace::*;
