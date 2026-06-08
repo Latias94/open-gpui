@@ -9,7 +9,7 @@ use open_gpui_canvas::{
     CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection,
     CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
     CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand, DocumentError,
-    HandleRole, NodeId, PointerButton, collect_visible_records, paint_canvas_frame,
+    HandleRole, NodeId, PointerButton, paint_canvas_frame, prepaint_canvas_frame,
 };
 use open_gpui_platform::application;
 
@@ -100,7 +100,9 @@ impl Render for SmokeView {
             }))
             .child(
                 canvas(
-                    move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
+                    move |bounds, window, _| {
+                        prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
+                    },
                     move |bounds, frame, window, cx| {
                         let mapper = CanvasInputMapper::new(bounds);
 

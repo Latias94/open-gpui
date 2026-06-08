@@ -9,7 +9,7 @@ use crate::{
 use open_gpui::{
     App, Bounds, Canvas, ContentMask, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point, ScrollWheelEvent,
-    SharedString, TextAlign, TextRun, Window, canvas, px, quad, rgb,
+    SharedString, TextAlign, TextRun, Window, WrappedLine, canvas, px, quad, rgb,
 };
 use std::sync::Arc;
 
@@ -228,6 +228,44 @@ pub struct CanvasPaintFrame {
     pub interaction: CanvasPaintInteractionFrame,
 }
 
+#[derive(Debug)]
+pub struct CanvasPreparedPaintFrame {
+    frame: CanvasPaintFrame,
+    labels: Vec<CanvasPreparedPaintLabel>,
+    label_indices: Vec<Option<usize>>,
+}
+
+impl CanvasPreparedPaintFrame {
+    pub fn frame(&self) -> &CanvasPaintFrame {
+        &self.frame
+    }
+
+    pub fn into_frame(self) -> CanvasPaintFrame {
+        self.frame
+    }
+
+    pub fn prepared_label_count(&self) -> usize {
+        self.labels.len()
+    }
+
+    pub fn record_count(&self) -> usize {
+        self.frame.records.len()
+    }
+
+    pub fn has_prepared_label(&self, record_index: usize) -> bool {
+        self.label_indices
+            .get(record_index)
+            .is_some_and(Option::is_some)
+    }
+}
+
+#[derive(Debug)]
+struct CanvasPreparedPaintLabel {
+    view_bounds: Bounds<Pixels>,
+    lines: Vec<WrappedLine>,
+    text_height: Pixels,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintRecord {
     pub target: HitTarget,
@@ -360,10 +398,12 @@ pub fn canvas_view(
     model: CanvasPaintModel,
     options: CanvasPaintOptions,
     theme: CanvasPaintTheme,
-) -> Canvas<CanvasPaintFrame> {
+) -> Canvas<CanvasPreparedPaintFrame> {
     let prepaint_model = model.clone();
     canvas(
-        move |bounds, _, _| collect_visible_records(&prepaint_model, bounds, options),
+        move |bounds, window, _| {
+            prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
+        },
         move |bounds, frame, window, cx| {
             paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
         },
@@ -418,10 +458,47 @@ pub fn collect_visible_records(
     }
 }
 
+pub fn prepaint_canvas_frame(
+    model: &CanvasPaintModel,
+    canvas_bounds: Bounds<Pixels>,
+    options: CanvasPaintOptions,
+    theme: CanvasPaintTheme,
+    window: &mut Window,
+) -> CanvasPreparedPaintFrame {
+    let frame = collect_visible_records(model, canvas_bounds, options);
+    prepare_canvas_frame(frame, theme, window)
+}
+
+pub fn prepare_canvas_frame(
+    frame: CanvasPaintFrame,
+    theme: CanvasPaintTheme,
+    window: &mut Window,
+) -> CanvasPreparedPaintFrame {
+    let mut labels = Vec::new();
+    let label_indices = frame
+        .records
+        .iter()
+        .map(|record| {
+            record.label.as_ref().and_then(|label| {
+                let prepared = prepare_label(label, theme, window)?;
+                let index = labels.len();
+                labels.push(prepared);
+                Some(index)
+            })
+        })
+        .collect();
+
+    CanvasPreparedPaintFrame {
+        frame,
+        labels,
+        label_indices,
+    }
+}
+
 pub fn paint_canvas_frame(
     canvas_bounds: Bounds<Pixels>,
     model: &CanvasPaintModel,
-    frame: &CanvasPaintFrame,
+    frame: &CanvasPreparedPaintFrame,
     theme: CanvasPaintTheme,
     window: &mut Window,
     cx: &mut App,
@@ -430,7 +507,7 @@ pub fn paint_canvas_frame(
         window.paint_quad(open_gpui::fill(canvas_bounds, background));
     }
 
-    for record in &frame.records {
+    for (record_index, record) in frame.frame.records.iter().enumerate() {
         match &record.target {
             HitTarget::Node(id) => {
                 let Some(node) = model.document.nodes.get(id) else {
@@ -489,12 +566,16 @@ pub fn paint_canvas_frame(
             }
         }
 
-        if let Some(label) = &record.label {
-            paint_label(canvas_bounds, label, theme, window, cx);
+        if let Some(label_index) = frame
+            .label_indices
+            .get(record_index)
+            .and_then(|index| *index)
+        {
+            paint_label(canvas_bounds, &frame.labels[label_index], theme, window, cx);
         }
     }
 
-    for record in &frame.records {
+    for record in &frame.frame.records {
         if !record.selected {
             continue;
         }
@@ -527,7 +608,7 @@ pub fn paint_canvas_frame(
         }
     }
 
-    if let Some(bounds) = frame.interaction.selection_bounds {
+    if let Some(bounds) = frame.frame.interaction.selection_bounds {
         paint_rect(
             window,
             canvas_bounds,
@@ -539,7 +620,7 @@ pub fn paint_canvas_frame(
         );
     }
 
-    if let Some(preview) = &frame.interaction.connection_preview {
+    if let Some(preview) = &frame.frame.interaction.connection_preview {
         paint_line(
             window,
             canvas_bounds,
@@ -550,7 +631,7 @@ pub fn paint_canvas_frame(
         );
     }
 
-    for guide in &frame.interaction.snap_guides {
+    for guide in &frame.frame.interaction.snap_guides {
         paint_line(
             window,
             canvas_bounds,
@@ -561,7 +642,7 @@ pub fn paint_canvas_frame(
         );
     }
 
-    for handle in &frame.interaction.transform_handles {
+    for handle in &frame.frame.interaction.transform_handles {
         paint_rect(
             window,
             canvas_bounds,
@@ -740,22 +821,19 @@ fn paint_line(
     }
 }
 
-fn paint_label(
-    canvas_bounds: Bounds<Pixels>,
+fn prepare_label(
     label: &CanvasPaintLabel,
     theme: CanvasPaintTheme,
     window: &mut Window,
-    cx: &mut App,
-) {
+) -> Option<CanvasPreparedPaintLabel> {
     let text = label.text.trim();
-    let label_bounds = label.view_bounds + canvas_bounds.origin;
     if text.is_empty()
-        || label_bounds.size.width <= Pixels::ZERO
-        || label_bounds.size.height <= Pixels::ZERO
+        || label.view_bounds.size.width <= Pixels::ZERO
+        || label.view_bounds.size.height <= Pixels::ZERO
         || !positive_pixels(theme.label_font_size)
         || !positive_pixels(theme.label_line_height)
     {
-        return;
+        return None;
     }
 
     let mut text_style = window.text_style();
@@ -771,18 +849,34 @@ fn paint_label(
             SharedString::new(text),
             theme.label_font_size,
             &[run],
-            Some(label_bounds.size.width),
-            label_line_clamp(theme, label_bounds),
+            Some(label.view_bounds.size.width),
+            label_line_clamp(theme, label.view_bounds),
         )
         .ok()
     else {
-        return;
+        return None;
     };
 
     let text_height = lines.iter().fold(Pixels::ZERO, |height, line| {
         height + line.size(theme.label_line_height).height
     });
-    let vertical_offset = ((label_bounds.size.height - text_height) / 2.0).max(Pixels::ZERO);
+
+    Some(CanvasPreparedPaintLabel {
+        view_bounds: label.view_bounds,
+        lines: lines.into_iter().collect(),
+        text_height,
+    })
+}
+
+fn paint_label(
+    canvas_bounds: Bounds<Pixels>,
+    label: &CanvasPreparedPaintLabel,
+    theme: CanvasPaintTheme,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let label_bounds = label.view_bounds + canvas_bounds.origin;
+    let vertical_offset = ((label_bounds.size.height - label.text_height) / 2.0).max(Pixels::ZERO);
     let mut origin = Point::new(label_bounds.left(), label_bounds.top() + vertical_offset);
 
     window.with_content_mask(
@@ -790,7 +884,7 @@ fn paint_label(
             bounds: label_bounds,
         }),
         |window| {
-            for line in &lines {
+            for line in &label.lines {
                 if origin.y >= label_bounds.bottom() {
                     break;
                 }
@@ -1370,6 +1464,38 @@ mod tests {
             Bounds::new(point(px(154.0), px(24.0)), size(px(82.0), px(62.0)))
         );
         assert_eq!(shape_label.color, parse_color("#0969da"));
+    }
+
+    #[test]
+    fn prepared_frame_preserves_snapshot_when_no_labels_are_visible() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "plain",
+                point(px(10.0), px(20.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .unwrap();
+        let model = CanvasPaintModel::new(document, CanvasViewport::default());
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let prepared = CanvasPreparedPaintFrame {
+            label_indices: frame.records.iter().map(|_| None).collect(),
+            labels: Vec::new(),
+            frame,
+        };
+
+        assert_eq!(prepared.record_count(), 1);
+        assert_eq!(prepared.prepared_label_count(), 0);
+        assert!(!prepared.has_prepared_label(0));
+        assert_eq!(
+            prepared.frame().records[0].target,
+            HitTarget::Node("plain".into())
+        );
     }
 
     #[test]

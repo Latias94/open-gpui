@@ -44,7 +44,8 @@ pub use gpui::{
     CanvasInputMapper, CanvasPaintConnectionPreview, CanvasPaintFrame, CanvasPaintInteraction,
     CanvasPaintInteractionFrame, CanvasPaintLabel, CanvasPaintModel, CanvasPaintOptions,
     CanvasPaintRecord, CanvasPaintSnapGuide, CanvasPaintTheme, CanvasPaintTransformHandle,
-    canvas_view, collect_visible_records, paint_canvas_frame,
+    CanvasPreparedPaintFrame, canvas_view, collect_visible_records, paint_canvas_frame,
+    prepaint_canvas_frame, prepare_canvas_frame,
 };
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
