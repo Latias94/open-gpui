@@ -1079,14 +1079,13 @@ fn viewport_runtime_handle_allows_platform_close_with_retain_policy(cx: &mut Tes
 #[open_gpui::test]
 fn viewport_runtime_window_closed_cleans_mapping_after_prevent_policy(cx: &mut TestAppContext) {
     let controller = cx.new(|_| DockController::from_graph(space(), DockGraph::new()));
-    let mut runtime =
-        DockViewportRuntime::with_close_policy(controller, DockViewportClosePolicy::Prevent);
     let secondary_space = DockSpaceId::from("secondary");
     let window: AnyWindowHandle = WindowHandle::<DockHost>::new(WindowId::from(909)).into();
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(secondary_space.clone(), window);
 
-    runtime
-        .adapter_mut()
-        .register_viewport(secondary_space.clone(), window);
+    let mut runtime =
+        DockViewportRuntime::from_adapter(controller, adapter, DockViewportClosePolicy::Prevent);
 
     let outcome = runtime.handle_window_closed(window.window_id());
 

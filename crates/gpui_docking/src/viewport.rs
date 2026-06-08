@@ -225,11 +225,6 @@ impl DockViewportRuntime {
         &self.adapter
     }
 
-    /// Returns mutable access to the low-level viewport adapter.
-    pub fn adapter_mut(&mut self) -> &mut DockViewportAdapter {
-        &mut self.adapter
-    }
-
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub fn close_policy(&self) -> DockViewportClosePolicy {
         self.close_policy.get()
