@@ -106,6 +106,9 @@ parallel modifier model when adding shift-click, additive marquee selection, con
 or tool-specific modifier gestures.
 The first built-in modifier behavior is shift-click selection toggling. It uses
 `CanvasToolEffect::ToggleSelection`, does not create undo history, and does not start a drag.
+Shift-drag on blank canvas is additive rather than cumulative: the tool snapshots the base
+selection at pointer-down time, unions intersection hits with that baseline while the marquee
+moves, and preserves the baseline selection even when the pointer crosses back over empty space.
 
 ## Architecture
 

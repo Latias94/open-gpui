@@ -140,10 +140,14 @@ pub enum ToolState {
     Idle,
     Pointing {
         origin: Point<Pixels>,
+        selection_mode: CanvasSelectionMode,
+        base_selection: CanvasSelection,
     },
     Selecting {
         origin: Point<Pixels>,
         current: Point<Pixels>,
+        selection_mode: CanvasSelectionMode,
+        base_selection: CanvasSelection,
     },
     Translating {
         origin: Point<Pixels>,
@@ -163,6 +167,13 @@ pub enum ToolState {
         tool_id: CanvasToolId,
         payload: CanvasValue,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum CanvasSelectionMode {
+    #[default]
+    Replace,
+    Add,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -232,6 +243,13 @@ impl CanvasSelection {
             self.insert_target(target);
             true
         }
+    }
+
+    pub fn extend_selection(&mut self, selection: CanvasSelection) {
+        self.nodes.extend(selection.nodes);
+        self.edges.extend(selection.edges);
+        self.shapes.extend(selection.shapes);
+        self.handles.extend(selection.handles);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -751,11 +769,10 @@ impl CanvasEditor {
                     .map(|record| record.target.clone())
                     .next();
 
-                if modifiers.shift {
-                    return Ok(hit
-                        .map(CanvasToolEffect::ToggleSelection)
-                        .into_iter()
-                        .collect());
+                if modifiers.shift
+                    && let Some(target) = hit
+                {
+                    return Ok(vec![CanvasToolEffect::ToggleSelection(target)]);
                 }
 
                 match hit {
@@ -783,16 +800,27 @@ impl CanvasEditor {
                             CanvasToolEffect::ReplaceSelection(target),
                             CanvasToolEffect::SetState(ToolState::Pointing {
                                 origin: document_position,
+                                selection_mode: CanvasSelectionMode::Replace,
+                                base_selection: CanvasSelection::default(),
                             }),
                         ]
                     }
                     None => {
-                        vec![
-                            CanvasToolEffect::ClearSelection,
-                            CanvasToolEffect::SetState(ToolState::Pointing {
-                                origin: document_position,
-                            }),
-                        ]
+                        let selection_mode = if modifiers.shift {
+                            CanvasSelectionMode::Add
+                        } else {
+                            CanvasSelectionMode::Replace
+                        };
+                        let mut effects = Vec::new();
+                        if !modifiers.shift {
+                            effects.push(CanvasToolEffect::ClearSelection);
+                        }
+                        effects.push(CanvasToolEffect::SetState(ToolState::Pointing {
+                            origin: document_position,
+                            selection_mode,
+                            base_selection: self.selection.clone(),
+                        }));
+                        effects
                     }
                 }
             }
@@ -829,35 +857,54 @@ impl CanvasEditor {
                     }),
                 ]
             }
-            (ToolState::Pointing { origin }, CanvasEvent::PointerMove { position }) => {
+            (
+                ToolState::Pointing {
+                    origin,
+                    selection_mode,
+                    base_selection,
+                },
+                CanvasEvent::PointerMove { position },
+            ) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
+                let bounds = selection_bounds(origin, document_position);
                 vec![
-                    CanvasToolEffect::SetSelection(
-                        self.selection_for_intersections(selection_bounds(
-                            origin,
-                            document_position,
-                        )),
-                    ),
+                    CanvasToolEffect::SetSelection(self.selection_for_intersections_with_mode(
+                        bounds,
+                        *selection_mode,
+                        base_selection,
+                    )),
                     CanvasToolEffect::SetState(ToolState::Selecting {
                         origin,
                         current: document_position,
+                        selection_mode: *selection_mode,
+                        base_selection: base_selection.clone(),
                     }),
                 ]
             }
-            (ToolState::Selecting { origin, .. }, CanvasEvent::PointerMove { position }) => {
+            (
+                ToolState::Selecting {
+                    origin,
+                    selection_mode,
+                    base_selection,
+                    ..
+                },
+                CanvasEvent::PointerMove { position },
+            ) => {
                 let origin = *origin;
                 let document_position = self.viewport.view_to_document(position);
+                let bounds = selection_bounds(origin, document_position);
                 vec![
-                    CanvasToolEffect::SetSelection(
-                        self.selection_for_intersections(selection_bounds(
-                            origin,
-                            document_position,
-                        )),
-                    ),
+                    CanvasToolEffect::SetSelection(self.selection_for_intersections_with_mode(
+                        bounds,
+                        *selection_mode,
+                        base_selection,
+                    )),
                     CanvasToolEffect::SetState(ToolState::Selecting {
                         origin,
                         current: document_position,
+                        selection_mode: *selection_mode,
+                        base_selection: base_selection.clone(),
                     }),
                 ]
             }
@@ -1102,6 +1149,23 @@ impl CanvasEditor {
             }
         }
         selection
+    }
+
+    fn selection_for_intersections_with_mode(
+        &self,
+        bounds: Bounds<Pixels>,
+        mode: CanvasSelectionMode,
+        base_selection: &CanvasSelection,
+    ) -> CanvasSelection {
+        let selection = self.selection_for_intersections(bounds);
+        match mode {
+            CanvasSelectionMode::Replace => selection,
+            CanvasSelectionMode::Add => {
+                let mut combined = base_selection.clone();
+                combined.extend_selection(selection);
+                combined
+            }
+        }
     }
 }
 
@@ -1623,6 +1687,66 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_shift_box_adds_to_base_selection_without_accumulating() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "base",
+                point(px(200.0), px(200.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "inside",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "outside",
+                point(px(100.0), px(100.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("base"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(0.0), px(0.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(40.0), px(40.0)),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("base"), NodeId::from("inside")]
+        );
+
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(-40.0), px(-40.0)),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("base")]
+        );
+    }
+
+    #[test]
     fn translating_selected_nodes_skips_locked_nodes() {
         let mut document = CanvasDocument::default();
         document
@@ -2003,6 +2127,8 @@ mod tests {
         let mut editor = CanvasEditor::default();
         editor.state = ToolState::Pointing {
             origin: point(px(10.0), px(20.0)),
+            selection_mode: CanvasSelectionMode::Replace,
+            base_selection: CanvasSelection::default(),
         };
 
         editor
@@ -2128,6 +2254,8 @@ mod tests {
                 CanvasToolEffect::SetSelection(selection),
                 CanvasToolEffect::SetState(ToolState::Pointing {
                     origin: point(px(10.0), px(20.0)),
+                    selection_mode: CanvasSelectionMode::Replace,
+                    base_selection: CanvasSelection::default(),
                 }),
                 CanvasToolEffect::PanViewport(point(px(5.0), px(-3.0))),
             ])
@@ -2140,7 +2268,9 @@ mod tests {
         assert_eq!(
             editor.state,
             ToolState::Pointing {
-                origin: point(px(10.0), px(20.0))
+                origin: point(px(10.0), px(20.0)),
+                selection_mode: CanvasSelectionMode::Replace,
+                base_selection: CanvasSelection::default(),
             }
         );
         assert_eq!(editor.viewport.origin, point(px(5.0), px(-3.0)));

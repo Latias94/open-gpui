@@ -64,6 +64,6 @@ pub use routing::{
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
-    CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId, CanvasToolReducer,
-    CanvasToolRegistry, CanvasToolRegistryError, PointerButton, ToolState,
+    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
+    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton, ToolState,
 };

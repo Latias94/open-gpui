@@ -27,6 +27,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
 - The built-in select tool supports shift-click selection toggling through the same incremental
   selection effect path that custom tools can use.
+- The built-in select tool also supports shift-drag additive marquee selection, seeded from the
+  drag start selection so box selection can grow a baseline set without accumulating during move
+  events.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
   redb, Loro, or rkyv into the default build.
 - `CanvasPersistenceCodec` and `CanvasPersistenceByteStore` separate typed canvas records from

@@ -451,7 +451,9 @@ pub fn paint_canvas_frame(
 
 fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
     match &model.interaction.state {
-        ToolState::Selecting { origin, current } => CanvasPaintInteractionFrame {
+        ToolState::Selecting {
+            origin, current, ..
+        } => CanvasPaintInteractionFrame {
             selection_bounds: Some(
                 model
                     .viewport
@@ -653,7 +655,7 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasNode};
+    use crate::{CanvasHandle, CanvasNode, CanvasSelectionMode};
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
     #[test]
@@ -804,6 +806,8 @@ mod tests {
         editor.state = ToolState::Selecting {
             origin: point(px(10.0), px(10.0)),
             current: point(px(40.0), px(50.0)),
+            selection_mode: CanvasSelectionMode::Replace,
+            base_selection: CanvasSelection::default(),
         };
         let model = CanvasPaintModel::from(&editor);
 
@@ -829,6 +833,8 @@ mod tests {
         model.interaction.state = ToolState::Selecting {
             origin: point(px(40.0), px(80.0)),
             current: point(px(20.0), px(50.0)),
+            selection_mode: CanvasSelectionMode::Replace,
+            base_selection: CanvasSelection::default(),
         };
 
         let frame = collect_visible_records(

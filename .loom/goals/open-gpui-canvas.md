@@ -97,7 +97,7 @@ stop_conditions:
 | Document diff | Done | `CanvasDocumentDiff` reports inserted, updated, removed, and metadata-changed records. |
 | Spatial index | Done | Hit testing and culling support nodes, handles, shapes, and edges. Indexes can apply document diffs incrementally. |
 | Viewport | Done | View/document transforms, anchored zoom, zoom factor validation, and visible document bounds are implemented. |
-| Selection rectangle and multi-select | Done | Select tool supports box selection and multi-node drag for selected nodes. |
+| Selection rectangle and multi-select | Done | Select tool supports box selection, shift-additive marquee selection, and multi-node drag for selected nodes. |
 | Edge routing metadata | Done | `CanvasEdgeRoute` records route kind, waypoints, control points, options, and interaction width without binding core to a renderer. |
 | Router strategy boundary | Done | `CanvasEdgeRouter` resolves route metadata into renderer-neutral `CanvasRoutePath` / `CanvasRouteSegment` values so hit testing and GPUI painting share the same route interpretation while applications can supply custom routers. |
 | JSON Canvas import/export | Done | `JsonCanvas` converts text/file/link/group nodes and side-based edges to and from `CanvasDocument`. |
