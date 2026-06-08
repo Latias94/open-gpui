@@ -232,8 +232,10 @@ fn registry_replaces_registered_panel(cx: &mut TestAppContext) {
 
     assert_eq!(previous.title(), "First");
     assert_eq!(
-        registry.get(&item("a")).map(crate::DockPanel::title),
-        Some("Second")
+        registry
+            .get(&item("a"))
+            .map(|panel| panel.title().to_string()),
+        Some("Second".to_string())
     );
     assert_eq!(registry.len(), 1);
 }
