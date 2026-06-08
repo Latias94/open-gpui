@@ -30,6 +30,17 @@ impl CanvasRoutePath {
         }))
     }
 
+    pub fn orthogonal(points: impl IntoIterator<Item = Point<Pixels>>) -> Self {
+        let points = points.into_iter().collect::<Vec<_>>();
+        let mut orthogonal_points = Vec::new();
+
+        for points in points.windows(2) {
+            append_orthogonal_leg(&mut orthogonal_points, points[0], points[1]);
+        }
+
+        Self::polyline(orthogonal_points)
+    }
+
     pub fn cubic_bezier(
         from: Point<Pixels>,
         control_1: Point<Pixels>,
@@ -145,12 +156,39 @@ impl CanvasEdgeRouter for CanvasDefaultEdgeRouter {
             );
         }
 
+        if route.kind.as_str() == CanvasEdgeRouteKind::ORTHOGONAL {
+            return CanvasRoutePath::orthogonal(
+                [request.source]
+                    .into_iter()
+                    .chain(route.waypoints.iter().copied())
+                    .chain([request.target]),
+            );
+        }
+
         CanvasRoutePath::polyline(
             [request.source]
                 .into_iter()
                 .chain(route.waypoints.iter().copied())
                 .chain([request.target]),
         )
+    }
+}
+
+fn append_orthogonal_leg(points: &mut Vec<Point<Pixels>>, from: Point<Pixels>, to: Point<Pixels>) {
+    push_unique_point(points, from);
+
+    if from.x != to.x && from.y != to.y {
+        let mid_x = (from.x + to.x) * 0.5;
+        push_unique_point(points, Point::new(mid_x, from.y));
+        push_unique_point(points, Point::new(mid_x, to.y));
+    }
+
+    push_unique_point(points, to);
+}
+
+fn push_unique_point(points: &mut Vec<Point<Pixels>>, point: Point<Pixels>) {
+    if points.last().copied() != Some(point) {
+        points.push(point);
     }
 }
 
@@ -226,6 +264,77 @@ mod tests {
         assert_eq!(
             path.bounds().unwrap(),
             Bounds::from_corners(point(px(0.0), px(-40.0)), point(px(100.0), px(40.0)))
+        );
+    }
+
+    #[test]
+    fn default_router_emits_orthogonal_segments() {
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = CanvasEdgeRoute::new(CanvasEdgeRouteKind::ORTHOGONAL);
+
+        let path = CanvasDefaultEdgeRouter.route_edge(CanvasRouteRequest {
+            edge: &edge,
+            source: point(px(0.0), px(0.0)),
+            target: point(px(100.0), px(50.0)),
+        });
+
+        assert_eq!(
+            path.document_points(),
+            vec![
+                point(px(0.0), px(0.0)),
+                point(px(50.0), px(0.0)),
+                point(px(50.0), px(50.0)),
+                point(px(100.0), px(50.0)),
+            ]
+        );
+        assert_eq!(
+            path.segments,
+            vec![
+                CanvasRouteSegment::Line {
+                    from: point(px(0.0), px(0.0)),
+                    to: point(px(50.0), px(0.0)),
+                },
+                CanvasRouteSegment::Line {
+                    from: point(px(50.0), px(0.0)),
+                    to: point(px(50.0), px(50.0)),
+                },
+                CanvasRouteSegment::Line {
+                    from: point(px(50.0), px(50.0)),
+                    to: point(px(100.0), px(50.0)),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn default_router_routes_orthogonal_waypoints_by_leg() {
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = CanvasEdgeRoute::new(CanvasEdgeRouteKind::ORTHOGONAL);
+        edge.route.waypoints = vec![point(px(40.0), px(30.0))];
+
+        let path = CanvasDefaultEdgeRouter.route_edge(CanvasRouteRequest {
+            edge: &edge,
+            source: point(px(0.0), px(0.0)),
+            target: point(px(100.0), px(30.0)),
+        });
+
+        assert_eq!(
+            path.document_points(),
+            vec![
+                point(px(0.0), px(0.0)),
+                point(px(20.0), px(0.0)),
+                point(px(20.0), px(30.0)),
+                point(px(40.0), px(30.0)),
+                point(px(100.0), px(30.0)),
+            ]
         );
     }
 }

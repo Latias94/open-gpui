@@ -160,8 +160,9 @@ fn inspect(transaction: &CanvasTransaction) {
 
 ## Route Edges
 
-`CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns that intent into
-renderer-neutral `CanvasRouteSegment` values that hit testing and GPUI painting can share.
+`CanvasEdgeRoute` stores route intent. `CanvasDefaultEdgeRouter` turns straight, polyline,
+orthogonal, and cubic-bezier intent into renderer-neutral `CanvasRouteSegment` values that hit
+testing and GPUI painting can share.
 
 ```rust
 use open_gpui_canvas::{CanvasDefaultEdgeRouter, CanvasEdgeRouter};
@@ -172,8 +173,9 @@ fn route(document: &open_gpui_canvas::CanvasDocument, edge: &open_gpui_canvas::C
 }
 ```
 
-Applications can provide their own `CanvasEdgeRouter` for orthogonal, obstacle-aware, or preview
-routes without changing `CanvasEdgeRoute` serialization.
+The default orthogonal route uses simple midpoint doglegs and optional waypoints. Applications can
+provide their own `CanvasEdgeRouter` for obstacle-aware, port-aware, or preview routes without
+changing `CanvasEdgeRoute` serialization.
 
 ## Render Through GPUI
 

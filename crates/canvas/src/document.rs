@@ -310,6 +310,10 @@ impl CanvasEdgeRoute {
             ..Self::default()
         }
     }
+
+    pub fn orthogonal() -> Self {
+        Self::new(CanvasEdgeRouteKind::ORTHOGONAL)
+    }
 }
 
 impl Default for CanvasEdgeRoute {
