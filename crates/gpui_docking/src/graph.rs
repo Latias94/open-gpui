@@ -8,6 +8,8 @@ use std::collections::HashMap;
 mod graph_canonical;
 #[path = "graph_edge_dock.rs"]
 mod graph_edge_dock;
+#[path = "graph_floating_mutation.rs"]
+mod graph_floating_mutation;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
 #[path = "graph_op_validation.rs"]
