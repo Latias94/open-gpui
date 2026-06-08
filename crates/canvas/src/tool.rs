@@ -368,8 +368,12 @@ impl CanvasToolContext<'_> {
         view_position: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.runtime
-            .hit_test(self.document_position(view_position), options)
+        self.runtime.precise_hit_test_with_kind_registry(
+            self.document,
+            self.kind_registry,
+            self.document_position(view_position),
+            options,
+        )
     }
 }
 
@@ -1117,7 +1121,12 @@ impl CanvasEditor {
 
                 let hit = self
                     .runtime
-                    .hit_test(document_position, HitOptions::default())
+                    .precise_hit_test_with_kind_registry(
+                        &self.document,
+                        self.kind_registry.as_ref(),
+                        document_position,
+                        HitOptions::default(),
+                    )
                     .map(|record| record.target.clone())
                     .next();
 
@@ -1536,8 +1545,10 @@ impl CanvasEditor {
             self.edge_router.as_ref(),
             Some(self.kind_registry.as_ref()),
         );
-        resolver
-            .connection_endpoint_at(self.runtime.hit_test(point, connection_hit_options()), role)
+        let records =
+            self.runtime
+                .precise_hit_test_with_resolver(resolver, point, connection_hit_options());
+        resolver.connection_endpoint_at(records, role)
     }
 
     fn begin_gesture(&mut self) {
@@ -1845,8 +1856,9 @@ fn next_z_index(current: i32, min_z: i32, max_z: i32, command: CanvasZOrderComma
 mod tests {
     use super::*;
     use crate::{
-        CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind, CanvasRoutePath,
-        CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget, HandleId,
+        CanvasNode, CanvasNodeHitTest, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind,
+        CanvasRoutePath, CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget,
+        HandleId,
     };
     use open_gpui::{point, px, size};
     use serde_json::{Value, json};
@@ -1970,6 +1982,14 @@ mod tests {
                 &proposal.node.kind,
                 "resize is disabled",
             ))
+        }
+    }
+
+    struct RightHalfNodeKind;
+
+    impl CanvasNodeKind for RightHalfNodeKind {
+        fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
+            Some(hit.point.x >= hit.bounds.center().x)
         }
     }
 
@@ -2238,6 +2258,61 @@ mod tests {
         );
         assert_eq!(editor.state, ToolState::Idle);
         assert_eq!(editor.history.undo_depth(), 0);
+    }
+
+    #[test]
+    fn select_tool_uses_registered_precise_hit_policy() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.kind = "right-half".to_string();
+        document.insert_node(node).unwrap();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("right-half", RightHalfNodeKind);
+        let mut editor =
+            CanvasEditor::try_new_with_kind_registry(document.clone(), registry.clone()).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(25.0), px(25.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert!(editor.selection.is_empty());
+        assert!(
+            editor
+                .runtime()
+                .hit_test(point(px(25.0), px(25.0)), HitOptions::default())
+                .next()
+                .is_some()
+        );
+        assert!(
+            editor
+                .runtime()
+                .precise_hit_test_with_kind_registry(
+                    editor.document(),
+                    editor.kind_registry(),
+                    point(px(25.0), px(25.0)),
+                    HitOptions::default(),
+                )
+                .next()
+                .is_none()
+        );
+
+        let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(75.0), px(25.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
     }
 
     #[test]

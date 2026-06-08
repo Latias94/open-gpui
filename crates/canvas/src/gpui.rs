@@ -642,7 +642,9 @@ fn connection_preview_target_position(
         model.kind_registry.as_ref(),
     );
     resolver.connection_preview_target(
-        model.runtime.hit_test(current, connection_hit_options()),
+        model
+            .runtime
+            .precise_hit_test_with_resolver(resolver, current, connection_hit_options()),
         source,
         current,
     )

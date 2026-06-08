@@ -92,6 +92,22 @@ pub struct CanvasShapeResizeProposal<'a> {
     pub bounds: Bounds<Pixels>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasNodeHitTest<'a> {
+    pub node: &'a CanvasNode,
+    pub point: Point<Pixels>,
+    pub bounds: Bounds<Pixels>,
+    pub margin: Pixels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasShapeHitTest<'a> {
+    pub shape: &'a CanvasShape,
+    pub point: Point<Pixels>,
+    pub bounds: Bounds<Pixels>,
+    pub margin: Pixels,
+}
+
 pub trait CanvasNodeKind: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
@@ -114,6 +130,10 @@ pub trait CanvasNodeKind: Send + Sync {
         _node: &CanvasNode,
         _handle_id: &crate::HandleId,
     ) -> Option<Point<Pixels>> {
+        None
+    }
+
+    fn node_contains_point(&self, _hit: CanvasNodeHitTest<'_>) -> Option<bool> {
         None
     }
 
@@ -153,6 +173,10 @@ pub trait CanvasShapeKind: Send + Sync {
     }
 
     fn shape_bounds(&self, _shape: &CanvasShape) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    fn shape_contains_point(&self, _hit: CanvasShapeHitTest<'_>) -> Option<bool> {
         None
     }
 
@@ -350,6 +374,40 @@ impl CanvasKindRegistry {
     pub fn shape_bounds(&self, shape: &CanvasShape) -> Option<Bounds<Pixels>> {
         self.shape_kind(&shape.kind)
             .and_then(|schema| schema.shape_bounds(shape))
+    }
+
+    pub fn node_contains_point(
+        &self,
+        node: &CanvasNode,
+        point: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        margin: Pixels,
+    ) -> Option<bool> {
+        self.node_kind(&node.kind).and_then(|schema| {
+            schema.node_contains_point(CanvasNodeHitTest {
+                node,
+                point,
+                bounds,
+                margin,
+            })
+        })
+    }
+
+    pub fn shape_contains_point(
+        &self,
+        shape: &CanvasShape,
+        point: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        margin: Pixels,
+    ) -> Option<bool> {
+        self.shape_kind(&shape.kind).and_then(|schema| {
+            schema.shape_contains_point(CanvasShapeHitTest {
+                shape,
+                point,
+                bounds,
+                margin,
+            })
+        })
     }
 
     pub fn resize_node_bounds(
@@ -558,6 +616,14 @@ mod tests {
 
     struct InvalidShapeResizeKind;
 
+    struct RightHalfNodeKind;
+
+    impl CanvasNodeKind for RightHalfNodeKind {
+        fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
+            Some(hit.point.x >= hit.bounds.center().x)
+        }
+    }
+
     impl CanvasShapeKind for InvalidShapeResizeKind {
         fn resize_shape_bounds(
             &self,
@@ -712,6 +778,25 @@ mod tests {
                 && kind == "invalid-size"
                 && message == "resize policy returned invalid bounds"
         ));
+    }
+
+    #[test]
+    fn registered_hit_policy_can_reject_points_inside_bounds() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("right-half", RightHalfNodeKind);
+
+        let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        node.kind = "right-half".to_string();
+        let bounds = node.bounds();
+
+        assert_eq!(
+            registry.node_contains_point(&node, point(px(25.0), px(20.0)), bounds, Pixels::ZERO),
+            Some(false)
+        );
+        assert_eq!(
+            registry.node_contains_point(&node, point(px(75.0), px(20.0)), bounds, Pixels::ZERO),
+            Some(true)
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::spatial_cache::CanvasSpatialCache;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
     CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
-    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord,
+    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -185,6 +185,54 @@ impl CanvasRuntime {
         self.spatial_cache.hit_test(point, options)
     }
 
+    pub fn precise_hit_test<'a>(
+        &'a self,
+        document: &'a CanvasDocument,
+        point: Point<Pixels>,
+        options: HitOptions,
+    ) -> impl Iterator<Item = &'a HitRecord> + 'a {
+        self.precise_hit_test_with_resolver(CanvasGeometryResolver::new(document), point, options)
+    }
+
+    pub fn precise_hit_test_with_kind_registry<'a>(
+        &'a self,
+        document: &'a CanvasDocument,
+        kind_registry: &'a CanvasKindRegistry,
+        point: Point<Pixels>,
+        options: HitOptions,
+    ) -> impl Iterator<Item = &'a HitRecord> + 'a {
+        self.precise_hit_test_with_resolver(
+            CanvasGeometryResolver::with_kind_registry(document, kind_registry),
+            point,
+            options,
+        )
+    }
+
+    pub fn precise_hit_test_with_resolver<'a, R>(
+        &'a self,
+        resolver: CanvasGeometryResolver<'a, R>,
+        point: Point<Pixels>,
+        options: HitOptions,
+    ) -> impl Iterator<Item = &'a HitRecord> + 'a
+    where
+        R: CanvasEdgeRouter + 'a,
+    {
+        self.spatial_cache
+            .hit_test(point, options)
+            .filter(move |record| {
+                let edge_geometry = match &record.target {
+                    HitTarget::Edge(id) => self.edge_geometries.get(id),
+                    _ => None,
+                };
+                resolver.record_contains_point_with_edge_geometry(
+                    record,
+                    point,
+                    options,
+                    edge_geometry,
+                )
+            })
+    }
+
     fn apply_edge_geometry_diff<R>(
         &mut self,
         document: &CanvasDocument,
@@ -293,8 +341,9 @@ where
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-        CanvasRoutePath, CanvasRouteRequest, CanvasTransaction, DocumentCommand, EdgeId, NodeId,
+        CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
+        CanvasNodeHitTest, CanvasNodeKind, CanvasRoutePath, CanvasRouteRequest, CanvasTransaction,
+        DocumentCommand, EdgeId, NodeId,
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -472,6 +521,76 @@ mod tests {
     }
 
     #[test]
+    fn runtime_precise_hit_test_uses_kind_policy() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.kind = "right-half".to_string();
+        document.insert_node(node).unwrap();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("right-half", RightHalfNodeKind);
+        let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
+
+        assert!(
+            runtime
+                .hit_test(point(px(25.0), px(25.0)), HitOptions::default())
+                .any(|record| matches!(&record.target, crate::HitTarget::Node(id) if id == &NodeId::from("a")))
+        );
+        assert!(
+            runtime
+                .precise_hit_test_with_kind_registry(
+                    &document,
+                    &registry,
+                    point(px(25.0), px(25.0)),
+                    HitOptions::default(),
+                )
+                .next()
+                .is_none()
+        );
+        assert!(
+            runtime
+                .precise_hit_test_with_kind_registry(
+                    &document,
+                    &registry,
+                    point(px(75.0), px(25.0)),
+                    HitOptions::default(),
+                )
+                .any(|record| matches!(&record.target, crate::HitTarget::Node(id) if id == &NodeId::from("a")))
+        );
+    }
+
+    #[test]
+    fn runtime_precise_hit_test_uses_cached_edge_geometry() {
+        let document = connected_document();
+        let router = VerticalDetourRouter;
+        let runtime = CanvasRuntime::rebuild_with_router(&document, &router);
+
+        assert!(
+            runtime
+                .hit_test(point(px(25.0), px(80.0)), HitOptions::default())
+                .any(|record| matches!(&record.target, crate::HitTarget::Edge(id) if id == &EdgeId::from("a-b")))
+        );
+        assert!(
+            runtime
+                .precise_hit_test_with_resolver(
+                    CanvasGeometryResolver::with_router(&document, &router),
+                    point(px(25.0), px(80.0)),
+                    HitOptions::default(),
+                )
+                .next()
+                .is_none()
+        );
+        assert!(
+            runtime
+                .precise_hit_test_with_resolver(
+                    CanvasGeometryResolver::with_router(&document, &router),
+                    point(px(5.0), px(80.0)),
+                    HitOptions::default(),
+                )
+                .any(|record| matches!(&record.target, crate::HitTarget::Edge(id) if id == &EdgeId::from("a-b")))
+        );
+    }
+
+    #[test]
     fn runtime_applies_kind_registry_geometry_after_diff() {
         let mut document = connected_registry_document();
         let registry = geometry_registry();
@@ -586,6 +705,14 @@ mod tests {
                     node.position.y + px(5.0),
                 )
             })
+        }
+    }
+
+    struct RightHalfNodeKind;
+
+    impl CanvasNodeKind for RightHalfNodeKind {
+        fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
+            Some(hit.point.x >= hit.bounds.center().x)
         }
     }
 
