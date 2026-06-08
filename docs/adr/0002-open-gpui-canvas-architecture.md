@@ -73,6 +73,12 @@ selection rectangles or connection previews, and the batched painter draws those
 base records. This keeps visual affordances visible in native examples without moving mutable
 editor state into the renderer or rendering every record as a GPUI element.
 
+Record visibility and interaction lock state are separate. Hidden records are omitted from default
+paint and hit-test paths unless explicitly included. Locked records remain visible for culling and
+painting, but default hit tests, box selection, endpoint picking, and node translation skip them.
+`HitOptions::include_locked` keeps diagnostics and editor-specific inspection tools possible
+without making locked records accidentally interactive.
+
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
 Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
 one path for recorded transactions, unrecorded gesture updates, undo commits, selection changes,

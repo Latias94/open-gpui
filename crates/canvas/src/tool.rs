@@ -638,9 +638,10 @@ impl CanvasEditor {
                         if !selection.nodes.contains(&id) {
                             selection.replace_with(HitTarget::Node(id.clone()));
                         }
-                        let original_nodes =
-                            self.document_nodes_for_selection(&selection).collect();
-                        let node_ids = selection.selected_nodes().cloned().collect();
+                        let original_nodes = self
+                            .document_nodes_for_selection(&selection)
+                            .collect::<Vec<_>>();
+                        let node_ids = original_nodes.iter().map(|node| node.id.clone()).collect();
                         vec![
                             CanvasToolEffect::SetSelection(selection),
                             CanvasToolEffect::SetState(ToolState::Translating {
@@ -866,7 +867,9 @@ impl CanvasEditor {
     ) -> impl Iterator<Item = CanvasNode> + 'a {
         selection
             .selected_nodes()
-            .filter_map(|id| self.document.nodes.get(id).cloned())
+            .filter_map(|id| self.document.nodes.get(id))
+            .filter(|node| !node.locked)
+            .cloned()
     }
 
     fn node_endpoint_at(&self, point: Point<Pixels>) -> Option<CanvasEndpoint> {
@@ -910,7 +913,7 @@ impl CanvasEditor {
 
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
-        for record in self.index.query(bounds) {
+        for record in self.index.query_with_options(bounds, HitOptions::default()) {
             match &record.target {
                 HitTarget::Node(id) => {
                     selection.nodes.insert(id.clone());
@@ -1046,6 +1049,44 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_ignores_locked_node_hits() {
+        let mut node = CanvasNode::new(
+            "locked",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        node.locked = true;
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(30.0), px(30.0)),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(30.0), px(30.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert!(editor.selection.is_empty());
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("locked")].position,
+            point(px(0.0), px(0.0))
+        );
+        assert_eq!(editor.history.undo_depth(), 0);
+    }
+
+    #[test]
     fn select_tool_clears_selection_when_canvas_is_pressed() {
         let mut document = CanvasDocument::default();
         document
@@ -1098,6 +1139,13 @@ mod tests {
                 size(px(20.0), px(20.0)),
             ))
             .unwrap();
+        let mut locked = CanvasNode::new(
+            "locked",
+            point(px(15.0), px(15.0)),
+            size(px(20.0), px(20.0)),
+        );
+        locked.locked = true;
+        document.insert_node(locked).unwrap();
         let mut editor = CanvasEditor::new(document);
 
         editor
@@ -1176,6 +1224,56 @@ mod tests {
     }
 
     #[test]
+    fn translating_selected_nodes_skips_locked_nodes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "free",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut locked = CanvasNode::new(
+            "locked",
+            point(px(200.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        locked.locked = true;
+        document.insert_node(locked).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("free"));
+        editor.selection.nodes.insert(NodeId::from("locked"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(20.0), px(30.0)),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(20.0), px(30.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("free")].position,
+            point(px(10.0), px(20.0))
+        );
+        assert_eq!(
+            editor.document.nodes[&NodeId::from("locked")].position,
+            point(px(200.0), px(0.0))
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
+    }
+
+    #[test]
     fn pan_tool_moves_viewport() {
         let mut editor = CanvasEditor::default();
         editor.set_tool(CanvasTool::Pan);
@@ -1236,6 +1334,40 @@ mod tests {
 
         assert!(editor.redo().unwrap());
         assert_eq!(editor.document.edges.len(), 1);
+    }
+
+    #[test]
+    fn connect_tool_ignores_locked_endpoints() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut locked =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        locked.locked = true;
+        document.insert_node(locked).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::Connect);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(210.0), px(10.0)),
+                button: PointerButton::Primary,
+            })
+            .unwrap();
+
+        assert!(editor.document.edges.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]

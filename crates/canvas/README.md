@@ -15,6 +15,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasGraph` provides zero-copy graph queries over the canonical document records.
 - `SpatialIndex` supports hit testing and visible-record culling without one GPUI element per
   canvas object.
+- Locked records remain visible for culling and painting, but default hit testing and selection
+  skip them unless `HitOptions::include_locked` is enabled.
 - `CanvasEditor` applies transactions, tracks undo/redo, maintains selection, and dispatches tool
   events.
 - `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined

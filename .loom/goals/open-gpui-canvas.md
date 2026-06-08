@@ -126,6 +126,7 @@ stop_conditions:
 | Persistent undo/redo helpers | Done | `undo_persistent_transaction` and `redo_persistent_transaction` append replayable history transactions before mutating the editor so persistence failures do not desynchronize memory from the log. |
 | Persistence module split | Done | Persistence codec, byte-store adapter, typed store helpers, memory stores, and tests are split into submodules while preserving the crate root public exports. |
 | Record change view | Done | `CanvasRecord` / `CanvasRecordChange` and transaction helpers expose ordered upsert/delete record changes for future Loro, sync, audit, and indexing adapters without replacing command replay. |
+| Locked interaction semantics | Done | `HitOptions::include_locked`, locked hit records, and select-tool filtering keep locked records visible for paint while default interaction skips selection, endpoint picking, and translation. |
 
 ## Next Implementation Slices
 

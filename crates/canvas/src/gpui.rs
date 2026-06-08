@@ -174,6 +174,7 @@ pub struct CanvasPaintRecord {
     pub view_bounds: Bounds<Pixels>,
     pub z_index: i32,
     pub hidden: bool,
+    pub locked: bool,
     pub selected: bool,
 }
 
@@ -273,6 +274,7 @@ pub fn collect_visible_records(
 
     let hit_options = HitOptions {
         include_hidden: options.include_hidden,
+        include_locked: true,
         include_handles: options.include_handles,
         margin: Pixels::ZERO,
     };
@@ -285,6 +287,7 @@ pub fn collect_visible_records(
             view_bounds: model.viewport.document_bounds_to_view(record.bounds),
             z_index: record.z_index,
             hidden: record.hidden,
+            locked: record.locked,
             selected: options.include_interaction_feedback
                 && target_is_selected(&record.target, &model.interaction.selection),
         })
@@ -648,6 +651,28 @@ mod tests {
             frame.records[0].view_bounds,
             Bounds::new(point(px(20.0), px(20.0)), size(px(40.0), px(20.0)))
         );
+    }
+
+    #[test]
+    fn collect_visible_records_keeps_locked_records_visible() {
+        let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(20.0), px(20.0)));
+        node.locked = true;
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let model = CanvasPaintModel::new(document, CanvasViewport::default());
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(frame.records.len(), 1);
+        assert_eq!(
+            frame.records[0].target,
+            HitTarget::Node(crate::NodeId::from("locked"))
+        );
+        assert!(frame.records[0].locked);
     }
 
     #[test]

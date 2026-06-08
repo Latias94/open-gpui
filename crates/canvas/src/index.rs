@@ -21,11 +21,13 @@ pub struct HitRecord {
     pub bounds: Bounds<Pixels>,
     pub z_index: i32,
     pub hidden: bool,
+    pub locked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HitOptions {
     pub include_hidden: bool,
+    pub include_locked: bool,
     pub include_handles: bool,
     pub margin: Pixels,
 }
@@ -34,6 +36,7 @@ impl Default for HitOptions {
     fn default() -> Self {
         Self {
             include_hidden: false,
+            include_locked: false,
             include_handles: false,
             margin: Pixels::ZERO,
         }
@@ -55,6 +58,7 @@ impl SpatialIndex {
                 bounds: node.bounds(),
                 z_index: node.z_index,
                 hidden: node.hidden,
+                locked: node.locked,
             });
 
             for handle in &node.handles {
@@ -66,6 +70,7 @@ impl SpatialIndex {
                     bounds: handle.bounds_in_document(node),
                     z_index: node.z_index,
                     hidden: node.hidden || !handle.connectable,
+                    locked: node.locked,
                 });
             }
         }
@@ -76,6 +81,7 @@ impl SpatialIndex {
                 bounds: shape.bounds,
                 z_index: shape.z_index,
                 hidden: shape.hidden,
+                locked: shape.locked,
             });
         }
 
@@ -86,6 +92,7 @@ impl SpatialIndex {
                     bounds,
                     z_index: edge.z_index,
                     hidden: edge.hidden,
+                    locked: edge.locked,
                 });
             }
         }
@@ -111,7 +118,13 @@ impl SpatialIndex {
     }
 
     pub fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
-        self.query_with_options(viewport, HitOptions::default())
+        self.query_with_options(
+            viewport,
+            HitOptions {
+                include_locked: true,
+                ..HitOptions::default()
+            },
+        )
     }
 
     pub fn query_with_options(
@@ -121,6 +134,7 @@ impl SpatialIndex {
     ) -> impl Iterator<Item = &HitRecord> {
         self.records.iter().filter(move |record| {
             (options.include_hidden || !record.hidden)
+                && (options.include_locked || !record.locked)
                 && (options.include_handles || !matches!(record.target, HitTarget::Handle { .. }))
                 && record.bounds.intersects(&viewport)
         })
@@ -135,6 +149,7 @@ impl SpatialIndex {
             .iter()
             .rev()
             .filter(move |record| options.include_hidden || !record.hidden)
+            .filter(move |record| options.include_locked || !record.locked)
             .filter(move |record| {
                 options.include_handles || !matches!(record.target, HitTarget::Handle { .. })
             })
@@ -166,6 +181,7 @@ impl SpatialIndex {
                     bounds: node.bounds(),
                     z_index: node.z_index,
                     hidden: node.hidden,
+                    locked: node.locked,
                 });
 
                 for handle in &node.handles {
@@ -177,6 +193,7 @@ impl SpatialIndex {
                         bounds: handle.bounds_in_document(node),
                         z_index: node.z_index,
                         hidden: node.hidden || !handle.connectable,
+                        locked: node.locked,
                     });
                 }
 
@@ -199,6 +216,7 @@ impl SpatialIndex {
                         bounds,
                         z_index: edge.z_index,
                         hidden: edge.hidden,
+                        locked: edge.locked,
                     });
                 }
             }
@@ -212,6 +230,7 @@ impl SpatialIndex {
                     bounds: shape.bounds,
                     z_index: shape.z_index,
                     hidden: shape.hidden,
+                    locked: shape.locked,
                 });
             }
         }
@@ -324,6 +343,56 @@ mod tests {
                 .map(|record| record.target.clone())
                 .collect::<Vec<_>>(),
             vec![HitTarget::Node(NodeId::from("hidden"))]
+        );
+    }
+
+    #[test]
+    fn locked_records_are_skipped_by_hit_test_unless_requested() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.locked = true;
+        document.insert_node(node).unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        assert!(
+            index
+                .hit_test(point(px(5.0), px(5.0)), HitOptions::default())
+                .next()
+                .is_none()
+        );
+
+        let options = HitOptions {
+            include_locked: true,
+            ..HitOptions::default()
+        };
+        assert_eq!(
+            index
+                .hit_test(point(px(5.0), px(5.0)), options)
+                .map(|record| (record.target.clone(), record.locked))
+                .collect::<Vec<_>>(),
+            vec![(HitTarget::Node(NodeId::from("locked")), true)]
+        );
+    }
+
+    #[test]
+    fn query_returns_locked_records_for_culling() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.locked = true;
+        document.insert_node(node).unwrap();
+
+        let index = SpatialIndex::rebuild(&document);
+        let records = index
+            .query(Bounds::new(
+                point(px(0.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .map(|record| (record.target.clone(), record.locked))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            records,
+            vec![(HitTarget::Node(NodeId::from("locked")), true)]
         );
     }
 
@@ -545,6 +614,7 @@ mod tests {
             .cmp(&target_key(&right.target))
             .then_with(|| left.z_index.cmp(&right.z_index))
             .then_with(|| left.hidden.cmp(&right.hidden))
+            .then_with(|| left.locked.cmp(&right.locked))
     }
 
     fn target_key(target: &HitTarget) -> (u8, String, String) {
