@@ -3,11 +3,15 @@ use open_gpui::{
     WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockGraph, DockHost, DockWorkspace, EditorDockLayoutSpec,
+    DockAction, DockController, DockGraph, DockPolicy, DockSpaceId, DockViewportAdapter,
+    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportWindowBounds, DockWorkspace, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
+use std::{cell::RefCell, rc::Rc};
 
 const SPACE: &str = "docking-demo";
+const SECONDARY_SPACE: &str = "docking-preview";
 
 struct DemoPanel {
     title: &'static str,
@@ -97,23 +101,35 @@ fn default_graph() -> DockGraph {
 fn restored_demo_graph() -> DockGraph {
     let mut workspace = DockWorkspace::new(SPACE, default_graph());
     workspace.policy_mut().set_allow_floating(true);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace
+        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
+            source_space: SPACE.into(),
+            item: "preview".into(),
+            target_space: SECONDARY_SPACE.into(),
+        })
+        .expect("preview panel should move into the secondary demo dock space");
     workspace
         .apply_action(&DockAction::FloatItemInWindow {
             source_space: SPACE.into(),
-            item: "preview".into(),
+            item: "problems".into(),
             target_space: SPACE.into(),
             bounds: Bounds::new(point(px(620.0), px(72.0)), size(px(300.0), px(220.0))),
         })
-        .expect("preview panel should float inside the demo dock space");
+        .expect("problems panel should float inside the demo dock space");
 
     let layout = workspace.graph().export_layout();
     DockGraph::import_layout(&layout).expect("demo dock layout should restore")
 }
 
-fn build_host(cx: &mut Context<DockHost>) -> DockHost {
-    let controller = DockController::builder(SPACE)
+fn build_controller() -> DockController {
+    let mut policy = DockPolicy::default();
+    policy.set_allow_floating(true);
+    policy.set_allow_platform_viewports(true);
+
+    DockController::builder(SPACE)
         .graph(restored_demo_graph())
-        .allow_floating(true)
+        .policy(policy)
         .panel_factory("explorer", "Explorer", |cx| {
             cx.new(|_| {
                 DemoPanel::new(
@@ -174,7 +190,7 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
                         "Layout round-trips through DockLayout.",
                         "Splitter handles resize panes.",
                         "Tabs can drag/drop between stacks.",
-                        "Floating bounds live in the graph layout.",
+                        "Secondary viewport placement lives in the adapter.",
                     ],
                 )
             })
@@ -210,24 +226,87 @@ fn build_host(cx: &mut Context<DockHost>) -> DockHost {
             })
             .into()
         })
-        .build();
+        .build()
+}
 
-    let controller = cx.new(|_| controller);
-    DockHost::from_controller(controller, SPACE, cx)
+fn viewport_window_options(bounds: Bounds<open_gpui::Pixels>) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        ..Default::default()
+    }
+}
+
+fn saved_viewport_placement(
+    primary_bounds: Bounds<open_gpui::Pixels>,
+    secondary_bounds: Bounds<open_gpui::Pixels>,
+) -> DockViewportPlacementLayout {
+    DockViewportPlacementLayout::new(vec![
+        DockViewportPlacement {
+            space: SPACE.into(),
+            display_id: None,
+            window_bounds: Some(DockViewportWindowBounds::from_window_bounds(
+                WindowBounds::Windowed(primary_bounds),
+            )),
+            host_bounds: None,
+        },
+        DockViewportPlacement {
+            space: SECONDARY_SPACE.into(),
+            display_id: None,
+            window_bounds: Some(DockViewportWindowBounds::from_window_bounds(
+                WindowBounds::Windowed(secondary_bounds),
+            )),
+            host_bounds: None,
+        },
+    ])
+}
+
+fn restored_viewport_options(
+    placement: &DockViewportPlacementLayout,
+    space: impl Into<DockSpaceId>,
+    fallback_bounds: Bounds<open_gpui::Pixels>,
+) -> WindowOptions {
+    let space = space.into();
+    placement
+        .window_options_for_space(&space, viewport_window_options(fallback_bounds))
+        .expect("demo viewport placement should produce window options")
 }
 
 fn main() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(980.0), px(680.0)), cx);
+        let controller = cx.new(|_| build_controller());
+        let adapter = Rc::new(RefCell::new(DockViewportAdapter::new()));
+        cx.on_window_closed({
+            let adapter = adapter.clone();
+            move |_, window_id| {
+                adapter
+                    .borrow_mut()
+                    .close_viewport_mapping(window_id, DockViewportClosePolicy::RetainLayout);
+            }
+        })
+        .detach();
 
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |_, cx| cx.new(build_host),
-        )
-        .expect("failed to open docking smoke window");
+        let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
+        let secondary_bounds = Bounds::new(
+            point(
+                primary_bounds.origin.x + primary_bounds.size.width + px(24.0),
+                primary_bounds.origin.y,
+            ),
+            size(px(460.0), px(360.0)),
+        );
+        let placement = saved_viewport_placement(primary_bounds, secondary_bounds);
+
+        let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
+        adapter
+            .borrow_mut()
+            .open_viewport(controller.clone(), SPACE, primary_options, cx)
+            .expect("failed to open primary docking viewport");
+
+        let secondary_options =
+            restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
+        adapter
+            .borrow_mut()
+            .open_viewport(controller, SECONDARY_SPACE, secondary_options, cx)
+            .expect("failed to open secondary docking viewport");
 
         cx.activate(true);
     });

@@ -16,6 +16,13 @@
 //! [`DockGraph`], [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
+//! Multi-window applications should keep one [`DockController`] as the graph and panel owner, keep
+//! one [`DockViewportAdapter`] outside serialized layout state, open controller-backed viewport
+//! windows through [`DockViewportAdapter::open_viewport`], and call
+//! [`DockViewportAdapter::close_viewport_mapping`] from GPUI close callbacks that report a
+//! [`WindowId`](open_gpui::WindowId). Persist [`DockLayout`] and
+//! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
+//! restores platform-window hints for the runtime adapter.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, Context};
