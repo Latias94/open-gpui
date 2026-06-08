@@ -665,33 +665,55 @@ impl DockViewportAdapter {
     }
 
     /// Updates the display id snapshot for a logical dock space.
+    ///
+    /// Returns true when the stored snapshot changed.
     pub fn set_display_id(&mut self, space: &DockSpaceId, display_id: Option<DisplayId>) -> bool {
         let Some(snapshot) = self.viewports.get_mut(space) else {
             return false;
         };
+        if snapshot.display_id == display_id {
+            return false;
+        }
+
         snapshot.display_id = display_id;
         true
     }
 
     /// Updates the platform window bounds snapshot for a logical dock space.
+    ///
+    /// Returns true when the stored snapshot changed.
     pub fn set_window_bounds(&mut self, space: &DockSpaceId, bounds: WindowBounds) -> bool {
         let Some(snapshot) = self.viewports.get_mut(space) else {
             return false;
         };
-        snapshot.window_bounds = Some(bounds);
+        let bounds = Some(bounds);
+        if snapshot.window_bounds == bounds {
+            return false;
+        }
+
+        snapshot.window_bounds = bounds;
         true
     }
 
     /// Updates the dock host bounds snapshot for a logical dock space.
+    ///
+    /// Returns true when the stored snapshot changed.
     pub fn set_host_bounds(&mut self, space: &DockSpaceId, bounds: Bounds<Pixels>) -> bool {
         let Some(snapshot) = self.viewports.get_mut(space) else {
             return false;
         };
-        snapshot.host_bounds = Some(bounds);
+        let bounds = Some(bounds);
+        if snapshot.host_bounds == bounds {
+            return false;
+        }
+
+        snapshot.host_bounds = bounds;
         true
     }
 
     /// Updates display id, window bounds, and host bounds in one snapshot write.
+    ///
+    /// Returns true when the stored snapshot changed.
     pub fn update_snapshot(
         &mut self,
         space: &DockSpaceId,
@@ -702,9 +724,18 @@ impl DockViewportAdapter {
         let Some(snapshot) = self.viewports.get_mut(space) else {
             return false;
         };
+        let window_bounds = Some(window_bounds);
+        let host_bounds = Some(host_bounds);
+        if snapshot.display_id == display_id
+            && snapshot.window_bounds == window_bounds
+            && snapshot.host_bounds == host_bounds
+        {
+            return false;
+        }
+
         snapshot.display_id = display_id;
-        snapshot.window_bounds = Some(window_bounds);
-        snapshot.host_bounds = Some(host_bounds);
+        snapshot.window_bounds = window_bounds;
+        snapshot.host_bounds = host_bounds;
         true
     }
 
@@ -1179,6 +1210,40 @@ mod tests {
                 .screen_to_host(&main, point(px(500.0), px(500.0)))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn snapshot_updates_report_only_real_changes() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let missing = space("missing");
+        adapter.register_viewport(main.clone(), handle(1));
+
+        let display = Some(DisplayId::new(7));
+        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0));
+        let host_bounds = bounds(10.0, 20.0, 300.0, 200.0);
+        assert!(!adapter.set_display_id(&missing, display));
+        assert!(!adapter.set_window_bounds(&missing, window_bounds));
+        assert!(!adapter.set_host_bounds(&missing, host_bounds));
+        assert!(!adapter.update_snapshot(&missing, display, window_bounds, host_bounds));
+
+        assert!(adapter.set_display_id(&main, display));
+        assert!(!adapter.set_display_id(&main, display));
+        assert!(adapter.set_window_bounds(&main, window_bounds));
+        assert!(!adapter.set_window_bounds(&main, window_bounds));
+        assert!(adapter.set_host_bounds(&main, host_bounds));
+        assert!(!adapter.set_host_bounds(&main, host_bounds));
+        assert!(!adapter.update_snapshot(&main, display, window_bounds, host_bounds));
+
+        let next_host_bounds = bounds(10.0, 20.0, 320.0, 240.0);
+        assert!(adapter.update_snapshot(&main, display, window_bounds, next_host_bounds));
+
+        let snapshot = adapter
+            .snapshot(&main)
+            .expect("registered viewport should retain its snapshot");
+        assert_eq!(snapshot.display_id, display);
+        assert_eq!(snapshot.window_bounds, Some(window_bounds));
+        assert_eq!(snapshot.host_bounds, Some(next_host_bounds));
     }
 
     #[test]
