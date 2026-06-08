@@ -11,6 +11,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 const GRID_COLUMNS: usize = 120;
 const GRID_ROWS: usize = 80;
+const DRAG_GRID_COLUMNS: usize = 40;
+const DRAG_GRID_ROWS: usize = 25;
 const DRAG_FRAMES: usize = 120;
 
 fn spatial_index_strategy_benches(c: &mut Criterion) {
@@ -25,6 +27,12 @@ fn spatial_index_strategy_benches(c: &mut Criterion) {
     for workload in workloads {
         bench_workload(c, &workload);
     }
+
+    let drag_workload = Workload::new(
+        "drag_grid",
+        grid_document(DRAG_GRID_COLUMNS, DRAG_GRID_ROWS),
+    );
+    bench_drag_workload(c, &drag_workload);
 }
 
 fn bench_workload(c: &mut Criterion, workload: &Workload) {
@@ -142,6 +150,13 @@ fn bench_workload(c: &mut Criterion, workload: &Workload) {
             ))
         });
     });
+
+    group.finish();
+}
+
+fn bench_drag_workload(c: &mut Criterion, workload: &Workload) {
+    let mut group = c.benchmark_group(format!("spatial_index/{}", workload.name));
+    let viewport = workload.viewport;
 
     for selected_nodes in [1, 10, 100] {
         group.bench_function(format!("drag_rebuild/vector/{selected_nodes}"), |b| {
