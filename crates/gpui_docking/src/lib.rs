@@ -89,6 +89,7 @@ mod viewport_registry;
 mod viewport_runtime;
 mod viewport_target;
 mod workspace;
+mod workspace_action;
 
 #[cfg(test)]
 mod host_tests;
