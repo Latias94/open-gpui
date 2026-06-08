@@ -2,14 +2,16 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockFloatingContainer,
     DockGraph, DockHost, DockItemId, DockLayoutNode, DockLayoutRect, DockNode, DockNodeId,
     DockOpApplyError, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportOpenStatus, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportWindowBounds, DockViewportWindowState, DockWorkspace, DropZone,
-    EditorDockLayoutSpec, SplitAxis, debug::DockDebugRegion,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus,
+    DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntime,
+    DockViewportRuntimeHandle, DockViewportWindowBounds, DockViewportWindowState, DockWorkspace,
+    DropZone, EditorDockLayoutSpec, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
-    AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
-    MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext, VisualTestContext, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb, size,
+    AnyWindowHandle, AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement,
+    Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
+    VisualTestContext, Window, WindowBounds, WindowHandle, WindowId, WindowOptions, div, point, px,
+    rgb, size,
 };
 use slotmap::Key;
 use std::{cell::Cell, rc::Rc};
@@ -687,6 +689,121 @@ fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) 
             .update(cx, |_, window, _| window.window_bounds())
             .expect("opened window should still be live"),
         saved_window_bounds
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(primary_space.clone(), primary_tabs);
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space, graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(
+        runtime.adapter().window_for_space(&secondary_space),
+        Some(opened.window)
+    );
+
+    let reused = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(480.0, 260.0),
+                app,
+            )
+        })
+        .expect("live viewport should be reused through runtime");
+    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window, opened.window);
+    assert_eq!(runtime.adapter().len(), 1);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    cx.update(|app| runtime.observe_window_closed(app).detach());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime handle");
+    assert_eq!(runtime.borrow().adapter().len(), 1);
+
+    opened
+        .window
+        .update(cx, |_, window, _| window.remove_window())
+        .expect("opened viewport should still be live");
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
+        None
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_close_policy_prevent_preserves_mapping(cx: &mut TestAppContext) {
+    let controller = cx.new(|_| DockController::from_graph(space(), DockGraph::new()));
+    let mut runtime =
+        DockViewportRuntime::with_close_policy(controller, DockViewportClosePolicy::Prevent);
+    let secondary_space = DockSpaceId::from("secondary");
+    let window: AnyWindowHandle = WindowHandle::<DockHost>::new(WindowId::from(909)).into();
+
+    runtime
+        .adapter_mut()
+        .register_viewport(secondary_space.clone(), window);
+
+    let outcome = runtime.handle_window_closed(window.window_id());
+
+    assert_eq!(outcome.status, DockViewportCloseStatus::Vetoed);
+    assert_eq!(outcome.space, Some(secondary_space.clone()));
+    assert_eq!(
+        runtime.adapter().window_for_space(&secondary_space),
+        Some(window)
     );
 }
 

@@ -41,8 +41,9 @@ cargo check -p open-gpui-docking-native
 cargo run -p open-gpui-docking-native
 ```
 
-The docking native example exercises the public owner-first setup: applications configure a
-`DockWorkspace`, register panel views there, and mount it through `DockHost`.
+The docking native example exercises the public multi-window setup: applications build one
+`DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
+controller-backed primary and secondary `DockHost` viewports.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 

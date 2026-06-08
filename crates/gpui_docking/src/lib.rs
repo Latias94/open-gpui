@@ -10,17 +10,18 @@
 //!   workspace or a shared controller.
 //! - [`DockViewportAdapter`] stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
+//! - [`DockViewportRuntime`] owns the controller-backed viewport lifecycle while
+//!   [`DockViewportRuntimeHandle`] keeps GPUI application callbacks ergonomic.
 //!
 //! Common GPUI applications should start with [`DockController::builder`], register lazy panel
 //! factories, and mount a controller-backed [`DockHost`]. Advanced callers can keep using
 //! [`DockGraph`], [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
-//! Multi-window applications should keep one [`DockController`] as the graph and panel owner, keep
-//! one [`DockViewportAdapter`] outside serialized layout state, open controller-backed viewport
-//! windows through [`DockViewportAdapter::open_viewport`], and call
-//! [`DockViewportAdapter::close_viewport_mapping`] from GPUI close callbacks that report a
-//! [`WindowId`](open_gpui::WindowId). Persist [`DockLayout`] and
+//! Multi-window applications should keep one [`DockController`] as the graph and panel owner, wrap
+//! it in a [`DockViewportRuntimeHandle`], open controller-backed viewport windows through the
+//! runtime, and install [`DockViewportRuntimeHandle::observe_window_closed`] to clean up callbacks
+//! that report a [`WindowId`](open_gpui::WindowId). Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
 //! restores platform-window hints for the runtime adapter.
 //!

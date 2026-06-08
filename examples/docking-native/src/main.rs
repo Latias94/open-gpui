@@ -3,12 +3,11 @@ use open_gpui::{
     WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockGraph, DockPolicy, DockSpaceId, DockViewportAdapter,
-    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportWindowBounds, DockWorkspace, EditorDockLayoutSpec,
+    DockAction, DockController, DockGraph, DockPolicy, DockSpaceId, DockViewportPlacement,
+    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
+    DockWorkspace, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
-use std::{cell::RefCell, rc::Rc};
 
 const SPACE: &str = "docking-demo";
 const SECONDARY_SPACE: &str = "docking-preview";
@@ -274,16 +273,8 @@ fn restored_viewport_options(
 fn main() {
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
-        let adapter = Rc::new(RefCell::new(DockViewportAdapter::new()));
-        cx.on_window_closed({
-            let adapter = adapter.clone();
-            move |_, window_id| {
-                adapter
-                    .borrow_mut()
-                    .close_viewport_mapping(window_id, DockViewportClosePolicy::RetainLayout);
-            }
-        })
-        .detach();
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        runtime.observe_window_closed(cx).detach();
 
         let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
         let secondary_bounds = Bounds::new(
@@ -296,16 +287,14 @@ fn main() {
         let placement = saved_viewport_placement(primary_bounds, secondary_bounds);
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
-        adapter
-            .borrow_mut()
-            .open_viewport(controller.clone(), SPACE, primary_options, cx)
+        runtime
+            .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);
-        adapter
-            .borrow_mut()
-            .open_viewport(controller, SECONDARY_SPACE, secondary_options, cx)
+        runtime
+            .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
 
         cx.activate(true);
