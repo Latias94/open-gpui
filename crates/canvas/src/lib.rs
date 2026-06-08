@@ -38,7 +38,7 @@ pub use gpui::{
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
 };
-pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
+pub use index::{CanvasSpatialIndex, HitOptions, HitRecord, HitTarget, SpatialIndex};
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,

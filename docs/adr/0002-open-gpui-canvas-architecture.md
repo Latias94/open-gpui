@@ -41,6 +41,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - A viewport/camera model that is separate from document data.
 - A spatial index and hit-test API that can be rebuilt or incrementally updated without changing
   document serialization.
+- A `CanvasSpatialIndex` query trait so future R-tree, tile, or GPU-assisted culling indexes can
+  plug into query and hit-test call sites without changing document records.
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
   edge sides into deterministic node handles.
 - A persistence boundary based on checkpoints and monotonic transaction logs.
@@ -60,6 +62,12 @@ spatial index, and viewport. Its prepaint step queries the visible document boun
 `SpatialIndex`, and its paint step emits GPUI quads and paths through the low-level `canvas`
 callback. It intentionally does not own application state or turn every record into an element;
 future overlays can layer selected node widgets on top of this batched base renderer.
+
+The default `SpatialIndex` remains a simple sorted record vector because it is predictable and easy
+to verify in the first release. Query call sites also have an object-safe `CanvasSpatialIndex`
+visitor trait. That trait deliberately covers query and hit-test traversal, not document mutation
+or cache ownership, so future R-tree or tile indexes can be introduced without making
+`CanvasEditor` generic too early.
 
 The native smoke example exercises the interaction boundary without expanding the public adapter
 surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
