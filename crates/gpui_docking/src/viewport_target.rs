@@ -1,5 +1,5 @@
 use crate::DockSpaceId;
-use open_gpui::{AnyWindowHandle, App, Pixels, Point, WindowId};
+use open_gpui::{AnyWindowHandle, App, Pixels, Point, Window, WindowId};
 
 /// Result of resolving a screen point into a registered dock viewport.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +59,15 @@ impl DockViewportTargetContext {
                 .map(|window| window.window_id())
                 .collect(),
         }
+    }
+
+    /// Builds a target context from GPUI application signals and treats this window as hovered.
+    ///
+    /// This is intended for pointer-event paths that already know the event window. GPUI app-level
+    /// signals provide active-window and stack ordering; the current event window supplies the
+    /// more specific hovered-window tie breaker.
+    pub fn from_window(window: &Window, cx: &App) -> Self {
+        Self::from_app(cx).with_hovered_window(window.window_handle())
     }
 
     /// Adds the hovered window signal.

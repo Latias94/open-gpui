@@ -4,9 +4,9 @@ use crate::{
     DockNodeId, DockOpApplyError, DockPanel, DockPanelViewError, DockPolicyError, DockSpaceId,
     DockViewportAdapter, DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus,
     DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntime,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportWindowBounds,
-    DockViewportWindowState, DockWorkspace, DropZone, EditorDockLayoutSpec, SplitAxis,
-    debug::DockDebugRegion,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
+    DockViewportWindowBounds, DockViewportWindowState, DockWorkspace, DropZone,
+    EditorDockLayoutSpec, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, InteractiveElement,
@@ -742,6 +742,58 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     assert_eq!(reused.status, DockViewportOpenStatus::Reused);
     assert_eq!(reused.window, opened.window);
     assert_eq!(adapter.len(), 1);
+}
+
+#[open_gpui::test]
+fn viewport_target_context_from_window_marks_event_window_as_hovered(cx: &mut TestAppContext) {
+    let alpha_space = DockSpaceId::from("alpha");
+    let zeta_space = DockSpaceId::from("zeta");
+    let (alpha_graph, _alpha_root) = tabs_graph(&["a"], 0);
+    let (zeta_graph, _zeta_root) = tabs_graph(&["b"], 0);
+    let (alpha_window, _alpha_host, _alpha_visual) = open_host(
+        cx,
+        alpha_graph,
+        &[("a", "Panel A", "A")],
+        size(px(320.0), px(200.0)),
+    );
+    let (zeta_window, _zeta_host, _zeta_visual) = open_host(
+        cx,
+        zeta_graph,
+        &[("b", "Panel B", "B")],
+        size(px(320.0), px(200.0)),
+    );
+    let alpha_handle: AnyWindowHandle = alpha_window.into();
+    let zeta_handle: AnyWindowHandle = zeta_window.into();
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(zeta_space.clone(), zeta_handle);
+    adapter.register_viewport(alpha_space.clone(), alpha_handle);
+    for space in [&alpha_space, &zeta_space] {
+        adapter.update_snapshot(
+            space,
+            None,
+            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 300.0, 200.0)),
+            floating_bounds(0.0, 0.0, 300.0, 200.0),
+        );
+    }
+
+    zeta_window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("zeta window should be live");
+    let context = alpha_window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("alpha window should be live");
+
+    assert_eq!(context.hovered_window, Some(alpha_handle.window_id()));
+    assert_eq!(context.active_window, Some(zeta_handle.window_id()));
+    assert_eq!(
+        adapter
+            .hit_test_screen_with_context(point(px(125.0), px(150.0)), &context)
+            .map(|hit| hit.space),
+        Some(alpha_space),
+        "current event window should win viewport arbitration as hovered"
+    );
 }
 
 #[open_gpui::test]
