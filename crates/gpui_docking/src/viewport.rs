@@ -232,12 +232,12 @@ impl DockViewportRuntime {
         &mut self.adapter
     }
 
-    /// Returns the close policy used by [`handle_window_closed`](Self::handle_window_closed).
+    /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub fn close_policy(&self) -> DockViewportClosePolicy {
         self.close_policy.get()
     }
 
-    /// Replaces the close policy used by [`handle_window_closed`](Self::handle_window_closed).
+    /// Replaces the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
         self.close_policy.set(close_policy);
     }
@@ -259,10 +259,13 @@ impl DockViewportRuntime {
         })
     }
 
-    /// Handles a GPUI window-closed notification by applying this runtime's close policy.
+    /// Handles a GPUI window-closed notification by removing stale runtime mapping.
+    ///
+    /// Close policy is applied by [`Self::handle_window_should_close`] before GPUI accepts a close.
+    /// Once a closed notification arrives, the platform window is already gone and docking must
+    /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
-        self.adapter
-            .close_viewport_mapping(window_id, self.close_policy())
+        self.adapter.handle_window_closed(window_id)
     }
 
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
@@ -538,6 +541,25 @@ impl DockViewportAdapter {
             window: snapshot.window,
             reason,
         })
+    }
+
+    /// Handles an already-accepted GPUI window close by removing runtime mapping.
+    pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
+        if let Some(outcome) =
+            self.unregister_window_id(window_id, DockViewportUnregisterReason::Closed)
+        {
+            DockViewportCloseOutcome {
+                space: Some(outcome.space),
+                window_id,
+                status: DockViewportCloseStatus::Closed,
+            }
+        } else {
+            DockViewportCloseOutcome {
+                space: None,
+                window_id,
+                status: DockViewportCloseStatus::UnknownWindow,
+            }
+        }
     }
 
     /// Applies viewport close policy to the adapter mapping for a window id.
