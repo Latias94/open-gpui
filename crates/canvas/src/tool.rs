@@ -756,6 +756,13 @@ impl CanvasEditor {
                     vec![CanvasToolEffect::ApplyTransaction(transaction)]
                 }
             }
+            (ToolState::Idle, CanvasEvent::Cancel) => {
+                if self.selection.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![CanvasToolEffect::ClearSelection]
+                }
+            }
             (
                 ToolState::Idle,
                 CanvasEvent::PointerDown {
@@ -1473,6 +1480,26 @@ mod tests {
             vec![NodeId::from("base")]
         );
         assert_eq!(editor.state, ToolState::Idle);
+    }
+
+    #[test]
+    fn select_tool_cancel_clears_selection_when_idle() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "base",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("base"));
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert!(editor.selection.is_empty());
+        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]

@@ -114,6 +114,8 @@ moves, and preserves the baseline selection even when the pointer crosses back o
 Pointing and selection states also use that base-selection snapshot as the cancel target, so
 aborted blank clicks or marquee gestures restore the pre-gesture selection rather than committing
 transient selection mutations.
+When the editor is idle, the same Cancel event clears the current selection so Escape acts as a
+single dismissal key across active gestures and passive selection states.
 Shift-constrained node translation uses pointer-move modifiers, chooses the dominant axis from the
 first shifted move, and preserves that axis while Shift remains held so graph layouts can align
 nodes without a separate transform mode.

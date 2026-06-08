@@ -34,6 +34,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   events.
 - Pointing and box-selection gestures snapshot the starting selection and restore it on cancel,
   keeping transient selection changes out of the committed editor state.
+- Idle Escape cancels also clear the current selection, so the same key exits both active gestures
+  and passive multi-selection states.
 - The built-in select tool uses pointer-move modifiers for shift-constrained node translation,
   locking to the first shifted move's dominant axis while the modifier remains held.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
