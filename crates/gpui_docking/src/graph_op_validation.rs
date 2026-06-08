@@ -1,19 +1,13 @@
-use crate::{DockItemId, DockNodeId, DockOp, DockOpApplyError, DockSpaceId, SplitFractionsUpdate};
-use std::collections::HashSet;
+use crate::{DockItemId, DockNodeId, DockOp, DockOpApplyError, DockSpaceId};
 
-use super::{DockGraph, DockNode, DropZone};
+use super::{DockGraph, DropZone};
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
     pub fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
         match op {
             DockOp::SetActiveTab { tabs, active } => {
-                let Some(node) = self.node(*tabs) else {
-                    return Err(DockOpApplyError::TabsNodeNotFound { tabs: *tabs });
-                };
-                let DockNode::Tabs { items, .. } = node else {
-                    return Err(DockOpApplyError::NodeIsNotTabs { node: *tabs });
-                };
+                let items = self.require_tabs_node(*tabs)?;
                 if *active >= items.len() {
                     return Err(DockOpApplyError::ActiveOutOfBounds {
                         tabs: *tabs,
@@ -126,24 +120,8 @@ impl DockGraph {
                         space: target_space.clone(),
                     });
                 }
-                let Some(node) = self.node(*source_tabs) else {
-                    return Err(DockOpApplyError::TabsNodeNotFound { tabs: *source_tabs });
-                };
-                let DockNode::Tabs { items, .. } = node else {
-                    return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs });
-                };
-                if items.is_empty() {
-                    return Err(DockOpApplyError::TabsNodeEmpty { tabs: *source_tabs });
-                }
-                if self
-                    .root_for_node_in_space(source_space, *source_tabs)
-                    .is_none()
-                {
-                    return Err(DockOpApplyError::SourceNodeNotInSpace {
-                        space: source_space.clone(),
-                        node: *source_tabs,
-                    });
-                }
+                self.require_non_empty_tabs_node(*source_tabs)?;
+                self.require_source_node_in_space(source_space, *source_tabs)?;
                 Ok(self.apply_op(op))
             }
             DockOp::FloatItemInWindow {
@@ -162,25 +140,8 @@ impl DockGraph {
                 source_tabs,
                 ..
             } => {
-                let Some(node) = self.node(*source_tabs) else {
-                    return Err(DockOpApplyError::TabsNodeNotFound { tabs: *source_tabs });
-                };
-                match node {
-                    DockNode::Tabs { items, .. } if items.is_empty() => {
-                        return Err(DockOpApplyError::TabsNodeEmpty { tabs: *source_tabs });
-                    }
-                    DockNode::Tabs { .. } => {}
-                    _ => return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs }),
-                }
-                if self
-                    .root_for_node_in_space(source_space, *source_tabs)
-                    .is_none()
-                {
-                    return Err(DockOpApplyError::SourceNodeNotInSpace {
-                        space: source_space.clone(),
-                        node: *source_tabs,
-                    });
-                }
+                self.require_non_empty_tabs_node(*source_tabs)?;
+                self.require_source_node_in_space(source_space, *source_tabs)?;
                 Ok(self.apply_op(op))
             }
             DockOp::SetFloatingBounds {
@@ -206,17 +167,8 @@ impl DockGraph {
                         floating: *floating,
                     });
                 }
-                match self.node(*target_tabs) {
-                    Some(DockNode::Tabs { .. }) => {}
-                    Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: *target_tabs }),
-                    None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: *target_tabs }),
-                }
-                let Some(target_root) = self.root_for_node_in_space(space, *target_tabs) else {
-                    return Err(DockOpApplyError::TargetNodeNotInSpace {
-                        space: space.clone(),
-                        target: *target_tabs,
-                    });
-                };
+                self.require_tabs_node(*target_tabs)?;
+                let target_root = self.require_target_node_in_space(space, *target_tabs)?;
                 if target_root == *floating {
                     return Err(DockOpApplyError::CannotMergeFloatingIntoOwnSubtree {
                         floating: *floating,
@@ -256,21 +208,9 @@ impl DockGraph {
                 item: item.clone(),
             });
         }
-        if self
-            .root_for_node_in_space(target_space, target_tabs)
-            .is_none()
-        {
-            return Err(DockOpApplyError::TargetNodeNotInSpace {
-                space: target_space.clone(),
-                target: target_tabs,
-            });
-        }
+        self.require_target_node_in_space(target_space, target_tabs)?;
         if zone == DropZone::Center {
-            match self.node(target_tabs) {
-                Some(DockNode::Tabs { .. }) => {}
-                Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
-                None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
-            }
+            self.require_tabs_node(target_tabs)?;
         }
         Ok(())
     }
@@ -280,62 +220,9 @@ impl DockGraph {
         space: &DockSpaceId,
         target_tabs: DockNodeId,
     ) -> Result<(), DockOpApplyError> {
-        if self.root_for_node_in_space(space, target_tabs).is_none() {
-            return Err(DockOpApplyError::TargetNodeNotInSpace {
-                space: space.clone(),
-                target: target_tabs,
-            });
-        }
-        match self.node(target_tabs) {
-            Some(DockNode::Tabs { .. }) => Ok(()),
-            Some(_) => Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
-            None => Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
-        }
-    }
-
-    fn target_space_is_empty_for_open(&self, space: &DockSpaceId) -> bool {
-        self.root(space).is_none() && self.floating_containers(space).is_empty()
-    }
-
-    pub(in crate::graph) fn target_space_is_empty_for_item_move(
-        &self,
-        source_space: &DockSpaceId,
-        item: &DockItemId,
-        target_space: &DockSpaceId,
-    ) -> bool {
-        if self.root(target_space).is_some() {
-            return false;
-        }
-        if source_space != target_space {
-            return self.floating_containers(target_space).is_empty();
-        }
-
-        let target_items = self.collect_items_in_space(target_space);
-        if target_items.is_empty() {
-            return true;
-        }
-        matches!(target_items.as_slice(), [target_item] if target_item == item)
-    }
-
-    pub(in crate::graph) fn target_space_is_empty_for_tabs_move(
-        &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        target_space: &DockSpaceId,
-    ) -> bool {
-        if self.root(target_space).is_some() {
-            return false;
-        }
-        if source_space != target_space {
-            return self.floating_containers(target_space).is_empty();
-        }
-
-        let target_items = self.collect_items_in_space(target_space);
-        if target_items.is_empty() {
-            return true;
-        }
-        let source_items = self.collect_items_in_subtree(source_tabs);
-        !source_items.is_empty() && target_items == source_items
+        self.require_target_node_in_space(space, target_tabs)?;
+        self.require_tabs_node(target_tabs)?;
+        Ok(())
     }
 
     fn validate_move_tabs(
@@ -346,88 +233,11 @@ impl DockGraph {
         target_tabs: DockNodeId,
         zone: DropZone,
     ) -> Result<(), DockOpApplyError> {
-        let Some(source_node) = self.node(source_tabs) else {
-            return Err(DockOpApplyError::TabsNodeNotFound { tabs: source_tabs });
-        };
-        match source_node {
-            DockNode::Tabs { items, .. } if items.is_empty() => {
-                return Err(DockOpApplyError::TabsNodeEmpty { tabs: source_tabs });
-            }
-            DockNode::Tabs { .. } => {}
-            _ => return Err(DockOpApplyError::NodeIsNotTabs { node: source_tabs }),
-        }
-        if self
-            .root_for_node_in_space(source_space, source_tabs)
-            .is_none()
-        {
-            return Err(DockOpApplyError::SourceNodeNotInSpace {
-                space: source_space.clone(),
-                node: source_tabs,
-            });
-        }
-        if self
-            .root_for_node_in_space(target_space, target_tabs)
-            .is_none()
-        {
-            return Err(DockOpApplyError::TargetNodeNotInSpace {
-                space: target_space.clone(),
-                target: target_tabs,
-            });
-        }
+        self.require_non_empty_tabs_node(source_tabs)?;
+        self.require_source_node_in_space(source_space, source_tabs)?;
+        self.require_target_node_in_space(target_space, target_tabs)?;
         if zone == DropZone::Center {
-            match self.node(target_tabs) {
-                Some(DockNode::Tabs { .. }) => {}
-                Some(_) => return Err(DockOpApplyError::NodeIsNotTabs { node: target_tabs }),
-                None => return Err(DockOpApplyError::TabsNodeNotFound { tabs: target_tabs }),
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_split_fractions(
-        &self,
-        split: DockNodeId,
-        fractions: &[f32],
-    ) -> Result<(), DockOpApplyError> {
-        let Some(node) = self.node(split) else {
-            return Err(DockOpApplyError::SplitNodeNotFound { split });
-        };
-        let DockNode::Split { children, .. } = node else {
-            return Err(DockOpApplyError::NodeIsNotSplit { node: split });
-        };
-        if children.len() < 2 {
-            return Err(DockOpApplyError::SplitTooFewChildren {
-                split,
-                children_len: children.len(),
-            });
-        }
-        if fractions.len() != children.len() {
-            return Err(DockOpApplyError::SplitFractionsLenMismatch {
-                split,
-                children_len: children.len(),
-                fractions_len: fractions.len(),
-            });
-        }
-        for (index, fraction) in fractions.iter().copied().enumerate() {
-            if !fraction.is_finite() || fraction < 0.0 {
-                return Err(DockOpApplyError::SplitFractionInvalid { split, index });
-            }
-        }
-        Ok(())
-    }
-
-    fn validate_split_fraction_updates(
-        &self,
-        updates: &[SplitFractionsUpdate],
-    ) -> Result<(), DockOpApplyError> {
-        let mut seen = HashSet::new();
-        for update in updates {
-            if !seen.insert(update.split) {
-                return Err(DockOpApplyError::DuplicateSplitFractionUpdate {
-                    split: update.split,
-                });
-            }
-            self.validate_split_fractions(update.split, &update.fractions)?;
+            self.require_tabs_node(target_tabs)?;
         }
         Ok(())
     }

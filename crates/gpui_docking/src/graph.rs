@@ -12,10 +12,16 @@ mod graph_edge_dock;
 mod graph_floating_mutation;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
+#[path = "graph_node_validation.rs"]
+mod graph_node_validation;
 #[path = "graph_op_validation.rs"]
 mod graph_op_validation;
 #[path = "graph_ops.rs"]
 mod graph_ops;
+#[path = "graph_space_validation.rs"]
+mod graph_space_validation;
+#[path = "graph_split_validation.rs"]
+mod graph_split_validation;
 #[path = "graph_tab_stack.rs"]
 mod graph_tab_stack;
 #[path = "graph_validation.rs"]
