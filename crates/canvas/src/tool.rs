@@ -545,11 +545,11 @@ impl CanvasHistory {
 }
 
 pub struct CanvasEditor {
-    document: CanvasDocument,
+    document: Arc<CanvasDocument>,
     viewport: CanvasViewport,
     tool: CanvasTool,
     state: ToolState,
-    runtime: CanvasRuntime,
+    runtime: Arc<CanvasRuntime>,
     edge_router: Arc<dyn CanvasEdgeRouter + Send + Sync>,
     kind_registry: Arc<CanvasKindRegistry>,
     selection: CanvasSelection,
@@ -580,11 +580,11 @@ impl CanvasEditor {
             kind_registry.as_ref(),
         );
         Self {
-            document,
+            document: Arc::new(document),
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
-            runtime,
+            runtime: Arc::new(runtime),
             edge_router,
             kind_registry,
             selection: CanvasSelection::default(),
@@ -624,11 +624,11 @@ impl CanvasEditor {
             kind_registry.as_ref(),
         );
         Ok(Self {
-            document,
+            document: Arc::new(document),
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
-            runtime,
+            runtime: Arc::new(runtime),
             edge_router,
             kind_registry,
             selection: CanvasSelection::default(),
@@ -649,7 +649,7 @@ impl CanvasEditor {
     }
 
     pub fn document(&self) -> &CanvasDocument {
-        &self.document
+        self.document.as_ref()
     }
 
     pub fn viewport(&self) -> CanvasViewport {
@@ -665,7 +665,19 @@ impl CanvasEditor {
     }
 
     pub fn runtime(&self) -> &CanvasRuntime {
-        &self.runtime
+        self.runtime.as_ref()
+    }
+
+    pub(crate) fn document_snapshot(&self) -> Arc<CanvasDocument> {
+        Arc::clone(&self.document)
+    }
+
+    pub(crate) fn runtime_snapshot(&self) -> Arc<CanvasRuntime> {
+        Arc::clone(&self.runtime)
+    }
+
+    pub(crate) fn kind_registry_snapshot(&self) -> Arc<CanvasKindRegistry> {
+        Arc::clone(&self.kind_registry)
     }
 
     pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
@@ -684,6 +696,14 @@ impl CanvasEditor {
         &self.history
     }
 
+    fn document_mut(&mut self) -> &mut CanvasDocument {
+        Arc::make_mut(&mut self.document)
+    }
+
+    fn runtime_mut(&mut self) -> &mut CanvasRuntime {
+        Arc::make_mut(&mut self.runtime)
+    }
+
     pub fn apply_transaction(
         &mut self,
         transaction: CanvasTransaction,
@@ -699,13 +719,14 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
+        let kind_registry = Arc::clone(&self.kind_registry);
         let committed = self
-            .document
-            .commit_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())?;
+            .document_mut()
+            .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
-        self.sync_runtime_diff(&diff);
+        self.selection.retain_document(self.document.as_ref());
+        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
         Ok(diff)
     }
 
@@ -713,10 +734,10 @@ impl CanvasEditor {
         &mut self,
         prepared: crate::journal::CanvasPreparedMutation,
     ) -> CanvasDocumentDiff {
-        let committed = prepared.apply_to(&mut self.document);
+        let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
+        self.selection.retain_document(self.document.as_ref());
         self.sync_runtime_diff(&diff);
         diff
     }
@@ -729,11 +750,11 @@ impl CanvasEditor {
             self.history.next_undo_transaction(),
             Some(prepared.committed().transaction())
         );
-        let committed = prepared.apply_to(&mut self.document);
+        let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
         let _ = self.history.pop_undo();
         self.history.push_redo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
+        self.selection.retain_document(self.document.as_ref());
         self.sync_runtime_diff(&diff);
         diff
     }
@@ -746,11 +767,11 @@ impl CanvasEditor {
             self.history.next_redo_transaction(),
             Some(prepared.committed().transaction())
         );
-        let committed = prepared.apply_to(&mut self.document);
+        let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
         let _ = self.history.pop_redo();
         self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(&self.document);
+        self.selection.retain_document(self.document.as_ref());
         self.sync_runtime_diff(&diff);
         diff
     }
@@ -792,24 +813,24 @@ impl CanvasEditor {
                 self.set_tool(tool);
             }
             CanvasToolEffect::SetSelection(mut selection) => {
-                selection.retain_document(&self.document);
+                selection.retain_document(self.document.as_ref());
                 self.selection = selection;
             }
             CanvasToolEffect::ReplaceSelection(target) => {
                 self.selection.replace_with(target);
-                self.selection.retain_document(&self.document);
+                self.selection.retain_document(self.document.as_ref());
             }
             CanvasToolEffect::AddSelection(target) => {
                 self.selection.insert_target(target);
-                self.selection.retain_document(&self.document);
+                self.selection.retain_document(self.document.as_ref());
             }
             CanvasToolEffect::RemoveSelection(target) => {
                 self.selection.remove_target(&target);
-                self.selection.retain_document(&self.document);
+                self.selection.retain_document(self.document.as_ref());
             }
             CanvasToolEffect::ToggleSelection(target) => {
                 self.selection.toggle_target(target);
-                self.selection.retain_document(&self.document);
+                self.selection.retain_document(self.document.as_ref());
             }
             CanvasToolEffect::ClearSelection => {
                 self.selection.clear();
@@ -834,7 +855,8 @@ impl CanvasEditor {
         let Some(gesture) = &self.gesture else {
             return Ok(None);
         };
-        gesture.prepare_commit_with_kind_registry(&self.document, self.kind_registry.as_ref())
+        gesture
+            .prepare_commit_with_kind_registry(self.document.as_ref(), self.kind_registry.as_ref())
     }
 
     pub(crate) fn apply_prepared_gesture_commit(
@@ -845,7 +867,7 @@ impl CanvasEditor {
         self.history
             .push_undo(prepared.committed().inverse().clone());
         self.gesture = None;
-        self.selection.retain_document(&self.document);
+        self.selection.retain_document(self.document.as_ref());
         self.sync_runtime_diff(&diff);
         diff
     }
@@ -886,11 +908,11 @@ impl CanvasEditor {
     }
 
     pub fn rebuild_runtime(&mut self) {
-        self.runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
-            &self.document,
+        self.runtime = Arc::new(CanvasRuntime::rebuild_with_router_and_kind_registry(
+            self.document.as_ref(),
             self.edge_router.as_ref(),
             self.kind_registry.as_ref(),
-        );
+        ));
     }
 
     pub fn set_edge_router<R>(&mut self, edge_router: R)
@@ -909,10 +931,10 @@ impl CanvasEditor {
             self.document.to_snapshot(),
             &kind_registry,
         )?;
-        let document_changed = document != self.document;
-        self.document = document;
+        let document_changed = document != *self.document;
+        self.document = Arc::new(document);
         self.kind_registry = Arc::new(kind_registry);
-        self.selection.retain_document(&self.document);
+        self.selection.retain_document(self.document.as_ref());
         self.gesture = None;
         if document_changed {
             self.history.clear();
@@ -936,11 +958,11 @@ impl CanvasEditor {
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
         CanvasToolContext {
-            document: &self.document,
+            document: self.document.as_ref(),
             viewport: &self.viewport,
             tool: &self.tool,
             state: &self.state,
-            runtime: &self.runtime,
+            runtime: self.runtime.as_ref(),
             edge_router: self.edge_router.as_ref(),
             kind_registry: self.kind_registry.as_ref(),
             selection: &self.selection,
@@ -964,8 +986,10 @@ impl CanvasEditor {
     }
 
     pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
-        let payload =
-            CanvasClipboardPayload::from_document_selection(&self.document, &self.selection);
+        let payload = CanvasClipboardPayload::from_document_selection(
+            self.document.as_ref(),
+            &self.selection,
+        );
         (!payload.is_empty()).then_some(payload)
     }
 
@@ -982,7 +1006,7 @@ impl CanvasEditor {
         payload: &CanvasClipboardPayload,
         offset: Point<Pixels>,
     ) -> Result<bool, DocumentError> {
-        let pasted = payload.paste_transaction(&self.document, offset);
+        let pasted = payload.paste_transaction(self.document.as_ref(), offset);
         self.apply_paste_transaction(pasted)
     }
 
@@ -1122,7 +1146,7 @@ impl CanvasEditor {
                 let hit = self
                     .runtime
                     .precise_hit_test_with_kind_registry(
-                        &self.document,
+                        self.document.as_ref(),
                         self.kind_registry.as_ref(),
                         document_position,
                         HitOptions::default(),
@@ -1470,7 +1494,7 @@ impl CanvasEditor {
 
     fn transform_handle_at(&self, point: Point<Pixels>) -> Option<CanvasTransformHandle> {
         canvas_transform_handles(
-            &self.document,
+            self.document.as_ref(),
             &self.selection,
             self.viewport,
             Some(self.kind_registry.as_ref()),
@@ -1507,7 +1531,7 @@ impl CanvasEditor {
         let mut selection = CanvasSelection::default();
         selection.nodes.extend(node_ids.iter().cloned());
         snap_delta_for_selection(
-            &self.document,
+            self.document.as_ref(),
             &selection,
             delta,
             DEFAULT_SNAP_THRESHOLD,
@@ -1526,7 +1550,7 @@ impl CanvasEditor {
         selection.nodes.extend(node_ids.iter().cloned());
         selection.shapes.extend(shape_ids.iter().cloned());
         snap_delta_for_resize_selection(
-            &self.document,
+            self.document.as_ref(),
             &selection,
             handle,
             delta,
@@ -1541,7 +1565,7 @@ impl CanvasEditor {
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
         let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
-            &self.document,
+            self.document.as_ref(),
             self.edge_router.as_ref(),
             Some(self.kind_registry.as_ref()),
         );
@@ -1552,7 +1576,7 @@ impl CanvasEditor {
     }
 
     fn begin_gesture(&mut self) {
-        self.gesture = Some(CanvasGestureSession::begin(&self.document));
+        self.gesture = Some(CanvasGestureSession::begin(self.document.as_ref()));
     }
 
     fn update_gesture(
@@ -1566,7 +1590,7 @@ impl CanvasEditor {
         let implicit_gesture = self
             .gesture
             .is_none()
-            .then(|| CanvasGestureSession::begin(&self.document));
+            .then(|| CanvasGestureSession::begin(self.document.as_ref()));
         let diff = self.apply_transient_transaction(transaction)?;
         if let Some(gesture) = implicit_gesture {
             self.gesture = Some(gesture);
@@ -1582,21 +1606,33 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
+        let kind_registry = Arc::clone(&self.kind_registry);
         let committed = self
-            .document
-            .commit_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())?;
+            .document_mut()
+            .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
         let diff = committed.diff().clone();
-        self.selection.retain_document(&self.document);
-        self.sync_runtime_diff(&diff);
+        self.selection.retain_document(self.document.as_ref());
+        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
         Ok(diff)
     }
 
     fn sync_runtime_diff(&mut self, diff: &CanvasDocumentDiff) {
-        self.runtime.apply_diff_with_router_and_kind_registry(
-            &self.document,
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_diff_with_kind_registry(diff, kind_registry.as_ref());
+    }
+
+    fn sync_runtime_diff_with_kind_registry(
+        &mut self,
+        diff: &CanvasDocumentDiff,
+        kind_registry: &CanvasKindRegistry,
+    ) {
+        let document = Arc::clone(&self.document);
+        let edge_router = Arc::clone(&self.edge_router);
+        self.runtime_mut().apply_diff_with_router_and_kind_registry(
+            document.as_ref(),
             diff,
-            self.edge_router.as_ref(),
-            self.kind_registry.as_ref(),
+            edge_router.as_ref(),
+            kind_registry,
         );
     }
 
@@ -1612,7 +1648,7 @@ impl CanvasEditor {
         let Some(gesture) = self.gesture.take() else {
             return Ok(CanvasDocumentDiff::default());
         };
-        let transaction = gesture.cancel_transaction(&self.document);
+        let transaction = gesture.cancel_transaction(self.document.as_ref());
         self.apply_transient_transaction(transaction)
     }
 
@@ -1714,7 +1750,7 @@ impl CanvasEditor {
 
         self.apply_transaction(pasted.transaction)?;
         let mut selection = pasted.selection;
-        selection.retain_document(&self.document);
+        selection.retain_document(self.document.as_ref());
         self.selection = selection;
         Ok(true)
     }

@@ -1,9 +1,9 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{BenchAppContext, Bounds, point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry, CanvasNode,
-    CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasViewport,
-    SpatialIndex, collect_visible_records, prepaint_canvas_frame,
+    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry,
+    CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+    CanvasViewport, SpatialIndex, collect_visible_records, prepaint_canvas_frame,
 };
 
 const LABELED_NODE_KIND: &str = "benchmark-labeled-node";
@@ -50,6 +50,12 @@ fn large_canvas_benches(c: &mut Criterion) {
         };
 
         b.iter(|| collect_visible_records(black_box(&model), black_box(canvas_bounds), options));
+    });
+
+    c.bench_function("paint_model_snapshot_from_editor", |b| {
+        let editor = CanvasEditor::new(document.clone());
+
+        b.iter(|| black_box(CanvasPaintModel::from(black_box(&editor))));
     });
 
     c.bench_function("paint_frame_prepaint_labels", |b| {

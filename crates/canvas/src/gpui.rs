@@ -104,9 +104,9 @@ impl CanvasPaintModel {
 impl From<&CanvasEditor> for CanvasPaintModel {
     fn from(editor: &CanvasEditor) -> Self {
         Self {
-            document: Arc::new(editor.document().clone()),
-            runtime: Arc::new(editor.runtime().clone()),
-            kind_registry: Arc::new(editor.kind_registry().clone()),
+            document: editor.document_snapshot(),
+            runtime: editor.runtime_snapshot(),
+            kind_registry: editor.kind_registry_snapshot(),
             viewport: editor.viewport(),
             interaction: CanvasPaintInteraction {
                 selection: editor.selection().clone(),
@@ -1321,7 +1321,7 @@ mod tests {
     use crate::{
         CanvasEdgeKind, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
         CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind,
-        CanvasToolEffect, EdgeId, HandleRole,
+        CanvasToolEffect, DocumentCommand, EdgeId, HandleRole,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
@@ -1942,6 +1942,51 @@ mod tests {
             overlay.placements[0].document_bounds,
             Bounds::new(point(px(5.0), px(5.0)), size(px(30.0), px(30.0)))
         );
+    }
+
+    #[test]
+    fn paint_model_from_editor_keeps_an_immutable_editor_snapshot() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "stable",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let snapshot = CanvasPaintModel::from(&editor);
+
+        editor
+            .apply(DocumentCommand::InsertNode(CanvasNode::new(
+                "after-snapshot",
+                point(px(70.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            )))
+            .unwrap();
+
+        let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(80.0)));
+        let old_frame =
+            collect_visible_records(&snapshot, canvas_bounds, CanvasPaintOptions::default());
+        let new_frame = collect_visible_records(
+            &CanvasPaintModel::from(&editor),
+            canvas_bounds,
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(snapshot.document().nodes.len(), 1);
+        assert!(
+            !snapshot
+                .document()
+                .nodes
+                .contains_key(&crate::NodeId::from("after-snapshot"))
+        );
+        assert!(old_frame.records.iter().all(|record| {
+            record.target != HitTarget::Node(crate::NodeId::from("after-snapshot"))
+        }));
+        assert!(new_frame.records.iter().any(|record| {
+            record.target == HitTarget::Node(crate::NodeId::from("after-snapshot"))
+        }));
     }
 
     #[test]
