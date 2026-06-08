@@ -225,6 +225,13 @@ pub enum DockOpApplyError {
         node: DockNodeId,
     },
 
+    /// The requested tabs node has no items to move.
+    #[error("tabs node {tabs:?} is empty")]
+    TabsNodeEmpty {
+        /// Empty tabs node.
+        tabs: DockNodeId,
+    },
+
     /// The target dock space already has a root node.
     #[error("target dock space {space} is not empty")]
     TargetSpaceNotEmpty {
@@ -239,6 +246,15 @@ pub enum DockOpApplyError {
         space: DockSpaceId,
         /// Missing floating container node.
         floating: DockNodeId,
+    },
+
+    /// A floating container cannot merge into a tabs node inside its own subtree.
+    #[error("floating container {floating:?} cannot merge into its own target {target:?}")]
+    CannotMergeFloatingIntoOwnSubtree {
+        /// The floating container being merged.
+        floating: DockNodeId,
+        /// The target tabs node inside the floating container.
+        target: DockNodeId,
     },
 
     /// A split fraction update has the wrong number of fractions.

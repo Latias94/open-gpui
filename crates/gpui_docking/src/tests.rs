@@ -219,6 +219,35 @@ fn checked_move_tabs_self_center_reports_noop() {
 }
 
 #[test]
+fn checked_move_tabs_reports_empty_source_tabs() {
+    let mut graph = DockGraph::new();
+    let empty = graph.insert_node(DockNode::Tabs {
+        items: Vec::new(),
+        active: 0,
+    });
+    let target = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), empty);
+    graph.set_root(DockSpaceId::new("other"), target);
+
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::MoveTabs {
+                source_space: space(),
+                source_tabs: empty,
+                target_space: DockSpaceId::new("other"),
+                target_tabs: target,
+                zone: DropZone::Center,
+                insert_index: None,
+            })
+            .expect_err("empty source tabs should be reported"),
+        DockOpApplyError::TabsNodeEmpty { tabs: empty }
+    );
+}
+
+#[test]
 fn checked_set_split_fraction_two_reports_only_real_changes() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
     assert!(graph.apply_op(&DockOp::MoveItem {
@@ -837,6 +866,29 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
         bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
     }));
     let floating = graph.floating_containers(&space())[0].node;
+    let DockNode::Floating {
+        child: floating_tabs,
+    } = graph
+        .node(floating)
+        .expect("floating node should remain present")
+    else {
+        panic!("floating container should point to a floating node");
+    };
+    let floating_tabs = *floating_tabs;
+
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::MergeFloatingInto {
+                space: space(),
+                floating,
+                target_tabs: floating_tabs,
+            })
+            .expect_err("floating cannot merge into its own tabs"),
+        DockOpApplyError::CannotMergeFloatingIntoOwnSubtree {
+            floating,
+            target: floating_tabs,
+        }
+    );
 
     assert_eq!(
         graph

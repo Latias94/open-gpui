@@ -265,7 +265,7 @@ impl DockGraph {
                     return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs });
                 };
                 if items.is_empty() {
-                    return Err(DockOpApplyError::OperationFailed);
+                    return Err(DockOpApplyError::TabsNodeEmpty { tabs: *source_tabs });
                 }
                 if self
                     .root_for_node_in_space(source_space, *source_tabs)
@@ -299,7 +299,7 @@ impl DockGraph {
                 };
                 match node {
                     DockNode::Tabs { items, .. } if items.is_empty() => {
-                        return Err(DockOpApplyError::OperationFailed);
+                        return Err(DockOpApplyError::TabsNodeEmpty { tabs: *source_tabs });
                     }
                     DockNode::Tabs { .. } => {}
                     _ => return Err(DockOpApplyError::NodeIsNotTabs { node: *source_tabs }),
@@ -350,7 +350,10 @@ impl DockGraph {
                     });
                 };
                 if target_root == *floating {
-                    return Err(DockOpApplyError::OperationFailed);
+                    return Err(DockOpApplyError::CannotMergeFloatingIntoOwnSubtree {
+                        floating: *floating,
+                        target: *target_tabs,
+                    });
                 }
                 Ok(self.apply_op(op))
             }
@@ -713,7 +716,7 @@ impl DockGraph {
         };
         match source_node {
             DockNode::Tabs { items, .. } if items.is_empty() => {
-                return Err(DockOpApplyError::OperationFailed);
+                return Err(DockOpApplyError::TabsNodeEmpty { tabs: source_tabs });
             }
             DockNode::Tabs { .. } => {}
             _ => return Err(DockOpApplyError::NodeIsNotTabs { node: source_tabs }),
