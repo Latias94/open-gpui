@@ -73,6 +73,7 @@ mod policy;
 mod render;
 mod splitter;
 mod viewport;
+mod viewport_target;
 mod workspace;
 
 #[cfg(test)]
@@ -91,4 +92,5 @@ pub use op::*;
 pub use panel::*;
 pub use policy::*;
 pub use viewport::*;
+pub use viewport_target::*;
 pub use workspace::*;
