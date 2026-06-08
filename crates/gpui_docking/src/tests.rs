@@ -644,6 +644,25 @@ fn float_item_in_window_creates_floating_container() {
 }
 
 #[test]
+fn checked_floating_runtime_ops_report_missing_container() {
+    let (mut graph, _root) = root_tabs_graph(&["a"]);
+    let missing = DockNodeId::null();
+
+    assert_eq!(
+        graph
+            .apply_op_checked(&DockOp::RaiseFloating {
+                space: space(),
+                floating: missing,
+            })
+            .expect_err("missing floating container should be reported"),
+        DockOpApplyError::FloatingContainerNotFound {
+            space: space(),
+            floating: missing,
+        }
+    );
+}
+
+#[test]
 fn merge_floating_into_moves_items_and_removes_floating() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
     assert!(graph.apply_op(&DockOp::FloatItemInWindow {

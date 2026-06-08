@@ -232,6 +232,15 @@ pub enum DockOpApplyError {
         space: DockSpaceId,
     },
 
+    /// The requested floating container is not registered in the dock space.
+    #[error("floating container {floating:?} not found in dock space {space}")]
+    FloatingContainerNotFound {
+        /// Dock space containing the floating container.
+        space: DockSpaceId,
+        /// Missing floating container node.
+        floating: DockNodeId,
+    },
+
     /// A split fraction update has the wrong number of fractions.
     #[error(
         "split node {split:?} has {children_len} children but received {fractions_len} fractions"

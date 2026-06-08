@@ -141,6 +141,17 @@ impl DockGraph {
             .unwrap_or_default()
     }
 
+    fn floating_container(
+        &self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+    ) -> Option<&DockFloatingContainer> {
+        self.floatings
+            .get(space)?
+            .iter()
+            .find(|container| container.node == floating)
+    }
+
     /// Returns mutable floating containers for a dock space.
     pub fn floating_containers_mut(
         &mut self,
@@ -233,6 +244,18 @@ impl DockGraph {
                     return Err(DockOpApplyError::SourceNodeNotInSpace {
                         space: source_space.clone(),
                         node: *source_tabs,
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
+            DockOp::SetFloatingBounds {
+                space, floating, ..
+            }
+            | DockOp::RaiseFloating { space, floating } => {
+                if self.floating_container(space, *floating).is_none() {
+                    return Err(DockOpApplyError::FloatingContainerNotFound {
+                        space: space.clone(),
+                        floating: *floating,
                     });
                 }
                 Ok(self.apply_op(op))
@@ -1040,6 +1063,9 @@ impl DockGraph {
         let Some(container) = floatings.iter_mut().find(|entry| entry.node == floating) else {
             return false;
         };
+        if container.bounds == bounds {
+            return false;
+        }
         container.bounds = bounds;
         true
     }
@@ -1052,7 +1078,7 @@ impl DockGraph {
             return false;
         };
         if index + 1 == floatings.len() {
-            return true;
+            return false;
         }
         let entry = floatings.remove(index);
         floatings.push(entry);

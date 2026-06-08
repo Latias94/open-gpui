@@ -501,6 +501,15 @@ fn floating_actions_create_move_raise_and_merge_containers(cx: &mut TestAppConte
             .collect::<Vec<_>>(),
         vec![second, first]
     );
+    assert_eq!(
+        workspace
+            .apply_action(&DockAction::RaiseFloating {
+                space: space(),
+                floating: first,
+            })
+            .expect("raising the top floating container should be a valid no-op"),
+        DockActionOutcome::Unchanged
+    );
 
     let moved_bounds = floating_bounds(90.0, 100.0, 200.0, 120.0);
     workspace
@@ -519,6 +528,16 @@ fn floating_actions_create_move_raise_and_merge_containers(cx: &mut TestAppConte
             .expect("first floating should remain present")
             .bounds,
         moved_bounds
+    );
+    assert_eq!(
+        workspace
+            .apply_action(&DockAction::SetFloatingBounds {
+                space: space(),
+                floating: first,
+                bounds: moved_bounds,
+            })
+            .expect("setting identical floating bounds should be a valid no-op"),
+        DockActionOutcome::Unchanged
     );
 
     workspace
