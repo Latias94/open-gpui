@@ -375,6 +375,39 @@ fn view(document: open_gpui_canvas::CanvasDocument) {
 }
 ```
 
+Editor-backed applications can use the deeper default view to keep GPUI input wiring inside the
+canvas adapter. The adapter maps mouse, wheel, focus, drag-capture, and keyboard events into
+`CanvasEvent`; the application only decides how an event is applied to its editor.
+
+```rust
+use open_gpui_canvas::{
+    CanvasEditorInputHandler, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+    canvas_editor_key_down_event, canvas_editor_view,
+};
+
+fn render_canvas(this: &MyView, cx: &mut open_gpui::Context<MyView>) -> impl open_gpui::IntoElement {
+    let model = CanvasPaintModel::from(&this.editor);
+    canvas_editor_view(
+        model,
+        cx.entity(),
+        this.focus_handle.clone(),
+        CanvasEditorInputHandler::new(
+            |view: &MyView| !view.editor.is_tool_state_idle(),
+            |view, event, cx| {
+                view.editor.handle_event(event).ok();
+                cx.notify();
+            },
+        ),
+        CanvasPaintOptions::default(),
+        CanvasPaintTheme::default(),
+    )
+}
+
+fn handle_key_down(view: &mut MyView, event: &open_gpui::KeyDownEvent) {
+    let _ = view.editor.handle_event(canvas_editor_key_down_event(event));
+}
+```
+
 Applications may still layer selected node widgets or text editors on top of this batched base
 renderer. The core path does not require one GPUI element per canvas record.
 

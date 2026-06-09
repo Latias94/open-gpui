@@ -261,11 +261,16 @@ overlay contract used in `examples/canvas-notes/src/main.rs`.
   batched records.
 - `examples/smoke-native/src/main.rs`: the smoke example removes duplicated input wiring while
   preserving stamp-tool behavior.
-- `examples/canvas-notes/src/main.rs`: the note example keeps sparse overlay behavior and no longer
-  needs to mutate overlay state during paint.
+- `examples/canvas-notes/src/main.rs`: the note example keeps sparse overlay behavior while using
+  the adapter frame hook instead of hand-registering mouse listeners and paint callbacks.
 
 **Verification:** The unit is complete when examples use the default adapter for ordinary canvas
 interaction while custom low-level paint hooks remain available.
+
+**Implementation outcome:** Added `CanvasEditorInputMapper`, `CanvasEditorInputHandler`,
+`canvas_editor_view`, and `canvas_editor_view_with_frame` in `crates/canvas/src/gpui.rs`. The smoke
+example now uses the default editor-backed canvas view, and the notes example uses the frame hook to
+derive selected-node overlay placement from the same prepared paint frame as batched rendering.
 
 ### U4. Built-In Tool State Machine Module
 

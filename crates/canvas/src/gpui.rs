@@ -7,11 +7,12 @@ use crate::{
     PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
-    App, Bounds, Canvas, ContentMask, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point, ScrollWheelEvent,
-    SharedString, TextAlign, TextRun, Window, WrappedLine, canvas, px, quad, rgb,
+    App, Bounds, Canvas, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Hsla,
+    KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PathBuilder, Pixels, Point, ScrollWheelEvent, SharedString, TextAlign, TextRun, Window,
+    WrappedLine, canvas, px, quad, rgb,
 };
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct CanvasPaintModel {
@@ -482,6 +483,181 @@ impl CanvasInputMapper {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasEditorInputMapper {
+    pub mapper: CanvasInputMapper,
+    pub pointer_interacting: bool,
+}
+
+impl CanvasEditorInputMapper {
+    pub fn new(bounds: Bounds<Pixels>) -> Self {
+        Self {
+            mapper: CanvasInputMapper::new(bounds),
+            pointer_interacting: false,
+        }
+    }
+
+    pub fn with_line_height(mut self, line_height: Pixels) -> Self {
+        self.mapper = self.mapper.with_line_height(line_height);
+        self
+    }
+
+    pub fn with_pointer_interacting(mut self, pointer_interacting: bool) -> Self {
+        self.pointer_interacting = pointer_interacting;
+        self
+    }
+
+    pub fn mouse_down(&self, event: &MouseDownEvent) -> Option<CanvasEvent> {
+        self.mapper.mouse_down(event)
+    }
+
+    pub fn mouse_move(&self, event: &MouseMoveEvent) -> Option<CanvasEvent> {
+        if self.pointer_interacting {
+            return Some(CanvasEvent::PointerMove {
+                position: event.position - self.mapper.bounds.origin,
+                modifiers: CanvasInputMapper::modifiers(event.modifiers),
+            });
+        }
+
+        self.mapper.mouse_move(event)
+    }
+
+    pub fn mouse_up(&self, event: &MouseUpEvent) -> Option<CanvasEvent> {
+        if self.pointer_interacting {
+            return pointer_button(event.button).map(|button| CanvasEvent::PointerUp {
+                position: event.position - self.mapper.bounds.origin,
+                button,
+                modifiers: CanvasInputMapper::modifiers(event.modifiers),
+            });
+        }
+
+        self.mapper.mouse_up(event)
+    }
+
+    pub fn scroll_wheel(&self, event: &ScrollWheelEvent) -> Option<CanvasEvent> {
+        self.mapper.scroll_wheel(event)
+    }
+}
+
+pub struct CanvasEditorInputHandler<T> {
+    pointer_interacting: Rc<dyn Fn(&T) -> bool>,
+    dispatch: Rc<dyn Fn(&mut T, CanvasEvent, &mut Context<T>)>,
+}
+
+impl<T> Clone for CanvasEditorInputHandler<T> {
+    fn clone(&self) -> Self {
+        Self {
+            pointer_interacting: self.pointer_interacting.clone(),
+            dispatch: self.dispatch.clone(),
+        }
+    }
+}
+
+impl<T> CanvasEditorInputHandler<T> {
+    pub fn new(
+        pointer_interacting: impl Fn(&T) -> bool + 'static,
+        dispatch: impl Fn(&mut T, CanvasEvent, &mut Context<T>) + 'static,
+    ) -> Self {
+        Self {
+            pointer_interacting: Rc::new(pointer_interacting),
+            dispatch: Rc::new(dispatch),
+        }
+    }
+
+    pub fn pointer_interacting(&self, target: &T) -> bool {
+        (self.pointer_interacting)(target)
+    }
+
+    pub fn dispatch_event(&self, target: &mut T, event: CanvasEvent, cx: &mut Context<T>) {
+        (self.dispatch)(target, event, cx)
+    }
+
+    pub fn dispatch_key_down(&self, target: &mut T, event: &KeyDownEvent, cx: &mut Context<T>) {
+        self.dispatch_event(target, canvas_editor_key_down_event(event), cx);
+    }
+}
+
+pub fn canvas_editor_key_down_event(event: &KeyDownEvent) -> CanvasEvent {
+    CanvasInputMapper::key_down_event(event)
+}
+
+pub fn register_canvas_editor_input<T>(
+    entity: Entity<T>,
+    focus_handle: FocusHandle,
+    bounds: Bounds<Pixels>,
+    handler: CanvasEditorInputHandler<T>,
+    window: &mut Window,
+) where
+    T: 'static,
+{
+    let mapper = CanvasEditorInputMapper::new(bounds);
+
+    window.on_mouse_event({
+        let entity = entity.clone();
+        let handler = handler.clone();
+        move |event: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+
+            let Some(event) = mapper.mouse_down(event) else {
+                return;
+            };
+
+            window.focus(&focus_handle, cx);
+            entity.update(cx, |target, cx| handler.dispatch_event(target, event, cx));
+        }
+    });
+
+    window.on_mouse_event({
+        let entity = entity.clone();
+        let handler = handler.clone();
+        move |event: &MouseMoveEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+
+            entity.update(cx, |target, cx| {
+                let mapper = mapper.with_pointer_interacting(handler.pointer_interacting(target));
+                if let Some(event) = mapper.mouse_move(event) {
+                    handler.dispatch_event(target, event, cx);
+                }
+            });
+        }
+    });
+
+    window.on_mouse_event({
+        let entity = entity.clone();
+        let handler = handler.clone();
+        move |event: &MouseUpEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+
+            entity.update(cx, |target, cx| {
+                let mapper = mapper.with_pointer_interacting(handler.pointer_interacting(target));
+                if let Some(event) = mapper.mouse_up(event) {
+                    handler.dispatch_event(target, event, cx);
+                }
+            });
+        }
+    });
+
+    window.on_mouse_event({
+        let entity = entity.clone();
+        let handler = handler.clone();
+        move |event: &ScrollWheelEvent, phase, _, cx| {
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+
+            if let Some(event) = mapper.scroll_wheel(event) {
+                entity.update(cx, |target, cx| handler.dispatch_event(target, event, cx));
+            }
+        }
+    });
+}
+
 pub fn canvas_view(
     model: CanvasPaintModel,
     options: CanvasPaintOptions,
@@ -493,6 +669,54 @@ pub fn canvas_view(
             prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
         },
         move |bounds, frame, window, cx| {
+            paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
+        },
+    )
+}
+
+pub fn canvas_editor_view<T>(
+    model: CanvasPaintModel,
+    entity: Entity<T>,
+    focus_handle: FocusHandle,
+    handler: CanvasEditorInputHandler<T>,
+    options: CanvasPaintOptions,
+    theme: CanvasPaintTheme,
+) -> Canvas<CanvasPreparedPaintFrame>
+where
+    T: 'static,
+{
+    let prepaint_model = model.clone();
+    canvas(
+        move |bounds, window, _| {
+            prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
+        },
+        move |bounds, frame, window, cx| {
+            register_canvas_editor_input(entity, focus_handle, bounds, handler, window);
+            paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
+        },
+    )
+}
+
+pub fn canvas_editor_view_with_frame<T>(
+    model: CanvasPaintModel,
+    entity: Entity<T>,
+    focus_handle: FocusHandle,
+    handler: CanvasEditorInputHandler<T>,
+    options: CanvasPaintOptions,
+    theme: CanvasPaintTheme,
+    on_frame: impl Fn(&mut T, &CanvasPreparedPaintFrame, &mut Context<T>) + 'static,
+) -> Canvas<CanvasPreparedPaintFrame>
+where
+    T: 'static,
+{
+    let prepaint_model = model.clone();
+    canvas(
+        move |bounds, window, _| {
+            prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
+        },
+        move |bounds, frame, window, cx| {
+            register_canvas_editor_input(entity.clone(), focus_handle, bounds, handler, window);
+            entity.update(cx, |target, cx| on_frame(target, &frame, cx));
             paint_canvas_frame(bounds, &model, &frame, theme, window, cx);
         },
     )
@@ -2383,6 +2607,69 @@ mod tests {
                 button: MouseButton::Navigate(open_gpui::NavigationDirection::Back),
                 position: point(px(120.0), px(80.0)),
                 ..MouseDownEvent::default()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn editor_input_mapper_keeps_drag_events_after_pointer_leaves_bounds() {
+        let mapper = CanvasEditorInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ))
+        .with_pointer_interacting(true);
+
+        assert_eq!(
+            mapper.mouse_move(&MouseMoveEvent {
+                position: point(px(20.0), px(80.0)),
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                ..MouseMoveEvent::default()
+            }),
+            Some(CanvasEvent::PointerMove {
+                position: point(px(-80.0), px(30.0)),
+                modifiers: CanvasKeyModifiers {
+                    shift: true,
+                    ..CanvasKeyModifiers::default()
+                },
+            })
+        );
+        assert_eq!(
+            mapper.mouse_up(&MouseUpEvent {
+                button: MouseButton::Left,
+                position: point(px(20.0), px(80.0)),
+                ..MouseUpEvent::default()
+            }),
+            Some(CanvasEvent::PointerUp {
+                position: point(px(-80.0), px(30.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+        );
+    }
+
+    #[test]
+    fn editor_input_mapper_filters_outside_events_when_not_dragging() {
+        let mapper = CanvasEditorInputMapper::new(Bounds::new(
+            point(px(100.0), px(50.0)),
+            size(px(200.0), px(120.0)),
+        ));
+
+        assert_eq!(
+            mapper.mouse_move(&MouseMoveEvent {
+                position: point(px(20.0), px(80.0)),
+                ..MouseMoveEvent::default()
+            }),
+            None
+        );
+        assert_eq!(
+            mapper.mouse_up(&MouseUpEvent {
+                button: MouseButton::Left,
+                position: point(px(20.0), px(80.0)),
+                ..MouseUpEvent::default()
             }),
             None
         );

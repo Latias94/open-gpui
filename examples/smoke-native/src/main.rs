@@ -1,16 +1,14 @@
 use open_gpui::{
-    App, Bounds, Context, DispatchPhase, FocusHandle, Hsla, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Window, WindowBounds,
-    WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
+    App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Window, WindowBounds, WindowOptions,
+    div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor,
-    CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasInputMapper, CanvasKindRegistry, CanvasNode,
-    CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasSelection,
-    CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, CanvasWidgetOverlayOptions, CanvasZOrderCommand,
-    DocumentCommand, DocumentError, HandleRole, NodeId, PointerButton, paint_canvas_frame,
-    prepaint_canvas_frame,
+    CanvasEditorInputHandler, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKindRegistry,
+    CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+    CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect,
+    CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand,
+    DocumentError, HandleRole, NodeId, PointerButton, canvas_editor_view,
 };
 use open_gpui_platform::application;
 
@@ -79,8 +77,6 @@ impl Render for SmokeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         let model = CanvasPaintModel::from(&self.editor);
-        let prepaint_model = model.clone();
-        let paint_model = model;
         let focus_handle = self.focus_handle.clone();
         let options = CanvasPaintOptions {
             include_handles: true,
@@ -100,94 +96,13 @@ impl Render for SmokeView {
                 this.handle_key_down(event, cx);
             }))
             .child(
-                canvas(
-                    move |bounds, window, _| {
-                        prepaint_canvas_frame(&prepaint_model, bounds, options, theme, window)
-                    },
-                    move |bounds, frame, window, cx| {
-                        let mapper = CanvasInputMapper::new(bounds);
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            let focus_handle = focus_handle.clone();
-                            move |event: &MouseDownEvent, phase, window, cx| {
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
-
-                                window.focus(&focus_handle, cx);
-                                entity.update(cx, |this, cx| {
-                                    this.handle_canvas_event(mapper.mouse_down(event), cx);
-                                });
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |event: &MouseMoveEvent, phase, _, cx| {
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
-
-                                entity.update(cx, |this, cx| {
-                                    let event = if this.is_pointer_interacting() {
-                                        Some(CanvasEvent::PointerMove {
-                                            position: event.position - mapper.bounds.origin,
-                                            modifiers: CanvasInputMapper::modifiers(
-                                                event.modifiers,
-                                            ),
-                                        })
-                                    } else {
-                                        mapper.mouse_move(event)
-                                    };
-                                    this.handle_canvas_event(event, cx);
-                                });
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |event: &MouseUpEvent, phase, _, cx| {
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
-
-                                entity.update(cx, |this, cx| {
-                                    let event = if this.is_pointer_interacting() {
-                                        pointer_button(event.button).map(|button| {
-                                            CanvasEvent::PointerUp {
-                                                position: event.position - mapper.bounds.origin,
-                                                button,
-                                                modifiers: CanvasInputMapper::modifiers(
-                                                    event.modifiers,
-                                                ),
-                                            }
-                                        })
-                                    } else {
-                                        mapper.mouse_up(event)
-                                    };
-                                    this.handle_canvas_event(event, cx);
-                                });
-                            }
-                        });
-
-                        window.on_mouse_event({
-                            let entity = entity.clone();
-                            move |event: &ScrollWheelEvent, phase, _, cx| {
-                                if phase != DispatchPhase::Bubble {
-                                    return;
-                                }
-
-                                entity.update(cx, |this, cx| {
-                                    this.handle_canvas_event(mapper.scroll_wheel(event), cx);
-                                });
-                            }
-                        });
-
-                        let _overlay_frame = frame
-                            .widget_overlay_frame(CanvasWidgetOverlayOptions::selected_nodes());
-                        paint_canvas_frame(bounds, &paint_model, &frame, theme, window, cx);
-                    },
+                canvas_editor_view(
+                    model,
+                    entity,
+                    focus_handle,
+                    Self::canvas_input_handler(),
+                    options,
+                    theme,
                 )
                 .size_full(),
             )
@@ -201,12 +116,19 @@ impl SmokeView {
                 cx.notify();
             }
             Ok(false) => {
-                self.handle_canvas_event(Some(CanvasInputMapper::key_down_event(event)), cx);
+                Self::canvas_input_handler().dispatch_key_down(self, event, cx);
             }
             Err(error) => {
                 eprintln!("canvas shortcut failed: {error}");
             }
         }
+    }
+
+    fn canvas_input_handler() -> CanvasEditorInputHandler<Self> {
+        CanvasEditorInputHandler::new(
+            |this: &SmokeView| this.is_pointer_interacting(),
+            |this, event, cx| this.handle_canvas_event(Some(event), cx),
+        )
     }
 
     fn handle_canvas_shortcut(&mut self, event: &KeyDownEvent) -> Result<bool, DocumentError> {
@@ -396,15 +318,6 @@ fn style(fill: Option<&str>, stroke: Option<&str>, stroke_width: open_gpui::Pixe
         fill: fill.map(str::to_string),
         stroke: stroke.map(str::to_string),
         stroke_width,
-    }
-}
-
-fn pointer_button(button: MouseButton) -> Option<PointerButton> {
-    match button {
-        MouseButton::Left => Some(PointerButton::Primary),
-        MouseButton::Right => Some(PointerButton::Secondary),
-        MouseButton::Middle => Some(PointerButton::Middle),
-        MouseButton::Navigate(_) => None,
     }
 }
 

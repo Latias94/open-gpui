@@ -1,15 +1,14 @@
 use open_gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, FocusHandle, Hsla, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent, Window, WindowBounds,
-    WindowOptions, canvas, div, point, prelude::*, px, rgb, size,
+    AnyElement, App, Bounds, Context, FocusHandle, Hsla, KeyDownEvent, Pixels, Window,
+    WindowBounds, WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_canvas::{
-    CanvasClipboardPayload, CanvasEditor, CanvasEvent, CanvasInputMapper, CanvasKindLabel,
+    CanvasClipboardPayload, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasKindLabel,
     CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal,
     CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasRecordKind, CanvasSchemaError,
     CanvasToolEffect, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
     CanvasWidgetOverlayOptions, CanvasZOrderCommand, DocumentError, HitTarget, NodeId,
-    PointerButton, document_from_json_canvas_str, paint_canvas_frame, prepaint_canvas_frame,
+    canvas_editor_view_with_frame, document_from_json_canvas_str,
 };
 use open_gpui_platform::application;
 
@@ -109,8 +108,6 @@ impl Render for NotesView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         let model = CanvasPaintModel::from(&self.editor);
-        let prepaint_model = model.clone();
-        let paint_model = model;
         let focus_handle = self.focus_handle.clone();
         let overlay_surfaces = self.render_overlay_surfaces();
         let selected = self.selected_node_summary();
@@ -146,126 +143,24 @@ impl Render for NotesView {
                             .flex_1()
                             .overflow_hidden()
                             .child(
-                                canvas(
-                                    move |bounds, window, _| {
-                                        prepaint_canvas_frame(
-                                            &prepaint_model,
-                                            bounds,
-                                            options,
-                                            theme,
-                                            window,
-                                        )
-                                    },
-                                    move |bounds, frame, window, cx| {
-                                        let mapper = CanvasInputMapper::new(bounds);
-
-                                        window.on_mouse_event({
-                                            let entity = entity.clone();
-                                            let focus_handle = focus_handle.clone();
-                                            move |event: &MouseDownEvent, phase, window, cx| {
-                                                if phase != DispatchPhase::Bubble {
-                                                    return;
-                                                }
-
-                                                window.focus(&focus_handle, cx);
-                                                entity.update(cx, |this, cx| {
-                                                    this.handle_canvas_event(
-                                                        mapper.mouse_down(event),
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        });
-
-                                        window.on_mouse_event({
-                                            let entity = entity.clone();
-                                            move |event: &MouseMoveEvent, phase, _, cx| {
-                                                if phase != DispatchPhase::Bubble {
-                                                    return;
-                                                }
-
-                                                entity.update(cx, |this, cx| {
-                                                    let event = if this.is_pointer_interacting() {
-                                                        Some(CanvasEvent::PointerMove {
-                                                            position: event.position
-                                                                - mapper.bounds.origin,
-                                                            modifiers: CanvasInputMapper::modifiers(
-                                                                event.modifiers,
-                                                            ),
-                                                        })
-                                                    } else {
-                                                        mapper.mouse_move(event)
-                                                    };
-                                                    this.handle_canvas_event(event, cx);
-                                                });
-                                            }
-                                        });
-
-                                        window.on_mouse_event({
-                                            let entity = entity.clone();
-                                            move |event: &MouseUpEvent, phase, _, cx| {
-                                                if phase != DispatchPhase::Bubble {
-                                                    return;
-                                                }
-
-                                                entity.update(cx, |this, cx| {
-                                                    let event = if this.is_pointer_interacting() {
-                                                        pointer_button(event.button).map(|button| {
-                                                            CanvasEvent::PointerUp {
-                                                                position: event.position
-                                                                    - mapper.bounds.origin,
-                                                                button,
-                                                                modifiers:
-                                                                    CanvasInputMapper::modifiers(
-                                                                        event.modifiers,
-                                                                    ),
-                                                            }
-                                                        })
-                                                    } else {
-                                                        mapper.mouse_up(event)
-                                                    };
-                                                    this.handle_canvas_event(event, cx);
-                                                });
-                                            }
-                                        });
-
-                                        window.on_mouse_event({
-                                            let entity = entity.clone();
-                                            move |event: &ScrollWheelEvent, phase, _, cx| {
-                                                if phase != DispatchPhase::Bubble {
-                                                    return;
-                                                }
-
-                                                entity.update(cx, |this, cx| {
-                                                    this.handle_canvas_event(
-                                                        mapper.scroll_wheel(event),
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        });
-
+                                canvas_editor_view_with_frame(
+                                    model,
+                                    entity,
+                                    focus_handle,
+                                    Self::canvas_input_handler(),
+                                    options,
+                                    theme,
+                                    |this, frame, cx| {
                                         let overlay_frame = frame.widget_overlay_frame(
                                             CanvasWidgetOverlayOptions::selected_nodes()
                                                 .with_hit_priority(
                                                     CanvasWidgetOverlayHitPriority::WidgetFirst,
                                                 ),
                                         );
-                                        entity.update(cx, |this, cx| {
-                                            if this.overlay_frame != overlay_frame {
-                                                this.overlay_frame = overlay_frame;
-                                                cx.notify();
-                                            }
-                                        });
-
-                                        paint_canvas_frame(
-                                            bounds,
-                                            &paint_model,
-                                            &frame,
-                                            theme,
-                                            window,
-                                            cx,
-                                        );
+                                        if this.overlay_frame != overlay_frame {
+                                            this.overlay_frame = overlay_frame;
+                                            cx.notify();
+                                        }
                                     },
                                 )
                                 .size_full(),
@@ -417,12 +312,19 @@ impl NotesView {
                 cx.notify();
             }
             Ok(false) => {
-                self.handle_canvas_event(Some(CanvasInputMapper::key_down_event(event)), cx);
+                Self::canvas_input_handler().dispatch_key_down(self, event, cx);
             }
             Err(error) => {
                 eprintln!("canvas shortcut failed: {error}");
             }
         }
+    }
+
+    fn canvas_input_handler() -> CanvasEditorInputHandler<Self> {
+        CanvasEditorInputHandler::new(
+            |this: &NotesView| this.is_pointer_interacting(),
+            |this, event, cx| this.handle_canvas_event(Some(event), cx),
+        )
     }
 
     fn handle_canvas_shortcut(&mut self, event: &KeyDownEvent) -> Result<bool, DocumentError> {
@@ -610,15 +512,6 @@ fn compact_title(input: &str, max_chars: usize) -> String {
 fn overlay_width(width: Pixels) -> Pixels {
     let width = width - px(20.0);
     if width > px(80.0) { width } else { px(80.0) }
-}
-
-fn pointer_button(button: MouseButton) -> Option<PointerButton> {
-    match button {
-        MouseButton::Left => Some(PointerButton::Primary),
-        MouseButton::Right => Some(PointerButton::Secondary),
-        MouseButton::Middle => Some(PointerButton::Middle),
-        MouseButton::Navigate(_) => None,
-    }
 }
 
 fn main() {
