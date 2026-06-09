@@ -103,11 +103,6 @@ impl DockViewportRuntime {
         DockViewportRuntimeHandle::from_runtime(self)
     }
 
-    /// Returns the shared docking controller.
-    pub fn controller(&self) -> &Entity<DockController> {
-        &self.controller
-    }
-
     pub(crate) fn controller_entity(&self) -> Entity<DockController> {
         self.controller.clone()
     }
