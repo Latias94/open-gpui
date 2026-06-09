@@ -1,5 +1,5 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId, split_fraction};
-use open_gpui::{Bounds, Pixels, Point, Size, point, px, size};
+use crate::{DockItemId, DockNodeId, DockSpaceId};
+use open_gpui::{Bounds, Pixels, Point, Size, px};
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 use std::collections::HashMap;
@@ -10,6 +10,8 @@ mod graph_canonical;
 mod graph_edge_dock;
 #[path = "graph_floating_mutation.rs"]
 mod graph_floating_mutation;
+#[path = "graph_layout.rs"]
+mod graph_layout;
 #[path = "graph_mutation.rs"]
 mod graph_mutation;
 #[path = "graph_node_validation.rs"]
@@ -18,6 +20,8 @@ mod graph_node_validation;
 mod graph_op_validation;
 #[path = "graph_ops.rs"]
 mod graph_ops;
+#[path = "graph_query.rs"]
+mod graph_query;
 #[path = "graph_space_validation.rs"]
 mod graph_space_validation;
 #[path = "graph_split_validation.rs"]
@@ -180,187 +184,6 @@ impl DockGraph {
         space: DockSpaceId,
     ) -> &mut Vec<DockFloatingContainer> {
         self.floatings.entry(space).or_default()
-    }
-
-    /// Computes layout bounds for a subtree into `out`.
-    pub fn compute_layout(
-        &self,
-        root: DockNodeId,
-        bounds: Bounds<Pixels>,
-        out: &mut HashMap<DockNodeId, Bounds<Pixels>>,
-    ) {
-        let Some(node) = self.nodes.get(root) else {
-            return;
-        };
-
-        out.insert(root, bounds);
-        match node {
-            DockNode::Tabs { .. } => {}
-            DockNode::Floating { child } => {
-                self.compute_layout(*child, bounds, out);
-            }
-            DockNode::Split {
-                axis,
-                children,
-                fractions,
-            } => {
-                if children.is_empty() {
-                    return;
-                }
-
-                let shares = split_fraction::cleaned_shares(children.len(), fractions);
-                let mut cursor = 0.0_f32;
-                let width = f32::from(bounds.size.width);
-                let height = f32::from(bounds.size.height);
-                let x = f32::from(bounds.origin.x);
-                let y = f32::from(bounds.origin.y);
-
-                for (child, share) in children.iter().copied().zip(shares) {
-                    let (child_bounds, next_cursor) = match axis {
-                        SplitAxis::Horizontal => {
-                            let child_width = width * share;
-                            (
-                                Bounds::new(
-                                    point(px(x + cursor), bounds.origin.y),
-                                    size(px(child_width), bounds.size.height),
-                                ),
-                                cursor + child_width,
-                            )
-                        }
-                        SplitAxis::Vertical => {
-                            let child_height = height * share;
-                            (
-                                Bounds::new(
-                                    point(bounds.origin.x, px(y + cursor)),
-                                    size(bounds.size.width, px(child_height)),
-                                ),
-                                cursor + child_height,
-                            )
-                        }
-                    };
-
-                    cursor = next_cursor;
-                    self.compute_layout(child, child_bounds, out);
-                }
-            }
-        }
-    }
-
-    /// Returns all dock items reachable from a dock space.
-    pub fn collect_items_in_space(&self, space: &DockSpaceId) -> Vec<DockItemId> {
-        let mut out = Vec::new();
-        if let Some(root) = self.root(space) {
-            self.collect_items_in_subtree_into(root, &mut out);
-        }
-        if let Some(floatings) = self.floatings.get(space) {
-            for floating in floatings {
-                self.collect_items_in_subtree_into(floating.node, &mut out);
-            }
-        }
-        out
-    }
-
-    /// Returns all dock items reachable from a subtree.
-    pub fn collect_items_in_subtree(&self, root: DockNodeId) -> Vec<DockItemId> {
-        let mut out = Vec::new();
-        self.collect_items_in_subtree_into(root, &mut out);
-        out
-    }
-
-    /// Returns true when an item is reachable from any dock space.
-    pub fn contains_item(&self, item: &DockItemId) -> bool {
-        self.spaces()
-            .iter()
-            .any(|space| self.find_item_in_space(space, item).is_some())
-    }
-
-    /// Finds an item in a dock space and returns its tabs node and tab index.
-    pub fn find_item_in_space(
-        &self,
-        space: &DockSpaceId,
-        item: &DockItemId,
-    ) -> Option<(DockNodeId, usize)> {
-        if let Some(root) = self.root(space)
-            && let Some(found) = self.find_item_in_subtree(root, item)
-        {
-            return Some(found);
-        }
-
-        self.floatings.get(space).and_then(|floatings| {
-            floatings
-                .iter()
-                .find_map(|floating| self.find_item_in_subtree(floating.node, item))
-        })
-    }
-
-    /// Returns the root that contains a node within a dock space forest.
-    pub fn root_for_node_in_space(
-        &self,
-        space: &DockSpaceId,
-        target: DockNodeId,
-    ) -> Option<DockNodeId> {
-        if let Some(root) = self.root(space)
-            && self.subtree_contains(root, target)
-        {
-            return Some(root);
-        }
-
-        self.floatings.get(space).and_then(|floatings| {
-            floatings.iter().find_map(|floating| {
-                self.subtree_contains(floating.node, target)
-                    .then_some(floating.node)
-            })
-        })
-    }
-
-    fn find_item_in_subtree(
-        &self,
-        root: DockNodeId,
-        item: &DockItemId,
-    ) -> Option<(DockNodeId, usize)> {
-        match self.nodes.get(root)? {
-            DockNode::Tabs { items, .. } => items
-                .iter()
-                .position(|candidate| candidate == item)
-                .map(|index| (root, index)),
-            DockNode::Floating { child } => self.find_item_in_subtree(*child, item),
-            DockNode::Split { children, .. } => children
-                .iter()
-                .copied()
-                .find_map(|child| self.find_item_in_subtree(child, item)),
-        }
-    }
-
-    fn collect_items_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockItemId>) {
-        let Some(node) = self.nodes.get(root) else {
-            return;
-        };
-        match node {
-            DockNode::Tabs { items, .. } => out.extend(items.iter().cloned()),
-            DockNode::Floating { child } => self.collect_items_in_subtree_into(*child, out),
-            DockNode::Split { children, .. } => {
-                for child in children {
-                    self.collect_items_in_subtree_into(*child, out);
-                }
-            }
-        }
-    }
-
-    fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {
-        if root == target {
-            return true;
-        }
-        let Some(node) = self.nodes.get(root) else {
-            return false;
-        };
-        match node {
-            DockNode::Tabs { .. } => false,
-            DockNode::Floating { child } => self.subtree_contains(*child, target),
-            DockNode::Split { children, .. } => children
-                .iter()
-                .copied()
-                .any(|child| self.subtree_contains(child, target)),
-        }
     }
 }
 
