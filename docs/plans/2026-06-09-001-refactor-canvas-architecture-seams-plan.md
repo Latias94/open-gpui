@@ -284,8 +284,8 @@ into composable state-machine modules.
 **Files:**
 
 - `crates/canvas/src/tool.rs`
+- `crates/canvas/src/tool/builtin.rs`
 - `crates/canvas/src/gesture.rs`
-- new `crates/canvas/src/tool_state.rs` or `crates/canvas/src/tools/mod.rs`
 - `crates/canvas/src/lib.rs`
 - `crates/canvas/README.md`
 
@@ -301,9 +301,9 @@ branch/leaf state-node separation in `repo-ref/tldraw/packages/editor/src/lib/ed
 
 **Test scenarios:**
 
-- `crates/canvas/src/tool_state.rs`: select idle to translating, selecting, resizing, and idle
+- `crates/canvas/src/tool/builtin.rs`: select idle to translating, selecting, resizing, and idle
   cancel transitions match existing behavior.
-- `crates/canvas/src/tool_state.rs`: pan and connect emit the same viewport and transaction effects
+- `crates/canvas/src/tool/builtin.rs`: pan and connect emit the same viewport and transaction effects
   as the current editor branches.
 - `crates/canvas/src/tool.rs`: `CanvasEditor::handle_event` delegates to built-in tool modules and
   still applies effects through one mutation path.
@@ -311,6 +311,10 @@ branch/leaf state-node separation in `repo-ref/tldraw/packages/editor/src/lib/ed
 
 **Verification:** The unit is complete when the old large `select_effects`, `pan_effects`, and
 `connect_effects` branches are removed or reduced to thin dispatch.
+
+**Implementation outcome:** Added crate-private built-in tool state machines in
+`crates/canvas/src/tool/builtin.rs`. `CanvasEditor` now dispatches built-in tools through
+`BuiltInCanvasTool` and keeps mutation, gesture, history, and runtime sync in the editor facade.
 
 ### U5. Semantic Geometry Module
 
