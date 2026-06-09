@@ -138,10 +138,12 @@ impl DockInteractionRuntime {
     pub(crate) fn push_drop_scene_fact(
         &mut self,
         position: Point<Pixels>,
+        excluded_tabs: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
     ) -> bool {
-        self.drop.push_scene_fact(position, fact, policy)
+        self.drop
+            .push_scene_fact(position, excluded_tabs, fact, policy)
     }
 
     pub(crate) fn take_resolved_drop_target(&mut self) -> Option<DockResolvedDropTarget> {
@@ -150,15 +152,6 @@ impl DockInteractionRuntime {
 
     pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
         self.drop.drop_resolution()
-    }
-
-    pub(crate) fn take_resolved_target_excluding_tabs(
-        &mut self,
-        source_tabs: DockNodeId,
-        policy: &DockPolicy,
-    ) -> Option<DockResolvedDropTarget> {
-        self.drop
-            .take_resolved_target_excluding_tabs(source_tabs, policy)
     }
 
     #[cfg(test)]

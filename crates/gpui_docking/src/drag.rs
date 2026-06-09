@@ -59,6 +59,13 @@ impl DockDragPayload {
     pub(crate) fn title(&self) -> &str {
         &self.title
     }
+
+    pub(crate) fn excluded_tabs_for_drop_scene(&self) -> Option<DockNodeId> {
+        match self.kind {
+            DockDragPayloadKind::Item { .. } => None,
+            DockDragPayloadKind::Tabs => Some(self.source_tabs),
+        }
+    }
 }
 
 pub(crate) struct DockDragPreview {

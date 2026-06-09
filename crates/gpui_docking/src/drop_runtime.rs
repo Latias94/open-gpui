@@ -23,6 +23,7 @@ pub(crate) struct DockDropRuntime {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockHostDropScene {
     pub(crate) position: Point<Pixels>,
+    excluded_tabs: Option<DockNodeId>,
     pub(crate) tab_labels: Vec<DockTabLabelDropTarget>,
     pub(crate) leaves: Vec<DockLeafDropTarget>,
     pub(crate) root: Option<DockRootDropTarget>,
@@ -46,6 +47,7 @@ impl DockHostDropScene {
     pub(crate) fn new(position: Point<Pixels>) -> Self {
         Self {
             position,
+            excluded_tabs: None,
             tab_labels: Vec::new(),
             leaves: Vec::new(),
             root: None,
@@ -57,7 +59,19 @@ impl DockHostDropScene {
         }
     }
 
+    pub(crate) fn excluding_tabs(mut self, tabs: Option<DockNodeId>) -> Self {
+        self.excluded_tabs = tabs;
+        self
+    }
+
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
+        if self
+            .excluded_tabs
+            .is_some_and(|tabs| fact.targets_tabs(tabs))
+        {
+            return;
+        }
+
         match fact {
             DockHostDropSceneFact::TabLabel(target) => self.tab_labels.push(target),
             DockHostDropSceneFact::Leaf(target) => self.leaves.push(target),
@@ -93,20 +107,19 @@ impl DockHostDropScene {
         self.resolve_drop(policy)
             .and_then(DockDropResolution::target)
     }
+}
 
-    fn without_tabs_targets(&self, tabs: DockNodeId) -> Self {
-        let mut scene = self.clone();
-        scene.tab_labels.retain(|target| target.target_tabs != tabs);
-        scene
-            .leaves
-            .retain(|target| target.root != tabs && target.target_tabs != tabs);
-        if scene.root.is_some_and(|target| target.root == tabs) {
-            scene.root = None;
+impl DockHostDropSceneFact {
+    fn targets_tabs(&self, tabs: DockNodeId) -> bool {
+        match self {
+            DockHostDropSceneFact::TabLabel(target) => target.target_tabs == tabs,
+            DockHostDropSceneFact::Leaf(target) => {
+                target.root == tabs || target.target_tabs == tabs
+            }
+            DockHostDropSceneFact::Root(target) => target.root == tabs,
+            DockHostDropSceneFact::FloatingTitleBar(target) => target.target_tabs == tabs,
+            DockHostDropSceneFact::EmptySpace(_) => false,
         }
-        scene
-            .floating_title_bars
-            .retain(|target| target.target_tabs != tabs);
-        scene
     }
 }
 
@@ -120,10 +133,11 @@ impl DockDropRuntime {
     pub(crate) fn push_scene_fact(
         &mut self,
         position: Point<Pixels>,
+        excluded_tabs: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
     ) -> bool {
-        let scene = self.scene_for_position(position);
+        let scene = self.scene_for_position(position, excluded_tabs);
         scene.push_fact(fact);
         let scene = scene.clone();
         self.resolve_scene(&scene, policy)
@@ -158,32 +172,17 @@ impl DockDropRuntime {
         self.resolution.as_ref()
     }
 
-    pub(crate) fn take_resolved_target_excluding_tabs(
+    fn scene_for_position(
         &mut self,
-        source_tabs: DockNodeId,
-        policy: &DockPolicy,
-    ) -> Option<DockResolvedDropTarget> {
-        let target = self
-            .scene
-            .as_ref()
-            .and_then(|scene| {
-                scene
-                    .without_tabs_targets(source_tabs)
-                    .resolved_target(policy)
-            })
-            .or_else(|| self.resolution.take().and_then(DockDropResolution::target));
-        self.scene = None;
-        self.resolution = None;
-        target
-    }
-
-    fn scene_for_position(&mut self, position: Point<Pixels>) -> &mut DockHostDropScene {
+        position: Point<Pixels>,
+        excluded_tabs: Option<DockNodeId>,
+    ) -> &mut DockHostDropScene {
         let should_reset = self
             .scene
             .as_ref()
-            .is_none_or(|scene| scene.position != position);
+            .is_none_or(|scene| scene.position != position || scene.excluded_tabs != excluded_tabs);
         if should_reset {
-            self.scene = Some(DockHostDropScene::new(position));
+            self.scene = Some(DockHostDropScene::new(position).excluding_tabs(excluded_tabs));
         }
         self.scene.as_mut().expect("scene should be initialized")
     }
@@ -277,6 +276,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 2,
@@ -303,6 +303,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 2,
@@ -313,6 +314,7 @@ mod tests {
         ));
         assert!(!runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: tabs,
                 target_tabs: tabs,
@@ -344,6 +346,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 0,
@@ -365,6 +368,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: tabs,
                 target_tabs: tabs,
@@ -375,6 +379,7 @@ mod tests {
         ));
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 2,
@@ -397,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn stack_drop_can_exclude_source_tabs_when_resolving_scene() {
+    fn stack_drop_excludes_source_tabs_during_scene_resolution() {
         let mut graph = crate::DockGraph::new();
         let source_tabs = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("source")],
@@ -410,9 +415,13 @@ mod tests {
         let mut runtime = DockDropRuntime::default();
         let position = point(px(120.0), px(80.0));
 
-        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        runtime.begin_scene(
+            DockHostDropScene::new(position).excluding_tabs(Some(source_tabs)),
+            &DockPolicy::default(),
+        );
         assert!(runtime.push_scene_fact(
             position,
+            Some(source_tabs),
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: target_tabs,
                 target_tabs,
@@ -421,8 +430,9 @@ mod tests {
             }),
             &DockPolicy::default()
         ));
-        assert!(runtime.push_scene_fact(
+        assert!(!runtime.push_scene_fact(
             position,
+            Some(source_tabs),
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: source_tabs,
                 target_tabs: source_tabs,
@@ -433,7 +443,7 @@ mod tests {
         ));
 
         let target = runtime
-            .take_resolved_target_excluding_tabs(source_tabs, &DockPolicy::default())
+            .take_resolved_target()
             .expect("underlying target should remain after excluding source tabs");
         assert_eq!(
             target.kind,
@@ -458,6 +468,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(!runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
                 root,
                 bounds: bounds(0.0, 0.0, 400.0, 240.0),
@@ -466,6 +477,7 @@ mod tests {
         ));
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root,
                 target_tabs: leaf,
@@ -497,6 +509,7 @@ mod tests {
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
             position,
+            None,
             DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
                 space: space.clone(),
                 bounds: bounds(0.0, 0.0, 400.0, 240.0),

@@ -33,18 +33,20 @@ impl DockHost {
 
     pub(crate) fn update_tabs_drop_target_from_render(
         &mut self,
+        payload: &DockDragPayload,
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         is_central: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tabs_drop_interaction(target_tabs, bounds, position, is_central, cx)
+        self.update_tabs_drop_interaction(payload, target_tabs, bounds, position, is_central, cx)
             .finish(cx)
     }
 
     pub(crate) fn update_tab_reorder_drop_target_from_render(
         &mut self,
+        payload: &DockDragPayload,
         target_tabs: DockNodeId,
         target_index: usize,
         bounds: Bounds<Pixels>,
@@ -53,6 +55,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_tab_reorder_drop_interaction(
+            payload,
             target_tabs,
             target_index,
             bounds,
@@ -65,6 +68,7 @@ impl DockHost {
 
     pub(crate) fn begin_host_drop_scene_from_render(
         &mut self,
+        payload: &DockDragPayload,
         host_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         window: &Window,
@@ -72,33 +76,36 @@ impl DockHost {
     ) -> bool {
         self.update_viewport_host_scene_from_window(host_bounds, position, window);
         self.update_floating_drag_interaction(position, cx)
-            .merge(self.begin_host_drop_scene_interaction(position, cx))
+            .merge(self.begin_host_drop_scene_interaction(payload, position, cx))
             .finish(cx)
     }
 
     pub(crate) fn update_root_drop_scene_from_render(
         &mut self,
+        payload: &DockDragPayload,
         root: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_root_drop_scene_interaction(root, bounds, position, cx)
+        self.update_root_drop_scene_interaction(payload, root, bounds, position, cx)
             .finish(cx)
     }
 
     pub(crate) fn update_empty_space_drop_scene_from_render(
         &mut self,
+        payload: &DockDragPayload,
         position: Point<Pixels>,
         bounds: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_empty_space_drop_scene_interaction(position, bounds, cx)
+        self.update_empty_space_drop_scene_interaction(payload, position, bounds, cx)
             .finish(cx)
     }
 
     pub(crate) fn update_floating_title_bar_drop_scene_from_render(
         &mut self,
+        payload: &DockDragPayload,
         floating: DockNodeId,
         target_tabs: DockNodeId,
         title_bounds: Bounds<Pixels>,
@@ -107,6 +114,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_floating_title_bar_drop_scene_interaction(
+            payload,
             floating,
             target_tabs,
             title_bounds,

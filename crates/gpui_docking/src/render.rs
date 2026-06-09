@@ -32,7 +32,9 @@ impl Render for DockHost {
             .text_color(black())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    let payload = event.drag(cx).clone();
                     this.begin_host_drop_scene_from_render(
+                        &payload,
                         event.bounds,
                         event.event.position,
                         window,
@@ -148,7 +150,9 @@ impl DockHost {
             .overflow_hidden()
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                    let payload = event.drag(cx).clone();
                     this.update_root_drop_scene_from_render(
+                        &payload,
                         root,
                         event.bounds,
                         event.event.position,
@@ -181,7 +185,9 @@ impl DockHost {
             .text_color(rgb(0x657083))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                    let payload = event.drag(cx).clone();
                     this.update_empty_space_drop_scene_from_render(
+                        &payload,
                         event.event.position,
                         event.bounds,
                         cx,
@@ -209,7 +215,9 @@ impl DockHost {
             .bg(rgba(0x00000000))
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                    let payload = event.drag(cx).clone();
                     this.update_empty_space_drop_scene_from_render(
+                        &payload,
                         event.event.position,
                         event.bounds,
                         cx,
