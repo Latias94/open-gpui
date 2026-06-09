@@ -487,6 +487,31 @@ impl DockViewportRuntime {
         route
     }
 
+    /// Resolves and commits a rendered payload release from a screen-space point.
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_payload_drop_from_screen_with_context(
+        &mut self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: crate::DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &DockViewportTargetContext,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        let source_space = source_space.into();
+        let route = self.resolve_payload_drop_route_with_context(
+            source_space.clone(),
+            source_tabs,
+            payload.clone(),
+            release_position,
+            suggested_window_bounds,
+            target_context,
+            cx,
+        );
+        self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
+    }
+
     pub(crate) fn begin_tear_off_request(
         &mut self,
         request: DockViewportTearOffRequest,

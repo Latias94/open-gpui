@@ -480,20 +480,13 @@ impl DockHost {
         let runtime = self.viewport_runtime()?.clone();
         let release_position = window_screen_position(window, release_position);
         let viewport_payload = viewport_payload(payload);
-        let route = runtime.resolve_payload_drop_route_with_context(
+        let result = runtime.commit_payload_drop_from_screen_with_context(
             payload.source_space.clone(),
             payload.source_tabs,
-            viewport_payload.clone(),
+            viewport_payload,
             release_position,
             None,
             &DockViewportTargetContext::from_window(window, cx),
-            cx,
-        );
-        let result = runtime.commit_payload_drop_route_with_outcome(
-            &payload.source_space,
-            payload.source_tabs,
-            viewport_payload,
-            route,
             cx,
         );
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))

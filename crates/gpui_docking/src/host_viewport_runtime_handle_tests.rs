@@ -833,31 +833,31 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     ));
 
     let result = cx.update(|app| {
-        let route = runtime.resolve_payload_drop_route_with_context(
+        let release_position = runtime
+            .last_host_scene_screen_position(&target_space)
+            .expect("target scene should expose a screen position");
+        let result = runtime.commit_payload_drop_from_screen_with_context(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
-            runtime
-                .last_host_scene_screen_position(&target_space)
-                .expect("target scene should expose a screen position"),
+            release_position,
             None,
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
         assert!(
             matches!(
-                &route,
-                DockViewportDropRoute::KnownViewport { window, .. } if *window == opened.window
+                runtime
+                    .runtime_status()
+                    .last_route
+                    .as_ref()
+                    .map(|record| &record.target),
+                Some(DockViewportRouteTarget::KnownViewport { window_id, .. })
+                    if *window_id == opened.window.window_id()
             ),
-            "known viewport route should carry the destination window"
+            "screen release seam should record the destination viewport route"
         );
-        runtime.commit_payload_drop_route_with_outcome(
-            &source_space,
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            route,
-            app,
-        )
+        result
     });
 
     let DockViewportDropRouteOutcome::Action(action) = result.expect("route should commit") else {
