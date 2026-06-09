@@ -4,7 +4,7 @@ use open_gpui::{
     size,
 };
 use open_gpui_docking::{
-    DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace,
+    DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace, DockPanel,
     DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
     EditorDockLayoutSpec,
@@ -606,22 +606,26 @@ fn build_controller() -> DockController {
             })
             .into()
         })
-        .panel_factory("workspace", "Workspace", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Workspace",
-                    "Pinned overview",
-                    0x0f766e,
-                    &[
-                        "open-gpui",
-                        "gpui_docking",
-                        "runtime viewports",
-                        "retained panels",
-                    ],
-                )
+        .panel(
+            "workspace",
+            DockPanel::lazy("Workspace", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Workspace",
+                        "Pinned overview",
+                        0x0f766e,
+                        &[
+                            "open-gpui",
+                            "gpui_docking",
+                            "runtime viewports",
+                            "retained panels",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
+            .closable(false),
+        )
         .panel_factory("editor", "Editor", |cx| {
             cx.new(|_| {
                 DemoPanel::new(
@@ -826,4 +830,123 @@ fn main() {
 
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use open_gpui_docking::{DockGraph, DockNode};
+
+    fn item(id: &str) -> DockItemId {
+        DockItemId::from(id)
+    }
+
+    #[test]
+    fn restored_layout_exposes_native_dogfood_spaces() {
+        let layout = restored_demo_layout();
+        let graph = DockGraph::import_layout(&layout).expect("demo layout should import");
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let central = DockSpaceId::from(CENTRAL_SPACE);
+
+        assert!(graph.root(&primary).is_some());
+        assert!(graph.root(&secondary).is_some());
+        assert_eq!(graph.root(&central), None);
+
+        let preview = item("preview");
+        let diff = item("diff");
+        let (secondary_tabs, preview_index) = graph
+            .find_item_in_space(&secondary, &preview)
+            .expect("preview should start in the secondary space");
+        let (diff_tabs, diff_index) = graph
+            .find_item_in_space(&secondary, &diff)
+            .expect("diff should start in the secondary space");
+        assert_eq!(secondary_tabs, diff_tabs);
+        assert_eq!(preview_index, 0);
+        assert_eq!(diff_index, 1);
+        let DockNode::Tabs { items, .. } = graph
+            .node(secondary_tabs)
+            .expect("secondary stack should exist")
+        else {
+            panic!("secondary dogfood node should be tabs");
+        };
+        assert_eq!(items.as_slice(), &[preview, diff]);
+
+        let problems = item("problems");
+        let (problem_tabs, _) = graph
+            .find_item_in_space(&primary, &problems)
+            .expect("problems should start in an in-window floating stack");
+        let problem_root = graph
+            .root_for_node_in_space(&primary, problem_tabs)
+            .expect("problems stack should have a root in the primary space");
+        assert!(
+            graph
+                .floating_containers(&primary)
+                .iter()
+                .any(|floating| floating.node == problem_root),
+            "problems should be reachable through a floating container"
+        );
+
+        let central_region = graph
+            .central_region(&central)
+            .expect("empty central dogfood space should keep central metadata");
+        assert_eq!(central_region.node, None);
+        assert!(central_region.keep_alive_when_empty);
+        assert!(central_region.passthrough_when_empty);
+    }
+
+    #[test]
+    fn built_controller_preserves_dogfood_panel_policy() {
+        let controller = build_controller();
+        let workspace = controller
+            .panels()
+            .descriptor(&item("workspace"))
+            .expect("workspace descriptor should be registered");
+        assert!(!workspace.is_closable());
+
+        for id in ["preview", "diff", "runtime", "problems"] {
+            assert!(
+                controller.panels().descriptor(&item(id)).is_some(),
+                "{id} descriptor should be registered for native dogfood"
+            );
+        }
+    }
+
+    #[test]
+    fn saved_placement_restores_all_dogfood_viewport_titles() {
+        let primary_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0)));
+        let secondary_bounds = Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0)));
+        let central_bounds = Bounds::new(point(px(944.0), px(384.0)), size(px(460.0), px(220.0)));
+        let placement = saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
+        assert_eq!(placement.viewports.len(), 3);
+
+        assert_viewport_title(&placement, SPACE, primary_bounds, "Docking demo");
+        assert_viewport_title(
+            &placement,
+            SECONDARY_SPACE,
+            secondary_bounds,
+            "Docking preview",
+        );
+        assert_viewport_title(
+            &placement,
+            CENTRAL_SPACE,
+            central_bounds,
+            "Empty central dogfood",
+        );
+    }
+
+    fn assert_viewport_title(
+        placement: &DockViewportPlacementLayout,
+        space: &str,
+        fallback_bounds: Bounds<Pixels>,
+        expected: &str,
+    ) {
+        let options = restored_viewport_options(placement, space, fallback_bounds);
+        let title = options
+            .titlebar
+            .as_ref()
+            .and_then(|titlebar| titlebar.title.as_ref())
+            .map(ToString::to_string);
+        assert_eq!(title.as_deref(), Some(expected));
+    }
 }
