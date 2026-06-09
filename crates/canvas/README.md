@@ -12,6 +12,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasDocument` stores nodes, edges, and shapes as separate record collections.
 - `CanvasNode` owns position, size, z-index, payload data, style, flags, and invisible handles.
 - `CanvasEdge` references source and target endpoints by node ID plus optional handle ID.
+- `CanvasRecordRelations` stores typed parent and group membership facts between any canvas
+  records, giving future frame, group, and layout features a shared structural layer instead of
+  hiding those relationships in arbitrary payload data.
 - Handles can be hidden, non-connectable, source-only, target-only, or bidirectional.
   `CanvasConnectionEndpointRole` and `CanvasHandle` helpers share endpoint-role semantics between
   built-in tools, custom tools, and rendering adapters.
@@ -151,6 +154,55 @@ fn inspect_with_index(document: &open_gpui_canvas::CanvasDocument) {
 
 The index is an application-owned cache. It preserves document edge order, deduplicates self-loop
 incident edges, and can apply diffs without changing document serialization.
+
+## Model Record Relationships
+
+Use `CanvasRecordRelations` when a relationship is part of the canvas structure rather than a
+kind-specific payload. Parent and group membership relations are expressed with `CanvasRecordId`,
+so nodes, edges, and shapes can participate in the same future frame, group, mind-map, or layout
+ownership model.
+
+```rust
+use open_gpui::{point, px, size};
+use open_gpui_canvas::{
+    CanvasDocument, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, DocumentCommand,
+    NodeId, ShapeId,
+};
+
+let note = CanvasRecordId::Node(NodeId::from("note"));
+let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+
+let mut document = CanvasDocument::default();
+document
+    .apply_transaction(CanvasTransaction::new([
+        DocumentCommand::InsertShape(CanvasShape::new(
+            "frame",
+            open_gpui::bounds(point(px(0.0), px(0.0)), size(px(320.0), px(240.0))),
+        )),
+        DocumentCommand::InsertNode(CanvasNode::new(
+            "note",
+            point(px(40.0), px(40.0)),
+            size(px(120.0), px(64.0)),
+        )),
+        DocumentCommand::SetRecordParent {
+            child: note.clone(),
+            parent: frame.clone(),
+        },
+        DocumentCommand::AddRecordToGroup {
+            group: frame.clone(),
+            member: note.clone(),
+        },
+    ]))
+    .unwrap();
+
+assert_eq!(document.relations().parent_of(&note), Some(&frame));
+```
+
+Relation commands validate that both endpoints exist and reject self-parenting. The mutation
+journal prunes relations that point at deleted records, including edges removed implicitly by node
+deletion, so persistence, undo/redo, runtime sync, and future CRDT adapters see the same committed
+structural facts. This slice does not implement group editing tools, frame layout, clipping, or
+parent-relative transforms yet.
 
 ## Edit Through Commands
 

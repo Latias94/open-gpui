@@ -77,6 +77,8 @@ impl CanvasMutationJournal {
         for command in transaction.commands.iter().cloned() {
             draft.apply(command)?;
         }
+        draft.prune_missing_relations();
+        draft.validate_relations()?;
         kind_registry.validate_document(&draft)?;
 
         let diff = draft.diff_against(document);
@@ -146,7 +148,9 @@ fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, DocumentCommand, EdgeId, NodeId};
+    use crate::{
+        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, DocumentCommand, EdgeId, NodeId,
+    };
     use open_gpui::{point, px, size};
 
     #[test]
@@ -179,6 +183,35 @@ mod tests {
             vec![
                 (9, 0, CanvasRecordId::Node(NodeId::from("a"))),
                 (9, 1, CanvasRecordId::Edge(EdgeId::from("a-b"))),
+            ]
+        );
+    }
+
+    #[test]
+    fn committed_mutation_prunes_relations_for_actual_deleted_records() {
+        let mut document = connected_document();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Node(NodeId::from("b")),
+                    member: CanvasRecordId::Edge(EdgeId::from("a-b")),
+                },
+            ))
+            .unwrap();
+
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::RemoveNode(
+                NodeId::from("a"),
+            )))
+            .unwrap();
+
+        assert!(committed.diff().relations_changed);
+        assert!(document.relations().is_empty());
+        assert_eq!(
+            committed.record_changes(),
+            &[
+                CanvasRecordChange::Delete(CanvasRecordId::Node(NodeId::from("a"))),
+                CanvasRecordChange::Delete(CanvasRecordId::Edge(EdgeId::from("a-b"))),
             ]
         );
     }

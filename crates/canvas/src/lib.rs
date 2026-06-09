@@ -19,6 +19,7 @@ mod json_canvas;
 mod layer;
 mod mutation;
 mod persistence;
+mod relations;
 mod routing;
 mod runtime;
 mod runtime_query;
@@ -87,6 +88,7 @@ pub use persistence::{
     load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
     replay_canvas_log, save_canvas_checkpoint, undo_persistent_transaction,
 };
+pub use relations::{CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelations};
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,

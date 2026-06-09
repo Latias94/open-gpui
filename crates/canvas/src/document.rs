@@ -10,6 +10,7 @@ use crate::format::{
 };
 use crate::geometry_facts::CanvasGeometryFacts;
 use crate::mutation::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
+use crate::relations::CanvasRecordRelations;
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
 
@@ -450,6 +451,10 @@ pub enum DocumentError {
     InvalidEdgeInteractionWidth(EdgeId),
     #[error("edge `{0}` has an invalid route point")]
     InvalidEdgeRoutePoint(EdgeId),
+    #[error("canvas relation references missing record `{0}`")]
+    MissingRelationRecord(CanvasRecordId),
+    #[error("canvas record `{0}` cannot be its own parent")]
+    SelfParentRelation(CanvasRecordId),
     #[error(transparent)]
     Schema(#[from] CanvasSchemaError),
 }
@@ -465,6 +470,21 @@ pub enum DocumentCommand {
     InsertShape(CanvasShape),
     UpdateShape(CanvasShape),
     RemoveShape(ShapeId),
+    SetRecordParent {
+        child: CanvasRecordId,
+        parent: CanvasRecordId,
+    },
+    ClearRecordParent {
+        child: CanvasRecordId,
+    },
+    AddRecordToGroup {
+        group: CanvasRecordId,
+        member: CanvasRecordId,
+    },
+    RemoveRecordFromGroup {
+        group: CanvasRecordId,
+        member: CanvasRecordId,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -477,6 +497,8 @@ pub struct CanvasDocumentDiff {
     pub removed: IndexSet<CanvasRecordId>,
     #[serde(default)]
     pub metadata_changed: bool,
+    #[serde(default)]
+    pub relations_changed: bool,
 }
 
 impl CanvasDocumentDiff {
@@ -485,6 +507,7 @@ impl CanvasDocumentDiff {
             && self.updated.is_empty()
             && self.removed.is_empty()
             && !self.metadata_changed
+            && !self.relations_changed
     }
 
     pub fn record_insert(&mut self, id: impl Into<CanvasRecordId>) {
@@ -561,6 +584,8 @@ pub struct CanvasSnapshot {
     pub shapes: Vec<CanvasShape>,
     #[serde(default)]
     pub metadata: CanvasValue,
+    #[serde(default)]
+    pub relations: CanvasRecordRelations,
 }
 
 impl Default for CanvasSnapshot {
@@ -571,6 +596,7 @@ impl Default for CanvasSnapshot {
             edges: Vec::new(),
             shapes: Vec::new(),
             metadata: CanvasValue::new(),
+            relations: CanvasRecordRelations::default(),
         }
     }
 }
@@ -593,6 +619,8 @@ pub struct CanvasDocument {
     shapes: IndexMap<ShapeId, CanvasShape>,
     #[serde(default)]
     metadata: CanvasValue,
+    #[serde(default)]
+    relations: CanvasRecordRelations,
 }
 
 impl Default for CanvasDocument {
@@ -603,6 +631,7 @@ impl Default for CanvasDocument {
             edges: IndexMap::new(),
             shapes: IndexMap::new(),
             metadata: CanvasValue::new(),
+            relations: CanvasRecordRelations::default(),
         }
     }
 }
@@ -618,6 +647,10 @@ impl CanvasDocument {
 
     pub fn metadata(&self) -> &CanvasValue {
         &self.metadata
+    }
+
+    pub fn relations(&self) -> &CanvasRecordRelations {
+        &self.relations
     }
 
     pub fn node(&self, id: &NodeId) -> Option<&CanvasNode> {
@@ -709,6 +742,7 @@ impl CanvasDocument {
         let mut document = Self {
             format_version: snapshot.format_version,
             metadata: snapshot.metadata,
+            relations: snapshot.relations,
             ..Self::default()
         };
 
@@ -727,6 +761,8 @@ impl CanvasDocument {
             document.insert_edge(edge)?;
         }
 
+        document.prune_missing_relations();
+        document.validate_relations()?;
         kind_registry.validate_document(&document)?;
         Ok(document)
     }
@@ -738,6 +774,7 @@ impl CanvasDocument {
             edges: self.edges.values().cloned().collect(),
             shapes: self.shapes.values().cloned().collect(),
             metadata: self.metadata.clone(),
+            relations: self.relations.clone(),
         }
     }
 
@@ -752,6 +789,20 @@ impl CanvasDocument {
             DocumentCommand::InsertShape(shape) => self.insert_shape(shape),
             DocumentCommand::UpdateShape(shape) => self.update_shape(shape),
             DocumentCommand::RemoveShape(id) => self.remove_shape(&id).map(drop),
+            DocumentCommand::SetRecordParent { child, parent } => {
+                self.set_record_parent(child, parent)
+            }
+            DocumentCommand::ClearRecordParent { child } => {
+                self.relations.clear_parent(&child);
+                Ok(())
+            }
+            DocumentCommand::AddRecordToGroup { group, member } => {
+                self.add_record_to_group(group, member)
+            }
+            DocumentCommand::RemoveRecordFromGroup { group, member } => {
+                self.relations.remove_from_group(&group, &member);
+                Ok(())
+            }
         }
     }
 
@@ -894,6 +945,34 @@ impl CanvasDocument {
             .ok_or_else(|| DocumentError::MissingShape(id.clone()))
     }
 
+    pub(crate) fn set_record_parent(
+        &mut self,
+        child: CanvasRecordId,
+        parent: CanvasRecordId,
+    ) -> Result<(), DocumentError> {
+        if child == parent {
+            return Err(DocumentError::SelfParentRelation(child));
+        }
+        self.validate_record_id(&child)?;
+        self.validate_record_id(&parent)?;
+        self.relations.set_parent(child, parent);
+        Ok(())
+    }
+
+    pub(crate) fn add_record_to_group(
+        &mut self,
+        group: CanvasRecordId,
+        member: CanvasRecordId,
+    ) -> Result<(), DocumentError> {
+        if group == member {
+            return Err(DocumentError::SelfParentRelation(group));
+        }
+        self.validate_record_id(&group)?;
+        self.validate_record_id(&member)?;
+        self.relations.add_to_group(group, member);
+        Ok(())
+    }
+
     pub fn validate_endpoint(&self, endpoint: &CanvasEndpoint) -> Result<(), DocumentError> {
         self.endpoint_parts(endpoint)?;
         Ok(())
@@ -914,6 +993,8 @@ impl CanvasDocument {
         for edge in self.edges.values() {
             self.validate_edge(edge)?;
         }
+
+        self.validate_relations()?;
 
         Ok(())
     }
@@ -1008,7 +1089,59 @@ impl CanvasDocument {
         }
 
         diff.metadata_changed = self.metadata != previous.metadata;
+        diff.relations_changed = self.relations != previous.relations;
         diff
+    }
+
+    pub(crate) fn prune_missing_relations(&mut self) -> bool {
+        let existing = self.record_id_set();
+        self.relations.prune_missing_records(&existing)
+    }
+
+    pub fn validate_relations(&self) -> Result<(), DocumentError> {
+        for relation in self.relations.parents() {
+            if relation.child == relation.parent {
+                return Err(DocumentError::SelfParentRelation(relation.child.clone()));
+            }
+            self.validate_record_id(&relation.child)?;
+            self.validate_record_id(&relation.parent)?;
+        }
+
+        for relation in self.relations.groups() {
+            if relation.group == relation.member {
+                return Err(DocumentError::SelfParentRelation(relation.group.clone()));
+            }
+            self.validate_record_id(&relation.group)?;
+            self.validate_record_id(&relation.member)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_record_id(&self, id: &CanvasRecordId) -> Result<(), DocumentError> {
+        if self.contains_record(id) {
+            Ok(())
+        } else {
+            Err(DocumentError::MissingRelationRecord(id.clone()))
+        }
+    }
+
+    fn contains_record(&self, id: &CanvasRecordId) -> bool {
+        match id {
+            CanvasRecordId::Node(id) => self.nodes.contains_key(id),
+            CanvasRecordId::Edge(id) => self.edges.contains_key(id),
+            CanvasRecordId::Shape(id) => self.shapes.contains_key(id),
+        }
+    }
+
+    fn record_id_set(&self) -> IndexSet<CanvasRecordId> {
+        self.nodes
+            .keys()
+            .cloned()
+            .map(CanvasRecordId::Node)
+            .chain(self.edges.keys().cloned().map(CanvasRecordId::Edge))
+            .chain(self.shapes.keys().cloned().map(CanvasRecordId::Shape))
+            .collect()
     }
 
     fn validate_node(node: &CanvasNode) -> Result<(), DocumentError> {
@@ -1191,6 +1324,61 @@ impl CanvasDocument {
                     .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
                     .clone(),
             )]),
+            DocumentCommand::SetRecordParent { child, parent } => {
+                if child == parent {
+                    return Err(DocumentError::SelfParentRelation(child.clone()));
+                }
+                self.validate_record_id(child)?;
+                self.validate_record_id(parent)?;
+                Ok(match self.relations.parent_of(child).cloned() {
+                    Some(previous) => vec![DocumentCommand::SetRecordParent {
+                        child: child.clone(),
+                        parent: previous,
+                    }],
+                    None => vec![DocumentCommand::ClearRecordParent {
+                        child: child.clone(),
+                    }],
+                })
+            }
+            DocumentCommand::ClearRecordParent { child } => {
+                self.validate_record_id(child)?;
+                Ok(match self.relations.parent_of(child).cloned() {
+                    Some(parent) => vec![DocumentCommand::SetRecordParent {
+                        child: child.clone(),
+                        parent,
+                    }],
+                    None => Vec::new(),
+                })
+            }
+            DocumentCommand::AddRecordToGroup { group, member } => {
+                if group == member {
+                    return Err(DocumentError::SelfParentRelation(group.clone()));
+                }
+                self.validate_record_id(group)?;
+                self.validate_record_id(member)?;
+                let already_member = self.relations.groups_for(member).any(|id| id == group);
+                Ok(if already_member {
+                    Vec::new()
+                } else {
+                    vec![DocumentCommand::RemoveRecordFromGroup {
+                        group: group.clone(),
+                        member: member.clone(),
+                    }]
+                })
+            }
+            DocumentCommand::RemoveRecordFromGroup { group, member } => {
+                self.validate_record_id(group)?;
+                self.validate_record_id(member)?;
+                let already_member = self.relations.groups_for(member).any(|id| id == group);
+                Ok(if already_member {
+                    vec![DocumentCommand::AddRecordToGroup {
+                        group: group.clone(),
+                        member: member.clone(),
+                    }]
+                } else {
+                    Vec::new()
+                })
+            }
         }
     }
 }
@@ -1286,6 +1474,50 @@ mod tests {
         let restored = CanvasDocument::from_snapshot(snapshot).unwrap();
         assert_eq!(restored.nodes.len(), 2);
         assert_eq!(restored.edges.len(), 1);
+    }
+
+    #[test]
+    fn snapshot_round_trips_record_relations() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: child.clone(),
+                    parent: group.clone(),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: group.clone(),
+                    member: child.clone(),
+                },
+            ]))
+            .unwrap();
+
+        let restored = CanvasDocument::from_snapshot(document.to_snapshot()).unwrap();
+
+        assert_eq!(restored.relations().parent_of(&child), Some(&group));
+        assert_eq!(
+            restored
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![child]
+        );
     }
 
     #[test]
@@ -1866,6 +2098,141 @@ mod tests {
             ]
         );
         assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn transaction_diff_tracks_relation_changes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("group")),
+                },
+            ))
+            .unwrap();
+
+        assert!(diff.relations_changed);
+        assert!(!diff.is_empty());
+        assert!(diff.inserted.is_empty());
+        assert!(diff.updated.is_empty());
+        assert!(diff.removed.is_empty());
+    }
+
+    #[test]
+    fn relation_commands_reject_dangling_records() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let err = document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("missing")),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::MissingRelationRecord(CanvasRecordId::Shape(ShapeId::from("missing")))
+        );
+        assert!(document.relations().is_empty());
+    }
+
+    #[test]
+    fn deleting_records_prunes_relations() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("child")),
+                },
+            ]))
+            .unwrap();
+
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::RemoveNode(
+                NodeId::from("child"),
+            )))
+            .unwrap();
+
+        assert!(diff.relations_changed);
+        assert!(document.relations().is_empty());
+    }
+
+    #[test]
+    fn relation_inverse_restores_previous_relations() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let before = document.clone();
+        let transaction = CanvasTransaction::new([
+            DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(NodeId::from("child")),
+                parent: CanvasRecordId::Shape(ShapeId::from("group")),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: CanvasRecordId::Shape(ShapeId::from("group")),
+                member: CanvasRecordId::Node(NodeId::from("child")),
+            },
+        ]);
+        let inverse = document.invert_transaction(&transaction).unwrap();
+
+        document.apply_transaction(transaction).unwrap();
+        assert!(!document.relations().is_empty());
+
+        document.apply_transaction(inverse).unwrap();
+        assert_eq!(document, before);
     }
 
     #[test]

@@ -180,30 +180,48 @@ impl DocumentCommand {
                 CanvasRecordId::Shape(shape.id.clone())
             }
             Self::RemoveShape(id) => CanvasRecordId::Shape(id.clone()),
+            Self::SetRecordParent { child, .. } | Self::ClearRecordParent { child } => {
+                child.clone()
+            }
+            Self::AddRecordToGroup { group, .. } | Self::RemoveRecordFromGroup { group, .. } => {
+                group.clone()
+            }
         }
     }
 
-    pub fn record_change(&self) -> CanvasRecordChange {
+    pub fn record_change(&self) -> Option<CanvasRecordChange> {
         match self {
             Self::InsertNode(node) | Self::UpdateNode(node) => {
-                CanvasRecordChange::Upsert(CanvasRecord::Node(node.clone()))
+                Some(CanvasRecordChange::Upsert(CanvasRecord::Node(node.clone())))
             }
-            Self::RemoveNode(id) => CanvasRecordChange::Delete(CanvasRecordId::Node(id.clone())),
+            Self::RemoveNode(id) => {
+                Some(CanvasRecordChange::Delete(CanvasRecordId::Node(id.clone())))
+            }
             Self::InsertEdge(edge) | Self::UpdateEdge(edge) => {
-                CanvasRecordChange::Upsert(CanvasRecord::Edge(edge.clone()))
+                Some(CanvasRecordChange::Upsert(CanvasRecord::Edge(edge.clone())))
             }
-            Self::RemoveEdge(id) => CanvasRecordChange::Delete(CanvasRecordId::Edge(id.clone())),
-            Self::InsertShape(shape) | Self::UpdateShape(shape) => {
-                CanvasRecordChange::Upsert(CanvasRecord::Shape(shape.clone()))
+            Self::RemoveEdge(id) => {
+                Some(CanvasRecordChange::Delete(CanvasRecordId::Edge(id.clone())))
             }
-            Self::RemoveShape(id) => CanvasRecordChange::Delete(CanvasRecordId::Shape(id.clone())),
+            Self::InsertShape(shape) | Self::UpdateShape(shape) => Some(
+                CanvasRecordChange::Upsert(CanvasRecord::Shape(shape.clone())),
+            ),
+            Self::RemoveShape(id) => Some(CanvasRecordChange::Delete(CanvasRecordId::Shape(
+                id.clone(),
+            ))),
+            Self::SetRecordParent { .. }
+            | Self::ClearRecordParent { .. }
+            | Self::AddRecordToGroup { .. }
+            | Self::RemoveRecordFromGroup { .. } => None,
         }
     }
 }
 
 impl CanvasTransaction {
     pub fn record_changes(&self) -> impl Iterator<Item = CanvasRecordChange> + '_ {
-        self.commands.iter().map(DocumentCommand::record_change)
+        self.commands
+            .iter()
+            .filter_map(DocumentCommand::record_change)
     }
 
     pub fn record_ids(&self) -> impl Iterator<Item = CanvasRecordId> + '_ {
@@ -268,19 +286,21 @@ mod tests {
 
         assert_eq!(
             DocumentCommand::UpdateNode(node.clone()).record_change(),
-            CanvasRecordChange::Upsert(CanvasRecord::Node(node))
+            Some(CanvasRecordChange::Upsert(CanvasRecord::Node(node)))
         );
         assert_eq!(
             DocumentCommand::InsertEdge(edge.clone()).record_change(),
-            CanvasRecordChange::Upsert(CanvasRecord::Edge(edge))
+            Some(CanvasRecordChange::Upsert(CanvasRecord::Edge(edge)))
         );
         assert_eq!(
             DocumentCommand::UpdateShape(shape.clone()).record_change(),
-            CanvasRecordChange::Upsert(CanvasRecord::Shape(shape))
+            Some(CanvasRecordChange::Upsert(CanvasRecord::Shape(shape)))
         );
         assert_eq!(
             DocumentCommand::RemoveNode(NodeId::from("node")).record_change(),
-            CanvasRecordChange::Delete(CanvasRecordId::Node(NodeId::from("node")))
+            Some(CanvasRecordChange::Delete(CanvasRecordId::Node(
+                NodeId::from("node")
+            )))
         );
     }
 

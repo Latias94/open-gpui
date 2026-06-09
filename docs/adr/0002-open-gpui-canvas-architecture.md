@@ -31,6 +31,7 @@ Create a new workspace crate named `open-gpui-canvas`, imported as `open_gpui_ca
 The first version will provide a renderer-aware but renderer-decoupled canvas core:
 
 - A document model with separate node, edge, and shape collections.
+- Typed record relationships for parent and group membership facts across nodes, edges, and shapes.
 - Strong ID newtypes for nodes, edges, shapes, handles, tools, and selections.
 - Stable geometry primitives based on GPUI `Point<Pixels>`, `Size<Pixels>`, and
   `Bounds<Pixels>`.
@@ -207,11 +208,22 @@ The canonical document is made of records:
 - `CanvasShape`: id, kind, bounds, z-index, flags, style, and payload.
 - `CanvasHandle`: id, side or local position, role, visibility, and connection permissions.
 - `CanvasEndpoint`: node id plus optional handle id.
+- `CanvasRecordRelations`: parent and group membership relations expressed by `CanvasRecordId`.
 
 The distinction between nodes and shapes is intentional. Nodes are semantic graph objects with
 handles and optional application payload. Shapes are drawable records with bounds and no required
 graph semantics. Applications may build mind-map topics as nodes, freehand strokes as shapes, and
 links as edges in the same document.
+
+Record relationships are structural document facts, not arbitrary kind payload. Parent and group
+relations live in `CanvasRecordRelations`, use `CanvasRecordId` so nodes, edges, and shapes can all
+participate, and are serialized in snapshots with a default empty value for older documents.
+Transactions can set or clear parent relations and add or remove group membership. The mutation
+journal validates relation endpoints, rejects self-parenting, and prunes relations for deleted
+records after document rules such as implicit incident edge deletion have run. This gives future
+frame, group, mind-map hierarchy, parent extent, layout ownership, export, and CRDT adapters one
+shared relationship fact source without committing the first release to group editing tools,
+clipping, parent-relative transforms, or z-order semantics for nested records.
 
 Kind-specific behavior is registry-driven rather than stored as hidden document state.
 `CanvasKindRegistry::open` leaves unknown kinds untouched, preserving imported and
