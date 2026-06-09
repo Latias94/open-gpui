@@ -1,7 +1,7 @@
 ---
 title: "refactor: Run docking morning refactor program"
 type: refactor
-status: active
+status: completed
 date: 2026-06-09
 ---
 

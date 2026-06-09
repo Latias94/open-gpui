@@ -58,8 +58,9 @@ Test locality:
 
 ## Residual Backlog
 
-- Keep shrinking legacy compatibility pressure around `DockHost::new`, `DockHost::with_options`,
-  and owned-host state accessors once downstream examples and tests no longer need them.
+- Keep shrinking legacy compatibility pressure around owned-host state accessors. `DockHost::new`
+  and `DockHost::with_options` are now deprecated compatibility delegates, and source/tests have
+  moved to the workspace-backed mounting path.
 - Add richer product behavior through the existing seams: tab reorder, whole-stack drag, viewport
   release polish, focus restoration, and accessibility behavior.
 - Continue splitting future viewport or graph code only when the extracted module passes the
