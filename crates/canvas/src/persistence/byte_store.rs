@@ -132,7 +132,7 @@ where
     }
 
     fn append_log_entry(&mut self, entry: CanvasLogEntry) -> Result<(), Self::Error> {
-        let sequence = entry.sequence;
+        let sequence = entry.sequence();
         let bytes = self
             .codec
             .encode_log_entry(&entry)
@@ -152,10 +152,10 @@ where
                     .codec
                     .decode_log_entry(&encoded.bytes)
                     .map_err(CanvasPersistenceByteStoreError::Codec)?;
-                if entry.sequence != encoded.sequence {
+                if entry.sequence() != encoded.sequence {
                     return Err(CanvasPersistenceByteStoreError::LogSequenceMismatch {
                         key: encoded.sequence,
-                        payload: entry.sequence,
+                        payload: entry.sequence(),
                     });
                 }
                 Ok(entry)

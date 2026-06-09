@@ -24,7 +24,7 @@ The current canvas architecture is on the right path: `CanvasEditor` owns consis
 from sparse overlays. Several interfaces are still too shallow for a reusable ecosystem.
 
 The highest-risk issue is that callers can still mutate `CanvasDocument` collections directly,
-bypassing transactions, the mutation journal, validation, runtime-cache sync, undo, persistence,
+bypassing transactions, the record mutation store, validation, runtime-cache sync, undo, persistence,
 and future CRDT translation. The second issue is that record mutation concepts exist, but store,
 history, persistence, and adapters still need to understand neighboring concepts instead of
 observing one store-level fact source. The third issue is developer experience: applications still
@@ -82,7 +82,7 @@ where they deepen Open GPUI's Rust-first modules.
 - KTD2. **Prefer one semantic mutation source:** durable observers should consume committed
   mutation batches, not infer from command intent, snapshots, or renderer-local caches.
 - KTD3. **Keep `CanvasEditor` as facade, not god object:** the editor should schedule events and
-  apply effects, while tool state machines, mutation journal, runtime query, and GPUI adapter own
+  apply effects, while tool state machines, record mutation store, runtime query, and GPUI adapter own
   their own deeper implementations.
 - KTD4. **Make the default GPUI path ergonomic without becoming xyflow:** the default adapter can
   own GPUI wiring and overlays while the base renderer remains batched and culling-driven.
@@ -122,8 +122,8 @@ The steady-state flow is:
 - Applications read records through `CanvasDocument` accessors or snapshots.
 - Every document write enters the record mutation store as a transaction, prepared mutation, replay
   entry, or controlled internal import path.
-- The mutation store applies the journal result, then updates history, persistence cursors, runtime
-  caches, and observers from the committed semantic diff.
+- The record mutation store produces the committed mutation fact, then editor and persistence paths
+  update history, persistence cursors, runtime caches, and observers from that committed diff.
 - `CanvasEditor` dispatches tool events and applies effects, but built-in tool state machines own
   select, pan, connect, resize, and future text-edit branches.
 - The GPUI adapter consumes editor snapshots and supplies default input and paint wiring without
@@ -193,7 +193,7 @@ persistence, replay, and future collaboration adapters.
 
 **Files:**
 
-- `crates/canvas/src/journal.rs`
+- `crates/canvas/src/mutation.rs`
 - `crates/canvas/src/changes.rs`
 - `crates/canvas/src/persistence.rs`
 - `crates/canvas/src/persistence/store.rs`
@@ -203,9 +203,9 @@ persistence, replay, and future collaboration adapters.
 - new `crates/canvas/src/store.rs` or equivalent mutation-store module
 
 **Approach:** Introduce a deeper record mutation/store module that wraps prepared mutation,
-committed mutation, sequence assignment, operation batches, and observer handoff. Persistence
-helpers should log the same committed mutation the editor applies. Command-derived batches stay as
-intent helpers but no durable observer should need them for truth.
+committed mutation, committed operation batches, and observer handoff. Persistence helpers should
+log the same committed mutation the editor applies. Command-derived batches stay as explicit
+legacy/intent helpers; no new durable observer should need them for truth.
 
 **Execution note:** Preserve existing persistence atomicity tests before moving code, then expand
 coverage around the new store interface.
@@ -215,9 +215,9 @@ coverage around the new store interface.
 
 **Test scenarios:**
 
-- `crates/canvas/src/store.rs`: removing a node produces node and incident edge delete operations
+- `crates/canvas/src/mutation.rs`: removing a node produces node and incident edge delete operations
   in sequence order.
-- `crates/canvas/src/store.rs`: committed operation batches preserve origin and transaction
+- `crates/canvas/src/mutation.rs`: committed operation batches preserve origin and transaction
   metadata.
 - `crates/canvas/src/persistence/store.rs`: transaction, undo, redo, and gesture commit append the
   committed mutation before applying it in memory.
@@ -494,7 +494,7 @@ commit.
 - `docs/plans/2026-06-08-009-refactor-canvas-editor-gesture-api-plan.md`
 - `docs/plans/2026-06-08-010-feat-canvas-paint-text-widget-overlay-plan.md`
 - `crates/canvas/src/document.rs`
-- `crates/canvas/src/journal.rs`
+- `crates/canvas/src/mutation.rs`
 - `crates/canvas/src/persistence/store.rs`
 - `crates/canvas/src/tool.rs`
 - `crates/canvas/src/gpui.rs`

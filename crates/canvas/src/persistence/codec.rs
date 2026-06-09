@@ -47,7 +47,7 @@ impl CanvasPersistenceRecord {
     pub fn sequence(&self) -> u64 {
         match self {
             Self::Checkpoint(checkpoint) => checkpoint.sequence,
-            Self::LogEntry(entry) => entry.sequence,
+            Self::LogEntry(entry) => entry.sequence(),
         }
     }
 

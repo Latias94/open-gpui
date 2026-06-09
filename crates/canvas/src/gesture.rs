@@ -1,4 +1,4 @@
-use crate::journal::CanvasMutationJournal;
+use crate::mutation::CanvasRecordMutationStore;
 use crate::{
     CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasTransaction,
     DocumentCommand, DocumentError,
@@ -26,7 +26,7 @@ impl CanvasGestureSession {
             return Ok(None);
         }
 
-        let prepared = CanvasMutationJournal::prepare_with_kind_registry(
+        let prepared = CanvasRecordMutationStore::prepare_with_kind_registry(
             &self.baseline,
             transaction,
             kind_registry,

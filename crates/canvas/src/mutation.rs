@@ -62,9 +62,9 @@ impl CanvasPreparedMutation {
     }
 }
 
-pub(crate) struct CanvasMutationJournal;
+pub(crate) struct CanvasRecordMutationStore;
 
-impl CanvasMutationJournal {
+impl CanvasRecordMutationStore {
     pub fn prepare_with_kind_registry(
         document: &CanvasDocument,
         transaction: CanvasTransaction,

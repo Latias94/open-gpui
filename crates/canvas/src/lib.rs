@@ -12,8 +12,8 @@ mod gesture;
 mod gpui;
 mod graph;
 mod index;
-mod journal;
 mod json_canvas;
+mod mutation;
 mod persistence;
 mod resolve;
 mod routing;
@@ -52,11 +52,11 @@ pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
 };
 pub use index::{CanvasSpatialIndex, HitOptions, HitRecord, HitTarget, SpatialIndex};
-pub use journal::CanvasCommittedMutation;
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
+pub use mutation::CanvasCommittedMutation;
 pub use persistence::{
     CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_PERSISTENCE_CODEC_VERSION,
     CANVAS_REDB_STORE_FEATURE, CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint,

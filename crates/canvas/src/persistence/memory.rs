@@ -41,14 +41,14 @@ impl CanvasPersistenceStore for MemoryCanvasPersistenceStore {
         Ok(self
             .log_entries
             .iter()
-            .filter(|entry| entry.sequence > after_sequence)
+            .filter(|entry| entry.sequence() > after_sequence)
             .cloned()
             .collect())
     }
 
     fn compact_log_entries(&mut self, through_sequence: u64) -> Result<(), Self::Error> {
         self.log_entries
-            .retain(|entry| entry.sequence > through_sequence);
+            .retain(|entry| entry.sequence() > through_sequence);
         Ok(())
     }
 }

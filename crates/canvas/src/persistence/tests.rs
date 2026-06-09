@@ -136,7 +136,7 @@ fn replays_checkpoint_and_transaction_log() {
         ))
         .unwrap();
     let checkpoint = CanvasCheckpoint::new(1, &document);
-    let log_entry = CanvasLogEntry::new(
+    let log_entry = CanvasLogEntry::from_legacy_transaction(
         2,
         DocumentCommand::InsertNode(CanvasNode::new(
             "b",
@@ -152,8 +152,8 @@ fn replays_checkpoint_and_transaction_log() {
 }
 
 #[test]
-fn log_entries_expose_record_operation_batches() {
-    let entry = CanvasLogEntry::new(
+fn legacy_log_entries_expose_intent_record_operation_batches() {
+    let entry = CanvasLogEntry::from_legacy_transaction(
         9,
         DocumentCommand::InsertNode(CanvasNode::new(
             "node",
@@ -162,7 +162,7 @@ fn log_entries_expose_record_operation_batches() {
         )),
     );
 
-    let batch = entry.record_operation_batch();
+    let batch = entry.intent_record_operation_batch();
 
     assert_eq!(batch.transaction_sequence, 9);
     assert_eq!(batch.operations.len(), 1);
@@ -206,7 +206,7 @@ fn committed_log_entries_expose_actual_record_operation_batches() {
     let committed = document.commit_transaction(transaction).unwrap();
     let entry = CanvasLogEntry::from_committed_mutation(11, &committed);
 
-    let batch = entry.record_operation_batch();
+    let batch = entry.committed_record_operation_batch().unwrap();
 
     assert_eq!(batch.transaction_sequence, 11);
     assert_eq!(
@@ -237,7 +237,7 @@ fn rejects_non_monotonic_log_sequences() {
         ))
         .unwrap();
     let checkpoint = CanvasCheckpoint::new(3, &document);
-    let log_entry = CanvasLogEntry::new(
+    let log_entry = CanvasLogEntry::from_legacy_transaction(
         3,
         DocumentCommand::InsertNode(CanvasNode::new(
             "b",
@@ -273,7 +273,7 @@ fn loads_document_from_store_after_checkpoint_sequence() {
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
             1,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "stale",
@@ -283,7 +283,7 @@ fn loads_document_from_store_after_checkpoint_sequence() {
         ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
             2,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "b",
@@ -304,13 +304,22 @@ fn loads_document_from_store_after_checkpoint_sequence() {
 fn compacts_log_entries_through_checkpoint_sequence() {
     let mut store = MemoryCanvasPersistenceStore::default();
     store
-        .append_log_entry(CanvasLogEntry::new(1, CanvasTransaction::default()))
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+            1,
+            CanvasTransaction::default(),
+        ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(2, CanvasTransaction::default()))
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+            2,
+            CanvasTransaction::default(),
+        ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(3, CanvasTransaction::default()))
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+            3,
+            CanvasTransaction::default(),
+        ))
         .unwrap();
 
     store.compact_log_entries(2).unwrap();
@@ -319,7 +328,7 @@ fn compacts_log_entries_through_checkpoint_sequence() {
         store
             .log_entries()
             .iter()
-            .map(|entry| entry.sequence)
+            .map(|entry| entry.sequence())
             .collect::<Vec<_>>(),
         vec![3]
     );
@@ -355,7 +364,7 @@ fn json_persistence_codec_round_trips_checkpoint_envelope() {
 #[test]
 fn json_persistence_codec_round_trips_log_entry_envelope() {
     let codec = CanvasJsonPersistenceCodec;
-    let entry = CanvasLogEntry::new(
+    let entry = CanvasLogEntry::from_legacy_transaction(
         3,
         DocumentCommand::InsertNode(CanvasNode::new(
             "a",
@@ -464,7 +473,7 @@ fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
         .unwrap();
     typed_store
-        .append_log_entry(CanvasLogEntry::new(
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
             2,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "b",
@@ -486,7 +495,7 @@ fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
 #[test]
 fn byte_store_adapter_rejects_log_key_sequence_mismatch() {
     let codec = CanvasJsonPersistenceCodec;
-    let entry = CanvasLogEntry::new(2, CanvasTransaction::default());
+    let entry = CanvasLogEntry::from_legacy_transaction(2, CanvasTransaction::default());
     let mut byte_store = MemoryCanvasPersistenceByteStore::default();
     byte_store
         .append_log_entry_bytes(9, codec.encode_log_entry(&entry).unwrap())
@@ -509,10 +518,16 @@ fn loads_persistence_cursor_from_checkpoint_and_log_tail() {
         .save_checkpoint(CanvasCheckpoint::new(3, &document))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(4, CanvasTransaction::default()))
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+            4,
+            CanvasTransaction::default(),
+        ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::new(5, CanvasTransaction::default()))
+        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+            5,
+            CanvasTransaction::default(),
+        ))
         .unwrap();
 
     let cursor = load_canvas_persistence_cursor(&store).unwrap();
@@ -543,11 +558,12 @@ fn persistent_transaction_appends_successful_editor_transaction() {
     );
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
-    assert_eq!(store.log_entries()[0].sequence, 1);
-    assert_eq!(store.log_entries()[0].transaction, transaction);
+    assert_eq!(store.log_entries()[0].sequence(), 1);
+    assert_eq!(store.log_entries()[0].transaction(), &transaction);
     assert_eq!(
         store.log_entries()[0]
-            .record_operation_batch()
+            .committed_record_operation_batch()
+            .unwrap()
             .operations
             .iter()
             .map(|operation| operation.id())
@@ -679,8 +695,8 @@ fn persistent_undo_logs_inverse_transaction_before_mutation() {
     assert_eq!(editor.history().redo_depth(), 1);
     assert_eq!(store.log_entries().len(), 2);
     assert!(matches!(
-        store.log_entries()[1].transaction.commands.as_slice(),
-        [DocumentCommand::RemoveNode(id)] if id == &NodeId::from("a")
+        store.log_entries()[1].transaction().commands.as_slice(),
+        [DocumentCommand::RemoveNode(id)] if *id == NodeId::from("a")
     ));
 
     let restored = load_canvas_document(&store).unwrap();
@@ -711,8 +727,8 @@ fn persistent_redo_logs_redo_transaction_before_mutation() {
     assert_eq!(editor.history().redo_depth(), 0);
     assert_eq!(store.log_entries().len(), 3);
     assert!(matches!(
-        store.log_entries()[2].transaction.commands.as_slice(),
-        [DocumentCommand::InsertNode(inserted)] if inserted == &node
+        store.log_entries()[2].transaction().commands.as_slice(),
+        [DocumentCommand::InsertNode(inserted)] if *inserted == node
     ));
 
     let restored = load_canvas_document(&store).unwrap();
@@ -1175,7 +1191,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
     assert!(matches!(
-        store.log_entries()[0].transaction.commands.as_slice(),
+        store.log_entries()[0].transaction().commands.as_slice(),
         [DocumentCommand::InsertEdge(edge)]
             if edge.source.node_id == NodeId::from("a")
                 && edge.target.node_id == NodeId::from("b")

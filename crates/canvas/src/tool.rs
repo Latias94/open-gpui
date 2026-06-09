@@ -732,7 +732,7 @@ impl CanvasEditor {
 
     pub(crate) fn apply_prepared_document_mutation(
         &mut self,
-        prepared: crate::journal::CanvasPreparedMutation,
+        prepared: crate::mutation::CanvasPreparedMutation,
     ) -> CanvasDocumentDiff {
         let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
@@ -744,7 +744,7 @@ impl CanvasEditor {
 
     pub(crate) fn apply_prepared_undo_mutation(
         &mut self,
-        prepared: crate::journal::CanvasPreparedMutation,
+        prepared: crate::mutation::CanvasPreparedMutation,
     ) -> CanvasDocumentDiff {
         debug_assert_eq!(
             self.history.next_undo_transaction(),
@@ -761,7 +761,7 @@ impl CanvasEditor {
 
     pub(crate) fn apply_prepared_redo_mutation(
         &mut self,
-        prepared: crate::journal::CanvasPreparedMutation,
+        prepared: crate::mutation::CanvasPreparedMutation,
     ) -> CanvasDocumentDiff {
         debug_assert_eq!(
             self.history.next_redo_transaction(),
@@ -779,7 +779,7 @@ impl CanvasEditor {
     pub(crate) fn prepare_document_transaction(
         &self,
         transaction: CanvasTransaction,
-    ) -> Result<crate::journal::CanvasPreparedMutation, DocumentError> {
+    ) -> Result<crate::mutation::CanvasPreparedMutation, DocumentError> {
         self.document
             .prepare_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())
     }

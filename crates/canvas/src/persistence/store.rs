@@ -22,14 +22,17 @@ impl CanvasCheckpoint {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanvasLogEntry {
-    pub sequence: u64,
-    pub transaction: CanvasTransaction,
+    sequence: u64,
+    transaction: CanvasTransaction,
     #[serde(default)]
-    pub record_operation_batch: Option<CanvasRecordOperationBatch>,
+    record_operation_batch: Option<CanvasRecordOperationBatch>,
 }
 
 impl CanvasLogEntry {
-    pub fn new(sequence: u64, transaction: impl Into<CanvasTransaction>) -> Self {
+    pub fn from_legacy_transaction(
+        sequence: u64,
+        transaction: impl Into<CanvasTransaction>,
+    ) -> Self {
         Self {
             sequence,
             transaction: transaction.into(),
@@ -45,10 +48,20 @@ impl CanvasLogEntry {
         }
     }
 
-    pub fn record_operation_batch(&self) -> CanvasRecordOperationBatch {
-        self.record_operation_batch
-            .clone()
-            .unwrap_or_else(|| self.transaction.record_operation_batch(self.sequence))
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn transaction(&self) -> &CanvasTransaction {
+        &self.transaction
+    }
+
+    pub fn committed_record_operation_batch(&self) -> Option<&CanvasRecordOperationBatch> {
+        self.record_operation_batch.as_ref()
+    }
+
+    pub fn intent_record_operation_batch(&self) -> CanvasRecordOperationBatch {
+        self.transaction.record_operation_batch(self.sequence)
     }
 }
 
@@ -213,14 +226,14 @@ where
         .map_err(CanvasPersistenceError::Store)?;
 
     for entry in log_entries {
-        if entry.sequence <= previous_sequence {
+        if entry.sequence() <= previous_sequence {
             return Err(CanvasPersistenceError::NonMonotonicLogSequence {
                 previous: previous_sequence,
-                found: entry.sequence,
+                found: entry.sequence(),
             });
         }
 
-        previous_sequence = entry.sequence;
+        previous_sequence = entry.sequence();
     }
 
     Ok(CanvasPersistenceCursor::new(previous_sequence))
@@ -442,15 +455,15 @@ fn replay_checkpoint_and_log<E>(
     };
 
     for entry in log_entries {
-        if entry.sequence <= previous_sequence {
+        if entry.sequence() <= previous_sequence {
             return Err(CanvasPersistenceError::NonMonotonicLogSequence {
                 previous: previous_sequence,
-                found: entry.sequence,
+                found: entry.sequence(),
             });
         }
 
-        document.apply_transaction(entry.transaction)?;
-        previous_sequence = entry.sequence;
+        document.apply_transaction(entry.transaction().clone())?;
+        previous_sequence = entry.sequence();
     }
 
     Ok(document)

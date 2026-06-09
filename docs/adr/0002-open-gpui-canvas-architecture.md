@@ -39,7 +39,7 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - Edge route metadata for straight, polyline, orthogonal, cubic-bezier, and custom routers,
   including manual waypoints, bezier control points, route options, and interaction width.
 - A viewport/camera model that is separate from document data.
-- A document mutation journal that returns committed mutations containing the applied transaction,
+- A record mutation store that returns committed mutations containing the applied transaction,
   inverse transaction, actual document diff, and actual semantic record operation batch.
 - A `CanvasRuntime` owner for spatial hit testing and indexed graph caches that can be rebuilt or
   incrementally updated without changing document serialization.
@@ -243,15 +243,16 @@ putting hidden cache state inside `CanvasDocument`.
 Document transactions expose two record-level views. `DocumentCommand::record_id`,
 `DocumentCommand::record_change`, `CanvasTransaction::record_ids`, and
 `CanvasTransaction::record_changes` translate the canonical command stream into ordered intent
-changes. `CanvasCommittedMutation` is the semantic view produced by the document mutation journal:
-it carries the applied transaction, inverse transaction, actual `CanvasDocumentDiff`, and actual
-record changes after document rules have run. A node deletion that removes incident edges therefore
-produces node and edge delete changes in the committed mutation, even when the original command
-stream only named the node.
+changes. `CanvasCommittedMutation` is the semantic view produced by the record mutation store in
+`crates/canvas/src/mutation.rs`: it carries the applied transaction, inverse transaction, actual
+`CanvasDocumentDiff`, and actual record changes after document rules have run. A node deletion that
+removes incident edges therefore produces node and edge delete changes in the committed mutation,
+even when the original command stream only named the node.
 `CanvasRecordOperation` and `CanvasRecordOperationBatch` add the transaction sequence,
 operation index, optional origin, and transaction metadata around either view. Persistence logs and
 future CRDT adapters should consume committed mutation batches when they need actual document
-semantics, while command-derived batches remain useful for intent inspection and legacy log entries.
+semantics. Command-derived batches are explicitly legacy/intent views for older transaction-only log
+entries and inspection tools.
 
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
@@ -284,6 +285,8 @@ prepared mutation through `CanvasEditor`. The log entry can carry the committed 
 record operation batch, so implicit document effects such as incident edge deletion are visible to
 persistence and future CRDT adapters. This keeps `CanvasEditor` free of concrete storage ownership
 while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry point.
+`CanvasLogEntry::from_committed_mutation` is the write path for new durable entries;
+`CanvasLogEntry::from_legacy_transaction` is reserved for replaying older transaction-only logs.
 Gesture updates remain outside the persistence log until the active gesture is committed as one
 explicit transaction.
 

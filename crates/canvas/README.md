@@ -173,6 +173,9 @@ fn edit_selection(editor: &mut CanvasEditor) -> Result<(), DocumentError> {
 `DocumentCommand` remains the canonical replay vocabulary. Commands and transactions still expose
 an ordered intent view, but sync, audit, and CRDT adapters should prefer committed mutations when
 they need the actual semantic changes produced by document rules such as incident edge removal.
+The record mutation store is the fact source for those committed mutations: it prepares a normalized
+transaction against a draft, validates the result, derives the inverse transaction, and records the
+actual semantic diff.
 
 ```rust
 use open_gpui_canvas::{
@@ -553,6 +556,10 @@ For tool reducers, use `apply_persistent_tool_effect` or `apply_persistent_tool_
 recorded transactions enter the log and gesture updates stay transient until `CommitGesture`.
 Gesture sessions begin with `BeginGesture`, update the in-memory document with `UpdateGesture`,
 and commit or cancel without asking tool authors to construct inverse transactions by hand.
+New log entries written by the persistence helpers are created from committed mutations, so their
+record operation batches describe actual document effects. `CanvasLogEntry::from_legacy_transaction`
+is reserved for replaying or testing older transaction-only logs where only the command intent is
+available.
 Applications that want one entrypoint can dispatch normalized canvas events through
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
 `handle_persistent_event_with_tool_registry`; those helpers reduce the active tool to effects, log
