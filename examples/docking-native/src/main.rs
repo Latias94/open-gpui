@@ -19,6 +19,85 @@ struct DemoPanel {
     lines: &'static [&'static str],
 }
 
+struct RuntimeStatusPanel {
+    runtime: DockViewportRuntimeHandle,
+}
+
+impl RuntimeStatusPanel {
+    fn new(runtime: DockViewportRuntimeHandle) -> Self {
+        Self { runtime }
+    }
+}
+
+impl Render for RuntimeStatusPanel {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let runtime = self.runtime.borrow();
+        let adapter = runtime.adapter();
+        let spaces = adapter
+            .spaces()
+            .into_iter()
+            .map(|space| {
+                let status = if adapter.window_for_space(&space).is_some() {
+                    "open"
+                } else {
+                    "missing"
+                };
+                format!("{}: {}", space.as_str(), status)
+            })
+            .collect::<Vec<_>>();
+        let placement = runtime.export_placement();
+        let lines = [
+            format!("close policy: {:?}", runtime.close_policy()),
+            format!("registered viewports: {}", spaces.len()),
+            format!("placement snapshots: {}", placement.viewports.len()),
+            format!("spaces: {}", spaces.join(", ")),
+        ];
+
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .gap_3()
+            .p_4()
+            .bg(rgb(0xffffff))
+            .text_color(rgb(0x111827))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(4.0)).h(px(28.0)).bg(rgb(0x0f766e)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_lg().child("Runtime"))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0x5f6b7a))
+                                    .child("Viewport dogfood state"),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(lines.into_iter().map(|line| {
+                        div()
+                            .px_2()
+                            .py_1()
+                            .bg(rgb(0xf4f6f8))
+                            .text_color(rgb(0x253041))
+                            .child(line)
+                    })),
+            )
+    }
+}
+
 impl DemoPanel {
     fn new(
         title: &'static str,
@@ -90,7 +169,7 @@ fn restored_demo_layout() -> DockLayout {
             EditorDockLayoutSpec::new(
                 ["explorer", "outline", "workspace"],
                 ["editor", "preview"],
-                ["terminal", "problems"],
+                ["terminal", "problems", "runtime"],
             )
             .with_fractions(0.24, 0.68)
             .with_active_indexes(0, 0, 0),
@@ -108,6 +187,7 @@ fn restored_demo_layout() -> DockLayout {
         .panel_descriptor("diff", DockPanelDescriptor::new("Diff"))
         .panel_descriptor("terminal", DockPanelDescriptor::new("Terminal"))
         .panel_descriptor("problems", DockPanelDescriptor::new("Problems"))
+        .panel_descriptor("runtime", DockPanelDescriptor::new("Runtime"))
         .try_build()
         .expect("demo controller setup should validate");
 
@@ -179,6 +259,7 @@ fn build_controller() -> DockController {
         .expect("demo dock layout should restore")
         .allow_floating(true)
         .allow_platform_viewports(true)
+        .panel_descriptor("runtime", DockPanelDescriptor::new("Runtime"))
         .panel_factory("explorer", "Explorer", |cx| {
             cx.new(|_| {
                 DemoPanel::new(
@@ -357,7 +438,13 @@ fn restored_viewport_options(
 fn main() {
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
-        let runtime = DockViewportRuntimeHandle::new(controller);
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let runtime_panel = cx.new(|_| RuntimeStatusPanel::new(runtime.clone()));
+        controller.update(cx, |controller, _| {
+            controller
+                .attach_panel_view("runtime", runtime_panel)
+                .expect("runtime panel descriptor should exist");
+        });
         runtime.observe_window_closed(cx).detach();
 
         let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
