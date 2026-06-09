@@ -95,10 +95,11 @@ canvas-local `CanvasEvent` values, while mutation remains in the application-own
 Backspace, and Escape use the same reducer path as application-owned keyboard integrations.
 
 Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
-copy of selection and tool state, `CanvasPaintFrame` marks selected records and computes transient
-selection rectangles or connection previews, and the batched painter draws those overlays after the
-base records. This keeps visual affordances visible in native examples without moving mutable
-editor state into the renderer or rendering every record as a GPUI element.
+copy of selection and the editor's internal tool-session state, `CanvasPaintFrame` marks selected
+records and computes transient selection rectangles or connection previews, and the batched painter
+draws those overlays after the base records. This keeps visual affordances visible in native
+examples without moving mutable editor state into the renderer or rendering every record as a GPUI
+element.
 
 Record visibility and interaction lock state are separate. Hidden records are omitted from default
 paint and hit-test paths unless explicitly included. Locked records remain visible for culling and
@@ -341,6 +342,8 @@ history, edge router, kind registry, and runtime-cache state, and `CanvasToolRed
 `CanvasToolIntent` values for the editor to apply. This avoids giving extensions mutable access to
 `CanvasEditor`, so undo, selection retention, runtime-cache refresh, schema validation,
 persistence logging, and future CRDT translation still pass through the same intent vocabulary.
+The built-in tool state enum remains crate-private; custom tools observe stable editor context and
+return intents instead of matching select, pan, connect, resize, or translate implementation states.
 
 `CanvasToolRegistry` is an ergonomic adapter over the same reducer contract. It maps
 `CanvasToolId` values to boxed reducers, dispatches the active custom tool, and reports a

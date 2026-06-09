@@ -1,11 +1,11 @@
+use crate::tool::ToolState;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
     CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRoutePath,
     CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasShape, CanvasSnapAxis,
     CanvasSnapGuide, CanvasStyle, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport,
-    HitOptions, HitTarget, PointerButton, ToolState, canvas_transform_handles,
-    connection_hit_options,
+    HitOptions, HitTarget, PointerButton, canvas_transform_handles, connection_hit_options,
 };
 use open_gpui::{
     App, Bounds, Canvas, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Hsla,
@@ -107,11 +107,6 @@ impl CanvasPaintModel {
         self.interaction = self.interaction.with_selection(selection);
         self
     }
-
-    pub fn with_tool_state(mut self, state: ToolState) -> Self {
-        self.interaction = self.interaction.with_tool_state(state);
-        self
-    }
 }
 
 impl From<&CanvasEditor> for CanvasPaintModel {
@@ -121,10 +116,8 @@ impl From<&CanvasEditor> for CanvasPaintModel {
             runtime: editor.runtime_snapshot(),
             kind_registry: editor.kind_registry_snapshot(),
             viewport: editor.viewport(),
-            interaction: CanvasPaintInteraction::new(
-                editor.selection().clone(),
-                editor.state().clone(),
-            ),
+            interaction: CanvasPaintInteraction::new(editor.selection().clone())
+                .with_internal_tool_state(editor.state().clone()),
         }
     }
 }
@@ -136,15 +129,18 @@ pub struct CanvasPaintInteraction {
 }
 
 impl CanvasPaintInteraction {
-    pub fn new(selection: CanvasSelection, state: ToolState) -> Self {
-        Self { selection, state }
+    pub fn new(selection: CanvasSelection) -> Self {
+        Self {
+            selection,
+            state: ToolState::Idle,
+        }
     }
 
     pub fn selection(&self) -> &CanvasSelection {
         &self.selection
     }
 
-    pub fn tool_state(&self) -> &ToolState {
+    pub(crate) fn tool_state(&self) -> &ToolState {
         &self.state
     }
 
@@ -153,7 +149,7 @@ impl CanvasPaintInteraction {
         self
     }
 
-    pub fn with_tool_state(mut self, state: ToolState) -> Self {
+    pub(crate) fn with_internal_tool_state(mut self, state: ToolState) -> Self {
         self.state = state;
         self
     }
@@ -2311,19 +2307,22 @@ mod tests {
             document,
             CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
         )
-        .with_selection(selection)
-        .with_tool_state(ToolState::Translating {
-            origin: point(px(10.0), px(10.0)),
-            last: point(px(20.0), px(20.0)),
-            constraint_axis: None,
-            node_ids: vec![crate::NodeId::from("selected")],
-            shape_ids: Vec::new(),
-            snap_guides: vec![CanvasSnapGuide {
-                axis: CanvasSnapAxis::Horizontal,
-                document_start: point(px(40.0), px(10.0)),
-                document_end: point(px(40.0), px(90.0)),
-            }],
-        });
+        .with_interaction(
+            CanvasPaintInteraction::new(selection).with_internal_tool_state(
+                ToolState::Translating {
+                    origin: point(px(10.0), px(10.0)),
+                    last: point(px(20.0), px(20.0)),
+                    constraint_axis: None,
+                    node_ids: vec![crate::NodeId::from("selected")],
+                    shape_ids: Vec::new(),
+                    snap_guides: vec![CanvasSnapGuide {
+                        axis: CanvasSnapAxis::Horizontal,
+                        document_start: point(px(40.0), px(10.0)),
+                        document_end: point(px(40.0), px(90.0)),
+                    }],
+                },
+            ),
+        );
 
         let frame = collect_visible_records(
             &model,
@@ -2384,12 +2383,14 @@ mod tests {
             CanvasDocument::default(),
             CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
         )
-        .with_tool_state(ToolState::Selecting {
-            origin: point(px(40.0), px(80.0)),
-            current: point(px(20.0), px(50.0)),
-            selection_mode: CanvasSelectionMode::Replace,
-            base_selection: CanvasSelection::default(),
-        });
+        .with_interaction(CanvasPaintInteraction::default().with_internal_tool_state(
+            ToolState::Selecting {
+                origin: point(px(40.0), px(80.0)),
+                current: point(px(20.0), px(50.0)),
+                selection_mode: CanvasSelectionMode::Replace,
+                base_selection: CanvasSelection::default(),
+            },
+        ));
 
         let frame = collect_visible_records(
             &model,
@@ -2465,10 +2466,12 @@ mod tests {
             CanvasViewport::default(),
             geometry_registry(),
         )
-        .with_tool_state(ToolState::Connecting {
-            source: CanvasEndpoint::new("source", Some("out")),
-            current: point(px(40.0), px(5.0)),
-        });
+        .with_interaction(CanvasPaintInteraction::default().with_internal_tool_state(
+            ToolState::Connecting {
+                source: CanvasEndpoint::new("source", Some("out")),
+                current: point(px(40.0), px(5.0)),
+            },
+        ));
 
         let frame = collect_visible_records(
             &model,

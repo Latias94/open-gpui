@@ -154,7 +154,7 @@ impl CanvasTool {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ToolState {
+pub(crate) enum ToolState {
     Idle,
     Pointing {
         origin: Point<Pixels>,
@@ -396,7 +396,6 @@ pub struct CanvasToolContext<'a> {
     document: &'a CanvasDocument,
     viewport: &'a CanvasViewport,
     tool: &'a CanvasTool,
-    state: &'a ToolState,
     runtime: &'a CanvasRuntime,
     edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
     kind_registry: &'a CanvasKindRegistry,
@@ -410,7 +409,6 @@ impl fmt::Debug for CanvasToolContext<'_> {
             .field("document", self.document)
             .field("viewport", self.viewport)
             .field("tool", self.tool)
-            .field("state", self.state)
             .field("runtime", self.runtime)
             .field("edge_router", &"<dyn CanvasEdgeRouter>")
             .field("kind_registry", self.kind_registry)
@@ -431,10 +429,6 @@ impl CanvasToolContext<'_> {
 
     pub fn tool(&self) -> &CanvasTool {
         self.tool
-    }
-
-    pub fn state(&self) -> &ToolState {
-        self.state
     }
 
     pub fn runtime(&self) -> &CanvasRuntime {
@@ -762,7 +756,7 @@ impl CanvasEditor {
         &self.tool
     }
 
-    pub fn state(&self) -> &ToolState {
+    pub(crate) fn state(&self) -> &ToolState {
         &self.state
     }
 
@@ -1126,7 +1120,6 @@ impl CanvasEditor {
             document: self.document.as_ref(),
             viewport: &self.viewport,
             tool: &self.tool,
-            state: &self.state,
             runtime: self.runtime.as_ref(),
             edge_router: self.edge_router.as_ref(),
             kind_registry: self.kind_registry.as_ref(),
