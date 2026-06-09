@@ -447,8 +447,8 @@ pub enum CanvasWidgetOverlayHitPriority {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasInputMapper {
-    pub bounds: Bounds<Pixels>,
-    pub line_height: Pixels,
+    bounds: Bounds<Pixels>,
+    line_height: Pixels,
 }
 
 impl CanvasInputMapper {
@@ -527,8 +527,8 @@ impl CanvasInputMapper {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasEditorInputMapper {
-    pub mapper: CanvasInputMapper,
-    pub pointer_interacting: bool,
+    mapper: CanvasInputMapper,
+    pointer_interacting: bool,
 }
 
 impl CanvasEditorInputMapper {
