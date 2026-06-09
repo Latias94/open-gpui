@@ -60,6 +60,9 @@ collect pointer facts, the drop resolver produces a resolved target, the workspa
 validates and commits that target, and viewport tear-off uses `DockViewportRuntime` to coordinate
 window creation before graph mutation. The active drop session stores a resolved target from layout
 facts rather than a tab-only intent, so preview and commit stay tied to the same resolver output.
+Splitter and floating pointer sessions emit crate-private resize/bounds requests that the host
+commits through controller/workspace transactions, rather than constructing public `DockAction`
+values from render callbacks.
 `DockAction` remains the public programmatic interface for explicit non-move commands such as
 selection, panel close/reopen, floating, and split resize. `DockOp` is crate-internal graph
 mutation machinery, so render code and applications do not need to understand source/target node

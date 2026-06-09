@@ -31,6 +31,8 @@ Host depth:
 - `crates/gpui_docking/src/host_render_session.rs` snapshots read-only render facts before element
   construction.
 - `crates/gpui_docking/src/host_render_actions.rs` is the render-callback commit entry point.
+- `DockHost` centralizes controller mutation/notification in one private helper and exposes
+  render-facing commit methods for select, drop, resize, and floating pointer sessions.
 - Render modules build elements and collect pointer facts; they do not directly own workspace
   commit policy or viewport runtime mapping.
 
@@ -43,8 +45,14 @@ Interaction foundation:
   resolved target instead of a tab-only preview projection.
 - `crates/gpui_docking/src/workspace_transaction.rs` commits resolved drop targets, so render code
   no longer constructs graph-shaped `MoveTab` commands for ordinary drag/drop.
+- `crates/gpui_docking/src/workspace_move_transaction.rs`,
+  `workspace_panel_transaction.rs`, `workspace_floating_transaction.rs`, and
+  `workspace_resize_transaction.rs` keep graph op projection behind workspace transactions while
+  public `DockAction` remains an explicit application command surface.
 - `crates/gpui_docking/src/geometry.rs` is the split and drop geometry authority for render
   bounds, hit testing, resize fractions, and central-region remaining space allocation.
+- `DockSplitLayout` is the shared split layout plan consumed by graph layout, rendered pane shares,
+  visual handle placement, splitter hit testing, and resize session start state.
 - `DockCentralRegion` is dock-space metadata, not a special graph node. It can stay alive while
   empty, expose passthrough semantics to render, and mark the root subtree used by central drop
   policy.
