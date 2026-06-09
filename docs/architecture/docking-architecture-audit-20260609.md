@@ -14,7 +14,7 @@ The docking crate now matches ADR 0002's layering for the current product surfac
 - `drop_target`, `drop_runtime`, `workspace_transaction`, `interaction`, and `geometry` now form
   the interaction foundation: resolver, resolved-target session, commit transaction, pointer
   session, and split/drop math each have one authority.
-- `DockViewportRuntime` is the testable platform-viewport lifecycle core, while
+- `DockViewportRuntime` is the internal testable platform-viewport lifecycle core, while
   `DockViewportRuntimeHandle` is the application-facing entry point for runtime-aware GPUI
   windows; `DockViewportAdapter` remains the lower-level mapping, coordinate, and placement
   primitive.

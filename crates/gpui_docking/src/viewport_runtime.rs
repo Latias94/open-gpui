@@ -23,14 +23,14 @@ use open_gpui::{
 };
 use std::rc::Rc;
 
-/// Owner for controller-backed platform viewport lifecycle.
+/// Internal owner for controller-backed platform viewport lifecycle.
 ///
 /// The runtime keeps the shared [`DockController`] together with the low-level
-/// [`DockViewportAdapter`] so applications do not have to pass the controller into every open call
+/// [`DockViewportAdapter`] so the handle does not have to pass the controller into every open call
 /// or duplicate close-callback cleanup logic. The adapter remains the place for window mappings,
 /// coordinate snapshots, and placement import/export.
 #[derive(Debug)]
-pub struct DockViewportRuntime {
+pub(crate) struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_gate: DockViewportCloseGate,
@@ -59,12 +59,12 @@ fn install_should_close_hook(
 
 impl DockViewportRuntime {
     /// Creates a runtime with the default close policy.
-    pub fn new(controller: Entity<DockController>) -> Self {
+    pub(crate) fn new(controller: Entity<DockController>) -> Self {
         Self::with_close_policy(controller, DockViewportClosePolicy::default())
     }
 
     /// Creates a runtime with an explicit close policy.
-    pub fn with_close_policy(
+    pub(crate) fn with_close_policy(
         controller: Entity<DockController>,
         close_policy: DockViewportClosePolicy,
     ) -> Self {
@@ -80,7 +80,8 @@ impl DockViewportRuntime {
     }
 
     /// Creates a runtime from an existing adapter.
-    pub fn from_adapter(
+    #[cfg(test)]
+    pub(crate) fn from_adapter(
         controller: Entity<DockController>,
         adapter: DockViewportAdapter,
         close_policy: DockViewportClosePolicy,
@@ -99,7 +100,7 @@ impl DockViewportRuntime {
     }
 
     /// Wraps this runtime in a cloneable handle for GPUI application callbacks.
-    pub fn into_handle(self) -> DockViewportRuntimeHandle {
+    pub(crate) fn into_handle(self) -> DockViewportRuntimeHandle {
         DockViewportRuntimeHandle::from_runtime(self)
     }
 
@@ -108,22 +109,22 @@ impl DockViewportRuntime {
     }
 
     /// Returns the low-level viewport adapter.
-    pub fn adapter(&self) -> &DockViewportAdapter {
+    pub(crate) fn adapter(&self) -> &DockViewportAdapter {
         &self.adapter
     }
 
     /// Returns the latest read-only runtime diagnostic snapshot.
-    pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
+    pub(crate) fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.status.clone()
     }
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
-    pub fn close_policy(&self) -> DockViewportClosePolicy {
+    pub(crate) fn close_policy(&self) -> DockViewportClosePolicy {
         self.close_gate.close_policy()
     }
 
     /// Replaces the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
-    pub fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
+    pub(crate) fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
         self.close_gate.set_close_policy(close_policy);
     }
 
@@ -152,7 +153,7 @@ impl DockViewportRuntime {
     /// Updates display, window, and host bounds for a registered viewport.
     ///
     /// Returns true when the stored runtime snapshot changed.
-    pub fn update_viewport_snapshot(
+    pub(crate) fn update_viewport_snapshot(
         &mut self,
         space: &DockSpaceId,
         display_id: Option<DisplayId>,
@@ -708,7 +709,7 @@ impl DockViewportRuntime {
     /// Close policy is applied by [`Self::handle_window_should_close`] before GPUI accepts a close.
     /// Once a closed notification arrives, the platform window is already gone and docking must
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
-    pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
+    pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         let outcome = self.adapter.handle_window_closed(window_id);
         self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
@@ -717,7 +718,7 @@ impl DockViewportRuntime {
     }
 
     /// Handles a GPUI window-closed notification with access to graph mutation context.
-    pub fn handle_window_closed_with_app(
+    pub(crate) fn handle_window_closed_with_app(
         &mut self,
         window_id: WindowId,
         cx: &mut App,
@@ -737,7 +738,7 @@ impl DockViewportRuntime {
     }
 
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
-    pub fn handle_window_should_close(
+    pub(crate) fn handle_window_should_close(
         &mut self,
         window_id: WindowId,
     ) -> DockViewportShouldCloseOutcome {
@@ -917,12 +918,12 @@ impl DockViewportRuntime {
     }
 
     /// Exports serializable placement snapshots from the adapter.
-    pub fn export_placement(&self) -> DockViewportPlacementLayout {
+    pub(crate) fn export_placement(&self) -> DockViewportPlacementLayout {
         self.adapter.export_placement()
     }
 
     /// Applies saved placement snapshots to registered viewport windows.
-    pub fn apply_placement(
+    pub(crate) fn apply_placement(
         &mut self,
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {

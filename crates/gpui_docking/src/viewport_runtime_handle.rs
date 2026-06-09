@@ -16,7 +16,7 @@ use open_gpui::{
 use std::cell::Ref;
 use std::{cell::RefCell, rc::Rc};
 
-/// Cloneable application handle for a shared [`DockViewportRuntime`].
+/// Cloneable application handle for the shared viewport runtime.
 ///
 /// GPUI application-level callbacks such as [`App::on_window_closed`] require `'static` closures.
 /// This handle hides the required interior mutability while keeping the runtime itself testable as
@@ -41,7 +41,7 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Creates a handle from a prepared runtime.
-    pub fn from_runtime(runtime: DockViewportRuntime) -> Self {
+    pub(crate) fn from_runtime(runtime: DockViewportRuntime) -> Self {
         Self {
             runtime: Rc::new(RefCell::new(runtime)),
         }
