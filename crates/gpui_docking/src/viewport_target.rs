@@ -6,11 +6,20 @@ use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
     /// Finds the registered viewport containing a screen point.
+    ///
+    /// This compatibility helper has no platform-window arbitration inputs, so overlapping
+    /// viewports fall back to the adapter's deterministic space order. Pointer-event paths and
+    /// other multi-window product flows should prefer [`Self::hit_test_screen_with_context`] with a
+    /// [`DockViewportTargetContext`] from the current GPUI window or app.
     pub fn hit_test_screen(&self, position: Point<Pixels>) -> Option<DockViewportHit> {
         self.hit_test_screen_with_context(position, &DockViewportTargetContext::new())
     }
 
     /// Finds the registered viewport containing a screen point using platform arbitration inputs.
+    ///
+    /// When more than one registered viewport contains the point, the resolver prefers hovered
+    /// window, then active window, then front-to-back window stack, and uses deterministic adapter
+    /// order only as the final fallback.
     pub fn hit_test_screen_with_context(
         &self,
         position: Point<Pixels>,
@@ -43,5 +52,75 @@ impl DockViewportAdapter {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DockHost, DockSpaceId};
+    use open_gpui::{
+        AnyWindowHandle, Bounds, WindowBounds, WindowHandle, WindowId, point, px, size,
+    };
+
+    fn space(id: &str) -> DockSpaceId {
+        DockSpaceId::from(id)
+    }
+
+    fn handle(id: u64) -> AnyWindowHandle {
+        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
+    }
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    #[test]
+    fn hit_testing_uses_context_before_deterministic_space_order() {
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let alpha_window = handle(1);
+        let zeta_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(alpha.clone(), alpha_window);
+        adapter.register_viewport(zeta.clone(), zeta_window);
+
+        for space in [&alpha, &zeta] {
+            adapter.update_snapshot(
+                space,
+                None,
+                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let position = point(px(120.0), px(140.0));
+        assert_eq!(
+            adapter.hit_test_screen(position).map(|hit| hit.space),
+            Some(alpha.clone()),
+            "context-free compatibility path uses stable space order"
+        );
+        assert_eq!(
+            adapter
+                .hit_test_screen_with_context(
+                    position,
+                    &DockViewportTargetContext::new().with_active_window(zeta_window),
+                )
+                .map(|hit| hit.space),
+            Some(zeta.clone()),
+            "active-window context should beat stable space order"
+        );
+        assert_eq!(
+            adapter
+                .hit_test_screen_with_context(
+                    position,
+                    &DockViewportTargetContext::new()
+                        .with_hovered_window(alpha_window)
+                        .with_active_window(zeta_window),
+                )
+                .map(|hit| hit.space),
+            Some(alpha),
+            "hovered-window context should beat active-window context"
+        );
     }
 }
