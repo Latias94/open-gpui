@@ -34,6 +34,7 @@ pub struct CanvasLogEntry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanvasLogEntryKind {
     CommittedMutation,
+    PartialCommittedMutation,
     LegacyReplayTransaction,
 }
 
@@ -68,12 +69,13 @@ impl CanvasLogEntry {
     }
 
     pub fn kind(&self) -> CanvasLogEntryKind {
-        if self.committed_record_operation_batch.is_some()
-            || self.committed_relation_operation_batch.is_some()
-        {
-            CanvasLogEntryKind::CommittedMutation
-        } else {
-            CanvasLogEntryKind::LegacyReplayTransaction
+        match (
+            self.committed_record_operation_batch.is_some(),
+            self.committed_relation_operation_batch.is_some(),
+        ) {
+            (true, true) => CanvasLogEntryKind::CommittedMutation,
+            (true, false) | (false, true) => CanvasLogEntryKind::PartialCommittedMutation,
+            (false, false) => CanvasLogEntryKind::LegacyReplayTransaction,
         }
     }
 
@@ -375,6 +377,9 @@ where
     match intent {
         CanvasToolIntent::ApplyTransaction(transaction) => {
             apply_persistent_transaction(editor, store, cursor, transaction)?;
+        }
+        CanvasToolIntent::CommitTransientTransaction => {
+            apply_persistent_gesture_commit(editor, store, cursor)?;
         }
         intent => {
             editor.apply_tool_intent(intent)?;

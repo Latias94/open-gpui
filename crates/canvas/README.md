@@ -552,7 +552,10 @@ rendering work through visible-record culling instead of per-record GPUI element
 Custom tools read editor state through `CanvasToolContext` and return `CanvasToolIntent` values.
 They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cache updates,
 persistence, and future CRDT translation keep passing through one mutation path. Built-in gesture
-state stays inside the editor.
+state stays inside the editor. For continuous interactions such as dragging or resizing, return
+`BeginTransientTransaction`, one or more `UpdateTransientTransaction` intents, and then
+`CommitTransientTransaction` or `CancelTransientTransaction`; the editor coalesces those updates
+into one undo entry and persistence log entry.
 
 ```rust
 use open_gpui::{px, size};
@@ -592,6 +595,17 @@ impl CanvasToolReducer for StampTool {
         ])
     }
 }
+```
+
+```rust
+# use open_gpui_canvas::{CanvasToolIntent, CanvasTransaction};
+let drag_update = CanvasTransaction::default();
+let intents = vec![
+    CanvasToolIntent::BeginTransientTransaction,
+    CanvasToolIntent::UpdateTransientTransaction(drag_update),
+    CanvasToolIntent::CommitTransientTransaction,
+];
+# let _ = intents;
 ```
 
 Register application tools with `CanvasToolRegistry`, then call
@@ -689,6 +703,9 @@ describe actual document effects and their relation operation batches describe a
 structural changes. `CanvasLogEntry::from_replay_transaction` is reserved for replaying or testing
 older transaction-only logs where only command intent is available; those entries are marked
 `LegacyReplayTransaction` and do not expose committed record or relation operations.
+Older committed logs that contain only some committed operation facts are marked
+`PartialCommittedMutation`; adapters should treat missing batches as unavailable facts, not as
+empty semantic changes.
 Applications that want one entrypoint can dispatch normalized canvas events through
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
 `handle_persistent_event_with_tool_registry`; those helpers route built-in tools through the

@@ -206,7 +206,7 @@ impl SmokeView {
                 ..
             }
         ) {
-            self.editor.set_tool(CanvasTool::custom(STAMP_TOOL_ID));
+            self.editor.set_tool(CanvasTool::custom(STAMP_TOOL_ID)).unwrap();
         }
 
         if let Err(error) = self

@@ -32,13 +32,30 @@ impl CanvasRecordGroupRelation {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CanvasRecordRelations {
     #[serde(default)]
     parents: Vec<CanvasRecordParentRelation>,
     #[serde(default)]
     groups: Vec<CanvasRecordGroupRelation>,
 }
+
+impl PartialEq for CanvasRecordRelations {
+    fn eq(&self, other: &Self) -> bool {
+        self.parents.len() == other.parents.len()
+            && self.groups.len() == other.groups.len()
+            && self
+                .parents
+                .iter()
+                .all(|relation| other.parent_of(&relation.child) == Some(&relation.parent))
+            && self
+                .groups
+                .iter()
+                .all(|relation| other.contains_group_relation(relation))
+    }
+}
+
+impl Eq for CanvasRecordRelations {}
 
 impl CanvasRecordRelations {
     pub fn is_empty(&self) -> bool {
@@ -209,6 +226,28 @@ mod tests {
             relations.groups_for(&member).cloned().collect::<Vec<_>>(),
             vec![group]
         );
+    }
+
+    #[test]
+    fn relation_equality_uses_semantic_ordering() {
+        let group_a = CanvasRecordId::Shape(ShapeId::from("group-a"));
+        let group_b = CanvasRecordId::Shape(ShapeId::from("group-b"));
+        let member_a = CanvasRecordId::Node(NodeId::from("member-a"));
+        let member_b = CanvasRecordId::Node(NodeId::from("member-b"));
+
+        let mut left = CanvasRecordRelations::default();
+        left.set_parent(member_a.clone(), group_a.clone());
+        left.set_parent(member_b.clone(), group_b.clone());
+        left.add_to_group(group_a.clone(), member_a.clone());
+        left.add_to_group(group_b.clone(), member_b.clone());
+
+        let mut right = CanvasRecordRelations::default();
+        right.set_parent(member_b.clone(), group_b.clone());
+        right.set_parent(member_a.clone(), group_a.clone());
+        right.add_to_group(group_b, member_b);
+        right.add_to_group(group_a, member_a);
+
+        assert_eq!(left, right);
     }
 
     #[test]

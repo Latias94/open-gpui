@@ -335,6 +335,33 @@ fn json_persistence_codec_decodes_legacy_committed_batch_field() {
 }
 
 #[test]
+fn json_persistence_codec_marks_record_only_committed_entries_partial() {
+    let codec = CanvasJsonPersistenceCodec;
+    let mut document = CanvasDocument::default();
+    let committed = document
+        .commit_transaction(CanvasTransaction::single(DocumentCommand::InsertNode(
+            CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        )))
+        .unwrap();
+    let entry = CanvasLogEntry::from_committed_mutation(6, &committed);
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&codec.encode_log_entry(&entry).unwrap()).unwrap();
+    value["record"]["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("committed_relation_operation_batch");
+    let bytes = serde_json::to_vec(&value).unwrap();
+
+    let entry = codec.decode_log_entry(&bytes).unwrap();
+
+    assert_eq!(entry.sequence(), 6);
+    assert_eq!(entry.kind(), CanvasLogEntryKind::PartialCommittedMutation);
+    assert!(!entry.is_legacy_replay_entry());
+    assert!(entry.committed_record_operations().is_some());
+    assert!(entry.committed_relation_operations().is_none());
+}
+
+#[test]
 fn rejects_non_monotonic_log_sequences() {
     let mut document = CanvasDocument::default();
     document
@@ -739,6 +766,66 @@ fn persistent_transaction_skips_empty_committed_diff() {
 
     assert!(diff.is_empty());
     assert_eq!(cursor.sequence(), 7);
+    assert!(store.log_entries().is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
+}
+
+#[test]
+fn persistent_transaction_skips_relation_order_only_diff() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "member",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    for id in ["group-a", "group-b"] {
+        document
+            .insert_shape(CanvasShape::new(
+                id,
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+    }
+    let member = CanvasRecordId::Node(NodeId::from("member"));
+    let group_a = CanvasRecordId::Shape(ShapeId::from("group-a"));
+    let group_b = CanvasRecordId::Shape(ShapeId::from("group-b"));
+    document
+        .apply_transaction(CanvasTransaction::new([
+            DocumentCommand::AddRecordToGroup {
+                group: group_a.clone(),
+                member: member.clone(),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: group_b,
+                member: member.clone(),
+            },
+        ]))
+        .unwrap();
+    let mut editor = CanvasEditor::new(document);
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::new(12);
+
+    let diff = apply_persistent_transaction(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::new([
+            DocumentCommand::RemoveRecordFromGroup {
+                group: group_a.clone(),
+                member: member.clone(),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: group_a,
+                member,
+            },
+        ]),
+    )
+    .unwrap();
+
+    assert!(diff.is_empty());
+    assert_eq!(cursor.sequence(), 12);
     assert!(store.log_entries().is_empty());
     assert_eq!(editor.history().undo_depth(), 0);
 }
@@ -1258,6 +1345,85 @@ fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
 }
 
 #[test]
+fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry() {
+    let mut document = CanvasDocument::default();
+    let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+    document.insert_node(original.clone()).unwrap();
+
+    let mut editor = CanvasEditor::new(document.clone());
+    let mut store = MemoryCanvasPersistenceStore::default();
+    store
+        .save_checkpoint(CanvasCheckpoint::new(0, &document))
+        .unwrap();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let first = CanvasNode::new("a", point(px(20.0), px(0.0)), size(px(10.0), px(10.0)));
+    let second = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
+
+    apply_persistent_tool_intents(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        [
+            CanvasToolIntent::BeginTransientTransaction,
+            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(first),
+            )),
+            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(second.clone()),
+            )),
+            CanvasToolIntent::CommitTransientTransaction,
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(cursor.sequence(), 1);
+    assert_eq!(store.log_entries().len(), 1);
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(editor.document().node(&NodeId::from("a")).unwrap(), &second);
+    assert_eq!(
+        load_canvas_document(&store)
+            .unwrap()
+            .node(&NodeId::from("a"))
+            .unwrap(),
+        &second
+    );
+}
+
+#[test]
+fn persistent_public_tool_intents_cancel_transient_transaction_without_log() {
+    let mut document = CanvasDocument::default();
+    let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+    document.insert_node(original.clone()).unwrap();
+
+    let mut editor = CanvasEditor::new(document);
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::new(7);
+    let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
+
+    apply_persistent_tool_intents(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        [
+            CanvasToolIntent::BeginTransientTransaction,
+            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(moved),
+            )),
+            CanvasToolIntent::CancelTransientTransaction,
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(cursor.sequence(), 7);
+    assert!(store.log_entries().is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
+    assert_eq!(
+        editor.document().node(&NodeId::from("a")).unwrap(),
+        &original
+    );
+}
+
+#[test]
 fn persistent_tool_effects_commit_relation_gesture_as_one_log_entry() {
     let mut document = CanvasDocument::default();
     document
@@ -1504,7 +1670,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
         ))
         .unwrap();
     let mut editor = CanvasEditor::new(document);
-    editor.set_tool(CanvasTool::Connect);
+    editor.set_tool(CanvasTool::Connect).unwrap();
     let mut store = MemoryCanvasPersistenceStore::default();
     store
         .save_checkpoint(CanvasCheckpoint::new(0, editor.document()))
@@ -1556,7 +1722,7 @@ fn persistent_event_dispatch_logs_builtin_connect_transaction() {
 fn persistent_event_dispatch_logs_custom_tool_transaction() {
     let mut editor = CanvasEditor::default();
     editor.set_viewport(crate::CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap());
-    editor.set_tool(CanvasTool::custom("stamp"));
+    editor.set_tool(CanvasTool::custom("stamp")).unwrap();
     let mut tool = PersistentStampTool::default();
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::default();
@@ -1593,7 +1759,7 @@ fn persistent_event_dispatch_logs_custom_tool_transaction() {
 #[test]
 fn persistent_registry_event_dispatch_logs_registered_custom_tool_transaction() {
     let mut editor = CanvasEditor::default();
-    editor.set_tool(CanvasTool::custom("stamp"));
+    editor.set_tool(CanvasTool::custom("stamp")).unwrap();
     let mut registry = CanvasToolRegistry::new();
     registry.insert("stamp", PersistentStampTool::default());
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1624,7 +1790,7 @@ fn persistent_registry_event_dispatch_logs_registered_custom_tool_transaction() 
 #[test]
 fn persistent_registry_event_dispatch_reports_missing_custom_tool_without_mutation() {
     let mut editor = CanvasEditor::default();
-    editor.set_tool(CanvasTool::custom("missing"));
+    editor.set_tool(CanvasTool::custom("missing")).unwrap();
     let mut registry = CanvasToolRegistry::new();
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::default();

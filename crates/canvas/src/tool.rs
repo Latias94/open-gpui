@@ -380,6 +380,10 @@ pub(crate) enum CanvasToolEffect {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasToolIntent {
     ApplyTransaction(CanvasTransaction),
+    BeginTransientTransaction,
+    UpdateTransientTransaction(CanvasTransaction),
+    CommitTransientTransaction,
+    CancelTransientTransaction,
     SetTool(CanvasTool),
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
@@ -912,7 +916,7 @@ impl CanvasEditor {
                 self.cancel_gesture()?;
             }
             CanvasToolEffect::SetTool(tool) => {
-                self.set_tool(tool);
+                self.set_tool(tool)?;
             }
             CanvasToolEffect::SetSelection(mut selection) => {
                 selection.retain_document(self.document.as_ref());
@@ -998,8 +1002,20 @@ impl CanvasEditor {
             CanvasToolIntent::ApplyTransaction(transaction) => {
                 self.apply_transaction(transaction)?;
             }
+            CanvasToolIntent::BeginTransientTransaction => {
+                self.begin_gesture();
+            }
+            CanvasToolIntent::UpdateTransientTransaction(transaction) => {
+                self.update_gesture(transaction)?;
+            }
+            CanvasToolIntent::CommitTransientTransaction => {
+                self.commit_gesture()?;
+            }
+            CanvasToolIntent::CancelTransientTransaction => {
+                self.cancel_gesture()?;
+            }
             CanvasToolIntent::SetTool(tool) => {
-                self.set_tool(tool);
+                self.set_tool(tool)?;
             }
             CanvasToolIntent::SetSelection(mut selection) => {
                 selection.retain_document(self.document.as_ref());
@@ -1106,9 +1122,11 @@ impl CanvasEditor {
         Ok(())
     }
 
-    pub fn set_tool(&mut self, tool: CanvasTool) {
+    pub fn set_tool(&mut self, tool: CanvasTool) -> Result<(), DocumentError> {
+        self.cancel_gesture()?;
         self.tool = tool;
         self.state = ToolState::Idle;
+        Ok(())
     }
 
     pub fn set_viewport(&mut self, viewport: CanvasViewport) {
@@ -1350,7 +1368,9 @@ impl CanvasEditor {
     }
 
     fn begin_gesture(&mut self) {
-        self.gesture = Some(CanvasGestureSession::begin(self.document.as_ref()));
+        if self.gesture.is_none() {
+            self.gesture = Some(CanvasGestureSession::begin(self.document.as_ref()));
+        }
     }
 
     fn update_gesture(
@@ -1450,11 +1470,13 @@ impl CanvasEditor {
     }
 
     fn cancel_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
-        let Some(gesture) = self.gesture.take() else {
+        let Some(gesture) = self.gesture.as_ref() else {
             return Ok(CanvasDocumentDiff::default());
         };
         let transaction = gesture.cancel_transaction(self.document.as_ref());
-        self.apply_transient_transaction(transaction)
+        let diff = self.apply_transient_transaction(transaction)?;
+        self.gesture = None;
+        Ok(diff)
     }
 
     fn delete_selection_transaction(&self) -> CanvasTransaction {
@@ -3361,7 +3383,7 @@ mod tests {
     #[test]
     fn pan_tool_moves_viewport() {
         let mut editor = CanvasEditor::default();
-        editor.set_tool(CanvasTool::Pan);
+        editor.set_tool(CanvasTool::Pan).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3398,7 +3420,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.set_tool(CanvasTool::Connect);
+        editor.set_tool(CanvasTool::Connect).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3440,7 +3462,7 @@ mod tests {
         locked.locked = true;
         document.insert_node(locked).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.set_tool(CanvasTool::Connect);
+        editor.set_tool(CanvasTool::Connect).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3480,7 +3502,7 @@ mod tests {
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.set_tool(CanvasTool::Connect);
+        editor.set_tool(CanvasTool::Connect).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3516,7 +3538,7 @@ mod tests {
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.set_tool(CanvasTool::Connect);
+        editor.set_tool(CanvasTool::Connect).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3557,7 +3579,7 @@ mod tests {
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.set_tool(CanvasTool::Connect);
+        editor.set_tool(CanvasTool::Connect).unwrap();
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3591,7 +3613,7 @@ mod tests {
             .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
-        editor.set_tool(CanvasTool::custom("stamp"));
+        editor.set_tool(CanvasTool::custom("stamp")).unwrap();
         let mut tool = StampTool::default();
 
         editor
@@ -3665,7 +3687,7 @@ mod tests {
             .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
-        editor.set_tool(CanvasTool::custom("stamp"));
+        editor.set_tool(CanvasTool::custom("stamp")).unwrap();
         let mut registry = CanvasToolRegistry::new();
 
         assert!(registry.is_empty());
@@ -3711,7 +3733,7 @@ mod tests {
     #[test]
     fn tool_registry_reports_missing_custom_tool() {
         let mut editor = CanvasEditor::default();
-        editor.set_tool(CanvasTool::custom("missing"));
+        editor.set_tool(CanvasTool::custom("missing")).unwrap();
         let mut registry = CanvasToolRegistry::new();
 
         let err = editor
@@ -3842,6 +3864,58 @@ mod tests {
         assert!(second_diff.is_empty());
         assert_eq!(editor.history.undo_depth(), 0);
         assert_eq!(editor.history.redo_depth(), 1);
+    }
+
+    #[test]
+    fn relation_order_only_transactions_do_not_push_history() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "member",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        for id in ["group-a", "group-b"] {
+            document
+                .insert_shape(CanvasShape::new(
+                    id,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+                ))
+                .unwrap();
+        }
+        let member = CanvasRecordId::Node(NodeId::from("member"));
+        let group_a = CanvasRecordId::Shape(ShapeId::from("group-a"));
+        let group_b = CanvasRecordId::Shape(ShapeId::from("group-b"));
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::AddRecordToGroup {
+                    group: group_a.clone(),
+                    member: member.clone(),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: group_b,
+                    member: member.clone(),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        let diff = editor
+            .apply_transaction_with_diff(CanvasTransaction::new([
+                DocumentCommand::RemoveRecordFromGroup {
+                    group: group_a.clone(),
+                    member: member.clone(),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: group_a,
+                    member,
+                },
+            ]))
+            .unwrap();
+
+        assert!(diff.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
     }
 
     #[test]
@@ -4182,6 +4256,130 @@ mod tests {
 
         assert_eq!(editor.history.undo_depth(), 0);
         assert!(editor.is_tool_state_idle());
+    }
+
+    #[test]
+    fn set_tool_cancels_active_gesture_before_switching() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let moved = CanvasNode::new("a", point(px(400.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(moved),
+                )),
+            ])
+            .unwrap();
+        assert_eq!(
+            editor.document.node(&NodeId::from("a")).unwrap().position,
+            point(px(400.0), px(0.0))
+        );
+
+        editor.set_tool(CanvasTool::Pan).unwrap();
+
+        assert_eq!(editor.tool(), &CanvasTool::Pan);
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(
+            editor
+                .runtime()
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .any(|record| record.target == HitTarget::Node(NodeId::from("a")))
+        );
+        assert!(
+            editor
+                .runtime()
+                .hit_test(point(px(410.0), px(10.0)), HitOptions::default())
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn begin_gesture_preserves_existing_baseline() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let first = CanvasNode::new("a", point(px(100.0), px(0.0)), size(px(100.0), px(100.0)));
+        let second = CanvasNode::new("a", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(first),
+                )),
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(second),
+                )),
+                CanvasToolEffect::CancelGesture,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+        assert_eq!(editor.history.undo_depth(), 1);
+    }
+
+    #[test]
+    fn public_tool_intents_commit_transient_transaction_as_one_undo_entry() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let first = CanvasNode::new("a", point(px(100.0), px(0.0)), size(px(100.0), px(100.0)));
+        let second = CanvasNode::new("a", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+        let baseline_depth = editor.history.undo_depth();
+
+        editor
+            .apply_tool_intents([
+                CanvasToolIntent::BeginTransientTransaction,
+                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(first),
+                )),
+                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(second.clone()),
+                )),
+                CanvasToolIntent::CommitTransientTransaction,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &second);
+        assert_eq!(editor.history.undo_depth(), baseline_depth + 1);
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+    }
+
+    #[test]
+    fn public_tool_intents_cancel_transient_transaction_without_history() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let moved = CanvasNode::new("a", point(px(100.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+        let baseline_depth = editor.history.undo_depth();
+
+        editor
+            .apply_tool_intents([
+                CanvasToolIntent::BeginTransientTransaction,
+                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(moved),
+                )),
+                CanvasToolIntent::CancelTransientTransaction,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+        assert_eq!(editor.history.undo_depth(), baseline_depth);
     }
 
     #[test]
