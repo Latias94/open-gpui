@@ -5,9 +5,7 @@ use crate::{
     DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
-use open_gpui::{
-    AppContext as _, Bounds, Context, Entity, Pixels, Point, Window, WindowId, point, px,
-};
+use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, WindowId, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -190,41 +188,8 @@ impl DockHost {
         self.viewport_runtime.as_ref()
     }
 
-    pub(crate) fn host_local_point(
-        &self,
-        host_bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-    ) -> Point<Pixels> {
-        point(
-            position.x - host_bounds.origin.x,
-            position.y - host_bounds.origin.y,
-        )
-    }
-
-    pub(crate) fn update_viewport_host_scene_from_window(
-        &mut self,
-        host_bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        window: &Window,
-    ) -> bool {
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            self.viewport_scene_window = None;
-            return false;
-        };
-        let window_id = window.window_handle().window_id();
-        if runtime.window_id_for_space(self.space()) != Some(window_id) {
-            self.viewport_scene_window = None;
-            return false;
-        }
-
-        self.viewport_scene_window = Some(window_id);
-        runtime.begin_viewport_host_scene(
-            self.space().clone(),
-            window_id,
-            window.window_bounds(),
-            host_bounds,
-            self.host_local_point(host_bounds, position),
-        )
+    pub(crate) fn set_viewport_scene_window(&mut self, window_id: Option<WindowId>) {
+        self.viewport_scene_window = window_id;
     }
 
     pub(crate) fn viewport_scene_window(&self) -> Option<WindowId> {
