@@ -69,6 +69,10 @@ runtime cache, and viewport. Its prepaint step queries the visible document boun
 `CanvasRuntime`, and its paint step emits GPUI quads and paths through the low-level `canvas`
 callback. It intentionally does not own application state or turn every record into an element;
 future overlays can layer selected node widgets on top of this batched base renderer.
+The public GPUI API remains a facade, while implementation modules separate snapshot model,
+input mapping, frame construction, style fallback, low-level painting, and view helper wiring. This
+keeps frame semantics testable without coupling them to GPUI primitive drawing, and keeps future
+custom painter or overlay work out of input mapping and runtime culling code.
 
 The default `SpatialIndex` remains a simple sorted record vector because it is predictable and easy
 to verify in the first release. Production query call sites go through `CanvasRuntime`, whose

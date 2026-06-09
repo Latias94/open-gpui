@@ -388,6 +388,12 @@ canvas callback. `CanvasPaintModel` owns a consistent document, runtime, kind-re
 and interaction snapshot; applications construct it from a document or `CanvasEditor` instead of
 assembling those parts by hand.
 
+The public `gpui` facade is intentionally thin. Internally, the adapter keeps model snapshots,
+input mapping, paint-frame construction, style fallback resolution, low-level GPUI painting, and
+view helper wiring in separate modules. That split preserves batched paint while leaving room for
+custom painters, text overlays, and sparse selected-record widgets without turning the document
+model into a GPUI element tree.
+
 Editor-backed applications should start with `canvas_editor_view` or
 `canvas_editor_view_with_frame`. These helpers keep canvas-bounds-dependent GPUI input wiring inside
 the canvas adapter: mouse, wheel, focus, and drag-capture events become renderer-neutral
