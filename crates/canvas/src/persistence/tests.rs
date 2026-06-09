@@ -1,10 +1,10 @@
 use super::*;
 use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordChange, CanvasRecordId,
-    CanvasRecordKind, CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext,
-    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
-    DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton,
+    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRecordKind,
+    CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolId,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
+    DocumentError, EdgeId, NodeId, PointerButton,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
     tool::CanvasToolEffect,
 };
@@ -135,7 +135,7 @@ fn replays_checkpoint_and_transaction_log() {
         ))
         .unwrap();
     let checkpoint = CanvasCheckpoint::new(1, &document);
-    let log_entry = CanvasLogEntry::from_legacy_transaction(
+    let log_entry = CanvasLogEntry::from_replay_transaction(
         2,
         DocumentCommand::InsertNode(CanvasNode::new(
             "b",
@@ -151,8 +151,8 @@ fn replays_checkpoint_and_transaction_log() {
 }
 
 #[test]
-fn legacy_log_entries_expose_intent_record_operation_batches() {
-    let entry = CanvasLogEntry::from_legacy_transaction(
+fn legacy_log_entries_do_not_expose_committed_record_operations() {
+    let entry = CanvasLogEntry::from_replay_transaction(
         9,
         DocumentCommand::InsertNode(CanvasNode::new(
             "node",
@@ -161,17 +161,9 @@ fn legacy_log_entries_expose_intent_record_operation_batches() {
         )),
     );
 
-    let batch = entry.intent_record_operation_batch();
-
-    assert_eq!(batch.transaction_sequence, 9);
-    assert_eq!(batch.operations.len(), 1);
-    assert_eq!(batch.operations[0].transaction_sequence, 9);
-    assert_eq!(batch.operations[0].operation_index, 0);
-    assert!(matches!(
-        &batch.operations[0].change,
-        CanvasRecordChange::Upsert(record)
-            if record.id() == CanvasRecordId::Node(NodeId::from("node"))
-    ));
+    assert_eq!(entry.kind(), CanvasLogEntryKind::LegacyReplayTransaction);
+    assert!(entry.is_legacy_replay_entry());
+    assert!(entry.committed_record_operations().is_none());
 }
 
 #[test]
@@ -205,7 +197,9 @@ fn committed_log_entries_expose_actual_record_operation_batches() {
     let committed = document.commit_transaction(transaction).unwrap();
     let entry = CanvasLogEntry::from_committed_mutation(11, &committed);
 
-    let batch = entry.committed_record_operation_batch().unwrap();
+    assert_eq!(entry.kind(), CanvasLogEntryKind::CommittedMutation);
+    assert!(!entry.is_legacy_replay_entry());
+    let batch = entry.committed_record_operations().unwrap();
 
     assert_eq!(batch.transaction_sequence, 11);
     assert_eq!(
@@ -226,6 +220,34 @@ fn committed_log_entries_expose_actual_record_operation_batches() {
 }
 
 #[test]
+fn json_persistence_codec_decodes_legacy_committed_batch_field() {
+    let codec = CanvasJsonPersistenceCodec;
+    let mut document = CanvasDocument::default();
+    let committed = document
+        .commit_transaction(CanvasTransaction::single(DocumentCommand::InsertNode(
+            CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        )))
+        .unwrap();
+    let entry = CanvasLogEntry::from_committed_mutation(5, &committed);
+    let legacy_json = String::from_utf8(codec.encode_log_entry(&entry).unwrap())
+        .unwrap()
+        .replace("committed_record_operation_batch", "record_operation_batch");
+
+    let entry = codec.decode_log_entry(legacy_json.as_bytes()).unwrap();
+
+    assert_eq!(entry.sequence(), 5);
+    assert_eq!(entry.kind(), CanvasLogEntryKind::CommittedMutation);
+    assert_eq!(
+        entry
+            .committed_record_operations()
+            .unwrap()
+            .operations
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn rejects_non_monotonic_log_sequences() {
     let mut document = CanvasDocument::default();
     document
@@ -236,7 +258,7 @@ fn rejects_non_monotonic_log_sequences() {
         ))
         .unwrap();
     let checkpoint = CanvasCheckpoint::new(3, &document);
-    let log_entry = CanvasLogEntry::from_legacy_transaction(
+    let log_entry = CanvasLogEntry::from_replay_transaction(
         3,
         DocumentCommand::InsertNode(CanvasNode::new(
             "b",
@@ -272,7 +294,7 @@ fn loads_document_from_store_after_checkpoint_sequence() {
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             1,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "stale",
@@ -282,7 +304,7 @@ fn loads_document_from_store_after_checkpoint_sequence() {
         ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             2,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "b",
@@ -303,19 +325,19 @@ fn loads_document_from_store_after_checkpoint_sequence() {
 fn compacts_log_entries_through_checkpoint_sequence() {
     let mut store = MemoryCanvasPersistenceStore::default();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             1,
             CanvasTransaction::default(),
         ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             2,
             CanvasTransaction::default(),
         ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             3,
             CanvasTransaction::default(),
         ))
@@ -363,7 +385,7 @@ fn json_persistence_codec_round_trips_checkpoint_envelope() {
 #[test]
 fn json_persistence_codec_round_trips_log_entry_envelope() {
     let codec = CanvasJsonPersistenceCodec;
-    let entry = CanvasLogEntry::from_legacy_transaction(
+    let entry = CanvasLogEntry::from_replay_transaction(
         3,
         DocumentCommand::InsertNode(CanvasNode::new(
             "a",
@@ -379,6 +401,11 @@ fn json_persistence_codec_round_trips_log_entry_envelope() {
     assert_eq!(envelope.kind(), CanvasPersistenceRecordKind::LogEntry);
     assert_eq!(envelope.sequence(), 3);
     assert_eq!(decoded, entry);
+    assert!(
+        String::from_utf8(bytes)
+            .unwrap()
+            .contains("committed_record_operation_batch")
+    );
 }
 
 #[test]
@@ -472,7 +499,7 @@ fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
         .unwrap();
     typed_store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             2,
             DocumentCommand::InsertNode(CanvasNode::new(
                 "b",
@@ -494,7 +521,7 @@ fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
 #[test]
 fn byte_store_adapter_rejects_log_key_sequence_mismatch() {
     let codec = CanvasJsonPersistenceCodec;
-    let entry = CanvasLogEntry::from_legacy_transaction(2, CanvasTransaction::default());
+    let entry = CanvasLogEntry::from_replay_transaction(2, CanvasTransaction::default());
     let mut byte_store = MemoryCanvasPersistenceByteStore::default();
     byte_store
         .append_log_entry_bytes(9, codec.encode_log_entry(&entry).unwrap())
@@ -517,13 +544,13 @@ fn loads_persistence_cursor_from_checkpoint_and_log_tail() {
         .save_checkpoint(CanvasCheckpoint::new(3, &document))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             4,
             CanvasTransaction::default(),
         ))
         .unwrap();
     store
-        .append_log_entry(CanvasLogEntry::from_legacy_transaction(
+        .append_log_entry(CanvasLogEntry::from_replay_transaction(
             5,
             CanvasTransaction::default(),
         ))
@@ -561,7 +588,7 @@ fn persistent_transaction_appends_successful_editor_transaction() {
     assert_eq!(store.log_entries()[0].transaction(), &transaction);
     assert_eq!(
         store.log_entries()[0]
-            .committed_record_operation_batch()
+            .committed_record_operations()
             .unwrap()
             .operations
             .iter()
@@ -732,6 +759,53 @@ fn persistent_redo_logs_redo_transaction_before_mutation() {
 
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.contains_node(&NodeId::from("a")));
+}
+
+#[test]
+fn persistent_undo_reuses_prepared_mutation_after_logging() {
+    let mut document = CanvasDocument::default();
+    let mut original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+    original.kind = "counted".to_string();
+    original.data.insert("version".to_string(), json!(1));
+    document.insert_node(original.clone()).unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = CanvasKindRegistry::open();
+    registry.register_node_kind(
+        "counted",
+        CountedNodeKind {
+            calls: calls.clone(),
+            max_successful_validations: 6,
+        },
+    );
+
+    let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let mut updated = original.clone();
+    updated.position = point(px(24.0), px(0.0));
+    updated.data.insert("version".to_string(), json!(2));
+
+    apply_persistent_transaction(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::single(DocumentCommand::UpdateNode(updated)),
+    )
+    .unwrap();
+
+    let changed = undo_persistent_transaction(&mut editor, &mut store, &mut cursor).unwrap();
+
+    assert!(changed);
+    assert_eq!(calls.load(Ordering::SeqCst), 6);
+    assert_eq!(cursor.sequence(), 2);
+    assert_eq!(store.log_entries().len(), 2);
+    assert_eq!(
+        editor.document().node(&NodeId::from("a")).unwrap(),
+        &original
+    );
+    assert_eq!(editor.history().undo_depth(), 0);
+    assert_eq!(editor.history().redo_depth(), 1);
 }
 
 #[test]

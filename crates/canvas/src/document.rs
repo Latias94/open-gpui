@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use std::fmt;
 use thiserror::Error;
 
-use crate::mutation::{CanvasCommittedMutation, CanvasPreparedMutation, CanvasRecordMutationStore};
+use crate::mutation::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
 use crate::resolve::CanvasGeometryResolver;
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
@@ -809,7 +809,7 @@ impl CanvasDocument {
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<CanvasCommittedMutation, DocumentError> {
-        CanvasRecordMutationStore::commit(self, transaction)
+        CanvasMutationJournal::commit(self, transaction)
     }
 
     pub fn commit_transaction_with_kind_registry(
@@ -817,7 +817,7 @@ impl CanvasDocument {
         transaction: CanvasTransaction,
         kind_registry: &CanvasKindRegistry,
     ) -> Result<CanvasCommittedMutation, DocumentError> {
-        CanvasRecordMutationStore::commit_with_kind_registry(self, transaction, kind_registry)
+        CanvasMutationJournal::commit_with_kind_registry(self, transaction, kind_registry)
     }
 
     pub(crate) fn prepare_transaction_with_kind_registry(
@@ -825,7 +825,7 @@ impl CanvasDocument {
         transaction: CanvasTransaction,
         kind_registry: &CanvasKindRegistry,
     ) -> Result<CanvasPreparedMutation, DocumentError> {
-        CanvasRecordMutationStore::prepare_with_kind_registry(self, transaction, kind_registry)
+        CanvasMutationJournal::prepare_with_kind_registry(self, transaction, kind_registry)
     }
 
     pub fn invert_transaction(

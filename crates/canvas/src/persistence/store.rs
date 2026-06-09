@@ -24,19 +24,25 @@ impl CanvasCheckpoint {
 pub struct CanvasLogEntry {
     sequence: u64,
     transaction: CanvasTransaction,
-    #[serde(default)]
-    record_operation_batch: Option<CanvasRecordOperationBatch>,
+    #[serde(default, alias = "record_operation_batch")]
+    committed_record_operation_batch: Option<CanvasRecordOperationBatch>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanvasLogEntryKind {
+    CommittedMutation,
+    LegacyReplayTransaction,
 }
 
 impl CanvasLogEntry {
-    pub fn from_legacy_transaction(
+    pub fn from_replay_transaction(
         sequence: u64,
         transaction: impl Into<CanvasTransaction>,
     ) -> Self {
         Self {
             sequence,
             transaction: transaction.into(),
-            record_operation_batch: None,
+            committed_record_operation_batch: None,
         }
     }
 
@@ -44,7 +50,7 @@ impl CanvasLogEntry {
         Self {
             sequence,
             transaction: committed.transaction().clone(),
-            record_operation_batch: Some(committed.record_operation_batch(sequence)),
+            committed_record_operation_batch: Some(committed.record_operation_batch(sequence)),
         }
     }
 
@@ -56,12 +62,20 @@ impl CanvasLogEntry {
         &self.transaction
     }
 
-    pub fn committed_record_operation_batch(&self) -> Option<&CanvasRecordOperationBatch> {
-        self.record_operation_batch.as_ref()
+    pub fn kind(&self) -> CanvasLogEntryKind {
+        if self.committed_record_operation_batch.is_some() {
+            CanvasLogEntryKind::CommittedMutation
+        } else {
+            CanvasLogEntryKind::LegacyReplayTransaction
+        }
     }
 
-    pub fn intent_record_operation_batch(&self) -> CanvasRecordOperationBatch {
-        self.transaction.record_operation_batch(self.sequence)
+    pub fn committed_record_operations(&self) -> Option<&CanvasRecordOperationBatch> {
+        self.committed_record_operation_batch.as_ref()
+    }
+
+    pub fn is_legacy_replay_entry(&self) -> bool {
+        self.kind() == CanvasLogEntryKind::LegacyReplayTransaction
     }
 }
 
@@ -242,12 +256,7 @@ where
     }
 
     let prepared = editor.prepare_document_transaction(transaction)?;
-    store
-        .append_log_entry(CanvasLogEntry::from_committed_mutation(
-            cursor.next_sequence(),
-            prepared.committed(),
-        ))
-        .map_err(CanvasPersistenceError::Store)?;
+    append_prepared_log_entry(store, cursor, prepared.committed())?;
     let diff = editor.apply_prepared_document_mutation(prepared);
     cursor.advance();
     Ok(diff)
@@ -266,12 +275,7 @@ where
     };
     let transaction = transaction.clone();
     let prepared = editor.prepare_document_transaction(transaction)?;
-    store
-        .append_log_entry(CanvasLogEntry::from_committed_mutation(
-            cursor.next_sequence(),
-            prepared.committed(),
-        ))
-        .map_err(CanvasPersistenceError::Store)?;
+    append_prepared_log_entry(store, cursor, prepared.committed())?;
     editor.apply_prepared_undo_mutation(prepared);
     cursor.advance();
     Ok(true)
@@ -290,12 +294,7 @@ where
     };
     let transaction = transaction.clone();
     let prepared = editor.prepare_document_transaction(transaction)?;
-    store
-        .append_log_entry(CanvasLogEntry::from_committed_mutation(
-            cursor.next_sequence(),
-            prepared.committed(),
-        ))
-        .map_err(CanvasPersistenceError::Store)?;
+    append_prepared_log_entry(store, cursor, prepared.committed())?;
     editor.apply_prepared_redo_mutation(prepared);
     cursor.advance();
     Ok(true)
@@ -462,6 +461,22 @@ where
     Ok(checkpoint)
 }
 
+fn append_prepared_log_entry<S>(
+    store: &mut S,
+    cursor: &CanvasPersistenceCursor,
+    committed: &CanvasCommittedMutation,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    store
+        .append_log_entry(CanvasLogEntry::from_committed_mutation(
+            cursor.next_sequence(),
+            committed,
+        ))
+        .map_err(CanvasPersistenceError::Store)
+}
+
 fn apply_persistent_gesture_commit<S>(
     editor: &mut CanvasEditor,
     store: &mut S,
@@ -472,12 +487,7 @@ where
 {
     match editor.prepare_gesture_commit()? {
         Some(prepared) => {
-            store
-                .append_log_entry(CanvasLogEntry::from_committed_mutation(
-                    cursor.next_sequence(),
-                    prepared.committed(),
-                ))
-                .map_err(CanvasPersistenceError::Store)?;
+            append_prepared_log_entry(store, cursor, prepared.committed())?;
             editor.apply_prepared_gesture_commit(prepared);
             cursor.advance();
         }

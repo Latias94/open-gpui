@@ -181,7 +181,7 @@ that history, persistence, and runtime sync consume. Reduce any remaining public
 constructors that let callers forge inconsistent record operations. Keep replay-only legacy paths
 explicitly labeled as such.
 
-**Patterns to follow:** `CanvasCommittedMutation`, `CanvasRecordMutationStore`,
+**Patterns to follow:** `CanvasCommittedMutation`, `CanvasMutationJournal`,
 `CanvasLogEntry::from_committed_mutation`, and the existing undo/redo persistence flow.
 
 **Test scenarios:**
