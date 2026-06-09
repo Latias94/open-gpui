@@ -42,14 +42,12 @@ impl DockGraph {
                     return;
                 }
 
-                let geometry = geometry::split_geometry_with_central(
-                    *axis,
-                    bounds,
+                let layout = geometry::DockSplitLayout::from_fractions(
                     children.len(),
                     fractions,
                     self.central_child_index(children, central_node),
-                    Pixels::ZERO,
                 );
+                let geometry = layout.geometry(*axis, bounds, Pixels::ZERO);
                 for (child, child_bounds) in children.iter().copied().zip(geometry.pane_bounds) {
                     self.compute_layout_with_central(child, child_bounds, out, central_node);
                 }

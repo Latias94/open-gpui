@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry,
+    DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry::DockSplitLayout,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -25,7 +25,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let shares = geometry::split_shares_with_central(
+        let layout = DockSplitLayout::from_fractions(
             children.len(),
             &fractions,
             session.central_child_index(&children),
@@ -53,7 +53,7 @@ impl DockHost {
                     index
                 ),
             );
-            let share = shares.get(index).copied().unwrap_or(1.0);
+            let share = layout.child_share(index).unwrap_or(1.0);
             split = split.child(
                 div()
                     .id(selector.clone())
@@ -67,20 +67,21 @@ impl DockHost {
             );
         }
 
-        if shares.len() >= 2 {
+        let handles = layout.handles();
+        if !handles.is_empty() {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            for (index, position) in geometry::split_handle_positions(&shares)
-                .into_iter()
-                .enumerate()
-            {
+            for handle_layout in &handles {
                 let selector = self.record_debug_selector(
-                    DockDebugRegion::SplitterHandle { split: node, index },
+                    DockDebugRegion::SplitterHandle {
+                        split: node,
+                        index: handle_layout.index,
+                    },
                     format!(
                         "{}:split:{}:handle:{}",
                         session.selector_prefix(),
                         node.as_u64(),
-                        index
+                        handle_layout.index
                     ),
                 );
                 let mut handle = div()
@@ -93,13 +94,13 @@ impl DockHost {
 
                 handle = match axis {
                     SplitAxis::Horizontal => handle
-                        .left(relative(position))
+                        .left(relative(handle_layout.center_share))
                         .top(px(0.0))
                         .ml(handle_offset)
                         .h_full()
                         .w(handle_size),
                     SplitAxis::Vertical => handle
-                        .top(relative(position))
+                        .top(relative(handle_layout.center_share))
                         .left(px(0.0))
                         .mt(handle_offset)
                         .w_full()
@@ -113,7 +114,7 @@ impl DockHost {
         split = split.child(self.render_splitter_event_layer(
             node,
             axis,
-            shares,
+            layout,
             session.splitter_handle_size(),
             cx,
         ));
@@ -125,7 +126,7 @@ impl DockHost {
         &self,
         node: DockNodeId,
         axis: SplitAxis,
-        shares: Vec<f32>,
+        layout: DockSplitLayout,
         handle_size: Pixels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -142,29 +143,21 @@ impl DockHost {
                     move |split_bounds, _, window, _| {
                         window.on_mouse_event({
                             let entity = entity.clone();
-                            let shares = shares.clone();
+                            let layout = layout.clone();
                             move |event: &MouseDownEvent, _, _, app| {
                                 if event.button != MouseButton::Left {
                                     return;
                                 }
 
-                                let handles = geometry::splitter_handle_bounds(
-                                    axis,
-                                    split_bounds,
-                                    &shares,
-                                    handle_size,
-                                );
-                                let Some(handle_index) = handles
+                                let geometry = layout.geometry(axis, split_bounds, handle_size);
+                                let Some(handle_index) = geometry
+                                    .handle_hit_bounds
                                     .iter()
                                     .position(|bounds| bounds.contains(&event.position))
                                 else {
                                     return;
                                 };
 
-                                let split_extent = match axis {
-                                    SplitAxis::Horizontal => split_bounds.size.width,
-                                    SplitAxis::Vertical => split_bounds.size.height,
-                                };
                                 let start_position = match axis {
                                     SplitAxis::Horizontal => event.position.x,
                                     SplitAxis::Vertical => event.position.y,
@@ -175,8 +168,8 @@ impl DockHost {
                                         node,
                                         handle_index,
                                         start_position,
-                                        split_extent,
-                                        shares.clone(),
+                                        geometry.extent,
+                                        geometry.shares.clone(),
                                         cx,
                                     );
                                 });

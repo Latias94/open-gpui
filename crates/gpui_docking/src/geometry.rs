@@ -19,6 +19,17 @@ pub(crate) struct DockSplitGeometry {
     pub(crate) extent: Pixels,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockSplitLayout {
+    shares: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockSplitHandleLayout {
+    pub(crate) index: usize,
+    pub(crate) center_share: f32,
+}
+
 pub(crate) fn resolve_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
@@ -56,11 +67,11 @@ pub(crate) fn resolve_drop_geometry(
     })
 }
 
-pub(crate) fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
+fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
     split_fraction::cleaned_shares(child_count, fractions)
 }
 
-pub(crate) fn split_shares_with_central(
+fn split_shares_with_central(
     child_count: usize,
     fractions: &[f32],
     central_child_index: Option<usize>,
@@ -100,59 +111,59 @@ pub(crate) fn split_shares_with_central(
     shares
 }
 
-pub(crate) fn split_handle_positions(shares: &[f32]) -> Vec<f32> {
-    let mut cursor = 0.0_f32;
-    shares
-        .iter()
-        .take(shares.len().saturating_sub(1))
-        .map(|share| {
-            cursor += *share;
-            cursor
-        })
-        .collect()
-}
+impl DockSplitLayout {
+    pub(crate) fn from_fractions(
+        child_count: usize,
+        fractions: &[f32],
+        central_child_index: Option<usize>,
+    ) -> Self {
+        Self {
+            shares: split_shares_with_central(child_count, fractions, central_child_index),
+        }
+    }
 
-pub(crate) fn split_geometry(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    child_count: usize,
-    fractions: &[f32],
-    handle_thickness: Pixels,
-) -> DockSplitGeometry {
-    split_geometry_with_central(
-        axis,
-        split_bounds,
-        child_count,
-        fractions,
-        None,
-        handle_thickness,
-    )
-}
+    pub(crate) fn child_share(&self, index: usize) -> Option<f32> {
+        self.shares.get(index).copied()
+    }
 
-pub(crate) fn split_geometry_with_central(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    child_count: usize,
-    fractions: &[f32],
-    central_child_index: Option<usize>,
-    handle_thickness: Pixels,
-) -> DockSplitGeometry {
-    let shares = split_shares_with_central(child_count, fractions, central_child_index);
-    let extent = split_extent(axis, split_bounds);
-    let handle_centers = split_handle_centers(axis, split_bounds, &shares);
-    let pane_bounds = split_pane_bounds(axis, split_bounds, &shares);
-    let handle_hit_bounds = handle_centers
-        .iter()
-        .copied()
-        .map(|center| split_handle_hit_bounds(axis, split_bounds, center, handle_thickness))
-        .collect();
+    pub(crate) fn handles(&self) -> Vec<DockSplitHandleLayout> {
+        let mut cursor = 0.0_f32;
+        self.shares
+            .iter()
+            .take(self.shares.len().saturating_sub(1))
+            .enumerate()
+            .map(|(index, share)| {
+                cursor += *share;
+                DockSplitHandleLayout {
+                    index,
+                    center_share: cursor,
+                }
+            })
+            .collect()
+    }
 
-    DockSplitGeometry {
-        pane_bounds,
-        handle_hit_bounds,
-        handle_centers,
-        shares,
-        extent,
+    pub(crate) fn geometry(
+        &self,
+        axis: SplitAxis,
+        split_bounds: Bounds<Pixels>,
+        handle_thickness: Pixels,
+    ) -> DockSplitGeometry {
+        let extent = split_extent(axis, split_bounds);
+        let handle_centers = split_handle_centers(axis, split_bounds, self.handles());
+        let pane_bounds = split_pane_bounds(axis, split_bounds, &self.shares);
+        let handle_hit_bounds = handle_centers
+            .iter()
+            .copied()
+            .map(|center| split_handle_hit_bounds(axis, split_bounds, center, handle_thickness))
+            .collect();
+
+        DockSplitGeometry {
+            pane_bounds,
+            handle_hit_bounds,
+            handle_centers,
+            shares: self.shares.clone(),
+            extent,
+        }
     }
 }
 
@@ -162,15 +173,6 @@ fn clean_fraction(value: f32) -> f32 {
     } else {
         0.0
     }
-}
-
-pub(crate) fn splitter_handle_bounds(
-    axis: SplitAxis,
-    split_bounds: Bounds<Pixels>,
-    shares: &[f32],
-    handle_thickness: Pixels,
-) -> Vec<Bounds<Pixels>> {
-    split_geometry(axis, split_bounds, shares.len(), shares, handle_thickness).handle_hit_bounds
 }
 
 pub(crate) fn resize_adjacent_split_fractions(
@@ -248,13 +250,13 @@ fn split_pane_bounds(
 fn split_handle_centers(
     axis: SplitAxis,
     split_bounds: Bounds<Pixels>,
-    shares: &[f32],
+    handles: Vec<DockSplitHandleLayout>,
 ) -> Vec<Pixels> {
     let origin = axis_origin(axis, split_bounds);
     let extent = split_extent(axis, split_bounds);
-    split_handle_positions(shares)
+    handles
         .into_iter()
-        .map(|position| origin + extent * position)
+        .map(|handle| origin + extent * handle.center_share)
         .collect()
 }
 
@@ -364,11 +366,9 @@ mod tests {
 
     #[test]
     fn splitter_handle_geometry_matches_fraction_boundaries() {
-        let geometry = split_geometry(
+        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
             SplitAxis::Horizontal,
             bounds(400.0, 100.0),
-            2,
-            &[0.25, 0.75],
             px(6.0),
         );
 
@@ -386,11 +386,9 @@ mod tests {
 
     #[test]
     fn vertical_split_geometry_matches_fraction_boundaries() {
-        let geometry = split_geometry(
+        let geometry = DockSplitLayout::from_fractions(2, &[0.25, 0.75], None).geometry(
             SplitAxis::Vertical,
             bounds(200.0, 400.0),
-            2,
-            &[0.25, 0.75],
             px(8.0),
         );
 
@@ -405,11 +403,9 @@ mod tests {
 
     #[test]
     fn split_geometry_repairs_fraction_input_once() {
-        let geometry = split_geometry(
+        let geometry = DockSplitLayout::from_fractions(3, &[f32::NAN], None).geometry(
             SplitAxis::Horizontal,
             bounds(300.0, 100.0),
-            3,
-            &[f32::NAN],
             px(6.0),
         );
 
@@ -423,12 +419,9 @@ mod tests {
 
     #[test]
     fn central_split_child_receives_remaining_space() {
-        let geometry = split_geometry_with_central(
+        let geometry = DockSplitLayout::from_fractions(3, &[0.2, 0.0, 0.3], Some(1)).geometry(
             SplitAxis::Horizontal,
             bounds(1000.0, 100.0),
-            3,
-            &[0.2, 0.0, 0.3],
-            Some(1),
             px(6.0),
         );
 
@@ -442,12 +435,9 @@ mod tests {
 
     #[test]
     fn central_split_child_yields_space_when_neighbors_over_allocate() {
-        let geometry = split_geometry_with_central(
+        let geometry = DockSplitLayout::from_fractions(3, &[0.8, 0.0, 0.7], Some(1)).geometry(
             SplitAxis::Horizontal,
             bounds(1000.0, 100.0),
-            3,
-            &[0.8, 0.0, 0.7],
-            Some(1),
             px(6.0),
         );
 
