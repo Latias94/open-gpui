@@ -98,8 +98,19 @@ impl CanvasPaintModel {
         &self.interaction
     }
 
-    pub fn interaction_mut(&mut self) -> &mut CanvasPaintInteraction {
-        &mut self.interaction
+    pub fn with_interaction(mut self, interaction: CanvasPaintInteraction) -> Self {
+        self.interaction = interaction;
+        self
+    }
+
+    pub fn with_selection(mut self, selection: CanvasSelection) -> Self {
+        self.interaction = self.interaction.with_selection(selection);
+        self
+    }
+
+    pub fn with_tool_state(mut self, state: ToolState) -> Self {
+        self.interaction = self.interaction.with_tool_state(state);
+        self
     }
 }
 
@@ -110,18 +121,42 @@ impl From<&CanvasEditor> for CanvasPaintModel {
             runtime: editor.runtime_snapshot(),
             kind_registry: editor.kind_registry_snapshot(),
             viewport: editor.viewport(),
-            interaction: CanvasPaintInteraction {
-                selection: editor.selection().clone(),
-                state: editor.state().clone(),
-            },
+            interaction: CanvasPaintInteraction::new(
+                editor.selection().clone(),
+                editor.state().clone(),
+            ),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintInteraction {
-    pub selection: CanvasSelection,
-    pub state: ToolState,
+    selection: CanvasSelection,
+    state: ToolState,
+}
+
+impl CanvasPaintInteraction {
+    pub fn new(selection: CanvasSelection, state: ToolState) -> Self {
+        Self { selection, state }
+    }
+
+    pub fn selection(&self) -> &CanvasSelection {
+        &self.selection
+    }
+
+    pub fn tool_state(&self) -> &ToolState {
+        &self.state
+    }
+
+    pub fn with_selection(mut self, selection: CanvasSelection) -> Self {
+        self.selection = selection;
+        self
+    }
+
+    pub fn with_tool_state(mut self, state: ToolState) -> Self {
+        self.state = state;
+        self
+    }
 }
 
 impl Default for CanvasPaintInteraction {
@@ -763,7 +798,7 @@ pub fn collect_visible_records(
                 hidden: record.hidden,
                 locked: record.locked,
                 selected: options.include_interaction_feedback
-                    && target_is_selected(&record.target, &model.interaction.selection),
+                    && target_is_selected(&record.target, model.interaction.selection()),
             }
         })
         .collect();
@@ -1001,7 +1036,7 @@ pub fn paint_canvas_frame(
 }
 
 fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
-    match &model.interaction.state {
+    match model.interaction.tool_state() {
         ToolState::Selecting {
             origin, current, ..
         } => CanvasPaintInteractionFrame {
@@ -1054,7 +1089,7 @@ fn paint_snap_guides(
 fn transform_handles_for_model(model: &CanvasPaintModel) -> Vec<CanvasPaintTransformHandle> {
     canvas_transform_handles(
         model.document.as_ref(),
-        &model.interaction.selection,
+        model.interaction.selection(),
         model.viewport,
         Some(model.kind_registry.as_ref()),
     )
@@ -2270,15 +2305,14 @@ mod tests {
                 size(px(40.0), px(20.0)),
             ))
             .unwrap();
-        let mut model = CanvasPaintModel::new(
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(crate::NodeId::from("selected"));
+        let model = CanvasPaintModel::new(
             document,
             CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
-        );
-        model
-            .interaction
-            .selection
-            .insert_node(crate::NodeId::from("selected"));
-        model.interaction.state = ToolState::Translating {
+        )
+        .with_selection(selection)
+        .with_tool_state(ToolState::Translating {
             origin: point(px(10.0), px(10.0)),
             last: point(px(20.0), px(20.0)),
             constraint_axis: None,
@@ -2289,7 +2323,7 @@ mod tests {
                 document_start: point(px(40.0), px(10.0)),
                 document_end: point(px(40.0), px(90.0)),
             }],
-        };
+        });
 
         let frame = collect_visible_records(
             &model,
@@ -2346,16 +2380,16 @@ mod tests {
 
     #[test]
     fn selecting_state_adds_selection_bounds_feedback() {
-        let mut model = CanvasPaintModel::new(
+        let model = CanvasPaintModel::new(
             CanvasDocument::default(),
             CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
-        );
-        model.interaction.state = ToolState::Selecting {
+        )
+        .with_tool_state(ToolState::Selecting {
             origin: point(px(40.0), px(80.0)),
             current: point(px(20.0), px(50.0)),
             selection_mode: CanvasSelectionMode::Replace,
             base_selection: CanvasSelection::default(),
-        };
+        });
 
         let frame = collect_visible_records(
             &model,
@@ -2426,15 +2460,15 @@ mod tests {
         let mut document = CanvasDocument::default();
         document.insert_node(source).unwrap();
         document.insert_node(target).unwrap();
-        let mut model = CanvasPaintModel::new_with_kind_registry(
+        let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::default(),
             geometry_registry(),
-        );
-        model.interaction.state = ToolState::Connecting {
+        )
+        .with_tool_state(ToolState::Connecting {
             source: CanvasEndpoint::new("source", Some("out")),
             current: point(px(40.0), px(5.0)),
-        };
+        });
 
         let frame = collect_visible_records(
             &model,
