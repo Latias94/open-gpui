@@ -79,10 +79,11 @@ complete through the same viewport tear-off transaction on platforms that can re
 state. macOS reports `NSEvent::pressedMouseButtons`, Windows reports `GetAsyncKeyState`, and
 unsupported platforms keep returning `None` so docking falls back to normal GPUI window-event
 delivery instead of pretending global input is available.
-`DockAction` remains the public programmatic interface for explicit non-move commands such as
-selection, panel close/reopen, floating, and split resize. `DockOp` is crate-internal graph
-mutation machinery, so render code and applications do not need to understand source/target node
-ids, zones, and insertion indexes to commit ordinary drag/drop.
+Named `DockWorkspace` and `DockController` command methods are the preferred public programmatic
+interface for explicit non-move commands such as selection, panel close/reopen, floating, and split
+resize. `DockAction` remains available when applications need command objects. `DockOp` is
+crate-internal graph mutation machinery, so render code and applications do not need to understand
+source/target node ids, zones, and insertion indexes to commit ordinary drag/drop.
 
 ## Architecture
 

@@ -4,7 +4,7 @@ use open_gpui::{
     size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockItemId, DockLayout, DockPanelDescriptor, DockSpaceId,
+    DockController, DockItemId, DockLayout, DockPanelDescriptor, DockSpaceId,
     DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportRuntimeHandle, DockViewportWindowBounds, EditorDockLayoutSpec,
 };
@@ -328,12 +328,7 @@ fn restore_secondary_panels(controller: &mut DockController) -> String {
     } else {
         results.push(open_item_result(
             "preview",
-            controller.apply_action(&DockAction::OpenItem {
-                space: secondary_space.clone(),
-                target_tabs: None,
-                item: preview.clone(),
-                insert_index: None,
-            }),
+            controller.open_item(secondary_space.clone(), None, preview.clone(), None),
         ));
     }
 
@@ -358,12 +353,7 @@ fn restore_secondary_panels(controller: &mut DockController) -> String {
     } else {
         results.push(open_item_result(
             "diff",
-            controller.apply_action(&DockAction::OpenItem {
-                space: secondary_space,
-                target_tabs: secondary_tabs,
-                item: diff,
-                insert_index: None,
-            }),
+            controller.open_item(secondary_space, secondary_tabs, diff, None),
         ));
     }
 
@@ -396,12 +386,7 @@ fn restore_outline_panel(controller: &mut DockController) -> String {
 
     open_item_result(
         "outline",
-        controller.apply_action(&DockAction::OpenItem {
-            space: main_space,
-            target_tabs,
-            item: outline,
-            insert_index: Some(1),
-        }),
+        controller.open_item(main_space, target_tabs, outline, Some(1)),
     )
 }
 
@@ -520,18 +505,10 @@ fn restored_demo_layout() -> DockLayout {
     let main_space = DockSpaceId::from(SPACE);
     let preview_item: open_gpui_docking::DockItemId = "preview".into();
     controller
-        .apply_action(&DockAction::CloseItem {
-            space: main_space.clone(),
-            item: preview_item.clone(),
-        })
+        .close_item(main_space.clone(), preview_item.clone())
         .expect("preview panel should close before reopening into secondary space");
     controller
-        .apply_action(&DockAction::OpenItem {
-            space: SECONDARY_SPACE.into(),
-            target_tabs: None,
-            item: preview_item.clone(),
-            insert_index: None,
-        })
+        .open_item(SECONDARY_SPACE, None, preview_item.clone(), None)
         .expect("preview panel should reopen into the secondary demo dock space");
     let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
     let diff_item: open_gpui_docking::DockItemId = "diff".into();
@@ -540,20 +517,15 @@ fn restored_demo_layout() -> DockLayout {
         .find_item_in_space(&secondary_space, &preview_item)
         .expect("preview panel should create secondary tabs");
     controller
-        .apply_action(&DockAction::OpenItem {
-            space: secondary_space,
-            target_tabs: Some(secondary_tabs),
-            item: diff_item,
-            insert_index: Some(1),
-        })
+        .open_item(secondary_space, Some(secondary_tabs), diff_item, Some(1))
         .expect("diff panel should join the secondary demo tab stack");
     controller
-        .apply_action(&DockAction::FloatItemInWindow {
-            source_space: SPACE.into(),
-            item: "problems".into(),
-            target_space: SPACE.into(),
-            bounds: Bounds::new(point(px(620.0), px(72.0)), size(px(300.0), px(220.0))),
-        })
+        .float_item_in_window(
+            SPACE,
+            "problems",
+            SPACE,
+            Bounds::new(point(px(620.0), px(72.0)), size(px(300.0), px(220.0))),
+        )
         .expect("problems panel should float inside the demo dock space");
 
     let outline_item: open_gpui_docking::DockItemId = "outline".into();
@@ -562,18 +534,10 @@ fn restored_demo_layout() -> DockLayout {
         .find_item_in_space(&main_space, &outline_item)
         .expect("outline panel should be in the restored demo layout");
     controller
-        .apply_action(&DockAction::CloseItem {
-            space: main_space.clone(),
-            item: outline_item.clone(),
-        })
+        .close_item(main_space.clone(), outline_item.clone())
         .expect("outline panel should close while its registration remains available");
     controller
-        .apply_action(&DockAction::OpenItem {
-            space: main_space,
-            target_tabs: Some(outline_tabs),
-            item: outline_item,
-            insert_index: Some(1),
-        })
+        .open_item(main_space, Some(outline_tabs), outline_item, Some(1))
         .expect("outline panel should reopen into its original tab stack");
 
     controller.graph().export_layout()

@@ -27,8 +27,9 @@
 //! factories, and mount a controller-backed [`DockHost`]. Rendered tab movement, splitter resize,
 //! floating drag, and viewport tear-off flow through the crate's interaction, transaction, geometry,
 //! and viewport-runtime modules. Advanced callers can still use [`DockGraph`],
-//! [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly for explicit programmatic
-//! layout operations.
+//! [`DockLayoutBuilder`], [`DockWorkspace`], and explicit [`DockAction`] command objects for
+//! programmatic layout operations, but applications should prefer the named
+//! [`DockController`] and [`DockWorkspace`] command methods for common panel and floating flows.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockController`] as the graph and panel owner, wrap
@@ -41,7 +42,8 @@
 //! cross-window drops need active, hovered, or front-to-back window arbitration; pointer-event
 //! paths should prefer [`DockViewportTargetContext::from_window`] so the event window participates
 //! as the hovered-window signal.
-//! Panel close/reopen flows should use [`DockAction::CloseItem`] and [`DockAction::OpenItem`]:
+//! Panel close/reopen flows should use [`DockController::close_item`],
+//! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
 //! inserts that registered item back into a target tab stack or empty dock space. Ordinary tab
 //! drag/drop uses resolved drop transactions internally rather than asking render code or app code

@@ -6,9 +6,9 @@ The docking crate now matches ADR 0002's layering for the current product surfac
 
 - `DockGraph` and `DockLayout` remain pure logical data; `DockOp` is crate-internal graph mutation
   machinery rather than public application API.
-- `DockWorkspace` and `DockController` own durable commits through public `DockAction` for explicit
-  non-move programmatic commands, while rendered tab drag/drop and viewport tear-off commits through
-  crate-internal move transactions.
+- `DockWorkspace` and `DockController` own durable commits through named public command methods;
+  `DockAction` remains an explicit command-object surface, while rendered tab drag/drop and
+  viewport tear-off commit through crate-internal move transactions.
 - `DockHost` renders one logical `DockSpaceId` from a shared controller; render snapshots and
   transient interaction sessions live in focused helper modules.
 - `drop_target`, `drop_runtime`, `workspace_transaction`, `interaction`, and `geometry` now form
@@ -51,8 +51,9 @@ Interaction foundation:
   no longer constructs graph-shaped `MoveTab` commands for ordinary drag/drop.
 - `crates/gpui_docking/src/workspace_move_transaction.rs`,
   `workspace_panel_transaction.rs`, `workspace_floating_transaction.rs`, and
-  `workspace_resize_transaction.rs` keep graph op projection behind workspace transactions while
-  public `DockAction` remains an explicit application command surface.
+  `workspace_resize_transaction.rs` keep graph op projection behind workspace transactions.
+  Applications can use named `DockWorkspace`/`DockController` command methods for common flows,
+  while public `DockAction` remains available for explicit command-object pipelines.
 - `crates/gpui_docking/src/geometry.rs` is the split and drop geometry authority for render
   bounds, hit testing, resize fractions, and central-region remaining space allocation.
 - `DockSplitLayout` is the shared split layout plan consumed by graph layout, rendered pane shares,

@@ -2,11 +2,13 @@ use crate::{DockGraphMutationError, DockItemId, DockNodeId, DockPolicyError, Doc
 use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
-/// Programmatic docking command applied by [`DockWorkspace`](crate::DockWorkspace).
+/// Programmatic docking command object applied by [`DockWorkspace`](crate::DockWorkspace).
 ///
 /// Rendered drag/drop interactions resolve a full-layout target first and commit through the
-/// workspace transaction path. Use these actions for explicit application commands such as
-/// selection, panel close/reopen, floating, and split resize.
+/// workspace transaction path. Prefer the named [`DockController`](crate::DockController) and
+/// [`DockWorkspace`](crate::DockWorkspace) command methods for ordinary application flows; use
+/// these command objects when an application needs to store, queue, or dispatch explicit docking
+/// commands.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockAction {
     /// Selects a tab within one tabs node.
