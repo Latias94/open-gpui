@@ -1,6 +1,6 @@
 use crate::{
-    DockController, DockGraph, DockNode, DockNodeId, SplitAxis, debug::DockDebugRegion,
-    host_test_support::*,
+    DockController, DockGraph, DockNode, DockNodeId, DockPanel, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -693,4 +693,124 @@ fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
         "panel A should no longer be mounted after mutation"
     );
+}
+
+#[open_gpui::test]
+fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let close_b = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::TabClose {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("closable tab should render a close control");
+    let close_b_bounds = debug_bounds(&mut visual, &close_b);
+    visual.simulate_click(close_b_bounds.center(), Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::Tab {
+                tabs: root,
+                item: item("b"),
+            },
+        )
+        .is_none(),
+        "closed tab should be removed from rendered graph state"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "closing an inactive tab should keep the previous active panel mounted"
+    );
+    let (items, active, metadata_still_registered) = cx.update_entity(&host, |host, cx| {
+        host.with_workspace(cx, |workspace| {
+            let DockNode::Tabs { items, active } = workspace
+                .graph()
+                .node(root)
+                .expect("root tabs should remain")
+            else {
+                panic!("root should stay as tabs");
+            };
+            (
+                items.clone(),
+                *active,
+                workspace.panels().contains(&item("b")),
+            )
+        })
+    });
+    assert_eq!(items, vec![item("a")]);
+    assert_eq!(active, 0);
+    assert!(
+        metadata_still_registered,
+        "close should remove graph membership without discarding panel metadata"
+    );
+}
+
+#[open_gpui::test]
+fn non_closable_tab_omits_close_control_and_rejects_close_action(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["locked", "open"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel(
+        item("locked"),
+        DockPanel::new("Locked", test_view(cx, "A")).closable(false),
+    );
+    workspace.register_panel_view(item("open"), "Open", test_view(cx, "B"));
+    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::TabClose {
+                tabs: root,
+                item: item("locked"),
+            },
+        )
+        .is_none(),
+        "non-closable tab should not expose a rendered close affordance"
+    );
+    assert!(
+        selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::TabClose {
+                tabs: root,
+                item: item("open"),
+            },
+        )
+        .is_some(),
+        "closable sibling should still expose a close affordance"
+    );
+
+    let changed = cx.update_entity(&host, |host, cx| {
+        host.close_item_from_render(item("locked"), cx)
+    });
+    assert!(!changed);
+
+    let items = cx.update_entity(&host, |host, cx| {
+        host.with_workspace(cx, |workspace| {
+            let DockNode::Tabs { items, .. } = workspace
+                .graph()
+                .node(root)
+                .expect("root tabs should remain")
+            else {
+                panic!("root should stay as tabs");
+            };
+            items.clone()
+        })
+    });
+    assert_eq!(items, vec![item("locked"), item("open")]);
 }

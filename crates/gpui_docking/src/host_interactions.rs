@@ -71,6 +71,14 @@ impl DockHost {
         self.commit_select_tab_interaction(tabs, &item, cx, false)
     }
 
+    pub(crate) fn close_item_interaction(
+        &mut self,
+        item: DockItemId,
+        cx: &mut Context<Self>,
+    ) -> DockHostInteractionOutcome {
+        self.commit_close_item_interaction(&item, cx, false)
+    }
+
     pub(crate) fn begin_splitter_drag_interaction(
         &mut self,
         split: DockNodeId,
@@ -351,6 +359,18 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
             self.commit_select_tab_from_host(tabs, item, cx),
+            notify_on_unchanged,
+        )
+    }
+
+    fn commit_close_item_interaction(
+        &mut self,
+        item: &DockItemId,
+        cx: &mut Context<Self>,
+        notify_on_unchanged: bool,
+    ) -> DockHostInteractionOutcome {
+        DockHostInteractionOutcome::from_commit_result(
+            self.commit_close_item_from_host(item, cx),
             notify_on_unchanged,
         )
     }

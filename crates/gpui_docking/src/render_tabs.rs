@@ -6,7 +6,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, black, div, rgb, white,
+    ParentElement, StatefulInteractiveElement, Styled, black, div, px, rgb, white,
 };
 
 impl DockHost {
@@ -96,11 +96,14 @@ impl DockHost {
             );
             let target_index = index;
             let tab_item = item.clone();
-            let tab = div()
+            let mut tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
                 .flex()
+                .flex_row()
                 .flex_none()
+                .items_center()
+                .gap_1()
                 .px_2()
                 .py_1()
                 .border_1()
@@ -139,6 +142,40 @@ impl DockHost {
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 })
                 .child(title);
+            if session.panel_is_closable(&item) {
+                let close_selector = self.record_debug_selector(
+                    DockDebugRegion::TabClose {
+                        tabs: node,
+                        item: item.clone(),
+                    },
+                    format!(
+                        "{}:tabs:{}:tab:{}:close",
+                        session.selector_prefix(),
+                        node.as_u64(),
+                        item
+                    ),
+                );
+                let close_item = item.clone();
+                let close = div()
+                    .id(close_selector.clone())
+                    .debug_selector(move || close_selector)
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .border_1()
+                    .border_color(rgb(0xcbd5e1))
+                    .bg(rgb(0xf8fafc))
+                    .text_color(rgb(0x475569))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.close_item_from_render(close_item.clone(), cx);
+                    }))
+                    .child("x");
+                tab = tab.child(close);
+            }
             tab_bar = tab_bar.child(tab);
         }
 

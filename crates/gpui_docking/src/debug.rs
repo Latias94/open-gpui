@@ -42,6 +42,13 @@ pub(crate) enum DockDebugRegion {
         /// Dock item id.
         item: DockItemId,
     },
+    /// Close control for one tab label.
+    TabClose {
+        /// Runtime tabs node id containing the item.
+        tabs: DockNodeId,
+        /// Dock item id.
+        item: DockItemId,
+    },
     /// The active panel body for one dock item.
     Panel {
         /// Dock item id.

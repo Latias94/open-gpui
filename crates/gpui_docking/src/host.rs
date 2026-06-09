@@ -112,6 +112,17 @@ impl DockHost {
         self.mutate_controller_from_host(cx, |controller| controller.commit_select_tab(tabs, item))
     }
 
+    pub(crate) fn commit_close_item_from_host(
+        &mut self,
+        item: &DockItemId,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let space = self.space().clone();
+        self.mutate_controller_from_host(cx, |controller| {
+            controller.commit_close_item(&space, item)
+        })
+    }
+
     pub(crate) fn commit_resize_split_from_host(
         &mut self,
         split: DockNodeId,

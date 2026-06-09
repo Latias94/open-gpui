@@ -149,6 +149,14 @@ impl DockController {
         self.workspace.commit_select_tab(tabs, item)
     }
 
+    pub(crate) fn commit_close_item(
+        &mut self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_close_item(space, item)
+    }
+
     #[cfg(test)]
     pub(crate) fn commit_tab_move(
         &mut self,

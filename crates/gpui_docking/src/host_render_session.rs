@@ -23,6 +23,7 @@ pub(crate) struct DockHostRenderSession {
     floating_containers: Vec<DockFloatingContainer>,
     panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
+    panel_closable: HashMap<DockItemId, bool>,
     central_node: Option<DockNodeId>,
     central_keep_alive_when_empty: bool,
     central_passthrough_when_empty: bool,
@@ -41,6 +42,7 @@ impl DockHostRenderSession {
             nodes: HashMap::new(),
             panels: HashMap::new(),
             panel_titles: HashMap::new(),
+            panel_closable: HashMap::new(),
             central_node: central.and_then(|central| central.node),
             central_keep_alive_when_empty: central
                 .is_some_and(|central| central.keep_alive_when_empty),
@@ -91,7 +93,7 @@ impl DockHostRenderSession {
         active: usize,
     ) {
         for item in items {
-            self.collect_panel_title(workspace, item);
+            self.collect_panel_metadata(workspace, item);
         }
 
         if let Some(active_item) = active_tab_item(items, active) {
@@ -99,18 +101,18 @@ impl DockHostRenderSession {
         }
     }
 
-    fn collect_panel_title(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
+    fn collect_panel_metadata(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
         if self.panel_titles.contains_key(item) {
             return;
         }
 
-        let title = workspace
-            .panels()
-            .catalog()
-            .descriptor(item)
+        let descriptor = workspace.panels().catalog().descriptor(item);
+        let title = descriptor
             .map(|descriptor| descriptor.title().to_string())
             .unwrap_or_else(|| item.to_string());
+        let closable = descriptor.is_some_and(|descriptor| descriptor.is_closable());
         self.panel_titles.insert(item.clone(), title);
+        self.panel_closable.insert(item.clone(), closable);
     }
 
     fn collect_panel_registration(&mut self, workspace: &DockWorkspace, item: &DockItemId) {
@@ -207,6 +209,10 @@ impl DockHostRenderSession {
             .get(item)
             .cloned()
             .unwrap_or_else(|| item.to_string())
+    }
+
+    pub(crate) fn panel_is_closable(&self, item: &DockItemId) -> bool {
+        self.panel_closable.get(item).copied().unwrap_or(false)
     }
 
     pub(crate) fn panel_for_render(

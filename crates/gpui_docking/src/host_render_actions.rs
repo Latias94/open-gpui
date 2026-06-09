@@ -11,6 +11,14 @@ impl DockHost {
         self.select_tab_interaction(tabs, item, cx).finish(cx)
     }
 
+    pub(crate) fn close_item_from_render(
+        &mut self,
+        item: DockItemId,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.close_item_interaction(item, cx).finish(cx)
+    }
+
     pub(crate) fn drop_payload_from_render(
         &mut self,
         payload: &DockDragPayload,
