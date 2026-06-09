@@ -3,6 +3,7 @@ use crate::{
     panel_view::{DockPanelViewError, DockPanelViewHandle, DockPanelViewStore},
 };
 use open_gpui::{AnyView, App};
+use thiserror::Error;
 
 /// Render-time registration snapshot for one dock panel.
 ///
@@ -128,6 +129,17 @@ impl DockPanelResolution<'_> {
     }
 }
 
+/// Error returned when attaching live view lifecycle state to restored panel metadata fails.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DockPanelAttachError {
+    /// The dock item has no registered descriptor metadata.
+    #[error("dock item {item} has no registered panel descriptor")]
+    MissingDescriptor {
+        /// The item that was requested.
+        item: DockItemId,
+    },
+}
+
 /// Registry mapping pure graph item IDs to panel metadata and optional renderable roots.
 #[derive(Debug, Default)]
 pub struct DockPanelRegistry {
@@ -188,6 +200,27 @@ impl DockPanelRegistry {
         self.register(item, DockPanel::lazy(title, factory))
     }
 
+    /// Attaches view content to existing panel metadata without rewriting the descriptor.
+    ///
+    /// This is the lazy-restore seam: callers can restore titles and close policy first, then bind
+    /// GPUI view lifecycle state when an application module becomes available.
+    pub fn attach_view(
+        &mut self,
+        item: impl Into<DockItemId>,
+        view: impl Into<AnyView>,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.attach_view_handle(item.into(), DockPanelViewHandle::from_view(view))
+    }
+
+    /// Attaches a lazy view factory to existing panel metadata without rewriting the descriptor.
+    pub fn attach_factory(
+        &mut self,
+        item: impl Into<DockItemId>,
+        factory: impl Fn(&mut App) -> AnyView + 'static,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.attach_view_handle(item.into(), DockPanelViewHandle::lazy(factory))
+    }
+
     /// Returns a registered panel by dock item id.
     pub fn get(&self, item: &DockItemId) -> Option<DockPanelRegistration> {
         self.entry_snapshot(item).map(DockPanelRegistration::new)
@@ -238,6 +271,22 @@ impl DockPanelRegistry {
             self.catalog.descriptor(item)?,
             self.views.view(item)?,
         ))
+    }
+
+    fn attach_view_handle(
+        &mut self,
+        item: DockItemId,
+        view: DockPanelViewHandle,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        let Some(descriptor) = self.catalog.descriptor(&item).cloned() else {
+            return Err(DockPanelAttachError::MissingDescriptor { item });
+        };
+
+        let previous = self
+            .views
+            .register(item, view)
+            .map(|view| DockPanelRegistration::new(DockPanelEntrySnapshot::new(&descriptor, view)));
+        Ok(previous)
     }
 }
 
@@ -306,6 +355,63 @@ mod tests {
             registry.resolve(&item).is_missing(),
             "descriptor-only registration should not pretend live content is available"
         );
+    }
+
+    #[test]
+    fn registry_attaches_view_lifecycle_without_rewriting_metadata() {
+        let mut registry = DockPanelRegistry::new();
+        let item = item("restored");
+        registry.register_descriptor(
+            item.clone(),
+            DockPanelDescriptor::new("Restored").closable(false),
+        );
+
+        assert!(matches!(
+            registry.attach_factory(item.clone(), |_| unreachable!()),
+            Ok(None)
+        ));
+
+        let registration = registry
+            .get(&item)
+            .expect("attached view lifecycle should complete registration");
+        assert_eq!(registration.title(), "Restored");
+        assert!(!registration.is_closable());
+        assert!(!registration.has_view());
+        assert!(matches!(
+            registration.view(),
+            Err(DockPanelViewError::LazyViewNotInstantiated)
+        ));
+    }
+
+    #[test]
+    fn registry_attach_requires_existing_descriptor_metadata() {
+        let mut registry = DockPanelRegistry::new();
+
+        assert!(matches!(
+            registry.attach_factory(item("missing"), |_| unreachable!()),
+            Err(DockPanelAttachError::MissingDescriptor { item }) if item == self::item("missing")
+        ));
+    }
+
+    #[test]
+    fn registry_attach_replacement_returns_previous_registration_snapshot() {
+        let mut registry = DockPanelRegistry::new();
+        let item = item("editor");
+        registry.register_descriptor(item.clone(), DockPanelDescriptor::new("Editor"));
+        registry
+            .attach_factory(item.clone(), |_| unreachable!())
+            .expect("first attach should succeed");
+
+        let previous = registry
+            .attach_factory(item.clone(), |_| unreachable!())
+            .expect("replacement attach should succeed")
+            .expect("replacement should return previous registration");
+
+        assert_eq!(previous.title(), "Editor");
+        assert!(matches!(
+            previous.view(),
+            Err(DockPanelViewError::LazyViewNotInstantiated)
+        ));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
-    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelDescriptor,
-    DockPanelRegistry, DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
-    host::DockHostOptions,
+    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelAttachError,
+    DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
+    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -97,6 +97,24 @@ impl DockController {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.workspace.register_panel_factory(item, title, factory)
+    }
+
+    /// Attaches GPUI view content to existing panel metadata.
+    pub fn attach_panel_view(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        view: impl Into<AnyView>,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.workspace.attach_panel_view(item, view)
+    }
+
+    /// Attaches a GPUI view factory to existing panel metadata.
+    pub fn attach_panel_factory(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.workspace.attach_panel_factory(item, factory)
     }
 
     /// Returns the workspace rendering options.

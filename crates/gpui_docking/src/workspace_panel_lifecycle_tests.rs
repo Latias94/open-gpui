@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelDescriptor,
-    DockWorkspace, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockPanel, DockPanelAttachError,
+    DockPanelDescriptor, DockWorkspace, host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
@@ -191,6 +191,33 @@ fn workspace_open_item_action_reopens_registered_lazy_panel_without_instantiatin
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(*active, 1);
+}
+
+#[test]
+fn workspace_attach_panel_factory_preserves_restored_metadata() {
+    let (graph, _root) = tabs_graph(&["restored"], 0);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_descriptor(
+        item("restored"),
+        DockPanelDescriptor::new("Restored").closable(false),
+    );
+
+    let previous = workspace
+        .attach_panel_factory(item("restored"), |_| unreachable!())
+        .expect("descriptor-backed attach should succeed");
+
+    assert!(previous.is_none());
+    let registration = workspace
+        .panels()
+        .get(&item("restored"))
+        .expect("attached view lifecycle should complete registration");
+    assert_eq!(registration.title(), "Restored");
+    assert!(!registration.is_closable());
+
+    assert!(matches!(
+        workspace.attach_panel_factory(item("missing"), |_| unreachable!()),
+        Err(DockPanelAttachError::MissingDescriptor { item }) if item == self::item("missing")
+    ));
 }
 
 #[open_gpui::test]

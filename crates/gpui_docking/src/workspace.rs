@@ -1,6 +1,7 @@
 use crate::{
-    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelDescriptor,
-    DockPanelRegistry, DockPolicy, DockSpaceId, host::DockHostOptions,
+    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelAttachError,
+    DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
+    host::DockHostOptions,
 };
 use open_gpui::AnyView;
 
@@ -100,6 +101,24 @@ impl DockWorkspace {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.panels.register_factory(item, title, factory)
+    }
+
+    /// Attaches GPUI view content to existing panel metadata.
+    pub fn attach_panel_view(
+        &mut self,
+        item: impl Into<DockItemId>,
+        view: impl Into<AnyView>,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.panels.attach_view(item, view)
+    }
+
+    /// Attaches a lazy GPUI view factory to existing panel metadata.
+    pub fn attach_panel_factory(
+        &mut self,
+        item: impl Into<DockItemId>,
+        factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
+        self.panels.attach_factory(item, factory)
     }
 
     /// Returns the workspace rendering options.
