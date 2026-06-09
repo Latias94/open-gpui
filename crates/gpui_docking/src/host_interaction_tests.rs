@@ -1,7 +1,7 @@
 use crate::{
-    DockController, DockGraph, DockNode, DockNodeId, DockPanel, DockViewportRuntimeHandle,
-    DockViewportTargetContext, DockWorkspace, SplitAxis, debug::DockDebugRegion,
-    host_test_support::*,
+    DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
+    DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -998,6 +998,98 @@ fn policy_rejected_edge_hover_renders_rejected_drop_preview_without_commit(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
         "rejected release should leave the target panel in place"
     );
+}
+
+#[open_gpui::test]
+fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let central_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, central_tabs],
+        fractions: vec![0.35, 0.65],
+    });
+    graph.set_root(space(), root);
+    graph.set_central_region(space(), DockCentralRegion::with_node(central_tabs));
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace
+        .policy_mut()
+        .set_allow_central_region_dock_over(false);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_panel = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
+        .expect("central target panel selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut visual, &target_panel).center();
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
+        .expect("central policy rejection should render a drop preview");
+    assert!(debug_bounds(&mut visual, &preview).size.width > px(0.0));
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "rejected central release should leave the source panel in place"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
+        "rejected central release should leave the central panel in place"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs {
+            items: source_items,
+            active: source_active,
+        } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should remain")
+        else {
+            panic!("source node should remain tabs");
+        };
+        assert_eq!(source_items, &vec![item("a")]);
+        assert_eq!(*source_active, 0);
+
+        let DockNode::Tabs {
+            items: central_items,
+            active: central_active,
+        } = controller
+            .graph()
+            .node(central_tabs)
+            .expect("central tabs should remain")
+        else {
+            panic!("central node should remain tabs");
+        };
+        assert_eq!(central_items, &vec![item("b")]);
+        assert_eq!(*central_active, 0);
+    });
 }
 
 #[open_gpui::test]
