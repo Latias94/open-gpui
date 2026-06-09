@@ -70,7 +70,7 @@ impl DockHostDropScene {
         self
     }
 
-    fn resolve(&self, policy: &DockPolicy) -> Option<DockDropResolution> {
+    pub(crate) fn resolve_drop(&self, policy: &DockPolicy) -> Option<DockDropResolution> {
         drop_target::resolve_layout_drop(DockDropResolverInput {
             position: self.position,
             policy,
@@ -82,6 +82,11 @@ impl DockHostDropScene {
             known_viewport: self.known_viewport.clone(),
             tear_off_candidate: self.tear_off_candidate.clone(),
         })
+    }
+
+    pub(crate) fn resolved_target(&self, policy: &DockPolicy) -> Option<DockResolvedDropTarget> {
+        self.resolve_drop(policy)
+            .and_then(DockDropResolution::target)
     }
 }
 
@@ -105,7 +110,7 @@ impl DockDropRuntime {
     }
 
     fn resolve_scene(&mut self, scene: &DockHostDropScene, policy: &DockPolicy) -> bool {
-        let mut target = match scene.resolve(policy).and_then(DockDropResolution::target) {
+        let mut target = match scene.resolved_target(policy) {
             Some(target) => Some(target),
             None if scene.clear_on_miss => None,
             None => return false,

@@ -28,17 +28,23 @@ impl Render for DockHost {
             .overflow_hidden()
             .text_color(black())
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                    this.begin_host_drop_scene_from_render(event.event.position, cx);
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, window, cx| {
+                    this.begin_host_drop_scene_from_render(
+                        event.bounds,
+                        event.event.position,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_drop(
-                cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
+                cx.listener(move |this, payload: &DockTabDragPayload, window, cx| {
                     this.drop_tab_from_render(
                         payload.source_space.clone(),
                         payload.source_tabs,
                         payload.item.clone(),
                         target_space.clone(),
+                        window,
                         cx,
                     );
                 }),

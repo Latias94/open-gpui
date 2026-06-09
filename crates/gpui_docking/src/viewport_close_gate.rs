@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct DockViewportCloseGate {
     close_policy: Rc<Cell<DockViewportClosePolicy>>,
     known_windows: Rc<RefCell<HashSet<WindowId>>>,

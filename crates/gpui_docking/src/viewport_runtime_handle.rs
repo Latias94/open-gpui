@@ -1,13 +1,15 @@
 use crate::{
-    DockController, DockItemId, DockNodeId, DockSpaceId, DockViewportCloseOutcome,
-    DockViewportClosePolicy, DockViewportDropRoute, DockViewportOpenOutcome,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
-    DockViewportRuntime, DockViewportShouldCloseOutcome, DockViewportTargetContext,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockActionApplyError, DockActionOutcome, DockController, DockHost, DockItemId, DockNodeId,
+    DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
+    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
+    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffRequest, drop_runtime::DockHostDropSceneFact,
+    viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
-    App, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription, WindowBounds, WindowId,
-    WindowOptions,
+    App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription,
+    WindowBounds, WindowId, WindowOptions,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -19,7 +21,7 @@ use std::{
 /// GPUI application-level callbacks such as [`App::on_window_closed`] require `'static` closures.
 /// This handle hides the required interior mutability while keeping the runtime itself testable as
 /// a normal Rust value.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DockViewportRuntimeHandle {
     runtime: Rc<RefCell<DockViewportRuntime>>,
 }
@@ -70,13 +72,58 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
-        let runtime = self.clone();
-        self.runtime.borrow_mut().open_viewport_with_should_close(
+        let space = space.into();
+        let status = match self
+            .runtime
+            .borrow_mut()
+            .reusable_window_for_space(&space, cx)
+        {
+            DockViewportReusableWindow::Reused(window) => {
+                return Ok(DockViewportOpenOutcome {
+                    space,
+                    window,
+                    status: DockViewportOpenStatus::Reused,
+                });
+            }
+            DockViewportReusableWindow::Stale => DockViewportOpenStatus::Replaced,
+            DockViewportReusableWindow::Missing => DockViewportOpenStatus::Opened,
+        };
+
+        let controller = self.runtime.borrow().controller_entity();
+        let host_space = space.clone();
+        let host_runtime = self.clone();
+        let window = cx
+            .open_window(options, move |_, cx| {
+                cx.new(move |cx| {
+                    DockHost::with_viewport_runtime(controller, host_space, host_runtime, cx)
+                })
+            })?
+            .into();
+
+        self.runtime
+            .borrow_mut()
+            .register_opened_viewport(space.clone(), window);
+
+        let close_runtime = self.clone();
+        if let Err(error) = window.update(cx, move |_, window, cx| {
+            let window_id = window.window_handle().window_id();
+            window.on_window_should_close(cx, move |_, _| {
+                close_runtime
+                    .handle_window_should_close(window_id)
+                    .allows_close()
+            });
+        }) {
+            self.runtime
+                .borrow_mut()
+                .discard_failed_opened_viewport(window.window_id());
+            return Err(error);
+        }
+
+        Ok(DockViewportOpenOutcome {
             space,
-            options,
-            cx,
-            move |window_id| runtime.handle_window_should_close(window_id).allows_close(),
-        )
+            window,
+            status,
+        })
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
@@ -108,6 +155,62 @@ impl DockViewportRuntimeHandle {
             window_bounds,
             host_bounds,
         )
+    }
+
+    pub(crate) fn begin_viewport_host_scene(
+        &self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+    ) -> bool {
+        self.runtime.borrow_mut().begin_viewport_host_scene(
+            space,
+            window_id,
+            window_bounds,
+            host_bounds,
+            host_position,
+        )
+    }
+
+    pub(crate) fn push_viewport_host_scene_fact(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+        fact: DockHostDropSceneFact,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .push_viewport_host_scene_fact(space, window_id, fact)
+    }
+
+    pub(crate) fn window_id_for_space(&self, space: &DockSpaceId) -> Option<WindowId> {
+        self.runtime
+            .borrow()
+            .adapter()
+            .window_for_space(space)
+            .map(|window| window.window_id())
+    }
+
+    pub(crate) fn commit_drop_route(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &DockItemId,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.runtime
+            .borrow_mut()
+            .commit_drop_route(source_space, source_tabs, item, route, cx)
+    }
+
+    pub(crate) fn last_host_scene_screen_position(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<Point<Pixels>> {
+        self.runtime.borrow().last_host_scene_screen_position(space)
     }
 
     /// Resolves a rendered tab release into a runtime route without mutating the graph.

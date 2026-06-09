@@ -2,10 +2,12 @@
 use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
-    interaction::DockInteractionRuntime, workspace::DockWorkspace,
+    DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspaceDropRequest,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, px};
+use open_gpui::{
+    AppContext as _, Bounds, Context, Entity, Pixels, Point, Window, WindowId, point, px,
+};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -40,6 +42,8 @@ impl Default for DockHostOptions {
 pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
+    viewport_runtime: Option<DockViewportRuntimeHandle>,
+    viewport_scene_window: Option<WindowId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
@@ -56,10 +60,23 @@ impl DockHost {
         Self {
             controller,
             space: space.into(),
+            viewport_runtime: None,
+            viewport_scene_window: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
         }
+    }
+
+    pub(crate) fn with_viewport_runtime(
+        controller: Entity<DockController>,
+        space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut host = Self::from_controller(controller, space, cx);
+        host.viewport_runtime = Some(viewport_runtime);
+        host
     }
 
     pub(crate) fn space(&self) -> &DockSpaceId {
@@ -152,6 +169,51 @@ impl DockHost {
 
     pub(crate) fn interaction_mut(&mut self) -> &mut DockInteractionRuntime {
         &mut self.interaction
+    }
+
+    pub(crate) fn viewport_runtime(&self) -> Option<&DockViewportRuntimeHandle> {
+        self.viewport_runtime.as_ref()
+    }
+
+    pub(crate) fn host_local_point(
+        &self,
+        host_bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+    ) -> Point<Pixels> {
+        point(
+            position.x - host_bounds.origin.x,
+            position.y - host_bounds.origin.y,
+        )
+    }
+
+    pub(crate) fn update_viewport_host_scene_from_window(
+        &mut self,
+        host_bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        window: &Window,
+    ) -> bool {
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            self.viewport_scene_window = None;
+            return false;
+        };
+        let window_id = window.window_handle().window_id();
+        if runtime.window_id_for_space(self.space()) != Some(window_id) {
+            self.viewport_scene_window = None;
+            return false;
+        }
+
+        self.viewport_scene_window = Some(window_id);
+        runtime.begin_viewport_host_scene(
+            self.space().clone(),
+            window_id,
+            window.window_bounds(),
+            host_bounds,
+            self.host_local_point(host_bounds, position),
+        )
+    }
+
+    pub(crate) fn viewport_scene_window(&self) -> Option<WindowId> {
+        self.viewport_scene_window
     }
 
     #[cfg(test)]

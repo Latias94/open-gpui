@@ -8,7 +8,11 @@ use crate::{
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
     DockViewportTearOffRequest, DockViewportTearOffTick,
+    drop_runtime::DockHostDropSceneFact,
+    drop_target::DockResolvedDropTarget,
     viewport_close_gate::DockViewportCloseGate,
+    viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
+    workspace_transaction::DockWorkspaceDropRequest,
 };
 use open_gpui::{
     AnyWindowHandle, App, Bounds, DisplayId, Entity, Pixels, Point, Result, WindowBounds, WindowId,
@@ -22,10 +26,12 @@ use std::rc::Rc;
 /// [`DockViewportAdapter`] so applications do not have to pass the controller into every open call
 /// or duplicate close-callback cleanup logic. The adapter remains the place for window mappings,
 /// coordinate snapshots, and placement import/export.
+#[derive(Debug)]
 pub struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_gate: DockViewportCloseGate,
+    host_scenes: DockViewportHostSceneRegistry,
     tear_off: DockViewportTearOffMachine,
     tear_off_tick: DockViewportTearOffTick,
 }
@@ -56,6 +62,7 @@ impl DockViewportRuntime {
             controller,
             adapter: DockViewportAdapter::new(),
             close_gate: DockViewportCloseGate::new(close_policy),
+            host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
         }
@@ -73,6 +80,7 @@ impl DockViewportRuntime {
             controller,
             adapter,
             close_gate,
+            host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
         }
@@ -86,6 +94,10 @@ impl DockViewportRuntime {
     /// Returns the shared docking controller.
     pub fn controller(&self) -> &Entity<DockController> {
         &self.controller
+    }
+
+    pub(crate) fn controller_entity(&self) -> Entity<DockController> {
+        self.controller.clone()
     }
 
     /// Returns the low-level viewport adapter.
@@ -137,6 +149,150 @@ impl DockViewportRuntime {
     ) -> bool {
         self.adapter
             .update_snapshot(space, display_id, window_bounds, host_bounds)
+    }
+
+    pub(crate) fn begin_viewport_host_scene(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+    ) -> bool {
+        let space = space.into();
+        let Some(window) = self.adapter.window_for_space(&space) else {
+            return false;
+        };
+        if window.window_id() != window_id {
+            return false;
+        }
+        let display_id = self
+            .adapter
+            .snapshot(&space)
+            .and_then(|snapshot| snapshot.display_id);
+        let changed = self.update_viewport_snapshot(&space, display_id, window_bounds, host_bounds);
+        self.host_scenes
+            .register(DockViewportHostSceneSnapshot::new(
+                space,
+                window_id,
+                window_bounds,
+                host_bounds,
+                host_position,
+            ))
+            || changed
+    }
+
+    pub(crate) fn push_viewport_host_scene_fact(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+        fact: DockHostDropSceneFact,
+    ) -> bool {
+        self.host_scenes.push_fact(space, window_id, fact)
+    }
+
+    pub(crate) fn reusable_window_for_space(
+        &mut self,
+        space: &DockSpaceId,
+        cx: &mut App,
+    ) -> DockViewportReusableWindow {
+        let Some(window) = self.adapter.window_for_space(space) else {
+            return DockViewportReusableWindow::Missing;
+        };
+        if window
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+        {
+            return DockViewportReusableWindow::Reused(window);
+        }
+
+        self.adapter.unregister_space(space);
+        self.host_scenes.unregister_space(space);
+        self.close_gate.sync_adapter(&self.adapter);
+        DockViewportReusableWindow::Stale
+    }
+
+    pub(crate) fn register_opened_viewport(&mut self, space: DockSpaceId, window: AnyWindowHandle) {
+        let replaced = self.adapter.register_viewport_with_outcome(space, window);
+        for removed in replaced.replaced {
+            self.host_scenes.unregister_space(&removed.space);
+        }
+        self.close_gate.sync_adapter(&self.adapter);
+    }
+
+    pub(crate) fn discard_failed_opened_viewport(&mut self, window_id: WindowId) {
+        self.adapter.handle_window_closed(window_id);
+        self.host_scenes.unregister_window(window_id);
+        self.close_gate.sync_adapter(&self.adapter);
+    }
+
+    pub(crate) fn commit_drop_route(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        item: &DockItemId,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let target_space = match route {
+            DockViewportDropRoute::Local { host_position } => {
+                self.resolve_route_target(source_space, host_position, cx)?
+            }
+            DockViewportDropRoute::KnownViewport { hit, .. } => {
+                self.resolve_route_target(&hit.space, hit.host_position, cx)?
+            }
+            DockViewportDropRoute::TearOff(_) => {
+                return Err(crate::DockTransactionError::TearOffRequiresViewportRuntime.into());
+            }
+            DockViewportDropRoute::Rejected(error) => return Err(error.into()),
+        };
+
+        let (target_space, target) = target_space;
+        self.controller.update(cx, |controller, cx| {
+            let outcome = controller.commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space,
+                source_tabs,
+                item,
+                target_space: &target_space,
+                target,
+            });
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
+    fn resolve_route_target(
+        &self,
+        target_space: &DockSpaceId,
+        host_position: Point<Pixels>,
+        cx: &App,
+    ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
+        let policy = *self.controller.read(cx).workspace().policy();
+        let Some(target) = self
+            .host_scenes
+            .resolve(target_space, host_position, &policy)
+        else {
+            return Err(
+                crate::DockTransactionError::ViewportTargetRequiresLocalResolution {
+                    space: target_space.clone(),
+                }
+                .into(),
+            );
+        };
+        Ok((target_space.clone(), target))
+    }
+
+    pub(crate) fn last_host_scene_screen_position(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<Point<Pixels>> {
+        self.host_scenes.screen_position(space)
     }
 
     /// Resolves a rendered tab release into a runtime route without mutating the graph.
@@ -232,6 +388,7 @@ impl DockViewportRuntime {
             }
             Err(error) => {
                 self.adapter.unregister_space(&pending.target_space);
+                self.host_scenes.unregister_space(&pending.target_space);
                 self.close_gate.sync_adapter(&self.adapter);
                 DockViewportTearOffCompletionOutcome::CommitFailed(
                     DockViewportTearOffCommitFailure {
@@ -281,6 +438,7 @@ impl DockViewportRuntime {
                 }
                 DockViewportTearOffCompletionOutcome::Cancelled(cancelled) => {
                     self.adapter.unregister_space(&pending.target_space);
+                    self.host_scenes.unregister_space(&pending.target_space);
                     self.close_gate.sync_adapter(&self.adapter);
                     DockViewportTearOffOpenOutcome::Cancelled(cancelled)
                 }
@@ -308,6 +466,7 @@ impl DockViewportRuntime {
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         let outcome = self.adapter.handle_window_closed(window_id);
+        self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
         outcome
     }
@@ -334,9 +493,14 @@ impl DockViewportRuntime {
             .open_viewport(self.controller.clone(), space, options, cx);
         self.close_gate.sync_adapter(&self.adapter);
         let outcome = outcome?;
+        if !matches!(outcome.status, crate::DockViewportOpenStatus::Reused) {
+            self.host_scenes.unregister_space(&outcome.space);
+        }
         if let Err(error) = install_should_close_hook(outcome.window, cx, should_close) {
             self.adapter
                 .handle_window_closed(outcome.window.window_id());
+            self.host_scenes
+                .unregister_window(outcome.window.window_id());
             self.close_gate.sync_adapter(&self.adapter);
             return Err(error);
         }
@@ -451,4 +615,10 @@ enum DockViewportTearOffSourceStatus {
     Ready,
     Missing,
     Moved,
+}
+
+pub(crate) enum DockViewportReusableWindow {
+    Missing,
+    Reused(AnyWindowHandle),
+    Stale,
 }

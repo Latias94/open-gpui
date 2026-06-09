@@ -1,5 +1,5 @@
 use crate::{DockHost, DockItemId, DockNodeId, DockSpaceId};
-use open_gpui::{Bounds, Context, Pixels, Point};
+use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
     pub(crate) fn select_tab_from_render(
@@ -17,9 +17,10 @@ impl DockHost {
         source_tabs: DockNodeId,
         item: DockItemId,
         target_space: DockSpaceId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.commit_tab_drop_interaction(source_space, source_tabs, item, target_space, cx)
+        self.commit_tab_drop_interaction(source_space, source_tabs, item, target_space, window, cx)
             .finish(cx)
     }
 
@@ -57,9 +58,12 @@ impl DockHost {
 
     pub(crate) fn begin_host_drop_scene_from_render(
         &mut self,
+        host_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.update_viewport_host_scene_from_window(host_bounds, position, window);
         self.begin_host_drop_scene_interaction(position, cx)
             .finish(cx)
     }

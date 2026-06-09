@@ -123,6 +123,7 @@ mod viewport_close;
 mod viewport_close_gate;
 mod viewport_coordinates;
 mod viewport_drop_route;
+mod viewport_drop_scene;
 mod viewport_open;
 mod viewport_placement;
 mod viewport_placement_adapter;
