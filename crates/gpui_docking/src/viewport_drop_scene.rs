@@ -40,6 +40,7 @@ impl DockViewportHostSceneSnapshot {
         self.scene.push_fact(fact);
     }
 
+    #[cfg(test)]
     pub(crate) fn screen_position(&self) -> Point<Pixels> {
         let window_bounds = self.window_bounds.get_bounds();
         point(
@@ -96,6 +97,7 @@ impl DockViewportHostSceneRegistry {
         scene.resolved_target(policy)
     }
 
+    #[cfg(test)]
     pub(crate) fn screen_position(&self, space: &DockSpaceId) -> Option<Point<Pixels>> {
         self.scenes
             .get(space)

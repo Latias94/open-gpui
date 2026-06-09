@@ -417,6 +417,7 @@ impl DockViewportRuntime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn last_host_scene_screen_position(
         &self,
         space: &DockSpaceId,
