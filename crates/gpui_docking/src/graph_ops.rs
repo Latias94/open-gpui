@@ -41,7 +41,6 @@ impl DockGraph {
                 }
                 self.move_item_to_empty_space(source_space, item.clone(), target_space)
             }
-            #[cfg(test)]
             DockOp::MoveTabs {
                 source_space,
                 source_tabs,
@@ -57,7 +56,6 @@ impl DockGraph {
                 *zone,
                 *insert_index,
             ),
-            #[cfg(test)]
             DockOp::MoveTabsToEmptyDockSpace {
                 source_space,
                 source_tabs,

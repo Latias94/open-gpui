@@ -2,7 +2,7 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
     DockTransactionError, DockViewportHit, DockWorkspace, DropZone,
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
+    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 
 pub(crate) struct DockWorkspaceDropRequest<'a> {
@@ -11,6 +11,24 @@ pub(crate) struct DockWorkspaceDropRequest<'a> {
     pub(crate) item: &'a DockItemId,
     pub(crate) target_space: &'a DockSpaceId,
     pub(crate) target: DockResolvedDropTarget,
+}
+
+pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
+    pub(crate) source_space: &'a DockSpaceId,
+    pub(crate) payload: DockWorkspaceDropPayload<'a>,
+    pub(crate) target_space: &'a DockSpaceId,
+    pub(crate) target: DockResolvedDropTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockWorkspaceDropPayload<'a> {
+    Item {
+        source_tabs: DockNodeId,
+        item: &'a DockItemId,
+    },
+    Tabs {
+        source_tabs: DockNodeId,
+    },
 }
 
 impl DockWorkspace {
@@ -26,14 +44,32 @@ impl DockWorkspace {
             target,
         } = request;
 
+        self.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+            source_space,
+            payload: DockWorkspaceDropPayload::Item { source_tabs, item },
+            target_space,
+            target,
+        })
+    }
+
+    pub(crate) fn commit_resolved_payload_drop(
+        &mut self,
+        request: DockWorkspacePayloadDropRequest<'_>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let DockWorkspacePayloadDropRequest {
+            source_space,
+            payload,
+            target_space,
+            target,
+        } = request;
+
         match target.kind {
             DockResolvedDropTargetKind::TabBar {
                 target_tabs,
                 insert_index,
-            } => self.commit_resolved_tab_drop(
+            } => self.commit_resolved_payload_tab_drop(
                 source_space,
-                source_tabs,
-                item,
+                payload,
                 target_space,
                 target_tabs,
                 DropZone::Center,
@@ -41,10 +77,9 @@ impl DockWorkspace {
             ),
             DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
             | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => self
-                .commit_resolved_tab_drop(
+                .commit_resolved_payload_tab_drop(
                     source_space,
-                    source_tabs,
-                    item,
+                    payload,
                     target_space,
                     target_tabs,
                     DropZone::Center,
@@ -52,28 +87,31 @@ impl DockWorkspace {
                 ),
             DockResolvedDropTargetKind::InnerEdge {
                 target_tabs, zone, ..
-            } => self.commit_resolved_tab_drop(
+            } => self.commit_resolved_payload_tab_drop(
                 source_space,
-                source_tabs,
-                item,
+                payload,
                 target_space,
                 target_tabs,
                 zone,
                 None,
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
-                .commit_resolved_tab_drop(
+                .commit_resolved_payload_tab_drop(
                     source_space,
-                    source_tabs,
-                    item,
+                    payload,
                     target_space,
                     root,
                     zone,
                     None,
                 ),
-            DockResolvedDropTargetKind::EmptyDockSpace { space } => {
-                self.commit_item_to_empty_dock_space(source_space, item, &space)
-            }
+            DockResolvedDropTargetKind::EmptyDockSpace { space } => match payload {
+                DockWorkspaceDropPayload::Item { item, .. } => {
+                    self.commit_item_to_empty_dock_space(source_space, item, &space)
+                }
+                DockWorkspaceDropPayload::Tabs { source_tabs } => {
+                    self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
+                }
+            },
             DockResolvedDropTargetKind::KnownViewport { hit } => {
                 Err(viewport_target_error(hit).into())
             }
@@ -83,25 +121,38 @@ impl DockWorkspace {
         }
     }
 
-    fn commit_resolved_tab_drop(
+    fn commit_resolved_payload_tab_drop(
         &mut self,
         source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        item: &DockItemId,
+        payload: DockWorkspaceDropPayload<'_>,
         target_space: &DockSpaceId,
         target_tabs: DockNodeId,
         zone: DropZone,
         insert_index: Option<usize>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space,
-            source_tabs,
-            item,
-            target_space,
-            target_tabs,
-            zone,
-            insert_index,
-        })
+        match payload {
+            DockWorkspaceDropPayload::Item { source_tabs, item } => {
+                self.commit_tab_move(DockWorkspaceMoveTabRequest {
+                    source_space,
+                    source_tabs,
+                    item,
+                    target_space,
+                    target_tabs,
+                    zone,
+                    insert_index,
+                })
+            }
+            DockWorkspaceDropPayload::Tabs { source_tabs } => {
+                self.commit_tabs_move(DockWorkspaceMoveTabsRequest {
+                    source_space,
+                    source_tabs,
+                    target_space,
+                    target_tabs,
+                    zone,
+                    insert_index,
+                })
+            }
+        }
     }
 }
 
@@ -271,6 +322,88 @@ mod tests {
             workspace.graph().collect_items_in_space(&detached),
             vec![item("a")]
         );
+    }
+
+    #[test]
+    fn resolved_center_target_moves_tabs_stack_preserving_order_and_active_item() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("c")],
+            active: 1,
+        });
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            active: 0,
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![source_tabs, target_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space(), root);
+        let mut workspace = DockWorkspace::new(space(), graph);
+
+        let outcome = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                source_space: &space(),
+                payload: DockWorkspaceDropPayload::Tabs { source_tabs },
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
+                    root: target_tabs,
+                    target_tabs,
+                }),
+            })
+            .expect("resolved center stack drop should commit");
+
+        assert_eq!(outcome, DockActionOutcome::Changed);
+        let DockNode::Tabs { items, active } = workspace
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
+        assert_eq!(*active, 2);
+    }
+
+    #[test]
+    fn resolved_empty_space_target_moves_tabs_stack_when_policy_allows() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("c")],
+            active: 1,
+        });
+        graph.set_root(space(), source_tabs);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        let detached = DockSpaceId::from("detached");
+
+        let outcome = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                source_space: &space(),
+                payload: DockWorkspaceDropPayload::Tabs { source_tabs },
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
+                    space: detached.clone(),
+                }),
+            })
+            .expect("resolved empty-space stack drop should commit");
+
+        assert_eq!(outcome, DockActionOutcome::Changed);
+        let detached_root = workspace
+            .graph()
+            .root(&detached)
+            .expect("detached space should have a root");
+        let DockNode::Tabs { items, active } = workspace
+            .graph()
+            .node(detached_root)
+            .expect("detached root should exist")
+        else {
+            panic!("detached root should be tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("c")]);
+        assert_eq!(*active, 1);
     }
 
     #[test]

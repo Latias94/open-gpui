@@ -65,7 +65,6 @@ impl DockGraph {
                 }
                 Ok(self.apply_op(op))
             }
-            #[cfg(test)]
             DockOp::MoveTabs {
                 source_space,
                 source_tabs,
@@ -107,7 +106,6 @@ impl DockGraph {
                 }
                 Ok(self.apply_op(op))
             }
-            #[cfg(test)]
             DockOp::MoveTabsToEmptyDockSpace {
                 source_space,
                 source_tabs,
@@ -229,7 +227,6 @@ impl DockGraph {
         Ok(())
     }
 
-    #[cfg(test)]
     fn validate_move_tabs(
         &self,
         source_space: &DockSpaceId,

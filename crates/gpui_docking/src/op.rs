@@ -59,7 +59,6 @@ pub(crate) enum DockOp {
     },
 
     /// Moves an entire tabs node as a group.
-    #[cfg(test)]
     MoveTabs {
         /// The source dock space.
         source_space: DockSpaceId,
@@ -76,7 +75,6 @@ pub(crate) enum DockOp {
     },
 
     /// Moves an entire tabs node into an empty dock space.
-    #[cfg(test)]
     MoveTabsToEmptyDockSpace {
         /// The source dock space.
         source_space: DockSpaceId,

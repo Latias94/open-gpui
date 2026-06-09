@@ -1,7 +1,7 @@
 use crate::{
     DockHost, DockItemId, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockTabDragPayload, DockTabDragPreview},
+    drag::{DockDragPayload, DockDragPreview},
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
 };
 use open_gpui::{
@@ -42,7 +42,7 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .bg(white())
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                     this.update_tabs_drop_target_from_render(
                         node,
                         event.bounds,
@@ -79,8 +79,12 @@ impl DockHost {
                     item
                 ),
             );
-            let payload =
-                DockTabDragPayload::new(session.space().clone(), node, item.clone(), title.clone());
+            let payload = DockDragPayload::new_item(
+                session.space().clone(),
+                node,
+                item.clone(),
+                title.clone(),
+            );
             let target_index = index;
             let tab_item = item.clone();
             let tab = div()
@@ -111,7 +115,7 @@ impl DockHost {
                     this.select_tab_from_render(node, tab_item.clone(), cx);
                 }))
                 .on_drag_move(cx.listener(
-                    move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                         this.update_tab_reorder_drop_target_from_render(
                             node,
                             target_index,
@@ -123,7 +127,7 @@ impl DockHost {
                     },
                 ))
                 .on_drag(payload, |payload, _, _, cx| {
-                    cx.new(|_| DockTabDragPreview::new(payload.title()))
+                    cx.new(|_| DockDragPreview::new(payload.title()))
                 })
                 .child(title);
             tab_bar = tab_bar.child(tab);

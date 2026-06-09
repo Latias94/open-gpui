@@ -1,5 +1,5 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion, drag::DockTabDragPayload,
+    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion, drag::DockDragPayload,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -124,7 +124,7 @@ impl DockHost {
 
         if let Some(target_tabs) = target_tabs {
             handle = handle.on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                     this.update_floating_title_bar_drop_scene_from_render(
                         floating,
                         target_tabs,

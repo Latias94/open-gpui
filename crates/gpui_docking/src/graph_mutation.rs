@@ -213,7 +213,6 @@ impl DockGraph {
         true
     }
 
-    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::graph) fn move_tabs_between_spaces(
         &mut self,
@@ -264,7 +263,6 @@ impl DockGraph {
         true
     }
 
-    #[cfg(test)]
     pub(in crate::graph) fn move_tabs_to_empty_space(
         &mut self,
         source_space: &DockSpaceId,

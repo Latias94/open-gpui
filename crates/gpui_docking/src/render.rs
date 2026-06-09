@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, debug::DockDebugRegion, drag::DockTabDragPayload,
+    DockHost, DockNode, DockNodeId, debug::DockDebugRegion, drag::DockDragPayload,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -28,7 +28,7 @@ impl Render for DockHost {
             .overflow_hidden()
             .text_color(black())
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, window, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     this.begin_host_drop_scene_from_render(
                         event.bounds,
                         event.event.position,
@@ -38,15 +38,17 @@ impl Render for DockHost {
                 },
             ))
             .on_drop(
-                cx.listener(move |this, payload: &DockTabDragPayload, window, cx| {
-                    this.drop_tab_from_render(
-                        payload.source_space.clone(),
-                        payload.source_tabs,
-                        payload.item.clone(),
-                        target_space.clone(),
-                        window,
-                        cx,
-                    );
+                cx.listener(move |this, payload: &DockDragPayload, window, cx| {
+                    if let Some(item) = payload.item() {
+                        this.drop_tab_from_render(
+                            payload.source_space.clone(),
+                            payload.source_tabs,
+                            item.clone(),
+                            target_space.clone(),
+                            window,
+                            cx,
+                        );
+                    }
                 }),
             );
 
@@ -109,7 +111,7 @@ impl DockHost {
             .size_full()
             .overflow_hidden()
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                     this.update_root_drop_scene_from_render(
                         root,
                         event.bounds,
@@ -142,7 +144,7 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x657083))
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                     this.update_empty_space_drop_scene_from_render(
                         event.event.position,
                         event.bounds,
@@ -170,7 +172,7 @@ impl DockHost {
             .size_full()
             .bg(rgba(0x00000000))
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
                     this.update_empty_space_drop_scene_from_render(
                         event.event.position,
                         event.bounds,
