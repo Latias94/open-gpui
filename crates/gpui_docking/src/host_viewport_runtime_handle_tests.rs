@@ -384,10 +384,10 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
                 &DockViewportTargetContext::new(),
                 app,
             );
-            runtime.commit_drop_route_with_outcome(
+            runtime.commit_payload_drop_route_with_outcome(
                 &source_space,
                 source_tabs,
-                &item("a"),
+                DockViewportDropPayload::Item(item("a")),
                 route,
                 app,
             )
@@ -606,7 +606,13 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             Some(opened.window),
             "known viewport route should carry the destination activation target"
         );
-        runtime.commit_drop_route_with_outcome(&source_space, source_tabs, &item("a"), route, app)
+        runtime.commit_payload_drop_route_with_outcome(
+            &source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            route,
+            app,
+        )
     });
 
     assert_eq!(
@@ -725,7 +731,13 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             Some(opened.window),
             "known viewport route should carry the destination activation target"
         );
-        runtime.commit_drop_route_with_outcome(&source_space, source_tabs, &item("a"), route, app)
+        runtime.commit_payload_drop_route_with_outcome(
+            &source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            route,
+            app,
+        )
     });
 
     let DockViewportDropRouteOutcome::Action(action) = result.expect("route should commit") else {

@@ -1,11 +1,11 @@
 use crate::{
-    DockActionApplyError, DockController, DockHost, DockItemId, DockNodeId, DockSpaceId,
-    DockTransactionError, DockViewportCloseOutcome, DockViewportClosePolicy,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
-    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId, DockTransactionError,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
@@ -215,24 +215,6 @@ impl DockViewportRuntimeHandle {
             .adapter()
             .window_for_space(space)
             .map(|window| window.window_id())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn commit_drop_route_with_outcome(
-        &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        item: &DockItemId,
-        route: DockViewportDropRoute,
-        cx: &mut App,
-    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        self.commit_payload_drop_route_with_outcome(
-            source_space,
-            source_tabs,
-            DockViewportDropPayload::Item(item.clone()),
-            route,
-            cx,
-        )
     }
 
     pub(crate) fn commit_payload_drop_route_with_outcome(
