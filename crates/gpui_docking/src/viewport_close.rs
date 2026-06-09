@@ -10,9 +10,9 @@ pub enum DockViewportClosePolicy {
     /// Reject the close request and leave the runtime mapping intact.
     ///
     /// This policy prevents platform closes only when viewports are opened through
-    /// [`crate::DockViewportRuntime`] or [`crate::DockViewportRuntimeHandle`], which install GPUI
-    /// should-close hooks. Adapter-level cleanup methods run after the platform close decision has
-    /// already happened, so vetoes are reported only by should-close outcomes.
+    /// [`crate::DockViewportRuntimeHandle`], which installs GPUI should-close hooks.
+    /// Adapter-level cleanup methods run after the platform close decision has already happened,
+    /// so vetoes are reported only by should-close outcomes.
     Prevent,
     /// Allow the platform close, then move the viewport's dock content into a fallback space.
     MergeBack {
