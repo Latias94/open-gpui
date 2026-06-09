@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_canvas::index::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasPaintModel,
     CanvasPaintOptions, CanvasRecordId, CanvasRuntime, CanvasShape, CanvasTransaction,
-    CanvasViewport, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
+    CanvasViewport, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
     collect_visible_records,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
@@ -504,11 +505,8 @@ fn simulate_drag_runtime(
     let mut count = 0;
 
     for frame in 0..DRAG_FRAMES {
-        let previous = document.clone();
-        move_selected_nodes(&mut document, &selected, frame);
-
-        let diff = document.diff_against(&previous);
-        runtime.apply_diff(&document, &diff);
+        let committed = move_selected_nodes(&mut document, &selected, frame);
+        runtime.apply_committed_mutation(&document, &committed);
         count += runtime.query(viewport).count();
     }
 
@@ -575,7 +573,7 @@ fn move_selected_nodes<'a>(
     document: &mut CanvasDocument,
     selected: impl IntoIterator<Item = &'a NodeId>,
     frame: usize,
-) {
+) -> open_gpui_canvas::CanvasCommittedMutation {
     let commands = selected
         .into_iter()
         .map(|id| {
@@ -584,7 +582,9 @@ fn move_selected_nodes<'a>(
             DocumentCommand::UpdateNode(node)
         })
         .collect::<Vec<_>>();
-    apply_commands(document, commands);
+    document
+        .commit_transaction(CanvasTransaction::new(commands))
+        .expect("benchmark document commands should be valid")
 }
 
 fn query_matches(record: &HitRecord, viewport: Bounds<Pixels>, options: HitOptions) -> bool {

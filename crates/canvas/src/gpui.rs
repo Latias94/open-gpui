@@ -1593,8 +1593,8 @@ mod tests {
     use super::*;
     use crate::{
         CanvasEdgeKind, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-        CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind,
-        CanvasToolEffect, DocumentCommand, EdgeId, HandleRole,
+        CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind, DocumentCommand,
+        EdgeId, HandleRole, tool::CanvasToolEffect,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 

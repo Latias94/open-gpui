@@ -6,12 +6,13 @@ use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
 use crate::{
-    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
-    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasSnapGuide,
-    CanvasTransaction, CanvasValue, CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
-    connection_hit_options, snap_delta_for_resize_selection, snap_delta_for_selection,
+    CanvasClipboardPayload, CanvasCommittedMutation, CanvasConnectionEndpointRole,
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter,
+    CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry, CanvasPasteTransaction,
+    CanvasRecordId, CanvasRuntime, CanvasSnapGuide, CanvasTransaction, CanvasViewport,
+    DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
+    HitTarget, NodeId, ShapeId, connection_hit_options, snap_delta_for_resize_selection,
+    snap_delta_for_selection,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -190,10 +191,6 @@ pub enum ToolState {
         source: CanvasEndpoint,
         current: Point<Pixels>,
     },
-    Custom {
-        tool_id: CanvasToolId,
-        payload: CanvasValue,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -362,7 +359,7 @@ impl CanvasSelection {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum CanvasToolEffect {
+pub(crate) enum CanvasToolEffect {
     ApplyTransaction(CanvasTransaction),
     BeginGesture,
     UpdateGesture(CanvasTransaction),
@@ -376,6 +373,20 @@ pub enum CanvasToolEffect {
     ToggleSelection(HitTarget),
     ClearSelection,
     SetState(ToolState),
+    PanViewport(Point<Pixels>),
+    SetViewport(CanvasViewport),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CanvasToolIntent {
+    ApplyTransaction(CanvasTransaction),
+    SetTool(CanvasTool),
+    SetSelection(CanvasSelection),
+    ReplaceSelection(HitTarget),
+    AddSelection(HitTarget),
+    RemoveSelection(HitTarget),
+    ToggleSelection(HitTarget),
+    ClearSelection,
     PanViewport(Point<Pixels>),
     SetViewport(CanvasViewport),
 }
@@ -473,7 +484,7 @@ pub trait CanvasToolReducer {
         &mut self,
         context: CanvasToolContext<'_>,
         event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError>;
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError>;
 }
 
 impl<F> CanvasToolReducer for F
@@ -481,13 +492,13 @@ where
     F: for<'a> FnMut(
         CanvasToolContext<'a>,
         CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError>,
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError>,
 {
     fn handle_event(
         &mut self,
         context: CanvasToolContext<'_>,
         event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
         self(context, event)
     }
 }
@@ -817,7 +828,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
     }
 
@@ -829,7 +840,8 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -846,7 +858,8 @@ impl CanvasEditor {
         let _ = self.history.pop_undo();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -863,7 +876,8 @@ impl CanvasEditor {
         let _ = self.history.pop_redo();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -883,7 +897,10 @@ impl CanvasEditor {
         self.history.next_redo_transaction()
     }
 
-    pub fn apply_tool_effect(&mut self, effect: CanvasToolEffect) -> Result<(), DocumentError> {
+    pub(crate) fn apply_tool_effect(
+        &mut self,
+        effect: CanvasToolEffect,
+    ) -> Result<(), DocumentError> {
         match effect {
             CanvasToolEffect::ApplyTransaction(transaction) => {
                 self.apply_transaction(transaction)?;
@@ -959,16 +976,73 @@ impl CanvasEditor {
             .push_undo(prepared.committed().inverse().clone());
         self.gesture = None;
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(
+            prepared.committed(),
+            kind_registry.as_ref(),
+        );
         diff
     }
 
-    pub fn apply_tool_effects(
+    pub(crate) fn apply_tool_effects(
         &mut self,
         effects: impl IntoIterator<Item = CanvasToolEffect>,
     ) -> Result<(), DocumentError> {
         for effect in effects {
             self.apply_tool_effect(effect)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn apply_tool_intent(&mut self, intent: CanvasToolIntent) -> Result<(), DocumentError> {
+        match intent {
+            CanvasToolIntent::ApplyTransaction(transaction) => {
+                self.apply_transaction(transaction)?;
+            }
+            CanvasToolIntent::SetTool(tool) => {
+                self.set_tool(tool);
+            }
+            CanvasToolIntent::SetSelection(mut selection) => {
+                selection.retain_document(self.document.as_ref());
+                self.selection = selection;
+            }
+            CanvasToolIntent::ReplaceSelection(target) => {
+                self.selection.replace_with(target);
+                self.selection.retain_document(self.document.as_ref());
+            }
+            CanvasToolIntent::AddSelection(target) => {
+                self.selection.insert_target(target);
+                self.selection.retain_document(self.document.as_ref());
+            }
+            CanvasToolIntent::RemoveSelection(target) => {
+                self.selection.remove_target(&target);
+                self.selection.retain_document(self.document.as_ref());
+            }
+            CanvasToolIntent::ToggleSelection(target) => {
+                self.selection.toggle_target(target);
+                self.selection.retain_document(self.document.as_ref());
+            }
+            CanvasToolIntent::ClearSelection => {
+                self.selection.clear();
+            }
+            CanvasToolIntent::PanViewport(delta) => {
+                self.viewport.pan_by(delta);
+            }
+            CanvasToolIntent::SetViewport(viewport) => {
+                self.viewport = viewport;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn apply_tool_intents(
+        &mut self,
+        intents: impl IntoIterator<Item = CanvasToolIntent>,
+    ) -> Result<(), DocumentError> {
+        for intent in intents {
+            self.apply_tool_intent(intent)?;
         }
 
         Ok(())
@@ -1121,7 +1195,7 @@ impl CanvasEditor {
         Ok(true)
     }
 
-    pub fn event_effects(
+    pub(crate) fn event_effects(
         &self,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
@@ -1139,22 +1213,13 @@ impl CanvasEditor {
     where
         T: CanvasToolReducer + ?Sized,
     {
-        let effects = self.event_effects_with_custom_tool(event, custom_tool)?;
-        self.apply_tool_effects(effects)
-    }
-
-    pub fn event_effects_with_custom_tool<T>(
-        &self,
-        event: CanvasEvent,
-        custom_tool: &mut T,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError>
-    where
-        T: CanvasToolReducer + ?Sized,
-    {
-        let Some(tool) = BuiltInCanvasTool::from_canvas_tool(&self.tool) else {
-            return custom_tool.handle_event(self.tool_context(), event);
-        };
-        tool.handle_event(self, event)
+        if BuiltInCanvasTool::from_canvas_tool(&self.tool).is_some() {
+            let effects = self.event_effects(event)?;
+            self.apply_tool_effects(effects)
+        } else {
+            let intents = custom_tool.handle_event(self.tool_context(), event)?;
+            self.apply_tool_intents(intents)
+        }
     }
 
     pub fn handle_event_with_tool_registry(
@@ -1162,24 +1227,18 @@ impl CanvasEditor {
         event: CanvasEvent,
         registry: &mut CanvasToolRegistry,
     ) -> Result<(), CanvasToolRegistryError> {
-        let effects = self.event_effects_with_tool_registry(event, registry)?;
-        self.apply_tool_effects(effects)?;
+        if let Some(tool_id) = self.tool.custom_id().cloned() {
+            let reducer = registry
+                .reducer_mut(&tool_id)
+                .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
+            let intents = reducer.handle_event(self.tool_context(), event)?;
+            self.apply_tool_intents(intents)?;
+        } else {
+            let effects = self.event_effects(event)?;
+            self.apply_tool_effects(effects)?;
+        }
+
         Ok(())
-    }
-
-    pub fn event_effects_with_tool_registry(
-        &self,
-        event: CanvasEvent,
-        registry: &mut CanvasToolRegistry,
-    ) -> Result<Vec<CanvasToolEffect>, CanvasToolRegistryError> {
-        let Some(tool_id) = self.tool.custom_id().cloned() else {
-            return Ok(self.event_effects(event)?);
-        };
-
-        let reducer = registry
-            .reducer_mut(&tool_id)
-            .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
-        Ok(self.event_effects_with_custom_tool(event, reducer)?)
     }
 
     fn translatable_selection_ids(
@@ -1330,28 +1389,24 @@ impl CanvasEditor {
             .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
         let diff = committed.diff().clone();
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
     }
 
-    fn sync_runtime_diff(&mut self, diff: &CanvasDocumentDiff) {
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_diff_with_kind_registry(diff, kind_registry.as_ref());
-    }
-
-    fn sync_runtime_diff_with_kind_registry(
+    fn sync_runtime_committed_with_kind_registry(
         &mut self,
-        diff: &CanvasDocumentDiff,
+        committed: &CanvasCommittedMutation,
         kind_registry: &CanvasKindRegistry,
     ) {
         let document = Arc::clone(&self.document);
         let edge_router = Arc::clone(&self.edge_router);
-        self.runtime_mut().apply_diff_with_router_and_kind_registry(
-            document.as_ref(),
-            diff,
-            edge_router.as_ref(),
-            kind_registry,
-        );
+        self.runtime_mut()
+            .apply_committed_mutation_with_router_and_kind_registry(
+                document.as_ref(),
+                committed,
+                edge_router.as_ref(),
+                kind_registry,
+            );
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
@@ -1607,7 +1662,7 @@ mod tests {
     use crate::{
         CanvasNode, CanvasNodeHitTest, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind,
         CanvasRoutePath, CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget,
-        HandleId,
+        CanvasValue, HandleId,
     };
     use open_gpui::{point, px, size};
     use serde_json::{Value, json};
@@ -1624,7 +1679,7 @@ mod tests {
             &mut self,
             context: CanvasToolContext<'_>,
             event: CanvasEvent,
-        ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+        ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
             self.calls += 1;
             self.last_tool_id = context.active_custom_tool_id().cloned();
 
@@ -1645,25 +1700,16 @@ mod tests {
             let node_id = NodeId::new(format!("stamp-{}", context.document().node_count()));
             let mut selection = CanvasSelection::default();
             selection.nodes.insert(node_id.clone());
-            let mut payload = CanvasValue::new();
-            payload.insert("phase".into(), serde_json::Value::String("pressed".into()));
 
             Ok(vec![
-                CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                     DocumentCommand::InsertNode(CanvasNode::new(
                         node_id.clone(),
                         context.document_position(position),
                         size(px(20.0), px(20.0)),
                     )),
                 )),
-                CanvasToolEffect::SetSelection(selection),
-                CanvasToolEffect::SetState(ToolState::Custom {
-                    tool_id: self
-                        .last_tool_id
-                        .clone()
-                        .unwrap_or_else(|| CanvasToolId::from("stamp")),
-                    payload,
-                }),
+                CanvasToolIntent::SetSelection(selection),
             ])
         }
     }
@@ -3437,13 +3483,7 @@ mod tests {
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("stamp-1")]
         );
-        assert!(matches!(
-            editor.state,
-            ToolState::Custom {
-                ref tool_id,
-                ..
-            } if tool_id == &CanvasToolId::from("stamp")
-        ));
+        assert_eq!(editor.state, ToolState::Idle);
 
         assert!(editor.undo().unwrap());
         assert!(!editor.document.contains_node(&NodeId::from("stamp-1")));

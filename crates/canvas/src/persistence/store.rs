@@ -1,7 +1,7 @@
 use crate::{
     CanvasCommittedMutation, CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent,
-    CanvasRecordOperationBatch, CanvasSnapshot, CanvasToolEffect, CanvasToolId, CanvasToolReducer,
-    CanvasToolRegistry, CanvasToolRegistryError, CanvasTransaction, DocumentError,
+    CanvasRecordOperationBatch, CanvasSnapshot, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
+    CanvasToolRegistry, CanvasTransaction, DocumentError, tool::CanvasToolEffect,
 };
 use std::{convert::Infallible, error::Error, fmt};
 
@@ -102,17 +102,6 @@ pub type CanvasReplayError = CanvasPersistenceError<Infallible>;
 pub enum CanvasPersistentToolRegistryError<E = Infallible> {
     MissingTool(CanvasToolId),
     Persistence(CanvasPersistenceError<E>),
-}
-
-impl<E> CanvasPersistentToolRegistryError<E> {
-    fn from_tool_registry_error(error: CanvasToolRegistryError) -> Self {
-        match error {
-            CanvasToolRegistryError::MissingTool(id) => Self::MissingTool(id),
-            CanvasToolRegistryError::Document(error) => {
-                Self::Persistence(CanvasPersistenceError::Document(error))
-            }
-        }
-    }
 }
 
 impl<E> From<CanvasPersistenceError<E>> for CanvasPersistentToolRegistryError<E> {
@@ -312,7 +301,7 @@ where
     Ok(true)
 }
 
-pub fn apply_persistent_tool_effect<S>(
+pub(crate) fn apply_persistent_tool_effect<S>(
     editor: &mut CanvasEditor,
     store: &mut S,
     cursor: &mut CanvasPersistenceCursor,
@@ -336,7 +325,7 @@ where
     Ok(())
 }
 
-pub fn apply_persistent_tool_effects<S>(
+pub(crate) fn apply_persistent_tool_effects<S>(
     editor: &mut CanvasEditor,
     store: &mut S,
     cursor: &mut CanvasPersistenceCursor,
@@ -347,6 +336,43 @@ where
 {
     for effect in effects {
         apply_persistent_tool_effect(editor, store, cursor, effect)?;
+    }
+
+    Ok(())
+}
+
+pub fn apply_persistent_tool_intent<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    intent: CanvasToolIntent,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    match intent {
+        CanvasToolIntent::ApplyTransaction(transaction) => {
+            apply_persistent_transaction(editor, store, cursor, transaction)?;
+        }
+        intent => {
+            editor.apply_tool_intent(intent)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn apply_persistent_tool_intents<S>(
+    editor: &mut CanvasEditor,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    intents: impl IntoIterator<Item = CanvasToolIntent>,
+) -> Result<(), CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    for intent in intents {
+        apply_persistent_tool_intent(editor, store, cursor, intent)?;
     }
 
     Ok(())
@@ -376,8 +402,13 @@ where
     S: CanvasPersistenceStore,
     T: CanvasToolReducer + ?Sized,
 {
-    let effects = editor.event_effects_with_custom_tool(event, custom_tool)?;
-    apply_persistent_tool_effects(editor, store, cursor, effects)
+    if editor.tool().custom_id().is_some() {
+        let intents = custom_tool.handle_event(editor.tool_context(), event)?;
+        apply_persistent_tool_intents(editor, store, cursor, intents)
+    } else {
+        let effects = editor.event_effects(event)?;
+        apply_persistent_tool_effects(editor, store, cursor, effects)
+    }
 }
 
 pub fn handle_persistent_event_with_tool_registry<S>(
@@ -390,10 +421,26 @@ pub fn handle_persistent_event_with_tool_registry<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let effects = editor
-        .event_effects_with_tool_registry(event, registry)
-        .map_err(CanvasPersistentToolRegistryError::from_tool_registry_error)?;
-    apply_persistent_tool_effects(editor, store, cursor, effects)?;
+    if let Some(tool_id) = editor.tool().custom_id().cloned() {
+        let reducer = registry
+            .reducer_mut(&tool_id)
+            .ok_or_else(|| CanvasPersistentToolRegistryError::MissingTool(tool_id.clone()))?;
+        let intents = reducer
+            .handle_event(editor.tool_context(), event)
+            .map_err(|error| {
+                CanvasPersistentToolRegistryError::Persistence(CanvasPersistenceError::Document(
+                    error,
+                ))
+            })?;
+        apply_persistent_tool_intents(editor, store, cursor, intents)
+            .map_err(CanvasPersistentToolRegistryError::from)?;
+    } else {
+        let effects = editor.event_effects(event).map_err(|error| {
+            CanvasPersistentToolRegistryError::Persistence(CanvasPersistenceError::Document(error))
+        })?;
+        apply_persistent_tool_effects(editor, store, cursor, effects)
+            .map_err(CanvasPersistentToolRegistryError::from)?;
+    }
     Ok(())
 }
 

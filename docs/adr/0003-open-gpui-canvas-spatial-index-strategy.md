@@ -10,7 +10,7 @@ model. The first release already has the important boundaries:
 
 - `CanvasRuntime` owns runtime caches;
 - `CanvasGeometryResolver` owns geometry semantics;
-- `SpatialIndex` remains the public correctness oracle and simple fallback model;
+- `SpatialIndex` remains a dev/test correctness oracle and simple fallback model;
 - production editor and paint paths query `CanvasRuntime` rather than borrowing a raw
   `SpatialIndex`;
 - tests prove hidden, locked, handle, margin, z-order, custom-router, and kind-registry behavior.
@@ -25,7 +25,7 @@ The candidates are:
 
 ## Decision
 
-Keep the current sorted-vector `SpatialIndex` as the 0.1 public oracle and fallback model.
+Keep the current sorted-vector `SpatialIndex` as the 0.1 dev/test oracle and fallback model.
 
 Adopt an internal runtime cache with this shape:
 
@@ -146,6 +146,8 @@ Decision: chosen as the next internal prototype direction.
 - `rstar` and `static_aabb2d_index` stay as dev-only spike dependencies for now.
 - The production runtime now owns a runtime query module over spatial cache internals.
 - Public editor and paint paths no longer expose a raw runtime `SpatialIndex` accessor.
+- The root crate API no longer re-exports `SpatialIndex`; benchmarks and parity tests reach it
+  through the hidden `index` module.
 - The next architecture work should benchmark the internal runtime path before adding public index
   selection APIs.
 - A future user-facing choice, if needed, should be semantic (`Auto`, `Simple`, `Dynamic`,

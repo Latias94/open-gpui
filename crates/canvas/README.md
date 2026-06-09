@@ -45,10 +45,11 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasInputMapper::key_down_event` lets focus-owning widgets dispatch keyboard input without a
   canvas-local bounds mapper; the native smoke example forwards Delete, Backspace, and Escape this
   way.
-- `CanvasToolEffect` is the mutation vocabulary shared by built-in tools and application-defined
-  custom tools, including replace/add/remove/toggle selection effects for multi-select workflows.
-- The built-in select tool supports shift-click selection toggling through the same incremental
-  selection effect path that custom tools can use.
+- Built-in tool state machines keep their gesture effects inside `CanvasEditor`, while
+  `CanvasToolIntent` is the public custom-tool vocabulary for document, selection, viewport, and
+  tool-mode changes.
+- The built-in select tool supports shift-click selection toggling through the same selection
+  semantics exposed to custom tools as intents.
 - The built-in select tool also supports shift-drag additive marquee selection, seeded from the
   drag start selection so box selection can grow a baseline set without accumulating during move
   events.
@@ -68,7 +69,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 ```rust
 use open_gpui::{point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, DocumentError,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasTransaction,
+    DocumentCommand, DocumentError,
 };
 
 fn build_document() -> Result<CanvasDocument, DocumentError> {
@@ -91,13 +93,15 @@ fn build_document() -> Result<CanvasDocument, DocumentError> {
         .push(CanvasHandle::new("in", point(px(0.0), px(40.0))));
 
     let mut document = CanvasDocument::default();
-    document.insert_node(source)?;
-    document.insert_node(target)?;
-    document.insert_edge(CanvasEdge::new(
-        "source-target",
-        CanvasEndpoint::new("source", Some("out")),
-        CanvasEndpoint::new("target", Some("in")),
-    ))?;
+    document.apply_transaction(CanvasTransaction::new([
+        DocumentCommand::InsertNode(source),
+        DocumentCommand::InsertNode(target),
+        DocumentCommand::InsertEdge(CanvasEdge::new(
+            "source-target",
+            CanvasEndpoint::new("source", Some("out")),
+            CanvasEndpoint::new("target", Some("in")),
+        )),
+    ]))?;
     Ok(document)
 }
 ```
@@ -121,8 +125,10 @@ fn inspect(document: &open_gpui_canvas::CanvasDocument) {
 }
 ```
 
-`CanvasGraph` is scan-based and zero-cache. For hot graph traversal, build a
-`CanvasGraphIndex` explicitly and keep it in sync with `CanvasDocumentDiff`.
+`CanvasGraph` is scan-based and zero-cache. For hot graph traversal that is independent of
+`CanvasEditor`, build a `CanvasGraphIndex` explicitly and keep it in sync with
+`CanvasDocumentDiff`. Application editing paths should prefer `CanvasRuntime`, which keeps graph,
+spatial, and edge-geometry caches behind one owner.
 
 ```rust
 use open_gpui_canvas::{CanvasEdgeDirection, CanvasGraphIndex, NodeId};
@@ -434,7 +440,7 @@ fn selected_note_widgets(frame: &CanvasPaintFrame) -> Vec<CanvasWidgetOverlayPla
 ```
 
 Widget event handlers should route edits back through `CanvasEditor` APIs, `DocumentCommand`
-transactions, or custom `CanvasToolEffect` values. Treat overlay placement as layout data, not as a
+transactions, or custom `CanvasToolIntent` values. Treat overlay placement as layout data, not as a
 second mutation path.
 
 Run the native note-map example to see JSON Canvas import, kind registry labels, resize policy,
@@ -463,14 +469,15 @@ rendering work through visible-record culling instead of per-record GPUI element
 
 ## Add A Custom Tool
 
-Custom tools read editor state through `CanvasToolContext` and return `CanvasToolEffect` values.
+Custom tools read editor state through `CanvasToolContext` and return `CanvasToolIntent` values.
 They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cache updates,
-persistence, and future CRDT translation keep passing through one mutation path.
+persistence, and future CRDT translation keep passing through one mutation path. Built-in gesture
+state stays inside the editor.
 
 ```rust
 use open_gpui::{px, size};
 use open_gpui_canvas::{
-    CanvasEvent, CanvasNode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolReducer,
+    CanvasEvent, CanvasNode, CanvasTool, CanvasToolContext, CanvasToolIntent, CanvasToolReducer,
     CanvasTransaction, DocumentCommand, DocumentError, NodeId, PointerButton,
 };
 
@@ -481,7 +488,7 @@ impl CanvasToolReducer for StampTool {
         &mut self,
         context: CanvasToolContext<'_>,
         event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
         let CanvasEvent::PointerDown {
             position,
             button: PointerButton::Primary,
@@ -498,10 +505,10 @@ impl CanvasToolReducer for StampTool {
         );
 
         Ok(vec![
-            CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::InsertNode(node),
             )),
-            CanvasToolEffect::SetTool(CanvasTool::Select),
+            CanvasToolIntent::SetTool(CanvasTool::Select),
         ])
     }
 }
@@ -539,7 +546,7 @@ The default crate ships only the persistence contract and an in-memory store.
 use open_gpui_canvas::{
     CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
     CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
-    apply_persistent_tool_effect, apply_persistent_transaction, handle_persistent_event,
+    apply_persistent_tool_intents, apply_persistent_transaction, handle_persistent_event,
     load_canvas_document, redo_persistent_transaction, save_canvas_checkpoint,
     undo_persistent_transaction,
 };
@@ -591,19 +598,17 @@ store
     .unwrap();
 ```
 
-For tool reducers, use `apply_persistent_tool_effect` or `apply_persistent_tool_effects` so
-recorded transactions enter the log and gesture updates stay transient until `CommitGesture`.
-Gesture sessions begin with `BeginGesture`, update the in-memory document with `UpdateGesture`,
-and commit or cancel without asking tool authors to construct inverse transactions by hand.
-New log entries written by the persistence helpers are created from committed mutations, so their
-record operation batches describe actual document effects. `CanvasLogEntry::from_legacy_transaction`
-is reserved for replaying or testing older transaction-only logs where only the command intent is
-available.
+For tool reducers, use `apply_persistent_tool_intents` so recorded transactions enter the log and
+custom tool output stays on the intent surface. The editor owns gesture lifecycle and turns
+selected built-in tool events into internal effects itself. New log entries written by the
+persistence helpers are created from committed mutations, so their record operation batches
+describe actual document effects. `CanvasLogEntry::from_legacy_transaction` is reserved for
+replaying or testing older transaction-only logs where only the command intent is available.
 Applications that want one entrypoint can dispatch normalized canvas events through
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
-`handle_persistent_event_with_tool_registry`; those helpers reduce the active tool to effects, log
-recorded transactions, apply transient updates in memory, and leave concrete storage ownership in
-the application.
+`handle_persistent_event_with_tool_registry`; those helpers route built-in tools through the
+editor's internal gesture path, route custom tools through reducer intents, and leave concrete
+storage ownership in the application.
 
 Feature names are reserved for future adapters:
 

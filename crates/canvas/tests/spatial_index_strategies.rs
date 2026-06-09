@@ -1,9 +1,9 @@
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+use open_gpui_canvas::index::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
     CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasRuntime,
     CanvasShape, CanvasTransaction, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
-    SpatialIndex,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -261,10 +261,8 @@ fn runtime_diff_updates_match_oracle_during_drag_frames() {
     let mut document = base_document.clone();
 
     for frame in [1, 60, 120] {
-        let previous = document.clone();
-        move_selected_nodes(&mut document, &selected_nodes, frame as f32);
-        let diff = document.diff_against(&previous);
-        runtime.apply_diff(&document, &diff);
+        let committed = move_selected_nodes(&mut document, &selected_nodes, frame as f32);
+        runtime.apply_committed_mutation(&document, &committed);
         let oracle = SpatialIndex::rebuild(&document);
 
         assert_runtime_against_oracle(
@@ -834,7 +832,11 @@ fn stale_record_ids_for_node_removal(
     stale_records
 }
 
-fn move_selected_nodes(document: &mut CanvasDocument, selected_nodes: &[NodeId], frame: f32) {
+fn move_selected_nodes(
+    document: &mut CanvasDocument,
+    selected_nodes: &[NodeId],
+    frame: f32,
+) -> open_gpui_canvas::CanvasCommittedMutation {
     let mut commands = Vec::new();
     for (index, id) in selected_nodes.iter().enumerate() {
         let mut node = document.node(id).unwrap().clone();
@@ -842,7 +844,9 @@ fn move_selected_nodes(document: &mut CanvasDocument, selected_nodes: &[NodeId],
         node.position.y += px(frame * 0.25);
         commands.push(DocumentCommand::UpdateNode(node));
     }
-    apply_commands(document, commands);
+    document
+        .commit_transaction(CanvasTransaction::new(commands))
+        .unwrap()
 }
 
 fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
