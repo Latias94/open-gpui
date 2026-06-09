@@ -65,14 +65,6 @@ fn missing_active_panel_renders_placeholder(cx: &mut TestAppContext) {
     .expect("missing panel selector should be emitted");
 
     assert!(debug_bounds(&mut visual, &missing).size.width > px(0.0));
-    assert_eq!(
-        host.read_with(&visual, |host, _| host
-            .graph()
-            .expect("owned host should expose graph")
-            .spaces()
-            .len()),
-        1
-    );
 }
 
 #[open_gpui::test]
@@ -89,13 +81,6 @@ fn empty_root_renders_placeholder(cx: &mut TestAppContext) {
         .expect("empty selector should be emitted");
 
     assert!(debug_bounds(&mut visual, &empty).size.width > px(0.0));
-    assert_eq!(
-        host.read_with(&visual, |host, _| host
-            .panels()
-            .expect("owned host should expose panels")
-            .len()),
-        1
-    );
 }
 
 #[open_gpui::test]

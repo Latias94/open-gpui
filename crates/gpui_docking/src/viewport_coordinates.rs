@@ -134,7 +134,7 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use crate::{
-        DockViewportAdapter, DockViewportHit,
+        DockViewportAdapter, DockViewportHit, DockViewportTargetContext,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
@@ -171,7 +171,10 @@ mod tests {
             Some(point(px(115.0), px(225.0)))
         );
         assert_eq!(
-            adapter.hit_test_screen(point(px(115.0), px(225.0))),
+            adapter.hit_test_screen_with_context(
+                point(px(115.0), px(225.0)),
+                &DockViewportTargetContext::new(),
+            ),
             Some(DockViewportHit {
                 space: main.clone(),
                 host_position: point(px(5.0), px(5.0)),

@@ -1,4 +1,6 @@
-use crate::{DockPanelViewError, DockWorkspace, debug::DockDebugRegion, host_test_support::*};
+use crate::{
+    DockController, DockPanelViewError, DockWorkspace, debug::DockDebugRegion, host_test_support::*,
+};
 use open_gpui::{AnyView, App, AppContext as _, TestAppContext, VisualTestContext, px, size};
 use std::{cell::Cell, rc::Rc};
 
@@ -168,16 +170,12 @@ fn lazy_panel_state_stays_out_of_layout_export(cx: &mut TestAppContext) {
     workspace.register_panel_factory("lazy", "Lazy Panel", |cx| {
         cx.new(|_| TestPanel { label: "lazy" }).into()
     });
+    let controller = cx.new(|_| DockController::new(workspace));
 
-    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
-    let json = host.read_with(&visual, |host, _| {
-        serde_json::to_string(
-            &host
-                .graph()
-                .expect("owned host should expose graph")
-                .export_layout(),
-        )
-        .expect("layout should serialize")
+    let (_window, _host, _visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
+    let json = cx.read_entity(&controller, |controller, _| {
+        serde_json::to_string(&controller.graph().export_layout()).expect("layout should serialize")
     });
 
     assert!(!json.contains("Lazy Panel"));

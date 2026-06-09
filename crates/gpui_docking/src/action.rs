@@ -148,9 +148,6 @@ impl DockActionOutcome {
 /// Error returned when a docking action cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockActionApplyError {
-    /// The action was sent directly to a controller-backed host.
-    #[error("controller-backed hosts apply actions through DockController")]
-    ControllerBackedHost,
     /// The selected item was not found in the target tabs node.
     #[error("dock item {item} not found in tabs node {tabs:?}")]
     ItemNotInTabs {

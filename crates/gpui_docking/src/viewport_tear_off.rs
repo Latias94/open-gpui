@@ -31,31 +31,10 @@ pub enum DockViewportTearOffOutcome {
 }
 
 impl DockViewportAdapter {
-    /// Resolves a tab release into either an existing viewport hit or a platform tear-off request.
+    /// Resolves a tab release using explicit viewport target arbitration inputs.
     ///
     /// This method never mutates the docking graph. Callers should open/register a destination
     /// viewport first, then commit a move action after runtime setup succeeds.
-    pub fn resolve_tear_off_request(
-        &self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        item: impl Into<DockItemId>,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        policy: &DockPolicy,
-    ) -> DockViewportTearOffOutcome {
-        self.resolve_tear_off_request_with_context(
-            source_space,
-            source_tabs,
-            item,
-            release_position,
-            suggested_window_bounds,
-            policy,
-            &DockViewportTargetContext::new(),
-        )
-    }
-
-    /// Resolves a tab release using explicit viewport target arbitration inputs.
     #[allow(clippy::too_many_arguments)]
     pub fn resolve_tear_off_request_with_context(
         &self,
@@ -108,13 +87,14 @@ mod tests {
         );
 
         assert_eq!(
-            adapter.resolve_tear_off_request(
+            adapter.resolve_tear_off_request_with_context(
                 main.clone(),
                 DockNodeId::null(),
                 item("a"),
                 point(px(115.0), px(225.0)),
                 None,
                 &DockPolicy::default(),
+                &DockViewportTargetContext::new(),
             ),
             DockViewportTearOffOutcome::KnownViewport(DockViewportHit {
                 space: main,
@@ -129,13 +109,14 @@ mod tests {
         let main = space("main");
 
         assert_eq!(
-            adapter.resolve_tear_off_request(
+            adapter.resolve_tear_off_request_with_context(
                 main,
                 DockNodeId::null(),
                 item("a"),
                 point(px(900.0), px(900.0)),
                 None,
                 &DockPolicy::default(),
+                &DockViewportTargetContext::new(),
             ),
             DockViewportTearOffOutcome::Rejected(DockPolicyError::PlatformViewportsDisabled)
         );
@@ -152,13 +133,14 @@ mod tests {
         policy.set_allow_platform_viewports(true);
 
         assert_eq!(
-            adapter.resolve_tear_off_request(
+            adapter.resolve_tear_off_request_with_context(
                 main.clone(),
                 DockNodeId::null(),
                 item.clone(),
                 release_position,
                 Some(suggested_window_bounds),
                 &policy,
+                &DockViewportTargetContext::new(),
             ),
             DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
                 source_space: main,
@@ -179,13 +161,14 @@ mod tests {
         policy.set_allow_platform_viewports(true);
 
         assert!(matches!(
-            adapter.resolve_tear_off_request(
+            adapter.resolve_tear_off_request_with_context(
                 main,
                 DockNodeId::null(),
                 item("a"),
                 point(px(115.0), px(225.0)),
                 None,
                 &policy,
+                &DockViewportTargetContext::new(),
             ),
             DockViewportTearOffOutcome::Requested(_)
         ));

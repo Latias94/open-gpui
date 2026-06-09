@@ -1,56 +1,11 @@
 use crate::{
-    DockAction, DockActionOutcome, DockController, DockGraph, DockHost, DockHostAccessError,
-    DockNode, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, debug::DockDebugRegion,
-    host_test_support::*,
+    DockController, DockGraph, DockNode, DockSpaceId, DockWorkspace, EditorDockLayoutSpec,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
 };
 use std::{cell::Cell, rc::Rc};
-
-#[open_gpui::test]
-fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
-    let workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
-    let mut host = DockHost::from_workspace(workspace);
-
-    let outcome = host
-        .apply_action(&DockAction::SelectTab {
-            tabs: root,
-            item: item("b"),
-        })
-        .expect("active tab mutation should be valid");
-
-    let graph = host.graph().expect("owned host should expose graph");
-    let DockNode::Tabs { active, .. } = graph.node(root).expect("tabs should exist") else {
-        panic!("root should be tabs");
-    };
-    assert_eq!(outcome, DockActionOutcome::Changed);
-    assert_eq!(*active, 1);
-    let panels = host.panels().expect("owned host should expose panels");
-    assert!(panels.contains(&item("a")));
-    assert!(panels.contains(&item("b")));
-}
-
-#[open_gpui::test]
-fn workspace_constructor_mounts_owned_state(_cx: &mut TestAppContext) {
-    let (graph, _root) = tabs_graph(&["a"], 0);
-    let workspace = DockWorkspace::new(space(), graph);
-    let host = DockHost::from_workspace(workspace);
-
-    assert_eq!(
-        host.workspace()
-            .expect("owned host should expose workspace")
-            .space(),
-        &space()
-    );
-    assert!(
-        host.graph()
-            .expect("owned host should expose graph")
-            .root(&space())
-            .is_some()
-    );
-}
 
 #[open_gpui::test]
 fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
@@ -63,11 +18,6 @@ fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
         open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
     let (window_b, host_b, visual_b) =
         open_controller_workspace(cx, controller.clone(), size(px(400.0), px(240.0)));
-
-    assert!(host_a.read_with(&visual_a, |host, _| matches!(
-        host.workspace(),
-        Err(DockHostAccessError::ControllerBackedHost)
-    )));
 
     assert!(
         selector_for(
@@ -176,10 +126,6 @@ fn controller_builder_mounts_host_with_lazy_panel_factories(cx: &mut TestAppCont
     let (window, host, mut visual) =
         open_controller_workspace(cx, controller.clone(), size(px(520.0), px(320.0)));
 
-    assert!(
-        cx.read_entity(&host, |host, _| host.controller().is_some()),
-        "host should be controller-backed when mounted from the builder path"
-    );
     assert_eq!(editor_calls.get(), 1);
     assert_eq!(
         preview_calls.get(),

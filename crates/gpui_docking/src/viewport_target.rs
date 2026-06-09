@@ -5,16 +5,6 @@ use crate::{
 use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
-    /// Finds the registered viewport containing a screen point.
-    ///
-    /// This compatibility helper has no platform-window arbitration inputs, so overlapping
-    /// viewports fall back to the adapter's deterministic space order. Pointer-event paths and
-    /// other multi-window product flows should prefer [`Self::hit_test_screen_with_context`] with a
-    /// [`DockViewportTargetContext`] from the current GPUI window or app.
-    pub fn hit_test_screen(&self, position: Point<Pixels>) -> Option<DockViewportHit> {
-        self.hit_test_screen_with_context(position, &DockViewportTargetContext::new())
-    }
-
     /// Finds the registered viewport containing a screen point using platform arbitration inputs.
     ///
     /// When more than one registered viewport contains the point, the resolver prefers hovered
@@ -82,9 +72,11 @@ mod tests {
 
         let position = point(px(120.0), px(140.0));
         assert_eq!(
-            adapter.hit_test_screen(position).map(|hit| hit.space),
+            adapter
+                .hit_test_screen_with_context(position, &DockViewportTargetContext::new())
+                .map(|hit| hit.space),
             Some(alpha.clone()),
-            "context-free compatibility path uses stable space order"
+            "empty context uses stable space order as the final fallback"
         );
         assert_eq!(
             adapter

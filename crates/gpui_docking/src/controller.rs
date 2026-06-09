@@ -27,20 +27,6 @@ impl DockController {
         Self { workspace }
     }
 
-    /// Creates a controller for one dock space and graph.
-    pub fn from_graph(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
-        Self::with_options(space, graph, DockHostOptions::default())
-    }
-
-    /// Creates a controller with explicit static rendering options.
-    pub fn with_options(
-        space: impl Into<DockSpaceId>,
-        graph: DockGraph,
-        options: DockHostOptions,
-    ) -> Self {
-        Self::new(DockWorkspace::with_options(space, graph, options))
-    }
-
     /// Returns the owned workspace.
     pub fn workspace(&self) -> &DockWorkspace {
         &self.workspace

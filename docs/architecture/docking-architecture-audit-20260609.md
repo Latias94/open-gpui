@@ -18,9 +18,10 @@ The docking crate now matches ADR 0002's layering for the current product surfac
 
 Host depth:
 
-- `crates/gpui_docking/src/host.rs` keeps `source`, `interaction`, and test debug state private.
-- `crates/gpui_docking/src/host_source.rs` owns the owned-workspace versus controller-backed
-  routing.
+- `crates/gpui_docking/src/host.rs` keeps the controller entity, rendered space id,
+  interaction runtime, and test debug state private.
+- `DockHost` is controller-backed only; it stores the controller entity plus rendered space id and
+  no longer carries an owned-workspace source path.
 - `crates/gpui_docking/src/host_render_session.rs` snapshots read-only render facts before element
   construction.
 - `crates/gpui_docking/src/host_render_actions.rs` is the render-callback commit entry point.
@@ -35,8 +36,8 @@ Viewport productization:
   `DockViewportCloseGate` and `DockViewportShouldCloseOutcome`.
 - Target resolution ranks hovered window, active window, front-to-back window stack, then
   deterministic fallback in `crates/gpui_docking/src/viewport_target_resolver.rs`.
-- `DockViewportAdapter::hit_test_screen` is documented as the compatibility path for callers that
-  lack platform-window context.
+- Viewport hit testing and tear-off resolution require explicit `DockViewportTargetContext`
+  arbitration input, even when callers choose an empty fallback context.
 
 Panel lifecycle:
 
@@ -58,9 +59,9 @@ Test locality:
 
 ## Residual Backlog
 
-- Keep shrinking legacy compatibility pressure around owned-host state accessors. `DockHost::new`
-  and `DockHost::with_options` are now deprecated compatibility delegates, and source/tests have
-  moved to the workspace-backed mounting path.
+- Legacy compatibility pressure around graph-based `DockHost` and `DockController` constructors,
+  host-owned state accessors, the `DockHostSource` owned/controller split, and context-free
+  viewport target helpers has been removed from the public docking API.
 - Add richer product behavior through the existing seams: tab reorder, whole-stack drag, viewport
   release polish, focus restoration, and accessibility behavior.
 - Continue splitting future viewport or graph code only when the extracted module passes the

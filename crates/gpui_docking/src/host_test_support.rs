@@ -133,11 +133,9 @@ pub(crate) fn open_workspace(
     workspace: DockWorkspace,
     window_size: open_gpui::Size<Pixels>,
 ) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
-    let window = cx.open_window(window_size, move |_, _| DockHost::from_workspace(workspace));
-    let host = window.root(cx).expect("window should expose DockHost root");
-    cx.run_until_parked();
-    let visual = VisualTestContext::from_window(window.into(), cx);
-    (window, host, visual)
+    let dock_space = workspace.space().clone();
+    let controller = cx.new(|_| DockController::new(workspace));
+    open_controller_space(cx, controller, dock_space, window_size)
 }
 
 pub(crate) fn open_controller_workspace(

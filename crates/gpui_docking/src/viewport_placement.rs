@@ -107,7 +107,7 @@ mod tests {
     use super::*;
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportPlacementValidationError,
-        DockViewportRestoreOutcome,
+        DockViewportRestoreOutcome, DockViewportTargetContext,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, WindowOptions, point, px};
@@ -197,7 +197,10 @@ mod tests {
         assert_eq!(restored.window_for_space(&main), Some(handle(101)));
         assert_eq!(restored.space_for_window(handle(102)), Some(&secondary));
         assert_eq!(
-            restored.hit_test_screen(point(px(935.0), px(245.0))),
+            restored.hit_test_screen_with_context(
+                point(px(935.0), px(245.0)),
+                &DockViewportTargetContext::new(),
+            ),
             Some(DockViewportHit {
                 space: secondary,
                 host_position: point(px(5.0), px(5.0)),

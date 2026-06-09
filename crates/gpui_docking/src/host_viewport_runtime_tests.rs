@@ -202,7 +202,7 @@ fn viewport_runtime_installs_should_close_hook_when_reusing_registered_window(
 
 #[open_gpui::test]
 fn viewport_runtime_window_closed_cleans_mapping_after_prevent_policy(cx: &mut TestAppContext) {
-    let controller = cx.new(|_| DockController::from_graph(space(), DockGraph::new()));
+    let controller = cx.new(|_| DockController::new(DockWorkspace::new(space(), DockGraph::new())));
     let secondary_space = DockSpaceId::from("secondary");
     let window: AnyWindowHandle = WindowHandle::<DockHost>::new(WindowId::from(909)).into();
     let mut adapter = DockViewportAdapter::new();

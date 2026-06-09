@@ -1,10 +1,10 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockController, DockGraph, DockSpaceId, host_source::DockHostSource,
+    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockSpaceId,
     interaction::DockInteractionRuntime, workspace::DockWorkspace,
 };
-use open_gpui::{Context, Entity, Pixels, px};
+use open_gpui::{AppContext as _, Context, Entity, Pixels, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -37,51 +37,14 @@ impl Default for DockHostOptions {
 /// crate's interaction runtime.
 #[derive(Debug)]
 pub struct DockHost {
-    source: DockHostSource,
+    controller: Entity<DockController>,
+    space: DockSpaceId,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
 }
 
 impl DockHost {
-    /// Creates a host for one dock space and graph.
-    ///
-    /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
-    /// constructor remains as a compatibility path and delegates to workspace-backed state.
-    #[deprecated(
-        since = "0.1.0",
-        note = "configure a DockWorkspace and mount it with DockHost::from_workspace"
-    )]
-    pub fn new(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
-        Self::from_workspace(DockWorkspace::new(space, graph))
-    }
-
-    /// Creates a host with explicit static rendering options.
-    ///
-    /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
-    /// constructor remains as a compatibility path and delegates to workspace-backed state.
-    #[deprecated(
-        since = "0.1.0",
-        note = "configure a DockWorkspace with options and mount it with DockHost::from_workspace"
-    )]
-    pub fn with_options(
-        space: impl Into<DockSpaceId>,
-        graph: DockGraph,
-        options: DockHostOptions,
-    ) -> Self {
-        Self::from_workspace(DockWorkspace::with_options(space, graph, options))
-    }
-
-    /// Creates a host that renders a configured workspace.
-    pub fn from_workspace(workspace: DockWorkspace) -> Self {
-        Self {
-            source: DockHostSource::Owned(Box::new(workspace)),
-            #[cfg(test)]
-            debug: DockDebugInstrumentation::default(),
-            interaction: DockInteractionRuntime::default(),
-        }
-    }
-
     /// Creates a host that renders one dock space from a shared controller.
     pub fn from_controller(
         controller: Entity<DockController>,
@@ -90,22 +53,45 @@ impl DockHost {
     ) -> Self {
         cx.observe(&controller, |_, _, cx| cx.notify()).detach();
         Self {
-            source: DockHostSource::Controller {
-                controller,
-                space: space.into(),
-            },
+            controller,
+            space: space.into(),
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
         }
     }
 
-    pub(crate) fn source(&self) -> &DockHostSource {
-        &self.source
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        &self.space
     }
 
-    pub(crate) fn source_mut(&mut self) -> &mut DockHostSource {
-        &mut self.source
+    pub(crate) fn with_workspace<R>(
+        &self,
+        cx: &Context<Self>,
+        read: impl FnOnce(&DockWorkspace) -> R,
+    ) -> R {
+        cx.read_entity(&self.controller, |controller, _| {
+            read(controller.workspace())
+        })
+    }
+
+    pub(crate) fn apply_action_from_host(
+        &mut self,
+        action: &DockAction,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            let outcome = controller.apply_action(action);
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
     }
 
     pub(crate) fn interaction(&self) -> &DockInteractionRuntime {
