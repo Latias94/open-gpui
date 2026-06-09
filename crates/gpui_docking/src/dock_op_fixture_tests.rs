@@ -1,20 +1,7 @@
+use crate::graph_test_support::{main_space as space, root_tabs_graph};
 use crate::*;
 use serde::Deserialize;
 use std::collections::HashSet;
-
-fn space() -> DockSpaceId {
-    DockSpaceId::new("main")
-}
-
-fn root_tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
-    let mut graph = DockGraph::new();
-    let root = graph.insert_node(DockNode::Tabs {
-        items: items.iter().copied().map(DockItemId::new).collect(),
-        active: 0,
-    });
-    graph.set_root(space(), root);
-    (graph, root)
-}
 
 #[derive(Debug, Deserialize)]
 struct FixtureSuite {

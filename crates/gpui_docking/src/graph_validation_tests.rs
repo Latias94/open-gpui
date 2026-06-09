@@ -1,12 +1,5 @@
+use crate::graph_test_support::{item, space};
 use crate::*;
-
-fn space(id: &str) -> DockSpaceId {
-    DockSpaceId::new(id)
-}
-
-fn item(id: &str) -> DockItemId {
-    DockItemId::new(id)
-}
 
 fn duplicate_item_graph() -> (DockGraph, DockNodeId, DockNodeId) {
     let mut graph = DockGraph::new();

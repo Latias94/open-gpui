@@ -1,22 +1,5 @@
+use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
 use crate::*;
-
-fn space() -> DockSpaceId {
-    DockSpaceId::new("main")
-}
-
-fn item(id: &str) -> DockItemId {
-    DockItemId::new(id)
-}
-
-fn root_tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
-    let mut graph = DockGraph::new();
-    let root = graph.insert_node(DockNode::Tabs {
-        items: items.iter().copied().map(item).collect(),
-        active: 0,
-    });
-    graph.set_root(space(), root);
-    (graph, root)
-}
 
 #[test]
 fn checked_set_active_tab_reports_only_real_changes() {

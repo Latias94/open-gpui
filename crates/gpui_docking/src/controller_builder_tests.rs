@@ -1,12 +1,5 @@
+use crate::graph_test_support::{item, main_space as space};
 use crate::*;
-
-fn space() -> DockSpaceId {
-    DockSpaceId::new("main")
-}
-
-fn item(id: &str) -> DockItemId {
-    DockItemId::new(id)
-}
 
 #[test]
 fn controller_builder_sets_layout_panels_policy_and_options() {
