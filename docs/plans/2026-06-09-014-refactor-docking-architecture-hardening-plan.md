@@ -1,7 +1,7 @@
 ---
 title: "refactor: Harden docking architecture seams"
 type: refactor
-status: active
+status: completed
 date: 2026-06-09
 ---
 
