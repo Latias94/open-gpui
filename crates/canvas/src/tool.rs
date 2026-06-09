@@ -1,4 +1,7 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
+use crate::layer::{
+    CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
+};
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
@@ -199,20 +202,12 @@ pub enum CanvasSelectionMode {
     Add,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum CanvasZOrderCommand {
-    BringToFront,
-    BringForward,
-    SendBackward,
-    SendToBack,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CanvasSelection {
-    pub nodes: IndexSet<NodeId>,
-    pub edges: IndexSet<EdgeId>,
-    pub shapes: IndexSet<ShapeId>,
-    pub handles: IndexSet<CanvasEndpoint>,
+    nodes: IndexSet<NodeId>,
+    edges: IndexSet<EdgeId>,
+    shapes: IndexSet<ShapeId>,
+    handles: IndexSet<CanvasEndpoint>,
 }
 
 impl CanvasSelection {
@@ -228,41 +223,87 @@ impl CanvasSelection {
         self.insert_target(target);
     }
 
+    pub fn contains_node(&self, id: &NodeId) -> bool {
+        self.nodes.contains(id)
+    }
+
+    pub fn contains_edge(&self, id: &EdgeId) -> bool {
+        self.edges.contains(id)
+    }
+
+    pub fn contains_shape(&self, id: &ShapeId) -> bool {
+        self.shapes.contains(id)
+    }
+
+    pub fn contains_handle(&self, endpoint: &CanvasEndpoint) -> bool {
+        self.handles.contains(endpoint)
+    }
+
     pub fn contains_target(&self, target: &HitTarget) -> bool {
         match target {
-            HitTarget::Node(id) => self.nodes.contains(id),
-            HitTarget::Handle { node_id, handle_id } => self.handles.contains(&CanvasEndpoint {
+            HitTarget::Node(id) => self.contains_node(id),
+            HitTarget::Handle { node_id, handle_id } => self.contains_handle(&CanvasEndpoint {
                 node_id: node_id.clone(),
                 handle_id: Some(handle_id.clone()),
             }),
-            HitTarget::Edge(id) => self.edges.contains(id),
-            HitTarget::Shape(id) => self.shapes.contains(id),
+            HitTarget::Edge(id) => self.contains_edge(id),
+            HitTarget::Shape(id) => self.contains_shape(id),
         }
+    }
+
+    pub fn insert_node(&mut self, id: NodeId) -> bool {
+        self.nodes.insert(id)
+    }
+
+    pub fn insert_edge(&mut self, id: EdgeId) -> bool {
+        self.edges.insert(id)
+    }
+
+    pub fn insert_shape(&mut self, id: ShapeId) -> bool {
+        self.shapes.insert(id)
+    }
+
+    pub fn insert_handle(&mut self, endpoint: CanvasEndpoint) -> bool {
+        self.handles.insert(endpoint)
     }
 
     pub fn insert_target(&mut self, target: HitTarget) -> bool {
         match target {
-            HitTarget::Node(id) => self.nodes.insert(id),
-            HitTarget::Handle { node_id, handle_id } => self.handles.insert(CanvasEndpoint {
+            HitTarget::Node(id) => self.insert_node(id),
+            HitTarget::Handle { node_id, handle_id } => self.insert_handle(CanvasEndpoint {
                 node_id,
                 handle_id: Some(handle_id),
             }),
-            HitTarget::Edge(id) => self.edges.insert(id),
-            HitTarget::Shape(id) => self.shapes.insert(id),
+            HitTarget::Edge(id) => self.insert_edge(id),
+            HitTarget::Shape(id) => self.insert_shape(id),
         }
+    }
+
+    pub fn remove_node(&mut self, id: &NodeId) -> bool {
+        self.nodes.shift_remove(id)
+    }
+
+    pub fn remove_edge(&mut self, id: &EdgeId) -> bool {
+        self.edges.shift_remove(id)
+    }
+
+    pub fn remove_shape(&mut self, id: &ShapeId) -> bool {
+        self.shapes.shift_remove(id)
+    }
+
+    pub fn remove_handle(&mut self, endpoint: &CanvasEndpoint) -> bool {
+        self.handles.shift_remove(endpoint)
     }
 
     pub fn remove_target(&mut self, target: &HitTarget) -> bool {
         match target {
-            HitTarget::Node(id) => self.nodes.shift_remove(id),
-            HitTarget::Handle { node_id, handle_id } => {
-                self.handles.shift_remove(&CanvasEndpoint {
-                    node_id: node_id.clone(),
-                    handle_id: Some(handle_id.clone()),
-                })
-            }
-            HitTarget::Edge(id) => self.edges.shift_remove(id),
-            HitTarget::Shape(id) => self.shapes.shift_remove(id),
+            HitTarget::Node(id) => self.remove_node(id),
+            HitTarget::Handle { node_id, handle_id } => self.remove_handle(&CanvasEndpoint {
+                node_id: node_id.clone(),
+                handle_id: Some(handle_id.clone()),
+            }),
+            HitTarget::Edge(id) => self.remove_edge(id),
+            HitTarget::Shape(id) => self.remove_shape(id),
         }
     }
 
@@ -283,6 +324,10 @@ impl CanvasSelection {
         self.handles.extend(selection.handles);
     }
 
+    pub fn clear_shapes(&mut self) {
+        self.shapes.clear();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
             && self.edges.is_empty()
@@ -300,6 +345,10 @@ impl CanvasSelection {
 
     pub fn selected_shapes(&self) -> impl Iterator<Item = &ShapeId> {
         self.shapes.iter()
+    }
+
+    pub fn selected_handles(&self) -> impl Iterator<Item = &CanvasEndpoint> {
+        self.handles.iter()
     }
 
     pub fn retain_document(&mut self, document: &CanvasDocument) {
@@ -1152,8 +1201,12 @@ impl CanvasEditor {
         shape_ids: &[ShapeId],
     ) -> crate::snap::CanvasSnapResult {
         let mut selection = CanvasSelection::default();
-        selection.nodes.extend(node_ids.iter().cloned());
-        selection.shapes.extend(shape_ids.iter().cloned());
+        for id in node_ids {
+            selection.insert_node(id.clone());
+        }
+        for id in shape_ids {
+            selection.insert_shape(id.clone());
+        }
         snap_delta_for_selection(
             self.document.as_ref(),
             &selection,
@@ -1171,8 +1224,12 @@ impl CanvasEditor {
         shape_ids: &[ShapeId],
     ) -> crate::snap::CanvasSnapResult {
         let mut selection = CanvasSelection::default();
-        selection.nodes.extend(node_ids.iter().cloned());
-        selection.shapes.extend(shape_ids.iter().cloned());
+        for id in node_ids {
+            selection.insert_node(id.clone());
+        }
+        for id in shape_ids {
+            selection.insert_shape(id.clone());
+        }
         snap_delta_for_resize_selection(
             self.document.as_ref(),
             &selection,
@@ -1376,83 +1433,50 @@ impl CanvasEditor {
 
     fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
         let mut records = self.z_order_records();
-        if !records.iter().any(|record| record.selected) {
-            return CanvasTransaction::default();
-        };
-
-        let original_order = records
-            .iter()
-            .map(|record| record.id.clone())
-            .collect::<Vec<_>>();
-        reorder_z_order_records(&mut records, command);
-        if records
-            .iter()
-            .map(|record| &record.id)
-            .eq(original_order.iter())
-        {
-            return CanvasTransaction::default();
-        }
-
-        let min_z = records
-            .iter()
-            .map(|record| record.z_index)
-            .min()
-            .unwrap_or_default();
-        let base_z = normalized_z_order_base(min_z, records.len());
-        let commands = records
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| {
-                let z_index = normalized_z_index(base_z, index);
-                (z_index != record.z_index)
-                    .then(|| self.z_order_update_command(&record.id, z_index))
-                    .flatten()
-            })
+        let commands = reorder_layer_z_indices(&mut records, command)
+            .into_iter()
+            .filter_map(|(record_id, z_index)| self.z_order_update_command(&record_id, z_index))
             .collect::<Vec<_>>();
 
         CanvasTransaction::new(commands)
     }
 
-    fn z_order_records(&self) -> Vec<ZOrderRecord> {
+    fn z_order_records(&self) -> Vec<CanvasLayerRecord> {
         let mut ordinal = 0;
         let mut records = Vec::new();
 
         records.extend(self.document.nodes().map(|node| {
-            let record = ZOrderRecord {
+            let record = CanvasLayerRecord {
                 id: CanvasRecordId::Node(node.id.clone()),
                 z_index: node.z_index,
                 ordinal,
-                selected: self.selection.nodes.contains(&node.id) && !node.locked,
+                selected: self.selection.contains_node(&node.id) && !node.locked,
             };
             ordinal += 1;
             record
         }));
         records.extend(self.document.shapes().map(|shape| {
-            let record = ZOrderRecord {
+            let record = CanvasLayerRecord {
                 id: CanvasRecordId::Shape(shape.id.clone()),
                 z_index: shape.z_index,
                 ordinal,
-                selected: self.selection.shapes.contains(&shape.id) && !shape.locked,
+                selected: self.selection.contains_shape(&shape.id) && !shape.locked,
             };
             ordinal += 1;
             record
         }));
         records.extend(self.document.edges().map(|edge| {
-            let record = ZOrderRecord {
+            let record = CanvasLayerRecord {
                 id: CanvasRecordId::Edge(edge.id.clone()),
                 z_index: edge.z_index,
                 ordinal,
-                selected: self.selection.edges.contains(&edge.id) && !edge.locked,
+                selected: self.selection.contains_edge(&edge.id) && !edge.locked,
             };
             ordinal += 1;
             record
         }));
 
-        records.sort_by(|left, right| {
-            left.z_index
-                .cmp(&right.z_index)
-                .then_with(|| left.ordinal.cmp(&right.ordinal))
-        });
+        sort_layer_records(&mut records);
         records
     }
 
@@ -1487,14 +1511,8 @@ impl CanvasEditor {
             .query_with_options(bounds, HitOptions::default())
         {
             match &record.target {
-                HitTarget::Node(id) => {
-                    selection.nodes.insert(id.clone());
-                }
-                HitTarget::Edge(id) => {
-                    selection.edges.insert(id.clone());
-                }
-                HitTarget::Shape(id) => {
-                    selection.shapes.insert(id.clone());
+                HitTarget::Node(_) | HitTarget::Edge(_) | HitTarget::Shape(_) => {
+                    selection.insert_target(record.target.clone());
                 }
                 HitTarget::Handle { .. } => {}
             }
@@ -1544,81 +1562,6 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
     } else {
         Axis::Vertical
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ZOrderRecord {
-    id: CanvasRecordId,
-    z_index: i32,
-    ordinal: usize,
-    selected: bool,
-}
-
-fn reorder_z_order_records(records: &mut Vec<ZOrderRecord>, command: CanvasZOrderCommand) {
-    match command {
-        CanvasZOrderCommand::BringToFront => {
-            let mut selected = Vec::new();
-            records.retain(|record| {
-                if record.selected {
-                    selected.push(record.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-            records.extend(selected);
-        }
-        CanvasZOrderCommand::SendToBack => {
-            let mut selected = Vec::new();
-            records.retain(|record| {
-                if record.selected {
-                    selected.push(record.clone());
-                    false
-                } else {
-                    true
-                }
-            });
-            selected.extend(records.iter().cloned());
-            *records = selected;
-        }
-        CanvasZOrderCommand::BringForward => {
-            let mut index = records.len();
-            while index > 0 {
-                index -= 1;
-                if !records[index].selected {
-                    continue;
-                }
-                let next = index + 1;
-                if next < records.len() && !records[next].selected {
-                    records.swap(index, next);
-                }
-            }
-        }
-        CanvasZOrderCommand::SendBackward => {
-            for index in 0..records.len() {
-                if !records[index].selected {
-                    continue;
-                }
-                if index > 0 && !records[index - 1].selected {
-                    records.swap(index - 1, index);
-                }
-            }
-        }
-    }
-}
-
-fn normalized_z_order_base(min_z: i32, record_count: usize) -> i32 {
-    let max_offset = record_count.saturating_sub(1).min(i32::MAX as usize) as i32;
-    if min_z > i32::MAX.saturating_sub(max_offset) {
-        i32::MAX - max_offset
-    } else {
-        min_z
-    }
-}
-
-fn normalized_z_index(base_z: i32, index: usize) -> i32 {
-    let offset = index.min(i32::MAX as usize) as i32;
-    base_z.saturating_add(offset)
 }
 
 #[cfg(test)]

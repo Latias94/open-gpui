@@ -157,10 +157,9 @@ pub fn snap_delta_for_resize_selection(
 
 fn selected_record_ids(selection: &CanvasSelection) -> Vec<String> {
     selection
-        .nodes
-        .iter()
+        .selected_nodes()
         .map(|id| format!("node:{id}"))
-        .chain(selection.shapes.iter().map(|id| format!("shape:{id}")))
+        .chain(selection.selected_shapes().map(|id| format!("shape:{id}")))
         .collect()
 }
 
@@ -440,7 +439,7 @@ mod tests {
             ))
             .unwrap();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("active"));
+        selection.insert_node(NodeId::from("active"));
 
         let result = snap_delta_for_selection(
             &document,
@@ -474,7 +473,7 @@ mod tests {
         document.insert_node(active).unwrap();
         document.insert_node(locked).unwrap();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("active"));
+        selection.insert_node(NodeId::from("active"));
 
         let result = snap_delta_for_selection(
             &document,
@@ -505,8 +504,8 @@ mod tests {
             ))
             .unwrap();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("active"));
-        selection.shapes.insert(ShapeId::from("target"));
+        selection.insert_node(NodeId::from("active"));
+        selection.insert_shape(ShapeId::from("target"));
 
         let result = snap_delta_for_resize_selection(
             &document,
@@ -520,7 +519,7 @@ mod tests {
         assert_eq!(result.delta, point(px(-46.0), px(-35.0)));
         assert!(result.guides.is_empty());
 
-        selection.shapes.clear();
+        selection.clear_shapes();
         let result = snap_delta_for_resize_selection(
             &document,
             &selection,

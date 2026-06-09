@@ -61,7 +61,7 @@ impl CanvasToolReducer for StampNodeTool {
         node.style = style(Some("#ecfeff"), Some("#0891b2"), px(2.0));
 
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(id);
+        selection.insert_node(id);
 
         Ok(vec![
             CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(

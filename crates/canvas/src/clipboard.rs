@@ -60,15 +60,15 @@ impl CanvasClipboardPayload {
         );
 
         let mut payload_selection = CanvasSelection::default();
-        payload_selection
-            .nodes
-            .extend(nodes.iter().map(|node| node.id.clone()));
-        payload_selection
-            .edges
-            .extend(edges.iter().map(|edge| edge.id.clone()));
-        payload_selection
-            .shapes
-            .extend(shapes.iter().map(|shape| shape.id.clone()));
+        for node in &nodes {
+            payload_selection.insert_node(node.id.clone());
+        }
+        for edge in &edges {
+            payload_selection.insert_edge(edge.id.clone());
+        }
+        for shape in &shapes {
+            payload_selection.insert_shape(shape.id.clone());
+        }
 
         Self {
             nodes,
@@ -110,7 +110,7 @@ impl CanvasClipboardPayload {
             let mut node = node.clone();
             node.id = node_ids[&node.id].clone();
             node.position += offset;
-            selection.nodes.insert(node.id.clone());
+            selection.insert_node(node.id.clone());
             commands.push(DocumentCommand::InsertNode(node));
         }
 
@@ -118,7 +118,7 @@ impl CanvasClipboardPayload {
             let mut shape = shape.clone();
             shape.id = shape_ids[&shape.id].clone();
             shape.bounds.origin += offset;
-            selection.shapes.insert(shape.id.clone());
+            selection.insert_shape(shape.id.clone());
             commands.push(DocumentCommand::InsertShape(shape));
         }
 
@@ -133,7 +133,7 @@ impl CanvasClipboardPayload {
             edge.id = edge_ids[&edge.id].clone();
             edge.source = source;
             edge.target = target;
-            selection.edges.insert(edge.id.clone());
+            selection.insert_edge(edge.id.clone());
             commands.push(DocumentCommand::InsertEdge(edge));
         }
 
@@ -221,8 +221,8 @@ mod tests {
     fn copy_selection_includes_internal_edges() {
         let document = connected_document();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("a"));
-        selection.nodes.insert(NodeId::from("b"));
+        selection.insert_node(NodeId::from("a"));
+        selection.insert_node(NodeId::from("b"));
 
         let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
 
@@ -248,7 +248,7 @@ mod tests {
     fn copy_selection_omits_external_edges() {
         let document = connected_document();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("a"));
+        selection.insert_node(NodeId::from("a"));
 
         let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
 
@@ -266,23 +266,35 @@ mod tests {
             ))
             .unwrap();
         let mut selection = CanvasSelection::default();
-        selection.nodes.insert(NodeId::from("a"));
-        selection.nodes.insert(NodeId::from("b"));
-        selection.shapes.insert(ShapeId::from("note"));
+        selection.insert_node(NodeId::from("a"));
+        selection.insert_node(NodeId::from("b"));
+        selection.insert_shape(ShapeId::from("note"));
         let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
 
         let pasted = payload.paste_transaction(&document, point(px(16.0), px(24.0)));
 
         assert_eq!(
-            pasted.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            pasted
+                .selection
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a-copy"), NodeId::from("b-copy")]
         );
         assert_eq!(
-            pasted.selection.edges.iter().cloned().collect::<Vec<_>>(),
+            pasted
+                .selection
+                .selected_edges()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![EdgeId::from("a-b-copy")]
         );
         assert_eq!(
-            pasted.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            pasted
+                .selection
+                .selected_shapes()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![ShapeId::from("note-copy")]
         );
 

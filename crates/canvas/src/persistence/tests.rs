@@ -951,7 +951,7 @@ fn persistent_tool_effects_log_recorded_transactions() {
             )),
             CanvasToolEffect::SetSelection({
                 let mut selection = CanvasSelection::default();
-                selection.nodes.insert(NodeId::from("a"));
+                selection.insert_node(NodeId::from("a"));
                 selection
             }),
         ],
@@ -960,7 +960,7 @@ fn persistent_tool_effects_log_recorded_transactions() {
 
     assert_eq!(cursor.sequence(), 1);
     assert_eq!(store.log_entries().len(), 1);
-    assert!(editor.selection().nodes.contains(&NodeId::from("a")));
+    assert!(editor.selection().contains_node(&NodeId::from("a")));
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.contains_node(&NodeId::from("a")));
 }

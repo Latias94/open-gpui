@@ -295,7 +295,7 @@ impl NotesView {
     }
 
     fn selected_node_summary(&self) -> Option<NodeSummary> {
-        let id = self.editor.selection().nodes.iter().next()?;
+        let id = self.editor.selection().selected_nodes().next()?;
         let node = self.editor.document().node(id)?;
         let title = compact_title(&node_title(node), 80);
         Some(NodeSummary {

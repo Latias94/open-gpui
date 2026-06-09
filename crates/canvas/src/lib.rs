@@ -13,6 +13,7 @@ mod gpui;
 mod graph;
 mod index;
 mod json_canvas;
+mod layer;
 mod mutation;
 mod persistence;
 mod resolve;
@@ -60,6 +61,7 @@ pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
+pub use layer::CanvasZOrderCommand;
 pub use mutation::CanvasCommittedMutation;
 pub use persistence::{
     CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_PERSISTENCE_CODEC_VERSION,
@@ -94,8 +96,7 @@ pub use snap::{
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
     CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
-    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, CanvasZOrderCommand,
-    PointerButton, ToolState,
+    CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton, ToolState,
 };
 pub use transform::{
     CanvasResizeHandle, CanvasTransformHandle, CanvasTransformTarget, canvas_transform_handles,

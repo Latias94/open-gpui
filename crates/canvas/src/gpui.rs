@@ -1105,15 +1105,7 @@ fn connection_preview_target_position(
 }
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
-    match target {
-        HitTarget::Node(id) => selection.nodes.contains(id),
-        HitTarget::Handle { node_id, handle_id } => selection.handles.contains(&CanvasEndpoint {
-            node_id: node_id.clone(),
-            handle_id: Some(handle_id.clone()),
-        }),
-        HitTarget::Edge(id) => selection.edges.contains(id),
-        HitTarget::Shape(id) => selection.shapes.contains(id),
-    }
+    selection.contains_target(target)
 }
 
 fn record_requests_widget_overlay(
@@ -2285,8 +2277,7 @@ mod tests {
         model
             .interaction
             .selection
-            .nodes
-            .insert(crate::NodeId::from("selected"));
+            .insert_node(crate::NodeId::from("selected"));
         model.interaction.state = ToolState::Translating {
             origin: point(px(10.0), px(10.0)),
             last: point(px(20.0), px(20.0)),
