@@ -1,7 +1,7 @@
 use crate::tool::ToolState;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
-    CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
+    CanvasEndpoint, CanvasEvent, CanvasGeometryFacts, CanvasKey, CanvasKeyModifiers,
     CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRoutePath,
     CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasShape, CanvasSnapAxis,
     CanvasSnapGuide, CanvasStyle, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport,
@@ -1105,11 +1105,11 @@ fn connection_preview(
     source: &CanvasEndpoint,
     current: Point<Pixels>,
 ) -> Option<CanvasPaintConnectionPreview> {
-    let resolver = CanvasGeometryResolver::with_kind_registry(
+    let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
         model.kind_registry.as_ref(),
     );
-    let source = resolver.endpoint_position(source).ok()?;
+    let source = facts.endpoint_position(source).ok()?;
     let target = connection_preview_target_position(model, source, current).unwrap_or(current);
     Some(CanvasPaintConnectionPreview {
         source_view_position: model.viewport.document_to_view(source),
@@ -1122,14 +1122,14 @@ fn connection_preview_target_position(
     source: Point<Pixels>,
     current: Point<Pixels>,
 ) -> Option<Point<Pixels>> {
-    let resolver = CanvasGeometryResolver::with_kind_registry(
+    let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
         model.kind_registry.as_ref(),
     );
-    resolver.connection_preview_target(
+    facts.connection_preview_target(
         model
             .runtime
-            .precise_hit_test_with_resolver(resolver, current, connection_hit_options()),
+            .precise_hit_test_with_facts(facts, current, connection_hit_options()),
         source,
         current,
     )

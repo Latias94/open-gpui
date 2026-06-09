@@ -1,5 +1,9 @@
 use crate::transform::{CanvasResizeHandle, resize_bounds_by_handle};
-use crate::{CanvasDocument, CanvasGeometryResolver, CanvasKindRegistry, CanvasSelection};
+use crate::{
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
+    CanvasRecordGeometry, CanvasRecordId, CanvasSelection,
+};
+use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px};
 use serde::{Deserialize, Serialize};
 
@@ -44,10 +48,7 @@ pub fn snap_delta_for_selection(
     let mut vertical = None;
 
     for candidate in candidate_bounds(document, kind_registry) {
-        if selected_record_ids
-            .iter()
-            .any(|id| id == &candidate.record_key)
-        {
+        if selected_record_ids.contains(candidate.record_id()) {
             continue;
         }
 
@@ -55,7 +56,7 @@ pub fn snap_delta_for_selection(
             horizontal,
             snap_axis(
                 moved_bounds,
-                candidate.bounds,
+                candidate.bounds(),
                 CanvasSnapAxis::Horizontal,
                 threshold,
             ),
@@ -64,7 +65,7 @@ pub fn snap_delta_for_selection(
             vertical,
             snap_axis(
                 moved_bounds,
-                candidate.bounds,
+                candidate.bounds(),
                 CanvasSnapAxis::Vertical,
                 threshold,
             ),
@@ -109,10 +110,7 @@ pub fn snap_delta_for_resize_selection(
     let mut vertical = None;
 
     for candidate in candidate_bounds(document, kind_registry) {
-        if selected_record_ids
-            .iter()
-            .any(|id| id == &candidate.record_key)
-        {
+        if selected_record_ids.contains(candidate.record_id()) {
             continue;
         }
 
@@ -120,7 +118,7 @@ pub fn snap_delta_for_resize_selection(
             horizontal,
             snap_resize_axis(
                 resized_bounds,
-                candidate.bounds,
+                candidate.bounds(),
                 CanvasSnapAxis::Horizontal,
                 handle,
                 threshold,
@@ -130,7 +128,7 @@ pub fn snap_delta_for_resize_selection(
             vertical,
             snap_resize_axis(
                 resized_bounds,
-                candidate.bounds,
+                candidate.bounds(),
                 CanvasSnapAxis::Vertical,
                 handle,
                 threshold,
@@ -155,11 +153,15 @@ pub fn snap_delta_for_resize_selection(
     }
 }
 
-fn selected_record_ids(selection: &CanvasSelection) -> Vec<String> {
+fn selected_record_ids(selection: &CanvasSelection) -> IndexSet<CanvasRecordId> {
     selection
         .selected_nodes()
-        .map(|id| format!("node:{id}"))
-        .chain(selection.selected_shapes().map(|id| format!("shape:{id}")))
+        .map(|id| CanvasRecordId::Node(id.clone()))
+        .chain(
+            selection
+                .selected_shapes()
+                .map(|id| CanvasRecordId::Shape(id.clone())),
+        )
         .collect()
 }
 
@@ -168,83 +170,43 @@ fn selection_bounds(
     selection: &CanvasSelection,
     kind_registry: Option<&CanvasKindRegistry>,
 ) -> Option<Bounds<Pixels>> {
-    let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+    let facts = CanvasGeometryFacts::with_router_and_kind_registry(
         document,
-        crate::CanvasDefaultEdgeRouter,
+        CanvasDefaultEdgeRouter,
         kind_registry,
     );
-    let mut bounds = None;
-
-    for id in selection.selected_nodes() {
-        let Some(node) = document.node(id) else {
-            continue;
-        };
-        if node.locked || node.hidden {
-            continue;
-        }
-        bounds = union_bounds(bounds, resolver.node_bounds(node));
-    }
-
-    for id in selection.selected_shapes() {
-        let Some(shape) = document.shape(id) else {
-            continue;
-        };
-        if shape.locked || shape.hidden {
-            continue;
-        }
-        bounds = union_bounds(bounds, resolver.shape_bounds(shape));
-    }
-
-    bounds
-}
-
-fn union_bounds(current: Option<Bounds<Pixels>>, next: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
-    Some(match current {
-        None => next,
-        Some(current) => Bounds::from_corners(
-            Point::new(
-                current.origin.x.min(next.origin.x),
-                current.origin.y.min(next.origin.y),
-            ),
-            Point::new(
-                (current.origin.x + current.size.width).max(next.origin.x + next.size.width),
-                (current.origin.y + current.size.height).max(next.origin.y + next.size.height),
-            ),
-        ),
-    })
+    facts.selected_bounds(selection)
 }
 
 #[derive(Clone, Debug)]
-struct CandidateBounds {
-    record_key: String,
-    bounds: Bounds<Pixels>,
+struct CandidateBounds(CanvasRecordGeometry);
+
+impl CandidateBounds {
+    fn record_id(&self) -> &CanvasRecordId {
+        &self.0.id
+    }
+
+    fn bounds(&self) -> Bounds<Pixels> {
+        self.0.bounds
+    }
 }
 
 fn candidate_bounds(
     document: &CanvasDocument,
     kind_registry: Option<&CanvasKindRegistry>,
 ) -> Vec<CandidateBounds> {
-    let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+    let facts = CanvasGeometryFacts::with_router_and_kind_registry(
         document,
-        crate::CanvasDefaultEdgeRouter,
+        CanvasDefaultEdgeRouter,
         kind_registry,
     );
-    let mut candidates = Vec::new();
-
-    candidates.extend(document.nodes().filter_map(|node| {
-        (!node.locked && !node.hidden).then(|| CandidateBounds {
-            record_key: format!("node:{}", node.id),
-            bounds: resolver.node_bounds(node),
-        })
-    }));
-    candidates.extend(document.shapes().filter_map(|shape| {
-        (!shape.locked && !shape.hidden).then(|| CandidateBounds {
-            record_key: format!("shape:{}", shape.id),
-            bounds: resolver.shape_bounds(shape),
-        })
-    }));
-
-    candidates
+    facts
+        .record_geometries()
+        .into_iter()
+        .filter(CanvasRecordGeometry::is_node_or_shape)
+        .filter(CanvasRecordGeometry::is_visible_unlocked)
+        .map(CandidateBounds)
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -418,7 +380,7 @@ fn snap_guide(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, CanvasShape, NodeId, ShapeId};
+    use crate::{CanvasNode, CanvasNodeKind, CanvasShape, NodeId, ShapeId};
     use open_gpui::{point, size};
 
     #[test]
@@ -488,6 +450,45 @@ mod tests {
     }
 
     #[test]
+    fn kind_registry_bounds_are_used_for_selection_and_candidates() {
+        let mut active =
+            CanvasNode::new("active", point(px(0.0), px(0.0)), size(px(40.0), px(40.0)));
+        active.kind = "wide".to_string();
+        let target = CanvasNode::new(
+            "target",
+            point(px(100.0), px(80.0)),
+            size(px(40.0), px(40.0)),
+        );
+        let mut document = CanvasDocument::default();
+        document.insert_node(active).unwrap();
+        document.insert_node(target).unwrap();
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(NodeId::from("active"));
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("wide", WideNodeKind);
+
+        let without_registry = snap_delta_for_selection(
+            &document,
+            &selection,
+            point(px(9.0), px(0.0)),
+            DEFAULT_SNAP_THRESHOLD,
+            None,
+        );
+        let with_registry = snap_delta_for_selection(
+            &document,
+            &selection,
+            point(px(9.0), px(0.0)),
+            DEFAULT_SNAP_THRESHOLD,
+            Some(&registry),
+        );
+
+        assert_eq!(without_registry.delta, point(px(9.0), px(0.0)));
+        assert!(without_registry.guides.is_empty());
+        assert_eq!(with_registry.delta, point(px(10.0), px(0.0)));
+        assert!(!with_registry.guides.is_empty());
+    }
+
+    #[test]
     fn resize_snaps_only_the_dragged_edges() {
         let mut document = CanvasDocument::default();
         document
@@ -542,5 +543,16 @@ mod tests {
                 .iter()
                 .any(|guide| guide.axis == CanvasSnapAxis::Vertical)
         );
+    }
+
+    struct WideNodeKind;
+
+    impl CanvasNodeKind for WideNodeKind {
+        fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
+            Some(Bounds::new(
+                node.position,
+                size(node.size.width + px(50.0), node.size.height),
+            ))
+        }
     }
 }

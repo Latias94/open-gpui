@@ -1,8 +1,8 @@
 use crate::{
     CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
-    CanvasRoutePath, CanvasRouteRequest, CanvasRouteSegment, CanvasShape, DocumentError,
-    HitOptions, HitRecord, HitTarget,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasRecordId,
+    CanvasRoutePath, CanvasRouteRequest, CanvasRouteSegment, CanvasSelection, CanvasShape,
+    DocumentError, HitOptions, HitRecord, HitTarget,
 };
 use open_gpui::{Bounds, Pixels, Point, px};
 
@@ -42,13 +42,13 @@ impl CanvasResolvedEdgeGeometry {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct CanvasGeometryResolver<'a, R = CanvasDefaultEdgeRouter> {
+pub struct CanvasGeometryFacts<'a, R = CanvasDefaultEdgeRouter> {
     document: &'a CanvasDocument,
     router: R,
     kind_registry: Option<&'a CanvasKindRegistry>,
 }
 
-impl<'a> CanvasGeometryResolver<'a> {
+impl<'a> CanvasGeometryFacts<'a> {
     pub fn new(document: &'a CanvasDocument) -> Self {
         Self::with_router(document, CanvasDefaultEdgeRouter)
     }
@@ -61,7 +61,7 @@ impl<'a> CanvasGeometryResolver<'a> {
     }
 }
 
-impl<'a, R> CanvasGeometryResolver<'a, R>
+impl<'a, R> CanvasGeometryFacts<'a, R>
 where
     R: CanvasEdgeRouter,
 {
@@ -164,6 +164,163 @@ where
 
     pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
         Ok(self.edge_geometry(edge)?.bounds)
+    }
+
+    pub fn record_geometry(&self, record_id: &CanvasRecordId) -> Option<CanvasRecordGeometry> {
+        match record_id {
+            CanvasRecordId::Node(id) => {
+                let node = self.document.node(id)?;
+                Some(CanvasRecordGeometry {
+                    id: CanvasRecordId::Node(node.id.clone()),
+                    bounds: self.node_bounds(node),
+                    z_index: node.z_index,
+                    hidden: node.hidden,
+                    locked: node.locked,
+                })
+            }
+            CanvasRecordId::Edge(id) => {
+                let edge = self.document.edge(id)?;
+                let bounds = self.edge_bounds(edge).ok()?;
+                Some(CanvasRecordGeometry {
+                    id: CanvasRecordId::Edge(edge.id.clone()),
+                    bounds,
+                    z_index: edge.z_index,
+                    hidden: edge.hidden,
+                    locked: edge.locked,
+                })
+            }
+            CanvasRecordId::Shape(id) => {
+                let shape = self.document.shape(id)?;
+                Some(CanvasRecordGeometry {
+                    id: CanvasRecordId::Shape(shape.id.clone()),
+                    bounds: self.shape_bounds(shape),
+                    z_index: shape.z_index,
+                    hidden: shape.hidden,
+                    locked: shape.locked,
+                })
+            }
+        }
+    }
+
+    pub fn record_geometries(&self) -> Vec<CanvasRecordGeometry> {
+        self.document
+            .nodes()
+            .filter_map(|node| self.record_geometry(&CanvasRecordId::Node(node.id.clone())))
+            .chain(
+                self.document.shapes().filter_map(|shape| {
+                    self.record_geometry(&CanvasRecordId::Shape(shape.id.clone()))
+                }),
+            )
+            .chain(
+                self.document.edges().filter_map(|edge| {
+                    self.record_geometry(&CanvasRecordId::Edge(edge.id.clone()))
+                }),
+            )
+            .collect()
+    }
+
+    pub fn selected_record_geometries(
+        &self,
+        selection: &CanvasSelection,
+    ) -> Vec<CanvasRecordGeometry> {
+        selection
+            .selected_nodes()
+            .filter_map(|id| self.record_geometry(&CanvasRecordId::Node(id.clone())))
+            .chain(
+                selection
+                    .selected_shapes()
+                    .filter_map(|id| self.record_geometry(&CanvasRecordId::Shape(id.clone()))),
+            )
+            .collect()
+    }
+
+    pub fn selected_bounds(&self, selection: &CanvasSelection) -> Option<Bounds<Pixels>> {
+        union_record_geometry_bounds(
+            self.selected_record_geometries(selection)
+                .into_iter()
+                .filter(CanvasRecordGeometry::is_visible_unlocked),
+        )
+    }
+
+    pub(crate) fn hit_records(&self) -> Vec<HitRecord> {
+        let mut records = Vec::new();
+
+        for node in self.document.nodes() {
+            records.extend(self.hit_records_for_record(&CanvasRecordId::Node(node.id.clone())));
+        }
+
+        for shape in self.document.shapes() {
+            records.extend(self.hit_records_for_record(&CanvasRecordId::Shape(shape.id.clone())));
+        }
+
+        for edge in self.document.edges() {
+            records.extend(self.hit_records_for_record(&CanvasRecordId::Edge(edge.id.clone())));
+        }
+
+        records
+    }
+
+    pub(crate) fn hit_records_for_record(&self, record_id: &CanvasRecordId) -> Vec<HitRecord> {
+        let mut records = Vec::new();
+
+        match record_id {
+            CanvasRecordId::Node(id) => {
+                let Some(node) = self.document.node(id) else {
+                    return records;
+                };
+
+                records.push(HitRecord {
+                    target: HitTarget::Node(node.id.clone()),
+                    bounds: self.node_bounds(node),
+                    z_index: node.z_index,
+                    hidden: node.hidden,
+                    locked: node.locked,
+                });
+
+                for handle in &node.handles {
+                    records.push(HitRecord {
+                        target: HitTarget::Handle {
+                            node_id: node.id.clone(),
+                            handle_id: handle.id.clone(),
+                        },
+                        bounds: self.handle_bounds(node, handle),
+                        z_index: node.z_index,
+                        hidden: node.hidden || handle.hidden || !handle.connectable,
+                        locked: node.locked,
+                    });
+                }
+            }
+            CanvasRecordId::Edge(id) => {
+                let Some(edge) = self.document.edge(id) else {
+                    return records;
+                };
+
+                if let Ok(bounds) = self.edge_bounds(edge) {
+                    records.push(HitRecord {
+                        target: HitTarget::Edge(edge.id.clone()),
+                        bounds,
+                        z_index: edge.z_index,
+                        hidden: edge.hidden,
+                        locked: edge.locked,
+                    });
+                }
+            }
+            CanvasRecordId::Shape(id) => {
+                let Some(shape) = self.document.shape(id) else {
+                    return records;
+                };
+
+                records.push(HitRecord {
+                    target: HitTarget::Shape(shape.id.clone()),
+                    bounds: self.shape_bounds(shape),
+                    z_index: shape.z_index,
+                    hidden: shape.hidden,
+                    locked: shape.locked,
+                });
+            }
+        }
+
+        records
     }
 
     pub fn record_contains_point(
@@ -287,6 +444,49 @@ where
         let geometry = self.edge_geometry(edge)?;
         Ok(geometry.contains_point(point, margin))
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasRecordGeometry {
+    pub id: CanvasRecordId,
+    pub bounds: Bounds<Pixels>,
+    pub z_index: i32,
+    pub hidden: bool,
+    pub locked: bool,
+}
+
+impl CanvasRecordGeometry {
+    pub fn is_node_or_shape(&self) -> bool {
+        matches!(self.id, CanvasRecordId::Node(_) | CanvasRecordId::Shape(_))
+    }
+
+    pub fn is_visible_unlocked(&self) -> bool {
+        !self.hidden && !self.locked
+    }
+}
+
+pub(crate) fn union_record_geometry_bounds(
+    geometries: impl IntoIterator<Item = CanvasRecordGeometry>,
+) -> Option<Bounds<Pixels>> {
+    geometries.into_iter().fold(None, |current, geometry| {
+        union_bounds(current, geometry.bounds)
+    })
+}
+
+fn union_bounds(current: Option<Bounds<Pixels>>, next: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
+    Some(match current {
+        None => next,
+        Some(current) => Bounds::from_corners(
+            Point::new(
+                current.origin.x.min(next.origin.x),
+                current.origin.y.min(next.origin.y),
+            ),
+            Point::new(
+                (current.origin.x + current.size.width).max(next.origin.x + next.size.width),
+                (current.origin.y + current.size.height).max(next.origin.y + next.size.height),
+            ),
+        ),
+    })
 }
 
 fn edge_interaction_radius(edge: &CanvasEdge) -> Pixels {
@@ -424,26 +624,26 @@ pub fn connection_hit_options() -> HitOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEdge, CanvasHandle, CanvasNode, CanvasStyle, HandleRole};
+    use crate::{CanvasEdge, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle, HandleRole};
     use open_gpui::{point, px, size};
 
     #[test]
-    fn resolver_uses_same_endpoint_position_for_handles_and_node_centers() {
+    fn facts_use_same_endpoint_position_for_handles_and_node_centers() {
         let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(10.0), px(20.0)), size(px(40.0), px(60.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(40.0), px(30.0))));
         document.insert_node(node).unwrap();
-        let resolver = CanvasGeometryResolver::new(&document);
+        let facts = CanvasGeometryFacts::new(&document);
 
         assert_eq!(
-            resolver
+            facts
                 .endpoint_position(&CanvasEndpoint::new("a", None::<&str>))
                 .unwrap(),
             point(px(30.0), px(50.0))
         );
         assert_eq!(
-            resolver
+            facts
                 .endpoint_position(&CanvasEndpoint::new("a", Some("out")))
                 .unwrap(),
             point(px(50.0), px(50.0))
@@ -451,14 +651,14 @@ mod tests {
     }
 
     #[test]
-    fn resolver_picks_connection_handles_by_role() {
+    fn facts_pick_connection_handles_by_role() {
         let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         let mut target_only = CanvasHandle::new("in", point(px(100.0), px(50.0)));
         target_only.role = HandleRole::Target;
         node.handles.push(target_only);
         document.insert_node(node).unwrap();
-        let resolver = CanvasGeometryResolver::new(&document);
+        let facts = CanvasGeometryFacts::new(&document);
         let records = [HitRecord {
             target: HitTarget::Handle {
                 node_id: "a".into(),
@@ -471,12 +671,61 @@ mod tests {
         }];
 
         assert_eq!(
-            resolver.connection_endpoint_at(&records, CanvasConnectionEndpointRole::Target),
+            facts.connection_endpoint_at(&records, CanvasConnectionEndpointRole::Target),
             Some(CanvasEndpoint::new("a", Some("in")))
         );
         assert_eq!(
-            resolver.connection_endpoint_at(&records, CanvasConnectionEndpointRole::Source),
+            facts.connection_endpoint_at(&records, CanvasConnectionEndpointRole::Source),
             None
+        );
+    }
+
+    #[test]
+    fn facts_materialize_hit_records_for_nodes_handles_shapes_and_edges() {
+        let mut document = CanvasDocument::default();
+        let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+        node.handles
+            .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
+        document.insert_node(node).unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(0.0), px(40.0)), size(px(20.0), px(20.0))),
+            ))
+            .unwrap();
+        document
+            .insert_edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", Some("out")),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .unwrap();
+
+        let records = CanvasGeometryFacts::new(&document).hit_records();
+        let targets = records
+            .into_iter()
+            .map(|record| record.target)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            targets,
+            vec![
+                HitTarget::Node("a".into()),
+                HitTarget::Handle {
+                    node_id: "a".into(),
+                    handle_id: "out".into(),
+                },
+                HitTarget::Node("b".into()),
+                HitTarget::Shape("shape".into()),
+                HitTarget::Edge("a-b".into()),
+            ]
         );
     }
 
@@ -509,7 +758,7 @@ mod tests {
         };
         document.insert_edge(edge.clone()).unwrap();
 
-        let geometry = CanvasGeometryResolver::new(&document)
+        let geometry = CanvasGeometryFacts::new(&document)
             .edge_geometry(&edge)
             .unwrap();
 

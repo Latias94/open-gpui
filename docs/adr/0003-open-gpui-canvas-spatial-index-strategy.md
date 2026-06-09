@@ -9,7 +9,7 @@
 model. The first release already has the important boundaries:
 
 - `CanvasRuntime` owns runtime caches;
-- `CanvasGeometryResolver` owns geometry semantics;
+- `CanvasGeometryFacts` owns geometry semantics;
 - `SpatialIndex` remains a dev/test correctness oracle and simple fallback model;
 - production editor and paint paths query `CanvasRuntime` rather than borrowing a raw
   `SpatialIndex`;
@@ -31,8 +31,8 @@ Adopt an internal runtime cache with this shape:
 
 ```mermaid
 flowchart LR
-    Document[CanvasDocument] --> Resolver[CanvasGeometryResolver]
-    Resolver --> Base[Static AABB Base]
+    Document[CanvasDocument] --> Facts[CanvasGeometryFacts]
+    Facts --> Base[Static AABB Base]
     Diff[CanvasDocumentDiff / Gesture Dirty Set] --> Overlay[Dynamic Overlay]
     Base --> Merge[Canvas Query Merge]
     Overlay --> Merge

@@ -8,7 +8,7 @@ use crate::transform::{
 use crate::{
     CanvasClipboardPayload, CanvasCommittedMutation, CanvasConnectionEndpointRole,
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter,
-    CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry, CanvasPasteTransaction,
+    CanvasEndpoint, CanvasGeometryFacts, CanvasKindRegistry, CanvasPasteTransaction,
     CanvasRecordId, CanvasRuntime, CanvasSnapGuide, CanvasTransaction, CanvasViewport,
     DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
     HitTarget, NodeId, ShapeId, connection_hit_options, snap_delta_for_resize_selection,
@@ -1334,15 +1334,15 @@ impl CanvasEditor {
         point: Point<Pixels>,
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
-        let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
             self.document.as_ref(),
             self.edge_router.as_ref(),
             Some(self.kind_registry.as_ref()),
         );
         let records =
             self.runtime
-                .precise_hit_test_with_resolver(resolver, point, connection_hit_options());
-        resolver.connection_endpoint_at(records, role)
+                .precise_hit_test_with_facts(facts, point, connection_hit_options());
+        facts.connection_endpoint_at(records, role)
     }
 
     fn begin_gesture(&mut self) {
@@ -1737,6 +1737,17 @@ mod tests {
                     "title",
                 )),
             }
+        }
+    }
+
+    struct WideBoundsNodeKind;
+
+    impl CanvasNodeKind for WideBoundsNodeKind {
+        fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
+            Some(Bounds::new(
+                node.position,
+                size(node.size.width + px(30.0), node.size.height),
+            ))
         }
     }
 
@@ -2613,6 +2624,35 @@ mod tests {
             handle.target == CanvasTransformTarget::Shape(ShapeId::from("shape"))
                 && handle.handle == CanvasResizeHandle::TopLeft
                 && handle.document_bounds.contains(&point(px(200.0), px(40.0)))
+        }));
+    }
+
+    #[test]
+    fn canvas_transform_handles_use_registered_geometry_bounds() {
+        let mut node =
+            CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
+        node.kind = "wide".to_string();
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        let mut selection = CanvasSelection::default();
+        selection.nodes.insert(NodeId::from("node"));
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind("wide", WideBoundsNodeKind);
+
+        let handles = canvas_transform_handles(
+            &document,
+            &selection,
+            CanvasViewport::default(),
+            Some(&registry),
+        );
+
+        assert_eq!(handles.len(), 4);
+        assert!(handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Node(NodeId::from("node"))
+                && handle.handle == CanvasResizeHandle::BottomRight
+                && handle
+                    .document_bounds
+                    .contains(&point(px(140.0), px(100.0)))
         }));
     }
 

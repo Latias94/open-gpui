@@ -1,8 +1,8 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
-    CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
-    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord,
-    mutation::CanvasCommittedMutation, runtime_query::CanvasRuntimeQuery,
+    CanvasGeometryFacts, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry, CanvasRecordId,
+    CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, mutation::CanvasCommittedMutation,
+    runtime_query::CanvasRuntimeQuery,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -191,7 +191,7 @@ impl CanvasRuntime {
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &'a HitRecord> + 'a {
-        self.precise_hit_test_with_resolver(CanvasGeometryResolver::new(document), point, options)
+        self.precise_hit_test_with_facts(CanvasGeometryFacts::new(document), point, options)
     }
 
     pub fn precise_hit_test_with_kind_registry<'a>(
@@ -201,16 +201,16 @@ impl CanvasRuntime {
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &'a HitRecord> + 'a {
-        self.precise_hit_test_with_resolver(
-            CanvasGeometryResolver::with_kind_registry(document, kind_registry),
+        self.precise_hit_test_with_facts(
+            CanvasGeometryFacts::with_kind_registry(document, kind_registry),
             point,
             options,
         )
     }
 
-    pub fn precise_hit_test_with_resolver<'a, R>(
+    pub fn precise_hit_test_with_facts<'a, R>(
         &'a self,
-        resolver: CanvasGeometryResolver<'a, R>,
+        facts: CanvasGeometryFacts<'a, R>,
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &'a HitRecord> + 'a
@@ -218,7 +218,7 @@ impl CanvasRuntime {
         R: CanvasEdgeRouter + 'a,
     {
         self.query
-            .precise_hit_test_with_resolver(resolver, &self.edge_geometries, point, options)
+            .precise_hit_test_with_facts(facts, &self.edge_geometries, point, options)
     }
 
     fn apply_edge_geometry_diff<R>(
@@ -267,12 +267,12 @@ impl CanvasRuntime {
                     self.edge_geometries.shift_remove(id);
                     return;
                 };
-                let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+                let facts = CanvasGeometryFacts::with_router_and_kind_registry(
                     document,
                     router,
                     kind_registry,
                 );
-                match resolver.edge_geometry(edge) {
+                match facts.edge_geometry(edge) {
                     Ok(geometry) => {
                         self.edge_geometries.insert(id.clone(), geometry);
                     }
@@ -310,12 +310,11 @@ fn resolve_edge_geometries<R>(
 where
     R: CanvasEdgeRouter + ?Sized,
 {
-    let resolver =
-        CanvasGeometryResolver::with_router_and_kind_registry(document, router, kind_registry);
+    let facts = CanvasGeometryFacts::with_router_and_kind_registry(document, router, kind_registry);
     document
         .edges()
         .filter_map(|edge| {
-            resolver
+            facts
                 .edge_geometry(edge)
                 .ok()
                 .map(|geometry| (edge.id.clone(), geometry))
@@ -557,8 +556,8 @@ mod tests {
         );
         assert!(
             runtime
-                .precise_hit_test_with_resolver(
-                    CanvasGeometryResolver::with_router(&document, &router),
+                .precise_hit_test_with_facts(
+                    CanvasGeometryFacts::with_router(&document, &router),
                     point(px(25.0), px(80.0)),
                     HitOptions::default(),
                 )
@@ -567,8 +566,8 @@ mod tests {
         );
         assert!(
             runtime
-                .precise_hit_test_with_resolver(
-                    CanvasGeometryResolver::with_router(&document, &router),
+                .precise_hit_test_with_facts(
+                    CanvasGeometryFacts::with_router(&document, &router),
                     point(px(5.0), px(80.0)),
                     HitOptions::default(),
                 )

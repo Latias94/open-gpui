@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryResolver, CanvasKindRegistry,
-    CanvasSelection, NodeId, ShapeId,
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
+    CanvasRecordGeometry, CanvasRecordId, CanvasSelection, NodeId, ShapeId,
 };
 use open_gpui::{Bounds, Pixels, Point, Size, px};
 use serde::{Deserialize, Serialize};
@@ -32,7 +32,7 @@ pub fn canvas_transform_handles(
     viewport: crate::CanvasViewport,
     kind_registry: Option<&CanvasKindRegistry>,
 ) -> Vec<CanvasTransformHandle> {
-    let resolver = CanvasGeometryResolver::with_router_and_kind_registry(
+    let facts = CanvasGeometryFacts::with_router_and_kind_registry(
         document,
         CanvasDefaultEdgeRouter,
         kind_registry,
@@ -40,35 +40,29 @@ pub fn canvas_transform_handles(
     let handle_size = transform_handle_document_size(viewport.zoom);
     let mut handles = Vec::new();
 
-    for id in selection.selected_nodes() {
-        let Some(node) = document.node(id) else {
-            continue;
-        };
-        if node.locked || node.hidden {
+    for geometry in facts.selected_record_geometries(selection) {
+        if !geometry.is_visible_unlocked() {
             continue;
         }
-        handles.extend(transform_handles_for_bounds(
-            CanvasTransformTarget::Node(node.id.clone()),
-            resolver.node_bounds(node),
-            handle_size,
-        ));
-    }
-
-    for id in selection.selected_shapes() {
-        let Some(shape) = document.shape(id) else {
+        let Some(target) = transform_target_for_record(&geometry) else {
             continue;
         };
-        if shape.locked || shape.hidden {
-            continue;
-        }
         handles.extend(transform_handles_for_bounds(
-            CanvasTransformTarget::Shape(shape.id.clone()),
-            resolver.shape_bounds(shape),
+            target,
+            geometry.bounds,
             handle_size,
         ));
     }
 
     handles
+}
+
+fn transform_target_for_record(geometry: &CanvasRecordGeometry) -> Option<CanvasTransformTarget> {
+    match &geometry.id {
+        CanvasRecordId::Node(id) => Some(CanvasTransformTarget::Node(id.clone())),
+        CanvasRecordId::Shape(id) => Some(CanvasTransformTarget::Shape(id.clone())),
+        CanvasRecordId::Edge(_) => None,
+    }
 }
 
 pub(crate) fn resize_bounds_by_handle(

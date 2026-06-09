@@ -1,10 +1,8 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
+    CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
     runtime_query::{hit_matches, query_matches},
-    spatial_cache::{
-        dirty_record_ids, materialize_records, refresh_records_with_resolver, remove_record,
-    },
+    spatial_cache::{dirty_record_ids, remove_record},
 };
 use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
@@ -55,14 +53,14 @@ pub struct SpatialIndex {
 
 impl SpatialIndex {
     pub fn rebuild(document: &CanvasDocument) -> Self {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::new(document))
+        Self::rebuild_with_facts(CanvasGeometryFacts::new(document))
     }
 
     pub fn rebuild_with_kind_registry(
         document: &CanvasDocument,
         kind_registry: &CanvasKindRegistry,
     ) -> Self {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::with_kind_registry(
+        Self::rebuild_with_facts(CanvasGeometryFacts::with_kind_registry(
             document,
             kind_registry,
         ))
@@ -72,7 +70,7 @@ impl SpatialIndex {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router(document, router))
+        Self::rebuild_with_facts(CanvasGeometryFacts::with_router(document, router))
     }
 
     pub fn rebuild_with_router_and_kind_registry<R>(
@@ -83,24 +81,24 @@ impl SpatialIndex {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router_and_kind_registry(
+        Self::rebuild_with_facts(CanvasGeometryFacts::with_router_and_kind_registry(
             document,
             router,
             Some(kind_registry),
         ))
     }
 
-    fn rebuild_with_resolver<R>(resolver: CanvasGeometryResolver<'_, R>) -> Self
+    fn rebuild_with_facts<R>(facts: CanvasGeometryFacts<'_, R>) -> Self
     where
         R: CanvasEdgeRouter + Copy,
     {
-        let mut records = materialize_records(resolver);
+        let mut records = facts.hit_records();
         records.sort_by(|a, b| a.z_index.cmp(&b.z_index));
         Self { records }
     }
 
     pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
-        self.apply_diff_with_resolver(CanvasGeometryResolver::new(document), diff);
+        self.apply_diff_with_facts(CanvasGeometryFacts::new(document), diff);
     }
 
     pub fn apply_diff_with_kind_registry(
@@ -109,8 +107,8 @@ impl SpatialIndex {
         diff: &CanvasDocumentDiff,
         kind_registry: &CanvasKindRegistry,
     ) {
-        self.apply_diff_with_resolver(
-            CanvasGeometryResolver::with_kind_registry(document, kind_registry),
+        self.apply_diff_with_facts(
+            CanvasGeometryFacts::with_kind_registry(document, kind_registry),
             diff,
         );
     }
@@ -123,7 +121,7 @@ impl SpatialIndex {
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_resolver(CanvasGeometryResolver::with_router(document, router), diff);
+        self.apply_diff_with_facts(CanvasGeometryFacts::with_router(document, router), diff);
     }
 
     pub fn apply_diff_with_router_and_kind_registry<R>(
@@ -135,8 +133,8 @@ impl SpatialIndex {
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_resolver(
-            CanvasGeometryResolver::with_router_and_kind_registry(
+        self.apply_diff_with_facts(
+            CanvasGeometryFacts::with_router_and_kind_registry(
                 document,
                 router,
                 Some(kind_registry),
@@ -145,9 +143,9 @@ impl SpatialIndex {
         );
     }
 
-    fn apply_diff_with_resolver<R>(
+    fn apply_diff_with_facts<R>(
         &mut self,
-        resolver: CanvasGeometryResolver<'_, R>,
+        facts: CanvasGeometryFacts<'_, R>,
         diff: &CanvasDocumentDiff,
     ) where
         R: CanvasEdgeRouter + Copy,
@@ -156,14 +154,14 @@ impl SpatialIndex {
             return;
         }
 
-        let dirty = dirty_record_ids(resolver.document(), diff);
+        let dirty = dirty_record_ids(facts.document(), diff);
 
         for record_id in &dirty {
             remove_record(&mut self.records, record_id);
         }
 
         for record_id in &dirty {
-            self.refresh_record_with_resolver(resolver, record_id);
+            self.refresh_record_with_facts(facts, record_id);
         }
 
         self.records.sort_by(|a, b| a.z_index.cmp(&b.z_index));
@@ -204,16 +202,15 @@ impl SpatialIndex {
         &self.records
     }
 
-    fn refresh_record_with_resolver<R>(
+    fn refresh_record_with_facts<R>(
         &mut self,
-        resolver: CanvasGeometryResolver<'_, R>,
+        facts: CanvasGeometryFacts<'_, R>,
         record_id: &CanvasRecordId,
     ) where
         R: CanvasEdgeRouter + Copy,
     {
         remove_record(&mut self.records, record_id);
-        self.records
-            .extend(refresh_records_with_resolver(resolver, record_id));
+        self.records.extend(facts.hit_records_for_record(record_id));
     }
 }
 

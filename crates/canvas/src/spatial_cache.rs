@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasRecordId, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
+    CanvasRecordId, HitRecord, HitTarget,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Bounds, Pixels, Point};
@@ -33,7 +33,7 @@ impl CanvasSpatialCache {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router(document, router))
+        Self::rebuild_with_facts(CanvasGeometryFacts::with_router(document, router))
     }
 
     pub(crate) fn rebuild_with_router_and_kind_registry<R>(
@@ -44,18 +44,18 @@ impl CanvasSpatialCache {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        Self::rebuild_with_resolver(CanvasGeometryResolver::with_router_and_kind_registry(
+        Self::rebuild_with_facts(CanvasGeometryFacts::with_router_and_kind_registry(
             document,
             router,
             Some(kind_registry),
         ))
     }
 
-    fn rebuild_with_resolver<R>(resolver: CanvasGeometryResolver<'_, R>) -> Self
+    fn rebuild_with_facts<R>(facts: CanvasGeometryFacts<'_, R>) -> Self
     where
         R: CanvasEdgeRouter + Copy,
     {
-        let records = materialize_records(resolver);
+        let records = facts.hit_records();
         let ordinals = ordinals_for_records(&records);
         let base = SpatialRecordSet::new(records);
         Self {
@@ -76,7 +76,7 @@ impl CanvasSpatialCache {
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_resolver(CanvasGeometryResolver::with_router(document, router), diff);
+        self.apply_diff_with_facts(CanvasGeometryFacts::with_router(document, router), diff);
     }
 
     pub(crate) fn apply_diff_with_router_and_kind_registry<R>(
@@ -88,8 +88,8 @@ impl CanvasSpatialCache {
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_resolver(
-            CanvasGeometryResolver::with_router_and_kind_registry(
+        self.apply_diff_with_facts(
+            CanvasGeometryFacts::with_router_and_kind_registry(
                 document,
                 router,
                 Some(kind_registry),
@@ -98,9 +98,9 @@ impl CanvasSpatialCache {
         );
     }
 
-    fn apply_diff_with_resolver<R>(
+    fn apply_diff_with_facts<R>(
         &mut self,
-        resolver: CanvasGeometryResolver<'_, R>,
+        facts: CanvasGeometryFacts<'_, R>,
         diff: &CanvasDocumentDiff,
     ) where
         R: CanvasEdgeRouter + Copy,
@@ -109,7 +109,7 @@ impl CanvasSpatialCache {
             return;
         }
 
-        let dirty = dirty_record_ids(resolver.document(), diff);
+        let dirty = dirty_record_ids(facts.document(), diff);
         if dirty.is_empty() {
             return;
         }
@@ -117,7 +117,7 @@ impl CanvasSpatialCache {
         for record_id in dirty {
             self.stale.insert(record_id.clone());
             self.overlay.remove_record(&record_id);
-            let records = refresh_records_with_resolver(resolver, &record_id);
+            let records = facts.hit_records_for_record(&record_id);
             self.assign_ordinals(&records);
             self.overlay.extend(records, &self.ordinals);
         }
@@ -125,7 +125,7 @@ impl CanvasSpatialCache {
         self.refresh_merged();
 
         if self.stale.len() > self.compact_after {
-            self.compact(resolver);
+            self.compact(facts);
         }
     }
 
@@ -171,11 +171,11 @@ impl CanvasSpatialCache {
         self.merged.sort();
     }
 
-    fn compact<R>(&mut self, resolver: CanvasGeometryResolver<'_, R>)
+    fn compact<R>(&mut self, facts: CanvasGeometryFacts<'_, R>)
     where
         R: CanvasEdgeRouter + Copy,
     {
-        self.base = SpatialRecordSet::new(materialize_records(resolver));
+        self.base = SpatialRecordSet::new(facts.hit_records());
         self.overlay = SpatialRecordSet::default();
         self.merged = self.base.clone();
         self.stale.clear();
@@ -244,107 +244,6 @@ impl SpatialRecordSet {
 pub(crate) struct IndexedHitRecord {
     pub(crate) ordinal: usize,
     pub(crate) record: HitRecord,
-}
-
-pub(crate) fn materialize_records<R>(resolver: CanvasGeometryResolver<'_, R>) -> Vec<HitRecord>
-where
-    R: CanvasEdgeRouter + Copy,
-{
-    let document = resolver.document();
-    let mut records = Vec::new();
-
-    for node in document.nodes() {
-        records.extend(refresh_records_with_resolver(
-            resolver,
-            &CanvasRecordId::Node(node.id.clone()),
-        ));
-    }
-
-    for shape in document.shapes() {
-        records.extend(refresh_records_with_resolver(
-            resolver,
-            &CanvasRecordId::Shape(shape.id.clone()),
-        ));
-    }
-
-    for edge in document.edges() {
-        records.extend(refresh_records_with_resolver(
-            resolver,
-            &CanvasRecordId::Edge(edge.id.clone()),
-        ));
-    }
-
-    records
-}
-
-pub(crate) fn refresh_records_with_resolver<R>(
-    resolver: CanvasGeometryResolver<'_, R>,
-    record_id: &CanvasRecordId,
-) -> Vec<HitRecord>
-where
-    R: CanvasEdgeRouter + Copy,
-{
-    let document = resolver.document();
-    let mut records = Vec::new();
-
-    match record_id {
-        CanvasRecordId::Node(id) => {
-            let Some(node) = document.node(id) else {
-                return records;
-            };
-
-            records.push(HitRecord {
-                target: HitTarget::Node(node.id.clone()),
-                bounds: resolver.node_bounds(node),
-                z_index: node.z_index,
-                hidden: node.hidden,
-                locked: node.locked,
-            });
-
-            for handle in &node.handles {
-                records.push(HitRecord {
-                    target: HitTarget::Handle {
-                        node_id: node.id.clone(),
-                        handle_id: handle.id.clone(),
-                    },
-                    bounds: resolver.handle_bounds(node, handle),
-                    z_index: node.z_index,
-                    hidden: node.hidden || handle.hidden || !handle.connectable,
-                    locked: node.locked,
-                });
-            }
-        }
-        CanvasRecordId::Edge(id) => {
-            let Some(edge) = document.edge(id) else {
-                return records;
-            };
-
-            if let Ok(bounds) = resolver.edge_bounds(edge) {
-                records.push(HitRecord {
-                    target: HitTarget::Edge(edge.id.clone()),
-                    bounds,
-                    z_index: edge.z_index,
-                    hidden: edge.hidden,
-                    locked: edge.locked,
-                });
-            }
-        }
-        CanvasRecordId::Shape(id) => {
-            let Some(shape) = document.shape(id) else {
-                return records;
-            };
-
-            records.push(HitRecord {
-                target: HitTarget::Shape(shape.id.clone()),
-                bounds: resolver.shape_bounds(shape),
-                z_index: shape.z_index,
-                hidden: shape.hidden,
-                locked: shape.locked,
-            });
-        }
-    }
-
-    records
 }
 
 pub(crate) fn remove_record(records: &mut Vec<HitRecord>, record_id: &CanvasRecordId) {

@@ -8,6 +8,7 @@ mod changes;
 mod clipboard;
 mod document;
 mod geometry;
+mod geometry_facts;
 mod gesture;
 mod gpui;
 mod graph;
@@ -17,7 +18,6 @@ mod json_canvas;
 mod layer;
 mod mutation;
 mod persistence;
-mod resolve;
 mod routing;
 mod runtime;
 mod runtime_query;
@@ -43,6 +43,9 @@ pub use document::{
     NodeId, ShapeId, migrate_canvas_snapshot,
 };
 pub use geometry::{CanvasViewport, TransformError};
+pub use geometry_facts::{
+    CanvasGeometryFacts, CanvasRecordGeometry, CanvasResolvedEdgeGeometry, connection_hit_options,
+};
 pub use gpui::{
     CanvasEditorInputHandler, CanvasEditorInputMapper, CanvasInputMapper,
     CanvasPaintConnectionPreview, CanvasPaintEdgeGeometry, CanvasPaintFrame,
@@ -80,7 +83,6 @@ pub use persistence::{
     load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
     replay_canvas_log, save_canvas_checkpoint, undo_persistent_transaction,
 };
-pub use resolve::{CanvasGeometryResolver, CanvasResolvedEdgeGeometry, connection_hit_options};
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,

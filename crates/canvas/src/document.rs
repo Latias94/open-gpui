@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 use std::fmt;
 use thiserror::Error;
 
+use crate::geometry_facts::CanvasGeometryFacts;
 use crate::mutation::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
-use crate::resolve::CanvasGeometryResolver;
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
 
@@ -957,7 +957,7 @@ impl CanvasDocument {
         &self,
         endpoint: &CanvasEndpoint,
     ) -> Result<Point<Pixels>, DocumentError> {
-        CanvasGeometryResolver::new(self).endpoint_position(endpoint)
+        CanvasGeometryFacts::new(self).endpoint_position(endpoint)
     }
 
     pub fn edge_route_path(&self, edge: &CanvasEdge) -> Result<CanvasRoutePath, DocumentError> {
@@ -972,7 +972,7 @@ impl CanvasDocument {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        CanvasGeometryResolver::with_router(self, router).edge_route_path(edge)
+        CanvasGeometryFacts::with_router(self, router).edge_route_path(edge)
     }
 
     pub fn edge_bounds(&self, edge: &CanvasEdge) -> Result<Bounds<Pixels>, DocumentError> {
@@ -987,7 +987,7 @@ impl CanvasDocument {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        CanvasGeometryResolver::with_router(self, router).edge_bounds(edge)
+        CanvasGeometryFacts::with_router(self, router).edge_bounds(edge)
     }
 
     pub fn edge_route_points(

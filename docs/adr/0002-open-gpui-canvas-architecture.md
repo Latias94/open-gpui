@@ -46,8 +46,8 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
 - A runtime query module so future R-tree, tile, or GPU-assisted culling indexes can act as coarse
   candidate providers while canvas-owned code keeps final hit-test, culling, and ordering
   semantics.
-- A `CanvasGeometryResolver` that centralizes record bounds, handle positions, edge routes, hit
-  geometry, endpoint picking, previews, and paint fallback semantics.
+- A `CanvasGeometryFacts` module that centralizes record bounds, handle positions, edge routes,
+  hit geometry, endpoint picking, previews, snap geometry, and transform geometry.
 - A `CanvasKindRegistry` that layers per-kind defaults, migrations, validation, and geometry hooks
   over the open `kind: String` plus JSON payload model.
 - A JSON Canvas adapter that maps text/file/link/group nodes into `CanvasNode` records and maps
@@ -78,11 +78,11 @@ should feed coarse candidates into that module rather than becoming public final
 `CanvasRuntime` is the cache owner that keeps the current spatial candidate cache,
 `CanvasGraphIndex`, and edge geometry cache synchronized from committed document diffs.
 
-Geometry has one resolver boundary. `CanvasGeometryResolver` combines the canonical document,
-router policy, and optional kind registry to answer bounds, handle positions, route paths, edge
-bounds, precise hit areas, and endpoint locations. Runtime caches, built-in tools, connection
-previews, culling, and GPUI paint all use this resolver path so a custom router or registered kind
-does not have to be reimplemented in every subsystem.
+Geometry has one facts boundary. `CanvasGeometryFacts` combines the canonical document, router
+policy, and optional kind registry to answer bounds, handle positions, route paths, edge bounds,
+precise hit areas, endpoint locations, snap candidates, and transform handle bounds. Runtime
+caches, built-in tools, connection previews, culling, and GPUI paint all use this facts path so a
+custom router or registered kind does not have to be reimplemented in every subsystem.
 
 The native smoke example exercises the interaction boundary through the default editor-backed
 adapter. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each

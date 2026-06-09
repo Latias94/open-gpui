@@ -1,7 +1,7 @@
 use crate::spatial_cache::{CanvasSpatialCache, IndexedHitRecord};
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
+    CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -139,9 +139,9 @@ impl CanvasRuntimeQuery {
         records.into_iter().map(|record| &record.record)
     }
 
-    pub(crate) fn precise_hit_test_with_resolver<'a, R>(
+    pub(crate) fn precise_hit_test_with_facts<'a, R>(
         &'a self,
-        resolver: CanvasGeometryResolver<'a, R>,
+        facts: CanvasGeometryFacts<'a, R>,
         edge_geometries: &'a IndexMap<EdgeId, CanvasResolvedEdgeGeometry>,
         point: Point<Pixels>,
         options: HitOptions,
@@ -154,7 +154,7 @@ impl CanvasRuntimeQuery {
                 HitTarget::Edge(id) => edge_geometries.get(id),
                 _ => None,
             };
-            resolver.record_contains_point_with_edge_geometry(record, point, options, edge_geometry)
+            facts.record_contains_point_with_edge_geometry(record, point, options, edge_geometry)
         })
     }
 }
