@@ -19,8 +19,8 @@
 //!   paths that should not touch live GPUI view state.
 //! - [`DockViewportAdapter`] stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
-//! - [`DockViewportRuntime`] owns the controller-backed viewport lifecycle while
-//!   [`DockViewportRuntimeHandle`] keeps GPUI application callbacks ergonomic.
+//! - [`DockViewportRuntime`] owns the testable controller-backed viewport lifecycle core while
+//!   [`DockViewportRuntimeHandle`] is the application entry point for runtime-aware windows.
 //!
 //! Common GPUI applications should start with [`DockController::builder`], register lazy panel
 //! factories, and mount a controller-backed [`DockHost`]. Rendered tab movement, splitter resize,

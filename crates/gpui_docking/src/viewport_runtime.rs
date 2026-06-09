@@ -137,7 +137,7 @@ impl DockViewportRuntime {
     /// Runtime-opened windows install a GPUI should-close hook so
     /// [`DockViewportClosePolicy::Prevent`] can veto a platform close before
     /// [`Self::handle_window_closed`] performs post-close cleanup.
-    pub fn open_viewport(
+    pub(crate) fn open_viewport(
         &mut self,
         space: impl Into<DockSpaceId>,
         options: WindowOptions,
@@ -460,7 +460,7 @@ impl DockViewportRuntime {
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     #[allow(clippy::too_many_arguments)]
-    pub fn resolve_payload_drop_route_with_context(
+    pub(crate) fn resolve_payload_drop_route_with_context(
         &mut self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: crate::DockNodeId,
@@ -485,31 +485,6 @@ impl DockViewportRuntime {
         self.status
             .record_route(source_space, source_tabs, payload_record, &route);
         route
-    }
-
-    /// Resolves and commits a rendered payload release from a screen-space point.
-    #[allow(clippy::too_many_arguments)]
-    pub fn commit_payload_drop_from_screen_with_context(
-        &mut self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: crate::DockNodeId,
-        payload: DockViewportDropPayload,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        target_context: &DockViewportTargetContext,
-        cx: &mut App,
-    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let source_space = source_space.into();
-        let route = self.resolve_payload_drop_route_with_context(
-            source_space.clone(),
-            source_tabs,
-            payload.clone(),
-            release_position,
-            suggested_window_bounds,
-            target_context,
-            cx,
-        );
-        self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
     }
 
     pub(crate) fn begin_tear_off_request(
@@ -614,7 +589,7 @@ impl DockViewportRuntime {
     /// The graph is not mutated until the destination viewport has opened and registered
     /// successfully. Duplicate requests for the same item are idempotent and do not open another
     /// window.
-    pub fn open_tear_off_viewport(
+    pub(crate) fn open_tear_off_viewport(
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
