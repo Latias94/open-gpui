@@ -4,7 +4,7 @@ use super::{DockGraph, DropZone};
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
-    pub fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
+    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
         match op {
             DockOp::SetActiveTab { tabs, active } => {
                 let items = self.require_tabs_node(*tabs)?;

@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// High-level graph mutation emitted by docking UI or application code.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockOp {
+pub(crate) enum DockOp {
     /// Selects the active item within a tabs node.
     SetActiveTab {
         /// The tabs node to update.
@@ -161,11 +161,11 @@ pub enum DockOp {
 
 /// Fraction update for one split node.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SplitFractionsUpdate {
+pub(crate) struct SplitFractionsUpdate {
     /// The split node to update.
-    pub split: DockNodeId,
+    pub(crate) split: DockNodeId,
     /// The normalized fractions to store.
-    pub fractions: Vec<f32>,
+    pub(crate) fractions: Vec<f32>,
 }
 
 /// Error returned by checked dock operation application.

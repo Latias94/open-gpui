@@ -60,8 +60,9 @@ collect pointer facts, the drop resolver produces a resolved target, the workspa
 validates and commits that target, and viewport tear-off uses `DockViewportRuntime` to coordinate
 window creation before graph mutation. The active drop session stores a resolved target from layout
 facts rather than a tab-only intent, so preview and commit stay tied to the same resolver output.
-`DockAction` and `DockOp` remain useful low-level data interfaces, but they are not the common
-render drag/drop interface.
+`DockAction` remains the public low-level programmatic interface. `DockOp` is crate-internal graph
+mutation machinery, so render code and applications do not need to understand source/target node
+ids, zones, and insertion indexes to commit ordinary drag/drop.
 
 ## Architecture
 
