@@ -104,6 +104,23 @@ fn empty_root_renders_placeholder(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn empty_central_passthrough_renders_full_host_drop_target(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+    let (_window, host, mut visual) = open_host(cx, graph, &[], size(px(320.0), px(200.0)));
+
+    let empty = selector_for(&visual, &host, DockDebugRegion::EmptySpace)
+        .expect("empty central passthrough selector should be emitted");
+    let bounds = debug_bounds(&mut visual, &empty);
+
+    assert_close(width(bounds), 320.0);
+    assert_close(height(bounds), 200.0);
+}
+
+#[open_gpui::test]
 fn floating_container_renders_panel_inside_overlay_bounds(cx: &mut TestAppContext) {
     let (graph, _root, floating) = floating_overlay_graph();
     let (_window, host, mut visual) = open_host(
