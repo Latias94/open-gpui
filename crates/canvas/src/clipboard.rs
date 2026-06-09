@@ -1,8 +1,8 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasSelection, CanvasShape,
-    CanvasTransaction, DocumentCommand, EdgeId, NodeId, ShapeId,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, CanvasRecordRelations,
+    CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand, EdgeId, NodeId, ShapeId,
 };
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Pixels, Point};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,8 @@ pub struct CanvasClipboardPayload {
     pub shapes: Vec<CanvasShape>,
     #[serde(default)]
     pub selection: CanvasSelection,
+    #[serde(default)]
+    pub relations: CanvasRecordRelations,
 }
 
 impl CanvasClipboardPayload {
@@ -36,7 +38,7 @@ impl CanvasClipboardPayload {
         let selected_node_ids = nodes
             .iter()
             .map(|node| node.id.clone())
-            .collect::<indexmap::IndexSet<_>>();
+            .collect::<IndexSet<_>>();
         let mut edges = selection
             .selected_edges()
             .filter_map(|id| document.edge(id))
@@ -46,7 +48,7 @@ impl CanvasClipboardPayload {
         let selected_edge_ids = edges
             .iter()
             .map(|edge| edge.id.clone())
-            .collect::<indexmap::IndexSet<_>>();
+            .collect::<IndexSet<_>>();
         edges.extend(
             document
                 .edges()
@@ -70,11 +72,29 @@ impl CanvasClipboardPayload {
             payload_selection.insert_shape(shape.id.clone());
         }
 
+        let copied_record_ids = copied_record_ids(&nodes, &edges, &shapes);
+        let mut relations = CanvasRecordRelations::default();
+        for relation in document.relations().parents() {
+            if copied_record_ids.contains(&relation.child)
+                && copied_record_ids.contains(&relation.parent)
+            {
+                relations.set_parent(relation.child.clone(), relation.parent.clone());
+            }
+        }
+        for relation in document.relations().groups() {
+            if copied_record_ids.contains(&relation.group)
+                && copied_record_ids.contains(&relation.member)
+            {
+                relations.add_to_group(relation.group.clone(), relation.member.clone());
+            }
+        }
+
         Self {
             nodes,
             edges,
             shapes,
             selection: payload_selection,
+            relations,
         }
     }
 
@@ -122,6 +142,7 @@ impl CanvasClipboardPayload {
             commands.push(DocumentCommand::InsertShape(shape));
         }
 
+        let mut pasted_edge_ids = IndexMap::new();
         for edge in &self.edges {
             let Some(source) = remap_endpoint(&edge.source, &node_ids) else {
                 continue;
@@ -130,11 +151,41 @@ impl CanvasClipboardPayload {
                 continue;
             };
             let mut edge = edge.clone();
-            edge.id = edge_ids[&edge.id].clone();
+            let original_edge_id = edge.id.clone();
+            edge.id = edge_ids[&original_edge_id].clone();
             edge.source = source;
             edge.target = target;
             selection.insert_edge(edge.id.clone());
+            pasted_edge_ids.insert(original_edge_id, edge.id.clone());
             commands.push(DocumentCommand::InsertEdge(edge));
+        }
+
+        for relation in self.relations.parents() {
+            let Some(child) =
+                remap_record_id(&relation.child, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            let Some(parent) =
+                remap_record_id(&relation.parent, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            commands.push(DocumentCommand::SetRecordParent { child, parent });
+        }
+
+        for relation in self.relations.groups() {
+            let Some(group) =
+                remap_record_id(&relation.group, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            let Some(member) =
+                remap_record_id(&relation.member, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            commands.push(DocumentCommand::AddRecordToGroup { group, member });
         }
 
         CanvasPasteTransaction {
@@ -148,6 +199,27 @@ impl CanvasClipboardPayload {
 pub struct CanvasPasteTransaction {
     pub transaction: CanvasTransaction,
     pub selection: CanvasSelection,
+}
+
+fn copied_record_ids(
+    nodes: &[CanvasNode],
+    edges: &[CanvasEdge],
+    shapes: &[CanvasShape],
+) -> IndexSet<CanvasRecordId> {
+    nodes
+        .iter()
+        .map(|node| CanvasRecordId::Node(node.id.clone()))
+        .chain(
+            edges
+                .iter()
+                .map(|edge| CanvasRecordId::Edge(edge.id.clone())),
+        )
+        .chain(
+            shapes
+                .iter()
+                .map(|shape| CanvasRecordId::Shape(shape.id.clone())),
+        )
+        .collect()
 }
 
 fn remap_ids<'a, I, T, Exists, Unique>(ids: I, exists: Exists, unique: Unique) -> IndexMap<T, T>
@@ -209,6 +281,19 @@ fn remap_endpoint(
             node_id,
             handle_id: endpoint.handle_id.clone(),
         })
+}
+
+fn remap_record_id(
+    id: &CanvasRecordId,
+    node_ids: &IndexMap<NodeId, NodeId>,
+    edge_ids: &IndexMap<EdgeId, EdgeId>,
+    shape_ids: &IndexMap<ShapeId, ShapeId>,
+) -> Option<CanvasRecordId> {
+    match id {
+        CanvasRecordId::Node(id) => node_ids.get(id).cloned().map(CanvasRecordId::Node),
+        CanvasRecordId::Edge(id) => edge_ids.get(id).cloned().map(CanvasRecordId::Edge),
+        CanvasRecordId::Shape(id) => shape_ids.get(id).cloned().map(CanvasRecordId::Shape),
+    }
 }
 
 #[cfg(test)]
@@ -322,6 +407,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn copy_selection_includes_internal_relations() {
+        let document = related_document();
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(NodeId::from("child"));
+        selection.insert_shape(ShapeId::from("group"));
+
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        assert_eq!(payload.relations.parent_of(&child), Some(&group));
+        assert_eq!(
+            payload
+                .relations
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![child]
+        );
+    }
+
+    #[test]
+    fn copy_selection_omits_external_relations() {
+        let document = related_document();
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(NodeId::from("child"));
+
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+
+        assert!(payload.relations.is_empty());
+    }
+
+    #[test]
+    fn paste_payload_remaps_internal_relations() {
+        let document = related_document();
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(NodeId::from("child"));
+        selection.insert_shape(ShapeId::from("group"));
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+
+        let pasted = payload.paste_transaction(&document, point(px(16.0), px(24.0)));
+
+        let mut draft = document.clone();
+        draft.apply_transaction(pasted.transaction).unwrap();
+
+        let child = CanvasRecordId::Node(NodeId::from("child-copy"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group-copy"));
+        assert_eq!(draft.relations().parent_of(&child), Some(&group));
+        assert_eq!(
+            draft
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![child]
+        );
+    }
+
+    #[test]
+    fn deserializes_clipboard_payload_without_relations() {
+        let payload = serde_json::from_str::<CanvasClipboardPayload>(
+            r#"{"nodes":[],"edges":[],"shapes":[],"selection":{"nodes":[],"edges":[],"shapes":[],"handles":[]}}"#,
+        )
+        .unwrap();
+
+        assert!(payload.relations.is_empty());
+    }
+
     fn connected_document() -> CanvasDocument {
         let mut document = CanvasDocument::default();
         document
@@ -344,6 +498,36 @@ mod tests {
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
+            .unwrap();
+        document
+    }
+
+    fn related_document() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("child")),
+                },
+            ]))
             .unwrap();
         document
     }

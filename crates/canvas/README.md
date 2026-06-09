@@ -209,6 +209,9 @@ parent-relative transforms yet.
 Applications should route product editing actions through `CanvasEditor` methods. The editor keeps
 selection pruning, undo/redo, runtime cache updates, kind validation, and future persistence hooks
 behind one mutation boundary.
+Copy, cut, paste, and duplicate preserve internal edges plus internal parent/group relations when
+both relationship endpoints are included in the clipboard payload; relationships to records outside
+the payload are intentionally omitted.
 
 ```rust
 use open_gpui::{point, px};

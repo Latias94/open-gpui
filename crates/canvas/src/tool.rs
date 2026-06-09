@@ -2341,9 +2341,28 @@ mod tests {
                 CanvasEndpoint::new("outside", None::<&str>),
             ))
             .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(-20.0), px(-20.0)), size(px(360.0), px(160.0))),
+            ))
+            .unwrap();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("a")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("frame")),
+                    member: CanvasRecordId::Node(NodeId::from("a")),
+                },
+            ]))
+            .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor.selection.nodes.insert(NodeId::from("a"));
         editor.selection.nodes.insert(NodeId::from("b"));
+        editor.selection.shapes.insert(ShapeId::from("frame"));
 
         assert!(
             editor
@@ -2354,6 +2373,7 @@ mod tests {
         assert!(editor.document.contains_node(&NodeId::from("a-copy")));
         assert!(editor.document.contains_node(&NodeId::from("b-copy")));
         assert!(editor.document.contains_edge(&EdgeId::from("a-b-copy")));
+        assert!(editor.document.contains_shape(&ShapeId::from("frame-copy")));
         assert!(
             !editor
                 .document
@@ -2375,6 +2395,25 @@ mod tests {
             editor.selection.edges.iter().cloned().collect::<Vec<_>>(),
             vec![EdgeId::from("a-b-copy")]
         );
+        assert_eq!(
+            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            vec![ShapeId::from("frame-copy")]
+        );
+        let copied_node = CanvasRecordId::Node(NodeId::from("a-copy"));
+        let copied_frame = CanvasRecordId::Shape(ShapeId::from("frame-copy"));
+        assert_eq!(
+            editor.document.relations().parent_of(&copied_node),
+            Some(&copied_frame)
+        );
+        assert_eq!(
+            editor
+                .document
+                .relations()
+                .members_of(&copied_frame)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![copied_node]
+        );
         assert_eq!(editor.history.undo_depth(), 1);
         assert!(
             editor
@@ -2386,6 +2425,7 @@ mod tests {
         assert!(editor.undo().unwrap());
         assert!(!editor.document.contains_node(&NodeId::from("a-copy")));
         assert!(!editor.document.contains_edge(&EdgeId::from("a-b-copy")));
+        assert!(!editor.document.contains_shape(&ShapeId::from("frame-copy")));
     }
 
     #[test]
