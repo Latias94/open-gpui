@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot pair a document with a runtime built from a different geometry policy.
 - Made `CanvasPaintModel` state private and routed edge paint through runtime-resolved geometry so
   GPUI paint cannot bypass router and kind-registry policy.
+- Tightened the GPUI canvas adapter API by making paint interaction snapshots, input mapper state,
+  custom tool context internals, and runtime graph-index storage private pre-release details.
 
 ## [0.1.0] - 2026-06-07
 
