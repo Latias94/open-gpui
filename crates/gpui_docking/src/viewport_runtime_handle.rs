@@ -218,25 +218,6 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn commit_drop_route(
-        &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        item: &DockItemId,
-        route: DockViewportDropRoute,
-        cx: &mut App,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.commit_payload_drop_route_with_outcome(
-            source_space,
-            source_tabs,
-            DockViewportDropPayload::Item(item.clone()),
-            route,
-            cx,
-        )?
-        .into_action_result()
-    }
-
-    #[cfg(test)]
     pub(crate) fn commit_drop_route_with_outcome(
         &self,
         source_space: &DockSpaceId,

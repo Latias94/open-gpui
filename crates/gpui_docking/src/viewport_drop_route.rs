@@ -1,6 +1,6 @@
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportHit, DockViewportTargetContext,
+    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportActivationTarget,
+    DockViewportAdapter, DockViewportDropPayload, DockViewportHit, DockViewportTargetContext,
     DockViewportTearOffRequest,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
@@ -24,6 +24,24 @@ pub enum DockViewportDropRoute {
     TearOff(DockViewportTearOffRequest),
     /// The release landed outside all registered viewports, but policy forbids opening one.
     Rejected(DockPolicyError),
+}
+
+impl DockViewportDropRoute {
+    /// Returns the runtime viewport that should become active after this route is committed,
+    /// when the route already names one.
+    pub fn activation_target(&self) -> Option<DockViewportActivationTarget> {
+        match self {
+            DockViewportDropRoute::KnownViewport { hit, window } => {
+                Some(DockViewportActivationTarget {
+                    space: hit.space.clone(),
+                    window: *window,
+                })
+            }
+            DockViewportDropRoute::Local { .. }
+            | DockViewportDropRoute::TearOff(_)
+            | DockViewportDropRoute::Rejected(_) => None,
+        }
+    }
 }
 
 impl DockViewportAdapter {

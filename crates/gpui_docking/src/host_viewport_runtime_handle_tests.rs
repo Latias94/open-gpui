@@ -392,12 +392,18 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
         })
         .expect("tear-off route should commit through runtime handle");
 
+    let activation = outcome.activation_target();
     let DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(completed)) =
         outcome
     else {
         panic!("tear-off route should open a viewport and complete the move");
     };
     assert_eq!(completed.action, crate::DockActionOutcome::Changed);
+    assert_eq!(
+        activation.as_ref().map(|target| target.window),
+        Some(completed.registration.window),
+        "tear-off completion should surface the new viewport activation target"
+    );
     assert_eq!(completed.pending.request.release_position, release_position);
     assert_eq!(
         completed.pending.request.suggested_window_bounds,
@@ -483,12 +489,18 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
         })
         .expect("stack tear-off route should commit through runtime handle");
 
+    let activation = outcome.activation_target();
     let DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(completed)) =
         outcome
     else {
         panic!("stack tear-off route should open a viewport and complete the move");
     };
     assert_eq!(completed.action, crate::DockActionOutcome::Changed);
+    assert_eq!(
+        activation.as_ref().map(|target| target.window),
+        Some(completed.registration.window),
+        "stack tear-off completion should surface the new viewport activation target"
+    );
     assert_eq!(
         completed.pending.target_space.as_str(),
         "source:tear-off:tabs:0"
@@ -587,7 +599,12 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
-        runtime.commit_drop_route(&source_space, source_tabs, &item("a"), route, app)
+        assert_eq!(
+            route.activation_target().map(|target| target.window),
+            Some(opened.window),
+            "known viewport route should carry the destination activation target"
+        );
+        runtime.commit_drop_route_with_outcome(&source_space, source_tabs, &item("a"), route, app)
     });
 
     assert_eq!(
@@ -701,10 +718,26 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
-        runtime.commit_drop_route(&source_space, source_tabs, &item("a"), route, app)
+        assert_eq!(
+            route.activation_target().map(|target| target.window),
+            Some(opened.window),
+            "known viewport route should carry the destination activation target"
+        );
+        runtime.commit_drop_route_with_outcome(&source_space, source_tabs, &item("a"), route, app)
     });
 
-    assert_eq!(result, Ok(crate::DockActionOutcome::Changed));
+    let DockViewportDropRouteOutcome::Action(action) = result.expect("route should commit") else {
+        panic!("known viewport drop should produce a normal action outcome");
+    };
+    assert_eq!(action.action, crate::DockActionOutcome::Changed);
+    assert_eq!(
+        action
+            .activation
+            .as_ref()
+            .map(|activation| activation.window),
+        Some(opened.window),
+        "known viewport drop should request activation of the destination window"
+    );
     let after_drop_context = source_opened
         .window
         .update(cx, |_, window, app| {

@@ -2,7 +2,7 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
     workspace_transaction::DockWorkspaceDropPayload,
 };
-use open_gpui::{Pixels, Point, WindowBounds};
+use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
 
 /// Drag payload carried by a viewport-routed drop release.
@@ -190,23 +190,59 @@ impl DockViewportTearOffOpenOutcome {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportDropRouteOutcome {
     /// The route resolved to a normal workspace action.
-    Action(DockActionOutcome),
+    Action(DockViewportDropActionOutcome),
     /// The route opened or reused a platform viewport through the tear-off runtime transaction.
     TearOff(DockViewportTearOffOpenOutcome),
+}
+
+/// Workspace action outcome plus viewport-side effects requested by a routed drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportDropActionOutcome {
+    /// Graph transaction outcome.
+    pub action: DockActionOutcome,
+    /// Runtime viewport that should become active after the drop, when known.
+    pub activation: Option<DockViewportActivationTarget>,
+}
+
+/// Runtime viewport activation target selected by a successful drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportActivationTarget {
+    /// Logical dock space to activate.
+    pub space: DockSpaceId,
+    /// GPUI window rendering the logical dock space.
+    pub window: AnyWindowHandle,
 }
 
 impl DockViewportDropRouteOutcome {
     /// Projects a runtime route outcome into a workspace action when one happened.
     pub fn action_outcome(&self) -> Option<DockActionOutcome> {
         match self {
-            DockViewportDropRouteOutcome::Action(outcome) => Some(*outcome),
+            DockViewportDropRouteOutcome::Action(outcome) => Some(outcome.action),
             DockViewportDropRouteOutcome::TearOff(outcome) => outcome.action_outcome(),
+        }
+    }
+
+    /// Returns the runtime viewport that should be activated after the drop, when known.
+    pub fn activation_target(&self) -> Option<DockViewportActivationTarget> {
+        match self {
+            DockViewportDropRouteOutcome::Action(outcome) => outcome.activation.clone(),
+            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
+                completed,
+            )) => Some(DockViewportActivationTarget {
+                space: completed.pending.target_space.clone(),
+                window: completed.registration.window,
+            }),
+            DockViewportDropRouteOutcome::TearOff(
+                DockViewportTearOffOpenOutcome::Duplicate(_)
+                | DockViewportTearOffOpenOutcome::Cancelled(_)
+                | DockViewportTearOffOpenOutcome::CommitFailed(_),
+            ) => None,
         }
     }
 
     pub(crate) fn into_action_result(self) -> Result<DockActionOutcome, DockActionApplyError> {
         match self {
-            DockViewportDropRouteOutcome::Action(action) => Ok(action),
+            DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
             )) => Ok(completed.action),

@@ -1,6 +1,7 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockNode, DockSpaceId,
-    DockTransactionError, DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockTransactionError, DockViewportActivationTarget, DockViewportAdapter,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropActionOutcome,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
@@ -272,8 +273,10 @@ impl DockViewportRuntime {
             }
             outcome
         })?;
-        let _ = self.reusable_window_for_space(&target_space, cx);
-        Ok(DockViewportDropRouteOutcome::Action(action))
+        let activation = self.activate_viewport_for_space(&target_space, cx);
+        Ok(DockViewportDropRouteOutcome::Action(
+            DockViewportDropActionOutcome { action, activation },
+        ))
     }
 
     fn resolve_route_target(
@@ -484,6 +487,9 @@ impl DockViewportRuntime {
         self.close_gate.sync_adapter(&self.adapter);
         match self.commit_tear_off_move(&pending, cx) {
             Ok(action) => {
+                let _ = registration
+                    .window
+                    .update(cx, |_, window, _| window.activate_window());
                 DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted {
                     pending,
                     registration,
@@ -583,6 +589,20 @@ impl DockViewportRuntime {
         self.adapter.unregister_space(target_space);
         self.host_scenes.unregister_space(target_space);
         self.close_gate.sync_adapter(&self.adapter);
+    }
+
+    fn activate_viewport_for_space(
+        &mut self,
+        target_space: &DockSpaceId,
+        cx: &mut App,
+    ) -> Option<DockViewportActivationTarget> {
+        match self.reusable_window_for_space(target_space, cx) {
+            DockViewportReusableWindow::Reused(window) => Some(DockViewportActivationTarget {
+                space: target_space.clone(),
+                window,
+            }),
+            DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
+        }
     }
 
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.
