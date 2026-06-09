@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::interaction::{FloatingDrag, SplitterDrag};
-use crate::{DockHost, DockNodeId, DockSpaceId, drop_target::DockDropIntent};
+use crate::{DockHost, DockNodeId, DockSpaceId, drop_target::DockResolvedDropTarget};
 use open_gpui::{Bounds, Context, Pixels, Point};
 
 impl DockHost {
@@ -103,11 +103,11 @@ impl DockHost {
         )
     }
 
-    pub(crate) fn take_tab_drop_intent(
+    pub(crate) fn take_tab_drop_target(
         &mut self,
         target_tabs: DockNodeId,
-    ) -> Option<DockDropIntent> {
-        self.interaction_mut().take_tab_drop_intent(target_tabs)
+    ) -> Option<DockResolvedDropTarget> {
+        self.interaction_mut().take_tab_drop_target(target_tabs)
     }
 
     pub(crate) fn tab_drop_preview_bounds(

@@ -20,7 +20,11 @@ impl DockHost {
         target_tabs: DockNodeId,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(intent) = self.take_tab_drop_intent(target_tabs) else {
+        let Some(target) = self.take_tab_drop_target(target_tabs) else {
+            cx.notify();
+            return false;
+        };
+        let Some(intent) = target.intent() else {
             cx.notify();
             return false;
         };

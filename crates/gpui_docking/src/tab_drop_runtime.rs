@@ -1,12 +1,12 @@
 use crate::{
     DockNodeId, DockPolicy, DropZone,
-    drop_target::{self, DockDropIntent, DockDropResolution},
+    drop_target::{self, DockDropIntent, DockDropResolution, DockResolvedDropTarget},
 };
 use open_gpui::{Bounds, Pixels, Point};
 
 #[derive(Debug, Default)]
 pub(crate) struct DockTabDropRuntime {
-    intent: Option<DockDropIntent>,
+    target: Option<DockResolvedDropTarget>,
 }
 
 impl DockTabDropRuntime {
@@ -17,19 +17,23 @@ impl DockTabDropRuntime {
         position: Point<Pixels>,
         policy: &DockPolicy,
     ) -> bool {
-        let mut intent = drop_target::resolve_tabs_drop(target_tabs, bounds, position, policy)
-            .and_then(DockDropResolution::intent);
-        if let Some(existing) = self.intent
-            && existing.target_tabs == target_tabs
-            && existing.insert_index.is_some()
-            && existing.preview_bounds.contains(&position)
-            && intent.as_ref().is_some_and(|intent| {
-                intent.target_tabs == target_tabs && intent.zone == DropZone::Center
-            })
+        let mut target = drop_target::resolve_tabs_drop(target_tabs, bounds, position, policy)
+            .and_then(DockDropResolution::target);
+        if let Some(existing) = self.target.as_ref()
+            && let Some(existing_intent) = existing.intent()
+            && existing_intent.target_tabs == target_tabs
+            && existing_intent.insert_index.is_some()
+            && existing_intent.preview_bounds.contains(&position)
+            && target
+                .as_ref()
+                .and_then(DockResolvedDropTarget::intent)
+                .is_some_and(|intent| {
+                    intent.target_tabs == target_tabs && intent.zone == DropZone::Center
+                })
         {
-            intent = Some(existing);
+            target = Some(existing.clone());
         }
-        self.replace_intent(intent)
+        self.replace_target(target)
     }
 
     pub(crate) fn update_tab_reorder_drop_intent(
@@ -49,38 +53,47 @@ impl DockTabDropRuntime {
         ) else {
             return false;
         };
-        self.replace_intent(resolution.intent())
+        self.replace_target(resolution.target())
     }
 
-    pub(crate) fn take_intent(&mut self, target_tabs: DockNodeId) -> Option<DockDropIntent> {
-        let intent = self
-            .intent
-            .filter(|intent| intent.target_tabs == target_tabs);
-        self.intent = None;
-        intent
+    pub(crate) fn take_resolved_target(
+        &mut self,
+        target_tabs: DockNodeId,
+    ) -> Option<DockResolvedDropTarget> {
+        let target = self.target.take()?;
+        match target.intent() {
+            Some(intent) if intent.target_tabs == target_tabs => Some(target),
+            _ => None,
+        }
     }
 
     pub(crate) fn preview_bounds(&self, target_tabs: DockNodeId) -> Option<Bounds<Pixels>> {
         let intent = self
-            .intent
-            .filter(|intent| intent.target_tabs == target_tabs)?;
+            .target
+            .as_ref()
+            .and_then(DockResolvedDropTarget::intent)?;
+        if intent.target_tabs != target_tabs {
+            return None;
+        }
         if intent.insert_index.is_some() {
             return None;
         }
         Some(intent.preview_bounds)
     }
 
-    fn replace_intent(&mut self, intent: Option<DockDropIntent>) -> bool {
-        if self.intent == intent {
+    fn replace_target(&mut self, target: Option<DockResolvedDropTarget>) -> bool {
+        if self.target == target {
             return false;
         }
-        self.intent = intent;
+        self.target = target;
         true
     }
 
     #[cfg(test)]
     pub(crate) fn intent(&self) -> Option<DockDropIntent> {
-        self.intent
+        self.target
+            .as_ref()
+            .and_then(DockResolvedDropTarget::intent)
     }
 }
 
@@ -143,9 +156,10 @@ mod tests {
             &DockPolicy::default(),
         ));
 
-        let intent = runtime
-            .take_intent(tabs)
+        let target = runtime
+            .take_resolved_target(tabs)
             .expect("reorder intent should remain available");
+        let intent = target.intent().expect("tab drop target should project");
         assert_eq!(intent.zone, DropZone::Center);
         assert_eq!(intent.insert_index, Some(3));
         assert!(runtime.intent().is_none());

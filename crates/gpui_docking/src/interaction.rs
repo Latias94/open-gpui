@@ -1,5 +1,5 @@
 use crate::{
-    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockDropIntent, geometry,
+    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockResolvedDropTarget, geometry,
     tab_drop_runtime::DockTabDropRuntime,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
@@ -137,11 +137,11 @@ impl DockInteractionRuntime {
         )
     }
 
-    pub(crate) fn take_tab_drop_intent(
+    pub(crate) fn take_tab_drop_target(
         &mut self,
         target_tabs: DockNodeId,
-    ) -> Option<DockDropIntent> {
-        self.tab_drop.take_intent(target_tabs)
+    ) -> Option<DockResolvedDropTarget> {
+        self.tab_drop.take_resolved_target(target_tabs)
     }
 
     pub(crate) fn tab_drop_preview_bounds(
