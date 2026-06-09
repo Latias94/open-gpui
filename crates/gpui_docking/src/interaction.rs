@@ -148,6 +148,15 @@ impl DockInteractionRuntime {
         self.drop.take_resolved_target()
     }
 
+    pub(crate) fn take_resolved_target_excluding_tabs(
+        &mut self,
+        source_tabs: DockNodeId,
+        policy: &DockPolicy,
+    ) -> Option<DockResolvedDropTarget> {
+        self.drop
+            .take_resolved_target_excluding_tabs(source_tabs, policy)
+    }
+
     pub(crate) fn tab_drop_preview_bounds(
         &self,
         target_tabs: DockNodeId,

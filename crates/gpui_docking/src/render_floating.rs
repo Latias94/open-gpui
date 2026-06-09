@@ -1,11 +1,13 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion, drag::DockDragPayload,
+    DockFloatingContainer, DockHost, DockNodeId,
+    debug::DockDebugRegion,
+    drag::{DockDragPayload, DockDragPreview},
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
-    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Styled, canvas, div, px, rgb,
-    white,
+    AnyElement, AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, StatefulInteractiveElement,
+    Styled, canvas, div, px, rgb, rgba, white,
 };
 
 impl DockHost {
@@ -104,9 +106,9 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
-        let target_tabs = session.first_tabs_in_subtree(floating);
+        let floating_tabs = session.first_tabs_in_subtree(floating);
 
-        let mut handle = div()
+        let handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -122,19 +124,51 @@ impl DockHost {
             .text_sm()
             .cursor_pointer();
 
-        if let Some(target_tabs) = target_tabs {
-            handle = handle.on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
-                    this.update_floating_title_bar_drop_scene_from_render(
-                        floating,
-                        target_tabs,
-                        event.bounds,
-                        bounds,
-                        event.event.position,
-                        cx,
-                    );
-                },
-            ));
+        if let Some(target_tabs) = floating_tabs {
+            let payload = DockDragPayload::new_tabs(space.clone(), target_tabs, title.clone());
+            let drag_entity = entity.clone();
+            let drag_space = space.clone();
+            let drag_surface_id = format!(
+                "{}:floating:{}:drag-surface",
+                session.selector_prefix(),
+                floating.as_u64()
+            );
+            let drag_surface = div()
+                .id(drag_surface_id)
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .size_full()
+                .cursor_pointer()
+                // Fully transparent empty surfaces do not reliably initiate GPUI drag hit-tests.
+                .bg(rgba(0x00000001))
+                .on_drag(payload, move |payload, _, window, cx| {
+                    let start_position = window.mouse_position();
+                    drag_entity.update(cx, |host, cx| {
+                        host.begin_floating_drag_from_render(
+                            drag_space.clone(),
+                            floating,
+                            start_position,
+                            bounds,
+                            cx,
+                        );
+                    });
+                    cx.new(|_| DockDragPreview::new(payload.title()))
+                })
+                .on_drag_move(cx.listener(
+                    move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                        this.update_floating_title_bar_drop_scene_from_render(
+                            floating,
+                            target_tabs,
+                            event.bounds,
+                            bounds,
+                            event.event.position,
+                            cx,
+                        );
+                    },
+                ));
+
+            return handle.child(title).child(drag_surface).into_any_element();
         }
 
         handle

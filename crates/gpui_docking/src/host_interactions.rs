@@ -39,6 +39,15 @@ impl DockHostInteractionOutcome {
         if changed { Self::Notify } else { Self::Idle }
     }
 
+    pub(crate) fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Rejected(error), _) | (_, Self::Rejected(error)) => Self::Rejected(error),
+            (Self::Changed, _) | (_, Self::Changed) => Self::Changed,
+            (Self::Notify, _) | (_, Self::Notify) => Self::Notify,
+            (Self::Idle, Self::Idle) => Self::Idle,
+        }
+    }
+
     fn from_commit_result(
         result: Result<DockActionOutcome, DockActionApplyError>,
         notify_on_unchanged: bool,
@@ -258,26 +267,38 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        if let Some(outcome) =
+        let outcome = if let Some(outcome) =
             self.commit_runtime_routed_payload_drop_interaction(payload, &target_space, window, cx)
         {
-            return outcome;
-        }
+            outcome
+        } else {
+            let policy = self.with_workspace(cx, |workspace| *workspace.policy());
+            let target = match payload.kind {
+                DockDragPayloadKind::Tabs => self
+                    .interaction_mut()
+                    .take_resolved_target_excluding_tabs(payload.source_tabs, &policy),
+                DockDragPayloadKind::Item { .. } => {
+                    self.interaction_mut().take_resolved_drop_target()
+                }
+            };
+            let Some(target) = target else {
+                return DockHostInteractionOutcome::Notify
+                    .merge(self.finish_floating_drag_interaction());
+            };
 
-        let Some(target) = self.interaction_mut().take_resolved_drop_target() else {
-            return DockHostInteractionOutcome::Notify;
+            self.commit_resolved_payload_drop_interaction(
+                DockWorkspacePayloadDropRequest {
+                    source_space: &payload.source_space,
+                    payload: workspace_payload(payload),
+                    target_space: &target_space,
+                    target,
+                },
+                cx,
+                true,
+            )
         };
 
-        self.commit_resolved_payload_drop_interaction(
-            DockWorkspacePayloadDropRequest {
-                source_space: &payload.source_space,
-                payload: workspace_payload(payload),
-                target_space: &target_space,
-                target,
-            },
-            cx,
-            true,
-        )
+        outcome.merge(self.finish_floating_drag_interaction())
     }
 
     fn commit_runtime_routed_payload_drop_interaction(

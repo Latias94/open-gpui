@@ -89,6 +89,21 @@ impl DockHostDropScene {
         self.resolve_drop(policy)
             .and_then(DockDropResolution::target)
     }
+
+    fn without_tabs_targets(&self, tabs: DockNodeId) -> Self {
+        let mut scene = self.clone();
+        scene.tab_labels.retain(|target| target.target_tabs != tabs);
+        scene
+            .leaves
+            .retain(|target| target.root != tabs && target.target_tabs != tabs);
+        if scene.root.is_some_and(|target| target.root == tabs) {
+            scene.root = None;
+        }
+        scene
+            .floating_title_bars
+            .retain(|target| target.target_tabs != tabs);
+        scene
+    }
 }
 
 impl DockDropRuntime {
@@ -136,6 +151,25 @@ impl DockDropRuntime {
     pub(crate) fn take_resolved_target(&mut self) -> Option<DockResolvedDropTarget> {
         self.scene = None;
         self.target.take()
+    }
+
+    pub(crate) fn take_resolved_target_excluding_tabs(
+        &mut self,
+        source_tabs: DockNodeId,
+        policy: &DockPolicy,
+    ) -> Option<DockResolvedDropTarget> {
+        let target = self
+            .scene
+            .as_ref()
+            .and_then(|scene| {
+                scene
+                    .without_tabs_targets(source_tabs)
+                    .resolved_target(policy)
+            })
+            .or_else(|| self.target.take());
+        self.scene = None;
+        self.target = None;
+        target
     }
 
     fn scene_for_position(&mut self, position: Point<Pixels>) -> &mut DockHostDropScene {
@@ -316,6 +350,54 @@ mod tests {
             DockResolvedDropTargetKind::TabBar {
                 target_tabs: tabs,
                 insert_index: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn stack_drop_can_exclude_source_tabs_when_resolving_scene() {
+        let mut graph = crate::DockGraph::new();
+        let source_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("source")],
+            active: 0,
+        });
+        let target_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("target")],
+            active: 0,
+        });
+        let mut runtime = DockDropRuntime::default();
+        let position = point(px(120.0), px(80.0));
+
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: target_tabs,
+                target_tabs,
+                bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: source_tabs,
+                target_tabs: source_tabs,
+                bounds: bounds(80.0, 40.0, 220.0, 140.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+
+        let target = runtime
+            .take_resolved_target_excluding_tabs(source_tabs, &DockPolicy::default())
+            .expect("underlying target should remain after excluding source tabs");
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: target_tabs,
+                target_tabs,
             }
         );
     }

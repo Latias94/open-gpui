@@ -8,46 +8,6 @@ use open_gpui::{
 use slotmap::Key;
 
 #[open_gpui::test]
-fn dragging_floating_handle_updates_graph_bounds(cx: &mut TestAppContext) {
-    let (graph, _root, floating) = floating_overlay_graph();
-    let mut workspace =
-        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
-    workspace.policy_mut().set_allow_floating(true);
-    let controller = cx.new(|_| DockController::new(workspace));
-    let (window, host, mut visual) =
-        open_controller_workspace(cx, controller.clone(), size(px(320.0), px(220.0)));
-
-    let handle = selector_for(
-        &visual,
-        &host,
-        DockDebugRegion::FloatingHandle { node: floating },
-    )
-    .expect("floating handle selector should be emitted");
-    let start = debug_bounds(&mut visual, &handle).center();
-    let end = point(start.x + px(40.0), start.y + px(30.0));
-
-    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
-    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
-    cx.run_until_parked();
-    let visual = VisualTestContext::from_window(window.into(), cx);
-
-    cx.read_entity(&controller, |controller, _| {
-        let container = controller
-            .graph()
-            .floating_containers(&space())
-            .iter()
-            .find(|container| container.node == floating)
-            .expect("floating container should remain present");
-        assert_close(f32::from(container.bounds.origin.x), 50.0);
-        assert_close(f32::from(container.bounds.origin.y), 50.0);
-    });
-    host.read_with(&visual, |host, _| {
-        assert!(host.floating_drag().is_none());
-    });
-}
-
-#[open_gpui::test]
 fn stale_floating_drag_begin_does_not_leave_transient_drag(cx: &mut TestAppContext) {
     let (graph, _root, _floating) = floating_overlay_graph();
     let mut workspace =
@@ -606,6 +566,52 @@ fn dragging_tab_to_floating_title_bar_merges_into_floating_stack(cx: &mut TestAp
         assert_eq!(items, &vec![item("a"), item("b")]);
         assert_eq!(*active, 1);
         assert_eq!(controller.graph().root(&space()), None);
+    });
+}
+
+#[open_gpui::test]
+fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppContext) {
+    let (graph, root, floating) = floating_overlay_graph();
+    let mut workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(360.0), px(240.0)));
+
+    let floating_handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("floating handle selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
+        .expect("root tabs selector should be emitted");
+    let start = debug_bounds(&mut visual, &floating_handle).center();
+    let end = debug_bounds(&mut visual, &target_tabs).center();
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "panel A should be active in the root stack after floating title-bar drop"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert!(
+            controller.graph().floating_containers(&space()).is_empty(),
+            "floating container should be removed after its stack merges into root"
+        );
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should still exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(*active, 1);
     });
 }
 

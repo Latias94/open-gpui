@@ -62,7 +62,8 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_viewport_host_scene_from_window(host_bounds, position, window);
-        self.begin_host_drop_scene_interaction(position, cx)
+        self.update_floating_drag_interaction(position, cx)
+            .merge(self.begin_host_drop_scene_interaction(position, cx))
             .finish(cx)
     }
 
