@@ -69,7 +69,7 @@ impl DockWorkspace {
             DockResolvedDropTargetKind::TabBar {
                 target_tabs,
                 insert_index,
-            } => self.commit_resolved_payload_tab_drop(
+            } => self.commit_resolved_payload_tabs_target_drop(
                 source_space,
                 payload,
                 target_space,
@@ -79,7 +79,7 @@ impl DockWorkspace {
             ),
             DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
             | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => self
-                .commit_resolved_payload_tab_drop(
+                .commit_resolved_payload_tabs_target_drop(
                     source_space,
                     payload,
                     target_space,
@@ -89,7 +89,7 @@ impl DockWorkspace {
                 ),
             DockResolvedDropTargetKind::InnerEdge {
                 target_tabs, zone, ..
-            } => self.commit_resolved_payload_tab_drop(
+            } => self.commit_resolved_payload_tabs_target_drop(
                 source_space,
                 payload,
                 target_space,
@@ -98,7 +98,7 @@ impl DockWorkspace {
                 None,
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
-                .commit_resolved_payload_tab_drop(
+                .commit_resolved_payload_tabs_target_drop(
                     source_space,
                     payload,
                     target_space,
@@ -123,7 +123,7 @@ impl DockWorkspace {
         }
     }
 
-    fn commit_resolved_payload_tab_drop(
+    fn commit_resolved_payload_tabs_target_drop(
         &mut self,
         source_space: &DockSpaceId,
         payload: DockWorkspaceDropPayload<'_>,
