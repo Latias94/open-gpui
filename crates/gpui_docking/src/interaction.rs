@@ -1,5 +1,5 @@
 use crate::{
-    DockAction, DockNodeId, DockPolicy, DockSpaceId,
+    DockNodeId, DockPolicy, DockSpaceId,
     drop_runtime::{DockDropRuntime, DockDropTargetUpdate},
     drop_target::DockResolvedDropTarget,
     geometry,
@@ -30,6 +30,19 @@ pub(crate) struct FloatingDrag {
     pub(crate) initial_bounds: Bounds<Pixels>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockSplitterResizeRequest {
+    pub(crate) split: DockNodeId,
+    pub(crate) fractions: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockFloatingBoundsRequest {
+    pub(crate) space: DockSpaceId,
+    pub(crate) floating: DockNodeId,
+    pub(crate) bounds: Bounds<Pixels>,
+}
+
 impl DockInteractionRuntime {
     pub(crate) fn start_splitter_drag(
         &mut self,
@@ -48,11 +61,11 @@ impl DockInteractionRuntime {
         });
     }
 
-    pub(crate) fn resize_split_action(
+    pub(crate) fn resize_split_request(
         &self,
         position: Pixels,
         split_min_size: Pixels,
-    ) -> Option<DockAction> {
+    ) -> Option<DockSplitterResizeRequest> {
         let drag = self.splitter_drag.as_ref()?;
         let delta = position - drag.start_position;
         let fractions = geometry::resize_adjacent_split_fractions(
@@ -64,7 +77,7 @@ impl DockInteractionRuntime {
             split_min_size,
         )?;
 
-        Some(DockAction::ResizeSplit {
+        Some(DockSplitterResizeRequest {
             split: drag.split,
             fractions,
         })
@@ -89,7 +102,10 @@ impl DockInteractionRuntime {
         });
     }
 
-    pub(crate) fn set_floating_bounds_action(&self, position: Point<Pixels>) -> Option<DockAction> {
+    pub(crate) fn floating_bounds_request(
+        &self,
+        position: Point<Pixels>,
+    ) -> Option<DockFloatingBoundsRequest> {
         let drag = self.floating_drag.as_ref()?;
         let delta = position - drag.start_position;
         let bounds = Bounds::new(
@@ -100,7 +116,7 @@ impl DockInteractionRuntime {
             drag.initial_bounds.size,
         );
 
-        Some(DockAction::SetFloatingBounds {
+        Some(DockFloatingBoundsRequest {
             space: drag.space.clone(),
             floating: drag.floating,
             bounds,
@@ -159,18 +175,18 @@ mod tests {
     fn splitter_update_without_active_drag_has_no_action() {
         let runtime = DockInteractionRuntime::default();
 
-        assert_eq!(runtime.resize_split_action(px(120.0), px(96.0)), None);
+        assert_eq!(runtime.resize_split_request(px(120.0), px(96.0)), None);
     }
 
     #[test]
-    fn splitter_drag_produces_resize_action() {
+    fn splitter_drag_produces_resize_request() {
         let split = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
         runtime.start_splitter_drag(split, 0, px(100.0), px(400.0), vec![0.5, 0.5]);
 
         assert_eq!(
-            runtime.resize_split_action(px(180.0), px(96.0)),
-            Some(DockAction::ResizeSplit {
+            runtime.resize_split_request(px(180.0), px(96.0)),
+            Some(DockSplitterResizeRequest {
                 split,
                 fractions: vec![0.7, 0.3],
             })
@@ -189,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn floating_drag_produces_bounds_action() {
+    fn floating_drag_produces_bounds_request() {
         let floating = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
         runtime.start_floating_drag(
@@ -200,8 +216,8 @@ mod tests {
         );
 
         assert_eq!(
-            runtime.set_floating_bounds_action(point(px(25.0), px(35.0))),
-            Some(DockAction::SetFloatingBounds {
+            runtime.floating_bounds_request(point(px(25.0), px(35.0))),
+            Some(DockFloatingBoundsRequest {
                 space: DockSpaceId::from("main"),
                 floating,
                 bounds: bounds(55.0, 65.0, 200.0, 100.0),

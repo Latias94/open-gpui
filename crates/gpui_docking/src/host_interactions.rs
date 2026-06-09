@@ -5,6 +5,7 @@ use crate::{
     DockSpaceId,
     drop_runtime::DockDropTargetUpdate,
     drop_target::{DockLeafDropTarget, DockTabLabelDropTarget},
+    interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
     workspace_transaction::DockWorkspaceDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point};
@@ -82,14 +83,14 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let split_min_size =
             self.with_workspace(cx, |workspace| workspace.options().split_min_size);
-        let Some(action) = self
+        let Some(request) = self
             .interaction()
-            .resize_split_action(position, split_min_size)
+            .resize_split_request(position, split_min_size)
         else {
             return DockHostInteractionOutcome::Idle;
         };
 
-        self.commit_action_interaction(action, cx, false)
+        self.commit_resize_split_interaction(request, cx, false)
     }
 
     pub(crate) fn finish_splitter_drag_interaction(&mut self) -> DockHostInteractionOutcome {
@@ -112,14 +113,7 @@ impl DockHost {
             return DockHostInteractionOutcome::Rejected(error.into());
         }
 
-        let outcome = self.commit_action_interaction(
-            DockAction::RaiseFloating {
-                space: space.clone(),
-                floating,
-            },
-            cx,
-            false,
-        );
+        let outcome = self.commit_raise_floating_interaction(&space, floating, cx, false);
         if matches!(outcome, DockHostInteractionOutcome::Rejected(_)) {
             return outcome;
         }
@@ -138,11 +132,11 @@ impl DockHost {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let Some(action) = self.interaction().set_floating_bounds_action(position) else {
+        let Some(request) = self.interaction().floating_bounds_request(position) else {
             return DockHostInteractionOutcome::Idle;
         };
 
-        self.commit_action_interaction(action, cx, false)
+        self.commit_set_floating_bounds_interaction(request, cx, false)
     }
 
     pub(crate) fn finish_floating_drag_interaction(&mut self) -> DockHostInteractionOutcome {
@@ -258,6 +252,48 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
             self.commit_resolved_drop_from_host(request, cx),
+            notify_on_unchanged,
+        )
+    }
+
+    fn commit_resize_split_interaction(
+        &mut self,
+        request: DockSplitterResizeRequest,
+        cx: &mut Context<Self>,
+        notify_on_unchanged: bool,
+    ) -> DockHostInteractionOutcome {
+        DockHostInteractionOutcome::from_commit_result(
+            self.commit_resize_split_from_host(request.split, &request.fractions, cx),
+            notify_on_unchanged,
+        )
+    }
+
+    fn commit_set_floating_bounds_interaction(
+        &mut self,
+        request: DockFloatingBoundsRequest,
+        cx: &mut Context<Self>,
+        notify_on_unchanged: bool,
+    ) -> DockHostInteractionOutcome {
+        DockHostInteractionOutcome::from_commit_result(
+            self.commit_set_floating_bounds_from_host(
+                &request.space,
+                request.floating,
+                request.bounds,
+                cx,
+            ),
+            notify_on_unchanged,
+        )
+    }
+
+    fn commit_raise_floating_interaction(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        cx: &mut Context<Self>,
+        notify_on_unchanged: bool,
+    ) -> DockHostInteractionOutcome {
+        DockHostInteractionOutcome::from_commit_result(
+            self.commit_raise_floating_from_host(space, floating, cx),
             notify_on_unchanged,
         )
     }

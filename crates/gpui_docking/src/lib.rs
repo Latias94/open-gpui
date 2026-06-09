@@ -137,12 +137,12 @@ mod viewport_target_resolver;
 mod viewport_tear_off;
 mod workspace;
 mod workspace_action;
-mod workspace_floating_action;
+mod workspace_floating_transaction;
 mod workspace_move_transaction;
 mod workspace_move_validation;
 mod workspace_panel_action;
 mod workspace_panel_lifecycle;
-mod workspace_resize_action;
+mod workspace_resize_transaction;
 mod workspace_transaction;
 
 #[cfg(test)]

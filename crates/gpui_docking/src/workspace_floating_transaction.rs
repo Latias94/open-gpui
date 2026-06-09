@@ -5,7 +5,7 @@ use crate::{
 use open_gpui::{Bounds, Pixels};
 
 impl DockWorkspace {
-    pub(crate) fn float_item_in_window_action(
+    pub(crate) fn commit_float_item_in_window(
         &mut self,
         source_space: &DockSpaceId,
         item: &DockItemId,
@@ -21,7 +21,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn float_tabs_in_window_action(
+    pub(crate) fn commit_float_tabs_in_window(
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
@@ -37,7 +37,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn set_floating_bounds_action(
+    pub(crate) fn commit_set_floating_bounds(
         &mut self,
         space: &DockSpaceId,
         floating: DockNodeId,
@@ -51,7 +51,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn raise_floating_action(
+    pub(crate) fn commit_raise_floating(
         &mut self,
         space: &DockSpaceId,
         floating: DockNodeId,
@@ -63,7 +63,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn merge_floating_into_action(
+    pub(crate) fn commit_merge_floating_into(
         &mut self,
         space: &DockSpaceId,
         floating: DockNodeId,

@@ -2,12 +2,12 @@
 use crate::workspace_move_transaction::DockWorkspaceMoveTabRequest;
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
-    DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelAttachError,
+    DockItemId, DockLayout, DockLayoutValidationError, DockNodeId, DockPanel, DockPanelAttachError,
     DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
     DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
     workspace_transaction::DockWorkspaceDropRequest,
 };
-use open_gpui::AnyView;
+use open_gpui::{AnyView, Bounds, Pixels};
 
 /// Shared owner for one logical docking workspace.
 ///
@@ -157,6 +157,32 @@ impl DockController {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace
             .commit_item_to_empty_dock_space(source_space, item, target_space)
+    }
+
+    pub(crate) fn commit_resize_split(
+        &mut self,
+        split: DockNodeId,
+        fractions: &[f32],
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_resize_split(split, fractions)
+    }
+
+    pub(crate) fn commit_set_floating_bounds(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        bounds: Bounds<Pixels>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .commit_set_floating_bounds(space, floating, bounds)
+    }
+
+    pub(crate) fn commit_raise_floating(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_raise_floating(space, floating)
     }
 }
 

@@ -23,30 +23,30 @@ impl DockWorkspace {
                 item,
                 target_space,
                 bounds,
-            } => self.float_item_in_window_action(source_space, item, target_space, *bounds),
+            } => self.commit_float_item_in_window(source_space, item, target_space, *bounds),
             DockAction::FloatTabsInWindow {
                 source_space,
                 source_tabs,
                 target_space,
                 bounds,
             } => {
-                self.float_tabs_in_window_action(source_space, *source_tabs, target_space, *bounds)
+                self.commit_float_tabs_in_window(source_space, *source_tabs, target_space, *bounds)
             }
             DockAction::SetFloatingBounds {
                 space,
                 floating,
                 bounds,
-            } => self.set_floating_bounds_action(space, *floating, *bounds),
+            } => self.commit_set_floating_bounds(space, *floating, *bounds),
             DockAction::RaiseFloating { space, floating } => {
-                self.raise_floating_action(space, *floating)
+                self.commit_raise_floating(space, *floating)
             }
             DockAction::MergeFloatingInto {
                 space,
                 floating,
                 target_tabs,
-            } => self.merge_floating_into_action(space, *floating, *target_tabs),
+            } => self.commit_merge_floating_into(space, *floating, *target_tabs),
             DockAction::ResizeSplit { split, fractions } => {
-                self.resize_split_action(*split, fractions)
+                self.commit_resize_split(*split, fractions)
             }
         }
     }

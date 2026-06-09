@@ -1,11 +1,11 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockSpaceId,
+    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockNodeId, DockSpaceId,
     interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspaceDropRequest,
 };
-use open_gpui::{AppContext as _, Context, Entity, Pixels, px};
+use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -103,6 +103,67 @@ impl DockHost {
         let controller = self.controller.clone();
         cx.update_entity(&controller, |controller, cx| {
             let outcome = controller.commit_resolved_drop(request);
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
+    pub(crate) fn commit_resize_split_from_host(
+        &mut self,
+        split: DockNodeId,
+        fractions: &[f32],
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            let outcome = controller.commit_resize_split(split, fractions);
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
+    pub(crate) fn commit_set_floating_bounds_from_host(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            let outcome = controller.commit_set_floating_bounds(space, floating, bounds);
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
+    pub(crate) fn commit_raise_floating_from_host(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            let outcome = controller.commit_raise_floating(space, floating);
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())

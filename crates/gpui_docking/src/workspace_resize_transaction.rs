@@ -1,7 +1,7 @@
 use crate::{DockActionApplyError, DockActionOutcome, DockNodeId, DockOp, DockWorkspace};
 
 impl DockWorkspace {
-    pub(crate) fn resize_split_action(
+    pub(crate) fn commit_resize_split(
         &mut self,
         split: DockNodeId,
         fractions: &[f32],
