@@ -148,10 +148,6 @@ impl CanvasRuntime {
         self.apply_edge_geometry_diff(document, diff, router, kind_registry);
     }
 
-    pub fn graph_index(&self) -> &CanvasGraphIndex {
-        &self.graph_index
-    }
-
     pub fn edge_geometry(&self, id: &EdgeId) -> Option<&CanvasResolvedEdgeGeometry> {
         self.edge_geometries.get(id)
     }
@@ -333,7 +329,7 @@ mod tests {
         let document = connected_document();
         let runtime = CanvasRuntime::rebuild(&document);
 
-        assert!(runtime.graph_index().contains_edge(&EdgeId::from("a-b")));
+        assert!(runtime.graph_index.contains_edge(&EdgeId::from("a-b")));
         assert!(
             runtime
                 .hit_test(point(px(1.0), px(1.0)), HitOptions::default())
@@ -386,7 +382,7 @@ mod tests {
             .unwrap();
         runtime.apply_diff(&document, &diff);
 
-        assert!(!runtime.graph_index().contains_edge(&EdgeId::from("a-b")));
+        assert!(!runtime.graph_index.contains_edge(&EdgeId::from("a-b")));
         assert_eq!(
             runtime
                 .graph(&document)
