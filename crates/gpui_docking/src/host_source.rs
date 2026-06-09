@@ -98,12 +98,12 @@ impl DockHost {
     /// This accessor is available for compatibility hosts created with [`Self::from_workspace`].
     /// Controller-backed hosts expose shared state through [`DockController`].
     pub fn workspace(&self) -> Result<&DockWorkspace, DockHostAccessError> {
-        self.source.workspace()
+        self.source().workspace()
     }
 
     /// Returns the shared controller when this host is controller-backed.
     pub fn controller(&self) -> Option<&Entity<DockController>> {
-        self.source.controller()
+        self.source().controller()
     }
 
     /// Applies a docking action through the host's owned workspace.
@@ -114,12 +114,12 @@ impl DockHost {
         &mut self,
         action: &DockAction,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.source.apply_action(action)
+        self.source_mut().apply_action(action)
     }
 
     /// Returns the logical dock space rendered by this host.
     pub fn space(&self) -> &DockSpaceId {
-        self.source.space()
+        self.source().space()
     }
 
     /// Returns the graph for an owned-workspace host.
@@ -155,7 +155,7 @@ impl DockHost {
         cx: &Context<Self>,
         read: impl FnOnce(&DockWorkspace) -> R,
     ) -> R {
-        self.source.with_workspace(cx, read)
+        self.source().with_workspace(cx, read)
     }
 
     pub(crate) fn apply_action_from_host(
@@ -163,6 +163,6 @@ impl DockHost {
         action: &DockAction,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.source.apply_action_from_host(action, cx)
+        self.source_mut().apply_action_from_host(action, cx)
     }
 }

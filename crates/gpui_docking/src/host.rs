@@ -37,10 +37,10 @@ impl Default for DockHostOptions {
 /// crate's interaction runtime.
 #[derive(Debug)]
 pub struct DockHost {
-    pub(crate) source: DockHostSource,
+    source: DockHostSource,
     #[cfg(test)]
-    pub(crate) debug: DockDebugInstrumentation,
-    pub(crate) interaction: DockInteractionRuntime,
+    debug: DockDebugInstrumentation,
+    interaction: DockInteractionRuntime,
 }
 
 impl DockHost {
@@ -90,5 +90,31 @@ impl DockHost {
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
         }
+    }
+
+    pub(crate) fn source(&self) -> &DockHostSource {
+        &self.source
+    }
+
+    pub(crate) fn source_mut(&mut self) -> &mut DockHostSource {
+        &mut self.source
+    }
+
+    pub(crate) fn interaction(&self) -> &DockInteractionRuntime {
+        &self.interaction
+    }
+
+    pub(crate) fn interaction_mut(&mut self) -> &mut DockInteractionRuntime {
+        &mut self.interaction
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_instrumentation(&self) -> &DockDebugInstrumentation {
+        &self.debug
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_instrumentation_mut(&mut self) -> &mut DockDebugInstrumentation {
+        &mut self.debug
     }
 }

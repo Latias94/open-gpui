@@ -25,7 +25,7 @@ space. Recent commits already deepened large parts of viewport and panel lifecyc
 reviewed risk is whether the seams are deep enough in the code paths that application authors will
 actually use.
 
-The current checkpoint still has uncommitted `DockHost` state extraction work. That should be
+The current checkpoint has uncommitted `DockHost` field-privacy and accessor work. That should be
 finished first, then followed by another architecture scan so the next slice is chosen from current
 evidence rather than from stale assumptions.
 
@@ -91,11 +91,12 @@ Out of scope:
 
 ## Key Technical Decisions
 
-- KTD1. **Finish the active host slice first:** The worktree already contains `DockHost` state
-  extraction edits. Finish and verify that slice before starting new viewport or panel churn.
-- KTD2. **Host state is a boundary, not the final abstraction:** `DockHostState` may gather host
-  source, interaction, pending render overrides, and viewport runtime handles, but render code
-  should still move toward accessors or snapshots that hide mutation details.
+- KTD1. **Finish the active host slice first:** The worktree already contains `DockHost` field
+  privacy and accessor edits. Finish and verify that slice before starting new viewport or panel
+  churn.
+- KTD2. **Host access is a boundary, not the final abstraction:** Private host fields and
+  crate-private accessors are the first narrowing step. Larger state containers should be added only
+  if they hide real ownership detail rather than becoming pass-through structure.
 - KTD3. **Viewport productization is evidence-driven:** Existing `viewport_runtime`,
   `viewport_close_gate`, and target resolver modules should be verified through runtime-opened
   window paths before adding more abstractions.
@@ -118,12 +119,11 @@ Target ownership after this pass:
 flowchart TB
   App[GPUI App] --> Window[GPUI Window]
   Window --> Host[DockHost]
-  Host --> HostState[DockHostState]
   Host --> Render[render modules]
   Render --> HostPorts[host render accessors]
-  HostState --> Source[DockHostSource]
-  HostState --> Interaction[interaction runtime state]
-  HostState --> ViewportRuntime[DockViewportRuntime]
+  Host --> Source[DockHostSource]
+  Host --> Interaction[DockInteractionRuntime]
+  Host --> ViewportRuntime[viewport runtime access]
 
   ViewportRuntime --> CloseGate[should-close gate]
   ViewportRuntime --> TargetResolver[viewport target resolver]
@@ -157,10 +157,10 @@ flowchart TB
 
 ## Implementation Units
 
-### U1. Complete Host State Extraction Checkpoint
+### U1. Complete Host Accessor Checkpoint
 
-**Goal:** Finish the current uncommitted `DockHostState` refactor so `DockHost` no longer directly
-stores source, transient interaction state, viewport runtime, or pending render overrides.
+**Goal:** Finish the current uncommitted `DockHost` accessor refactor so render and interaction
+modules no longer depend on direct field access.
 
 **Requirements:** R1, R2, R3, R8
 
@@ -176,9 +176,10 @@ stores source, transient interaction state, viewport runtime, or pending render 
 - `crates/gpui_docking/src/host_render_session.rs`
 - `crates/gpui_docking/src/host_*tests.rs`
 
-**Approach:** Finish migrating field reads and writes to `DockHostState` methods. Keep public host
-constructors stable, and keep `DockHostSource` as the workspace/controller ownership boundary. Any
-test-only access should go through crate-private helpers rather than old public fields.
+**Approach:** Finish migrating field reads and writes to crate-private `DockHost` accessors. Keep
+public host constructors stable, and keep `DockHostSource` as the workspace/controller ownership
+boundary. Any test-only access should go through crate-private helpers rather than old public
+fields.
 
 **Patterns to follow:** Current `DockHostSource`, `DockHost::apply_action_from_host`,
 `DockWorkspace::apply_action`, `DockViewportRuntime`, and existing host interaction tests.
@@ -188,8 +189,8 @@ test-only access should go through crate-private helpers rather than old public 
 - Owned hosts still apply splitter, floating, tab selection, and tab-drop actions through their
   workspace.
 - Controller-backed hosts still apply the same actions through the shared controller.
-- Pending focus, pending active panel, and pending area overrides are consumed once and do not
-  remain as public host state.
+- Host source and interaction runtime fields are private, with test-only debug access routed through
+  crate-private helpers.
 - Viewport runtime operations still work for owned and controller-backed host paths.
 - Debug snapshots can inspect host state without depending on direct host fields.
 
@@ -198,7 +199,8 @@ render or interaction code.
 
 ### U2. Narrow Render Access To Host State
 
-**Goal:** Reduce render-layer knowledge of mutable host internals after `DockHostState` exists.
+**Goal:** Reduce render-layer knowledge of mutable host internals after host fields are private
+behind crate-private accessors.
 
 **Requirements:** R2, R3, R8, R9
 
@@ -373,8 +375,8 @@ clear next slice.
 
 ## Risks And Dependencies
 
-- **Current dirty worktree risk:** The active `DockHostState` edits may contain partial migration
-  mistakes. Mitigation: finish U1 before starting unrelated changes.
+- **Current dirty worktree risk:** The active `DockHost` accessor edits may contain partial
+  migration mistakes. Mitigation: finish U1 before starting unrelated changes.
 - **Over-abstraction risk:** Moving state behind helper types can add shallow pass-through APIs.
   Mitigation: delete old bridge methods and keep only accessors that hide real ownership detail.
 - **Runtime hook risk:** GPUI should-close behavior is platform-mediated. Mitigation: keep close
@@ -389,8 +391,8 @@ clear next slice.
 
 ## Acceptance Examples
 
-- AE1. After U1, `DockHost` stores one host-state boundary instead of separate source, interaction,
-  viewport, and pending override fields, and current host behavior remains green.
+- AE1. After U1, `DockHost` fields are private behind crate-private accessors, and current host
+  behavior remains green.
 - AE2. After U2, render code uses host accessors or render-session APIs rather than directly
   mutating host-owned transient state.
 - AE3. After U3, a runtime-opened viewport can be prevented from closing before cleanup, and

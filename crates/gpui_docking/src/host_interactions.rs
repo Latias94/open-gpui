@@ -12,7 +12,7 @@ impl DockHost {
         split_extent: Pixels,
         initial_fractions: Vec<f32>,
     ) {
-        self.interaction.start_splitter_drag(
+        self.interaction_mut().start_splitter_drag(
             split,
             handle_index,
             start_position,
@@ -29,7 +29,7 @@ impl DockHost {
         let split_min_size =
             self.with_workspace(cx, |workspace| workspace.options().split_min_size);
         let Some(action) = self
-            .interaction
+            .interaction()
             .resize_split_action(position, split_min_size)
         else {
             return false;
@@ -41,7 +41,7 @@ impl DockHost {
     }
 
     pub(crate) fn finish_splitter_drag(&mut self) -> bool {
-        self.interaction.finish_splitter_drag()
+        self.interaction_mut().finish_splitter_drag()
     }
 
     pub(crate) fn start_floating_drag(
@@ -51,7 +51,7 @@ impl DockHost {
         start_position: Point<Pixels>,
         initial_bounds: Bounds<Pixels>,
     ) {
-        self.interaction
+        self.interaction_mut()
             .start_floating_drag(space, floating, start_position, initial_bounds);
     }
 
@@ -60,7 +60,7 @@ impl DockHost {
         position: Point<Pixels>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(action) = self.interaction.set_floating_bounds_action(position) else {
+        let Some(action) = self.interaction().set_floating_bounds_action(position) else {
             return false;
         };
 
@@ -70,7 +70,7 @@ impl DockHost {
     }
 
     pub(crate) fn finish_floating_drag(&mut self) -> bool {
-        self.interaction.finish_floating_drag()
+        self.interaction_mut().finish_floating_drag()
     }
 
     pub(crate) fn update_tabs_drop_intent(
@@ -81,7 +81,7 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> bool {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        self.interaction
+        self.interaction_mut()
             .update_tabs_drop_intent(target_tabs, bounds, position, &policy)
     }
 
@@ -94,7 +94,7 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> bool {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        self.interaction.update_tab_reorder_drop_intent(
+        self.interaction_mut().update_tab_reorder_drop_intent(
             target_tabs,
             target_index,
             bounds,
@@ -107,23 +107,23 @@ impl DockHost {
         &mut self,
         target_tabs: DockNodeId,
     ) -> Option<DockDropIntent> {
-        self.interaction.take_tab_drop_intent(target_tabs)
+        self.interaction_mut().take_tab_drop_intent(target_tabs)
     }
 
     pub(crate) fn tab_drop_preview_bounds(
         &self,
         target_tabs: DockNodeId,
     ) -> Option<Bounds<Pixels>> {
-        self.interaction.tab_drop_preview_bounds(target_tabs)
+        self.interaction().tab_drop_preview_bounds(target_tabs)
     }
 
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
-        self.interaction.splitter_drag()
+        self.interaction().splitter_drag()
     }
 
     #[cfg(test)]
     pub(crate) fn floating_drag(&self) -> Option<&FloatingDrag> {
-        self.interaction.floating_drag()
+        self.interaction().floating_drag()
     }
 }
