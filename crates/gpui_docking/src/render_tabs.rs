@@ -29,6 +29,7 @@ impl DockHost {
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
         let target_space = session.space().clone();
+        let is_central = session.is_central_tabs(node);
 
         let mut tabs = div()
             .id(selector.clone())
@@ -47,6 +48,7 @@ impl DockHost {
                         node,
                         event.bounds,
                         event.event.position,
+                        is_central,
                         cx,
                     );
                 },
@@ -128,6 +130,7 @@ impl DockHost {
                             target_index,
                             event.bounds,
                             event.event.position,
+                            is_central,
                             cx,
                         );
                     },

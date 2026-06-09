@@ -1,6 +1,6 @@
 use crate::{
-    DockFloatingContainer, DockGraph, DockNode, DockNodeId, SplitAxis, debug::DockDebugRegion,
-    host_test_support::*,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId, SplitAxis,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{TestAppContext, px, size};
 use slotmap::Key;
@@ -234,4 +234,62 @@ fn unnormalized_split_fractions_are_repaired_for_rendering(cx: &mut TestAppConte
 
     assert_close(width(debug_bounds(&mut visual, &left)), 400.0);
     assert_close(width(debug_bounds(&mut visual, &right)), 200.0);
+}
+
+#[open_gpui::test]
+fn central_split_child_uses_remaining_render_space(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        active: 0,
+    });
+    let main = graph.insert_node(DockNode::Tabs {
+        items: vec![item("main")],
+        active: 0,
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        active: 0,
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, main, right],
+        fractions: vec![0.2, 0.0, 0.3],
+    });
+    graph.set_root(space(), split);
+    graph.set_central_region(space(), DockCentralRegion::with_node(main));
+
+    let (_window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[
+            ("left", "Left", "Left"),
+            ("main", "Main", "Main"),
+            ("right", "Right", "Right"),
+        ],
+        size(px(1000.0), px(200.0)),
+    );
+
+    let left_selector = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 0 },
+    )
+    .expect("left split selector should be emitted");
+    let main_selector = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 1 },
+    )
+    .expect("main split selector should be emitted");
+    let right_selector = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::SplitChild { split, index: 2 },
+    )
+    .expect("right split selector should be emitted");
+
+    assert_close(width(debug_bounds(&mut visual, &left_selector)), 200.0);
+    assert_close(width(debug_bounds(&mut visual, &main_selector)), 500.0);
+    assert_close(width(debug_bounds(&mut visual, &right_selector)), 300.0);
 }

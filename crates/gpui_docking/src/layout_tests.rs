@@ -52,6 +52,37 @@ fn compute_layout_repairs_mismatched_fraction_lengths_without_truncating_childre
 }
 
 #[test]
+fn compute_layout_gives_central_child_remaining_split_space() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        active: 0,
+    });
+    let main = graph.insert_node(DockNode::Tabs {
+        items: vec![item("main")],
+        active: 0,
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        active: 0,
+    });
+    let split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, main, right],
+        fractions: vec![0.2, 0.0, 0.3],
+    });
+    graph.set_root(space(), split);
+    graph.set_central_region(space(), DockCentralRegion::with_node(main));
+
+    let mut layout = std::collections::HashMap::new();
+    graph.compute_layout(split, dock_bounds(0.0, 0.0, 1000.0, 100.0), &mut layout);
+
+    assert_eq!(layout[&left].size.width, open_gpui::px(200.0));
+    assert_eq!(layout[&main].size.width, open_gpui::px(500.0));
+    assert_eq!(layout[&right].size.width, open_gpui::px(300.0));
+}
+
+#[test]
 fn layout_roundtrips_roots_splits_and_floatings() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
     assert!(graph.apply_op(&DockOp::MoveItem {
@@ -82,6 +113,76 @@ fn layout_roundtrips_roots_splits_and_floatings() {
         dock_bounds(10.0, 20.0, 300.0, 200.0)
     );
     imported.assert_canonical_space(&space());
+}
+
+#[test]
+fn empty_central_region_roundtrips_without_root_or_items() {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space(),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+
+    let layout = graph.export_layout();
+    assert_eq!(layout.spaces.len(), 1);
+    assert_eq!(layout.spaces[0].root, None);
+    assert!(layout.spaces[0].floatings.is_empty());
+    assert_eq!(
+        layout.spaces[0].central,
+        Some(DockLayoutCentralRegion {
+            node: None,
+            keep_alive_when_empty: true,
+            passthrough_when_empty: true,
+        })
+    );
+    layout
+        .validate()
+        .expect("empty central layout should validate");
+
+    let imported = DockGraph::import_layout(&layout).expect("empty central layout should import");
+    let central = imported
+        .central_region(&space())
+        .expect("central metadata should roundtrip");
+    assert_eq!(central.node, None);
+    assert!(central.keep_alive_when_empty);
+    assert!(central.passthrough_when_empty);
+    assert!(imported.root(&space()).is_none());
+    assert!(imported.collect_items_in_space(&space()).is_empty());
+}
+
+#[test]
+fn central_node_roundtrips_for_default_editor_layout() {
+    let graph = DockGraph::default_editor_layout(
+        space(),
+        EditorDockLayoutSpec::new(["hierarchy"], ["scene", "game"], ["inspector"]),
+    );
+    let central = graph
+        .central_region(&space())
+        .and_then(|central| central.node)
+        .expect("default editor layout should mark main tabs as central");
+    assert_eq!(
+        graph.collect_items_in_subtree(central),
+        vec![item("scene"), item("game")]
+    );
+
+    let layout = graph.export_layout();
+    assert!(
+        layout.spaces[0]
+            .central
+            .as_ref()
+            .and_then(|central| central.node)
+            .is_some(),
+        "central node id should be serialized"
+    );
+    let imported = DockGraph::import_layout(&layout).expect("central layout should import");
+    let imported_central = imported
+        .central_region(&space())
+        .and_then(|central| central.node)
+        .expect("central node should import");
+    assert_eq!(
+        imported.collect_items_in_subtree(imported_central),
+        vec![item("scene"), item("game")]
+    );
 }
 
 #[test]
@@ -124,6 +225,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![
             DockLayoutNode::Tabs {
@@ -148,6 +250,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![DockLayoutNode::Split {
             id: 1,
@@ -166,6 +269,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![DockLayoutNode::Tabs {
             id: 1,
@@ -180,12 +284,71 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
 }
 
 #[test]
+fn layout_validation_rejects_ordinary_empty_tabs() {
+    let empty_tabs = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+            central: None,
+        }],
+        vec![DockLayoutNode::Tabs {
+            id: 1,
+            items: Vec::new(),
+            active: 0,
+        }],
+    );
+
+    assert_eq!(
+        empty_tabs.validate(),
+        Err(DockLayoutValidationError::EmptyTabs { id: 1 })
+    );
+}
+
+#[test]
+fn layout_validation_rejects_central_node_outside_root_subtree() {
+    let layout = DockLayout::new(
+        vec![DockLayoutSpace {
+            id: space(),
+            root: Some(1),
+            floatings: Vec::new(),
+            central: Some(DockLayoutCentralRegion {
+                node: Some(2),
+                keep_alive_when_empty: true,
+                passthrough_when_empty: false,
+            }),
+        }],
+        vec![
+            DockLayoutNode::Tabs {
+                id: 1,
+                items: vec![item("root")],
+                active: 0,
+            },
+            DockLayoutNode::Tabs {
+                id: 2,
+                items: vec![item("central")],
+                active: 0,
+            },
+        ],
+    );
+
+    assert_eq!(
+        layout.validate(),
+        Err(DockLayoutValidationError::CentralNodeNotInRoot {
+            space: space(),
+            node: 2,
+        })
+    );
+}
+
+#[test]
 fn layout_validation_rejects_shared_and_unreachable_nodes() {
     let shared_child = DockLayout::new(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![
             DockLayoutNode::Split {
@@ -211,6 +374,7 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![
             DockLayoutNode::Tabs {
@@ -239,11 +403,13 @@ fn layout_validation_rejects_duplicate_spaces() {
                 id: space(),
                 root: None,
                 floatings: Vec::new(),
+                central: None,
             },
             DockLayoutSpace {
                 id: space(),
                 root: None,
                 floatings: Vec::new(),
+                central: None,
             },
         ],
         Vec::new(),
@@ -262,6 +428,7 @@ fn layout_validation_rejects_duplicate_items() {
             id: space(),
             root: Some(1),
             floatings: Vec::new(),
+            central: None,
         }],
         vec![
             DockLayoutNode::Split {
@@ -308,6 +475,7 @@ fn layout_validation_rejects_invalid_floating_bounds() {
                     height: 200.0,
                 },
             }],
+            central: None,
         }],
         vec![DockLayoutNode::Tabs {
             id: 1,

@@ -10,6 +10,7 @@ pub struct DockPolicy {
     allow_splitter_resize: bool,
     allow_floating: bool,
     allow_platform_viewports: bool,
+    allow_central_region_dock_over: bool,
 }
 
 impl DockPolicy {
@@ -78,6 +79,16 @@ impl DockPolicy {
         self.allow_platform_viewports = allowed;
     }
 
+    /// Returns whether center/tab-bar docking over a central region is allowed.
+    pub fn allows_central_region_dock_over(&self) -> bool {
+        self.allow_central_region_dock_over
+    }
+
+    /// Enables or disables center/tab-bar docking over a central region.
+    pub fn set_allow_central_region_dock_over(&mut self, allowed: bool) {
+        self.allow_central_region_dock_over = allowed;
+    }
+
     pub(crate) fn validate_drop_zone(&self, zone: DropZone) -> Result<(), DockPolicyError> {
         match zone {
             DropZone::Center if !self.allow_center_merge => {
@@ -125,6 +136,14 @@ impl DockPolicy {
             Err(DockPolicyError::PlatformViewportsDisabled)
         }
     }
+
+    pub(crate) fn validate_central_region_dock_over(&self) -> Result<(), DockPolicyError> {
+        if self.allow_central_region_dock_over {
+            Ok(())
+        } else {
+            Err(DockPolicyError::CentralRegionDockOverDisabled)
+        }
+    }
 }
 
 impl Default for DockPolicy {
@@ -136,6 +155,7 @@ impl Default for DockPolicy {
             allow_splitter_resize: true,
             allow_floating: false,
             allow_platform_viewports: false,
+            allow_central_region_dock_over: true,
         }
     }
 }
@@ -161,6 +181,9 @@ pub enum DockPolicyError {
     /// Platform viewport tear-off interactions are disabled.
     #[error("platform viewports are disabled by docking policy")]
     PlatformViewportsDisabled,
+    /// Docking over the central region is disabled.
+    #[error("central region dock-over is disabled by docking policy")]
+    CentralRegionDockOverDisabled,
 }
 
 #[cfg(test)]
@@ -183,6 +206,7 @@ mod tests {
             policy.validate_platform_viewports(),
             Err(DockPolicyError::PlatformViewportsDisabled)
         );
+        assert!(policy.validate_central_region_dock_over().is_ok());
     }
 
     #[test]
@@ -193,6 +217,7 @@ mod tests {
         policy.set_allow_same_stack_center_drop(false);
         policy.set_allow_splitter_resize(false);
         policy.set_allow_platform_viewports(false);
+        policy.set_allow_central_region_dock_over(false);
 
         assert_eq!(
             policy.validate_drop_zone(DropZone::Center),
@@ -213,6 +238,10 @@ mod tests {
         assert_eq!(
             policy.validate_platform_viewports(),
             Err(DockPolicyError::PlatformViewportsDisabled)
+        );
+        assert_eq!(
+            policy.validate_central_region_dock_over(),
+            Err(DockPolicyError::CentralRegionDockOverDisabled)
         );
     }
 

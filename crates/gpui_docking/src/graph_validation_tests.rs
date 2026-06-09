@@ -68,6 +68,57 @@ fn layout_builder_try_build_returns_canonical_valid_graph() {
 }
 
 #[test]
+fn graph_validation_accepts_empty_central_region_without_empty_tabs() {
+    let mut graph = DockGraph::new();
+    graph.set_central_region(
+        space("main"),
+        DockCentralRegion::empty().with_passthrough_when_empty(true),
+    );
+
+    graph
+        .validate()
+        .expect("empty central metadata should not require an empty tabs node");
+}
+
+#[test]
+fn graph_validation_rejects_ordinary_empty_tabs() {
+    let mut graph = DockGraph::new();
+    let tabs = graph.insert_node(DockNode::Tabs {
+        items: Vec::new(),
+        active: 0,
+    });
+    graph.set_root(space("main"), tabs);
+
+    assert_eq!(
+        graph.validate(),
+        Err(DockGraphValidationError::EmptyTabs { tabs })
+    );
+}
+
+#[test]
+fn graph_validation_rejects_central_node_outside_root_subtree() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        active: 0,
+    });
+    let central = graph.insert_node(DockNode::Tabs {
+        items: vec![item("central")],
+        active: 0,
+    });
+    graph.set_root(space("main"), root);
+    graph.set_central_region(space("main"), DockCentralRegion::with_node(central));
+
+    assert_eq!(
+        graph.validate(),
+        Err(DockGraphValidationError::CentralNodeNotInRoot {
+            space: space("main"),
+            node: central,
+        })
+    );
+}
+
+#[test]
 fn graph_validation_rejects_duplicate_reachable_items() {
     let (graph, left, right) = duplicate_item_graph();
 

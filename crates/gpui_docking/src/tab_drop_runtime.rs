@@ -15,10 +15,17 @@ impl DockTabDropRuntime {
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         policy: &DockPolicy,
     ) -> bool {
-        let mut target = drop_target::resolve_tabs_drop(target_tabs, bounds, position, policy)
-            .and_then(DockDropResolution::target);
+        let mut target = drop_target::resolve_tabs_drop_with_central(
+            target_tabs,
+            bounds,
+            position,
+            is_central,
+            policy,
+        )
+        .and_then(DockDropResolution::target);
         if let Some(existing) = self.target.as_ref()
             && let Some(existing_intent) = existing.intent()
             && existing_intent.target_tabs == target_tabs
@@ -42,13 +49,15 @@ impl DockTabDropRuntime {
         target_index: usize,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         policy: &DockPolicy,
     ) -> bool {
-        let Some(resolution) = drop_target::resolve_tab_reorder_drop(
+        let Some(resolution) = drop_target::resolve_tab_reorder_drop_with_central(
             target_tabs,
             target_index,
             bounds,
             position,
+            is_central,
             policy,
         ) else {
             return false;
@@ -117,6 +126,7 @@ mod tests {
             2,
             bounds(10.0, 20.0, 100.0, 24.0),
             point(px(95.0), px(28.0)),
+            false,
             &DockPolicy::default(),
         ));
         assert_eq!(
@@ -129,6 +139,7 @@ mod tests {
             1,
             bounds(10.0, 20.0, 100.0, 24.0),
             point(px(200.0), px(28.0)),
+            false,
             &DockPolicy::default(),
         ));
         assert_eq!(
@@ -147,12 +158,14 @@ mod tests {
             2,
             bounds(10.0, 100.0, 100.0, 24.0),
             point(px(95.0), px(108.0)),
+            false,
             &DockPolicy::default(),
         ));
         assert!(!runtime.update_tabs_drop_intent(
             tabs,
             bounds(0.0, 0.0, 400.0, 400.0),
             point(px(95.0), px(108.0)),
+            false,
             &DockPolicy::default(),
         ));
 
@@ -175,6 +188,7 @@ mod tests {
             0,
             bounds(10.0, 20.0, 100.0, 24.0),
             point(px(20.0), px(28.0)),
+            false,
             &DockPolicy::default(),
         ));
 

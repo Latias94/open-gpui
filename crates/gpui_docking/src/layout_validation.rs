@@ -130,6 +130,25 @@ impl DockLayout {
                     });
                 }
             }
+            if let Some(central) = &space.central
+                && let Some(node) = central.node
+            {
+                if !by_id.contains_key(&node) {
+                    return Err(DockLayoutValidationError::CentralNodeMissing {
+                        space: space.id.clone(),
+                        node,
+                    });
+                }
+                if !space
+                    .root
+                    .is_some_and(|root| subtree_contains(root, node, &by_id))
+                {
+                    return Err(DockLayoutValidationError::CentralNodeNotInRoot {
+                        space: space.id.clone(),
+                        node,
+                    });
+                }
+            }
         }
 
         validate_forest_ownership(&by_id, &self.spaces)?;
@@ -273,6 +292,22 @@ pub enum DockLayoutValidationError {
         /// Unreachable node id.
         id: u32,
     },
+    /// A central region references a missing node.
+    #[error("dock space {space} references missing central node {node}")]
+    CentralNodeMissing {
+        /// Dock space id.
+        space: DockSpaceId,
+        /// Missing central node id.
+        node: u32,
+    },
+    /// A central region references a node outside its dock space root subtree.
+    #[error("dock space {space} central node {node} is not inside its root subtree")]
+    CentralNodeNotInRoot {
+        /// Dock space id.
+        space: DockSpaceId,
+        /// Central node id.
+        node: u32,
+    },
 }
 
 fn detect_cycles(by_id: &HashMap<u32, &DockLayoutNode>) -> Result<(), DockLayoutValidationError> {
@@ -363,4 +398,17 @@ fn mark_reachable_once(
     }
 
     Ok(())
+}
+
+fn subtree_contains(root: u32, target: u32, by_id: &HashMap<u32, &DockLayoutNode>) -> bool {
+    if root == target {
+        return true;
+    }
+    match by_id.get(&root) {
+        Some(DockLayoutNode::Split { children, .. }) => children
+            .iter()
+            .copied()
+            .any(|child| subtree_contains(child, target, by_id)),
+        Some(DockLayoutNode::Tabs { .. }) | None => false,
+    }
 }

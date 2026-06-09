@@ -155,6 +155,7 @@ mod tests {
             kind,
             source: DockDropResolveSource::LeafBody,
             preview_bounds: Some(bounds()),
+            is_central_region: false,
         }
     }
 

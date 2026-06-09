@@ -114,10 +114,11 @@ impl DockInteractionRuntime {
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         policy: &DockPolicy,
     ) -> bool {
         self.tab_drop
-            .update_tabs_drop_intent(target_tabs, bounds, position, policy)
+            .update_tabs_drop_intent(target_tabs, bounds, position, is_central, policy)
     }
 
     pub(crate) fn update_tab_reorder_drop_intent(
@@ -126,6 +127,7 @@ impl DockInteractionRuntime {
         target_index: usize,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         policy: &DockPolicy,
     ) -> bool {
         self.tab_drop.update_tab_reorder_drop_intent(
@@ -133,6 +135,7 @@ impl DockInteractionRuntime {
             target_index,
             bounds,
             position,
+            is_central,
             policy,
         )
     }

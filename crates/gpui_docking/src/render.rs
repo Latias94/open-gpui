@@ -4,7 +4,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window,
-    black, div, rgb,
+    black, div, rgb, rgba,
 };
 
 impl Render for DockHost {
@@ -25,11 +25,18 @@ impl Render for DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0xf7f8fa))
             .text_color(black());
+
+        if session.empty_central_passthrough() {
+            host = host.bg(rgba(0x00000000));
+        } else {
+            host = host.bg(rgb(0xf7f8fa));
+        }
 
         if let Some(root) = session.root() {
             host = host.child(self.render_node(root, &session, cx));
+        } else if session.empty_central_passthrough() {
+            host = host.child(self.render_passthrough_empty_central_space(&session));
         } else {
             host = host.child(self.render_empty_space(&session));
         }
@@ -82,6 +89,23 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x657083))
             .child(session.empty_message().to_string())
+            .into_any_element()
+    }
+
+    fn render_passthrough_empty_central_space(
+        &mut self,
+        session: &DockHostRenderSession,
+    ) -> AnyElement {
+        let selector = self.record_debug_selector(
+            DockDebugRegion::EmptySpace,
+            format!("{}:empty-central", session.selector_prefix()),
+        );
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .flex()
+            .size_full()
+            .bg(rgba(0x00000000))
             .into_any_element()
     }
 

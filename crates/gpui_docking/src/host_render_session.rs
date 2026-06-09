@@ -23,6 +23,9 @@ pub(crate) struct DockHostRenderSession {
     floating_containers: Vec<DockFloatingContainer>,
     panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
+    central_node: Option<DockNodeId>,
+    central_keep_alive_when_empty: bool,
+    central_passthrough_when_empty: bool,
     empty_message: String,
     missing_panel_prefix: String,
     splitter_handle_size: Pixels,
@@ -30,6 +33,7 @@ pub(crate) struct DockHostRenderSession {
 
 impl DockHostRenderSession {
     fn new(space: DockSpaceId, workspace: &DockWorkspace) -> Self {
+        let central = workspace.graph().central_region(&space);
         let mut session = Self {
             selector_prefix: format!("dock:{space}"),
             root: workspace.graph().root(&space),
@@ -37,6 +41,11 @@ impl DockHostRenderSession {
             nodes: HashMap::new(),
             panels: HashMap::new(),
             panel_titles: HashMap::new(),
+            central_node: central.and_then(|central| central.node),
+            central_keep_alive_when_empty: central
+                .is_some_and(|central| central.keep_alive_when_empty),
+            central_passthrough_when_empty: central
+                .is_some_and(|central| central.passthrough_when_empty),
             empty_message: workspace.options().empty_message.clone(),
             missing_panel_prefix: workspace.options().missing_panel_prefix.clone(),
             splitter_handle_size: workspace.options().splitter_handle_size,
@@ -163,6 +172,26 @@ impl DockHostRenderSession {
         self.splitter_handle_size
     }
 
+    pub(crate) fn is_central_tabs(&self, node_id: DockNodeId) -> bool {
+        self.central_node
+            .is_some_and(|central| self.subtree_contains(central, node_id))
+    }
+
+    pub(crate) fn central_child_index(&self, children: &[DockNodeId]) -> Option<usize> {
+        let central = self.central_node?;
+        children
+            .iter()
+            .position(|child| self.subtree_contains(*child, central))
+    }
+
+    pub(crate) fn has_empty_central_region(&self) -> bool {
+        self.root.is_none() && self.central_node.is_none() && self.central_keep_alive_when_empty
+    }
+
+    pub(crate) fn empty_central_passthrough(&self) -> bool {
+        self.has_empty_central_region() && self.central_passthrough_when_empty
+    }
+
     pub(crate) fn panel_title(&self, item: &DockItemId) -> String {
         self.panel_titles
             .get(item)
@@ -182,6 +211,20 @@ impl DockHostRenderSession {
                 prefix: self.missing_panel_prefix.clone(),
                 item: item.clone(),
             })
+    }
+
+    fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {
+        if root == target {
+            return true;
+        }
+        match self.node(root) {
+            Some(DockNode::Split { children, .. }) => children
+                .iter()
+                .copied()
+                .any(|child| self.subtree_contains(child, target)),
+            Some(DockNode::Floating { child }) => self.subtree_contains(*child, target),
+            Some(DockNode::Tabs { .. }) | None => false,
+        }
     }
 }
 
@@ -204,7 +247,10 @@ fn default_floating_title() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_test_support::{floating_overlay_graph, item, space, tabs_graph};
+    use crate::{
+        DockCentralRegion, DockGraph,
+        host_test_support::{floating_overlay_graph, item, space, tabs_graph},
+    };
 
     #[test]
     fn render_session_keeps_inactive_panel_views_out_of_snapshot() {
@@ -232,5 +278,20 @@ mod tests {
 
         assert!(session.floating_child(floating).is_some());
         assert_eq!(session.floating_title(floating), "Floating A");
+    }
+
+    #[test]
+    fn render_session_exposes_empty_central_passthrough_semantics() {
+        let mut graph = DockGraph::new();
+        graph.set_central_region(
+            space(),
+            DockCentralRegion::empty().with_passthrough_when_empty(true),
+        );
+        let workspace = DockWorkspace::new(space(), graph);
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert!(session.has_empty_central_region());
+        assert!(session.empty_central_passthrough());
     }
 }

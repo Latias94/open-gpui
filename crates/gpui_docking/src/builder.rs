@@ -1,6 +1,6 @@
 use crate::{
-    DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId, DockNode, DockNodeId,
-    DockSpaceId, SplitAxis,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockGraphValidationError, DockItemId,
+    DockNode, DockNodeId, DockSpaceId, SplitAxis,
 };
 
 /// Convenience builder for programmatic dock layouts.
@@ -92,6 +92,15 @@ impl DockLayoutBuilder {
         floating
     }
 
+    /// Sets central region semantics for a dock space.
+    pub fn set_central_region(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        central: DockCentralRegion,
+    ) {
+        self.graph.set_central_region(space, central);
+    }
+
     /// Finishes the builder and returns a canonical graph without validation.
     pub fn build(mut self) -> DockGraph {
         self.simplify_graph();
@@ -179,13 +188,15 @@ impl DockGraph {
         space: impl Into<DockSpaceId>,
         spec: EditorDockLayoutSpec,
     ) -> Self {
+        let space = space.into();
         let mut builder = DockLayoutBuilder::new();
         let left = builder.tabs(spec.left_items, spec.active_left);
         let main = builder.tabs(spec.main_items, spec.active_main);
         let bottom = builder.tabs(spec.bottom_items, spec.active_bottom);
         let right = builder.split_vertical(main, bottom, spec.main_fraction);
         let root = builder.split_horizontal(left, right, spec.left_fraction);
-        builder.set_root(space, root);
+        builder.set_root(space.clone(), root);
+        builder.set_central_region(space, DockCentralRegion::with_node(main));
         builder.build()
     }
 }

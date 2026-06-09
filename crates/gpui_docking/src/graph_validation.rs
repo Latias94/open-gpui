@@ -112,6 +112,14 @@ pub enum DockGraphValidationError {
         /// Invalid fraction index.
         index: usize,
     },
+    /// A central region references a node outside its dock space root subtree.
+    #[error("dock space {space} central node {node:?} is not inside its root subtree")]
+    CentralNodeNotInRoot {
+        /// Dock space id.
+        space: DockSpaceId,
+        /// Central node id.
+        node: DockNodeId,
+    },
 }
 
 impl DockGraph {
@@ -158,6 +166,18 @@ impl DockGraph {
                         });
                     }
                 }
+            }
+        }
+
+        for (space, central) in &self.central_regions {
+            let Some(node) = central.node else {
+                continue;
+            };
+            if !self.root_subtree_contains(space, node) {
+                return Err(DockGraphValidationError::CentralNodeNotInRoot {
+                    space: space.clone(),
+                    node,
+                });
             }
         }
 

@@ -15,6 +15,14 @@ impl DockGraph {
                 }
             }
         }
+        let stale_central_node = self
+            .central_regions
+            .get(space)
+            .and_then(|central| central.node)
+            .is_some_and(|node| !self.root_subtree_contains(space, node));
+        if stale_central_node && let Some(central) = self.central_regions.get_mut(space) {
+            central.node = None;
+        }
 
         let Some(mut floatings) = self.floatings.remove(space) else {
             return;

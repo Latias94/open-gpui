@@ -1,6 +1,6 @@
 use crate::{
-    DockFloatingContainer, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId, SplitAxis,
-    dock_bounds,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockItemId, DockNode, DockNodeId,
+    DockSpaceId, SplitAxis, dock_bounds,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -45,6 +45,23 @@ pub struct DockLayoutSpace {
     /// In-window floating containers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub floatings: Vec<DockLayoutFloatingContainer>,
+    /// Optional central region semantics for this dock space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub central: Option<DockLayoutCentralRegion>,
+}
+
+/// Serializable central region semantics for one logical dock space.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DockLayoutCentralRegion {
+    /// Optional node id in [`DockLayout::nodes`] that currently occupies the central region.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<u32>,
+    /// Whether the central region remains present while empty.
+    #[serde(default = "default_true")]
+    pub keep_alive_when_empty: bool,
+    /// Whether empty central space allows underlying application input to pass through.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub passthrough_when_empty: bool,
 }
 
 /// Serializable in-window floating container.
@@ -153,11 +170,15 @@ impl DockGraph {
                     })
                 })
                 .collect();
+            let central = self
+                .central_region(&space)
+                .map(|central| DockLayoutCentralRegion::from_graph(central, self, &mut exporter));
 
             spaces.push(DockLayoutSpace {
                 id: space,
                 root,
                 floatings,
+                central,
             });
         }
 
@@ -192,6 +213,11 @@ impl DockGraph {
                         node: floating_node,
                         bounds: floating.bounds.to_bounds(),
                     });
+            }
+
+            if let Some(central) = &space.central {
+                let central = importer.build_central_region(central);
+                importer.graph.set_central_region(space.id.clone(), central);
             }
         }
 
@@ -294,6 +320,14 @@ impl LayoutImporter<'_> {
         self.built.insert(id, node);
         node
     }
+
+    fn build_central_region(&mut self, central: &DockLayoutCentralRegion) -> DockCentralRegion {
+        DockCentralRegion {
+            node: central.node.map(|node| self.build_node(node)),
+            keep_alive_when_empty: central.keep_alive_when_empty,
+            passthrough_when_empty: central.passthrough_when_empty,
+        }
+    }
 }
 
 fn floating_child(graph: &DockGraph, node: DockNodeId) -> Option<DockNodeId> {
@@ -301,4 +335,28 @@ fn floating_child(graph: &DockGraph, node: DockNodeId) -> Option<DockNodeId> {
         DockNode::Floating { child } => Some(*child),
         _ => Some(node),
     }
+}
+
+impl DockLayoutCentralRegion {
+    fn from_graph(
+        central: &DockCentralRegion,
+        graph: &DockGraph,
+        exporter: &mut LayoutExporter,
+    ) -> Self {
+        Self {
+            node: central
+                .node
+                .map(|node| exporter.export_subtree(graph, node)),
+            keep_alive_when_empty: central.keep_alive_when_empty,
+            passthrough_when_empty: central.passthrough_when_empty,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

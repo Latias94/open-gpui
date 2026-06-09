@@ -70,6 +70,15 @@ impl DockGraph {
         })
     }
 
+    pub(in crate::graph) fn root_subtree_contains(
+        &self,
+        space: &DockSpaceId,
+        target: DockNodeId,
+    ) -> bool {
+        self.root(space)
+            .is_some_and(|root| self.subtree_contains(root, target))
+    }
+
     fn find_item_in_subtree(
         &self,
         root: DockNodeId,
@@ -103,7 +112,7 @@ impl DockGraph {
         }
     }
 
-    fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {
+    pub(in crate::graph) fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {
         if root == target {
             return true;
         }

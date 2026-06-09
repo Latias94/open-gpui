@@ -153,12 +153,18 @@ impl DockHost {
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut()
-                .update_tabs_drop_intent(target_tabs, bounds, position, &policy),
+            self.interaction_mut().update_tabs_drop_intent(
+                target_tabs,
+                bounds,
+                position,
+                is_central,
+                &policy,
+            ),
         )
     }
 
@@ -168,6 +174,7 @@ impl DockHost {
         target_index: usize,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -177,6 +184,7 @@ impl DockHost {
                 target_index,
                 bounds,
                 position,
+                is_central,
                 &policy,
             ),
         )

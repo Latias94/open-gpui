@@ -25,7 +25,11 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let shares = geometry::split_shares(children.len(), &fractions);
+        let shares = geometry::split_shares_with_central(
+            children.len(),
+            &fractions,
+            session.central_child_index(&children),
+        );
         let mut split = div()
             .id(selector.clone())
             .debug_selector(move || selector)

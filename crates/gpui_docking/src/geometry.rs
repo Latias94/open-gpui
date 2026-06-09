@@ -60,6 +60,46 @@ pub(crate) fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
     split_fraction::cleaned_shares(child_count, fractions)
 }
 
+pub(crate) fn split_shares_with_central(
+    child_count: usize,
+    fractions: &[f32],
+    central_child_index: Option<usize>,
+) -> Vec<f32> {
+    let Some(central_child_index) = central_child_index else {
+        return split_shares(child_count, fractions);
+    };
+    if child_count == 0 || central_child_index >= child_count {
+        return split_shares(child_count, fractions);
+    }
+    if child_count == 1 {
+        return vec![1.0];
+    }
+
+    let mut shares: Vec<f32> = (0..child_count)
+        .map(|index| {
+            if index == central_child_index {
+                0.0
+            } else {
+                clean_fraction(fractions.get(index).copied().unwrap_or(0.0))
+            }
+        })
+        .collect();
+
+    let non_central_sum: f32 = shares.iter().sum();
+    if non_central_sum > 1.0 {
+        for (index, share) in shares.iter_mut().enumerate() {
+            if index != central_child_index {
+                *share /= non_central_sum;
+            }
+        }
+        shares[central_child_index] = 0.0;
+    } else {
+        shares[central_child_index] = 1.0 - non_central_sum;
+    }
+
+    shares
+}
+
 pub(crate) fn split_handle_positions(shares: &[f32]) -> Vec<f32> {
     let mut cursor = 0.0_f32;
     shares
@@ -79,7 +119,25 @@ pub(crate) fn split_geometry(
     fractions: &[f32],
     handle_thickness: Pixels,
 ) -> DockSplitGeometry {
-    let shares = split_shares(child_count, fractions);
+    split_geometry_with_central(
+        axis,
+        split_bounds,
+        child_count,
+        fractions,
+        None,
+        handle_thickness,
+    )
+}
+
+pub(crate) fn split_geometry_with_central(
+    axis: SplitAxis,
+    split_bounds: Bounds<Pixels>,
+    child_count: usize,
+    fractions: &[f32],
+    central_child_index: Option<usize>,
+    handle_thickness: Pixels,
+) -> DockSplitGeometry {
+    let shares = split_shares_with_central(child_count, fractions, central_child_index);
     let extent = split_extent(axis, split_bounds);
     let handle_centers = split_handle_centers(axis, split_bounds, &shares);
     let pane_bounds = split_pane_bounds(axis, split_bounds, &shares);
@@ -95,6 +153,14 @@ pub(crate) fn split_geometry(
         handle_centers,
         shares,
         extent,
+    }
+}
+
+fn clean_fraction(value: f32) -> f32 {
+    if value.is_finite() && value >= 0.0 {
+        value
+    } else {
+        0.0
     }
 }
 
@@ -353,6 +419,42 @@ mod tests {
         assert_close(geometry.shares[0], 0.0);
         assert_close(geometry.shares[1], 0.5);
         assert_close(geometry.shares[2], 0.5);
+    }
+
+    #[test]
+    fn central_split_child_receives_remaining_space() {
+        let geometry = split_geometry_with_central(
+            SplitAxis::Horizontal,
+            bounds(1000.0, 100.0),
+            3,
+            &[0.2, 0.0, 0.3],
+            Some(1),
+            px(6.0),
+        );
+
+        assert_close(geometry.shares[0], 0.2);
+        assert_close(geometry.shares[1], 0.5);
+        assert_close(geometry.shares[2], 0.3);
+        assert_eq!(geometry.pane_bounds[0].size.width, px(200.0));
+        assert_eq!(geometry.pane_bounds[1].size.width, px(500.0));
+        assert_eq!(geometry.pane_bounds[2].size.width, px(300.0));
+    }
+
+    #[test]
+    fn central_split_child_yields_space_when_neighbors_over_allocate() {
+        let geometry = split_geometry_with_central(
+            SplitAxis::Horizontal,
+            bounds(1000.0, 100.0),
+            3,
+            &[0.8, 0.0, 0.7],
+            Some(1),
+            px(6.0),
+        );
+
+        assert_close(geometry.shares[0], 0.5333);
+        assert_close(geometry.shares[1], 0.0);
+        assert_close(geometry.shares[2], 0.4667);
+        assert_close(geometry.shares.iter().sum(), 1.0);
     }
 
     fn assert_close(actual: f32, expected: f32) {

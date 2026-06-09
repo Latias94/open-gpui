@@ -17,6 +17,7 @@ pub(crate) struct DockResolvedDropTarget {
     pub(crate) kind: DockResolvedDropTargetKind,
     pub(crate) source: DockDropResolveSource,
     pub(crate) preview_bounds: Option<Bounds<Pixels>>,
+    pub(crate) is_central_region: bool,
 }
 
 impl DockResolvedDropTarget {
@@ -117,6 +118,7 @@ pub(crate) struct DockTabLabelDropTarget {
     pub(crate) target_tabs: DockNodeId,
     pub(crate) target_index: usize,
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) is_central: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,6 +126,7 @@ pub(crate) struct DockLeafDropTarget {
     pub(crate) root: DockNodeId,
     pub(crate) target_tabs: DockNodeId,
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) is_central: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -214,6 +217,7 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
             kind: DockResolvedDropTargetKind::KnownViewport { hit },
             source: DockDropResolveSource::KnownViewport,
             preview_bounds: None,
+            is_central_region: false,
         }));
     }
 
@@ -248,6 +252,7 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
             },
             source: DockDropResolveSource::TearOffCandidate,
             preview_bounds: None,
+            is_central_region: false,
         };
         return Some(match input.policy.validate_platform_viewports() {
             Ok(()) => DockDropResolution::Valid(target),
@@ -264,10 +269,21 @@ pub(crate) fn resolve_tabs_drop(
     position: Point<Pixels>,
     policy: &DockPolicy,
 ) -> Option<DockDropResolution> {
+    resolve_tabs_drop_with_central(target_tabs, bounds, position, false, policy)
+}
+
+pub(crate) fn resolve_tabs_drop_with_central(
+    target_tabs: DockNodeId,
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    is_central: bool,
+    policy: &DockPolicy,
+) -> Option<DockDropResolution> {
     let leaf = [DockLeafDropTarget {
         root: target_tabs,
         target_tabs,
         bounds,
+        is_central,
     }];
     resolve_layout_drop(DockDropResolverInput {
         leaves: &leaf,
@@ -282,10 +298,29 @@ pub(crate) fn resolve_tab_reorder_drop(
     position: Point<Pixels>,
     policy: &DockPolicy,
 ) -> Option<DockDropResolution> {
+    resolve_tab_reorder_drop_with_central(
+        target_tabs,
+        target_index,
+        bounds,
+        position,
+        false,
+        policy,
+    )
+}
+
+pub(crate) fn resolve_tab_reorder_drop_with_central(
+    target_tabs: DockNodeId,
+    target_index: usize,
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    is_central: bool,
+    policy: &DockPolicy,
+) -> Option<DockDropResolution> {
     let tab = [DockTabLabelDropTarget {
         target_tabs,
         target_index,
         bounds,
+        is_central,
     }];
     resolve_layout_drop(DockDropResolverInput {
         tab_labels: &tab,
@@ -307,6 +342,7 @@ fn resolve_floating_title_bar_drop(
             },
             source: DockDropResolveSource::FloatingTitleBar,
             preview_bounds: Some(target.preview_bounds),
+            is_central_region: false,
         })
 }
 
@@ -328,6 +364,7 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
                 },
                 source: DockDropResolveSource::TabBar,
                 preview_bounds: Some(target.bounds),
+                is_central_region: target.is_central,
             }
         })
 }
@@ -355,6 +392,7 @@ fn resolve_root_edge_drop(
         },
         source: DockDropResolveSource::RootEdge,
         preview_bounds: Some(geometry.preview_bounds),
+        is_central_region: false,
     })
 }
 
@@ -377,16 +415,34 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
             },
             source: DockDropResolveSource::EmptyDockSpace,
             preview_bounds: Some(target.bounds),
+            is_central_region: false,
         })
 }
 
 fn validate_target(target: DockResolvedDropTarget, policy: &DockPolicy) -> DockDropResolution {
+    if target.is_central_dock_over_target()
+        && let Err(reason) = policy.validate_central_region_dock_over()
+    {
+        return DockDropResolution::Rejected(DockDropRejection { target, reason });
+    }
+
     let Some(zone) = target.zone() else {
         return DockDropResolution::Valid(target);
     };
     match policy.validate_drop_zone(zone) {
         Ok(()) => DockDropResolution::Valid(target),
         Err(reason) => DockDropResolution::Rejected(DockDropRejection { target, reason }),
+    }
+}
+
+impl DockResolvedDropTarget {
+    fn is_central_dock_over_target(&self) -> bool {
+        self.is_central_region
+            && matches!(
+                self.kind,
+                DockResolvedDropTargetKind::TabBar { .. }
+                    | DockResolvedDropTargetKind::LeafCenter { .. }
+            )
     }
 }
 
@@ -416,6 +472,7 @@ fn target_from_leaf_geometry(
         kind,
         source,
         preview_bounds: Some(geometry.preview_bounds),
+        is_central_region: leaf.is_central,
     }
 }
 
@@ -461,6 +518,7 @@ mod tests {
             root,
             target_tabs,
             bounds: bounds(300.0, 200.0),
+            is_central: false,
         }
     }
 
@@ -612,6 +670,7 @@ mod tests {
             target_tabs: root,
             target_index: 2,
             bounds: bounds(100.0, 24.0),
+            is_central: false,
         };
         let leaf = leaf(root, root);
         let resolution = resolve_layout_drop(DockDropResolverInput {
@@ -700,6 +759,7 @@ mod tests {
                 root,
                 target_tabs: leaf_tabs,
                 bounds: leaf_bounds,
+                is_central: false,
             }],
             ..DockDropResolverInput::new(point(px(12.0), px(180.0)), &policy())
         })
@@ -789,6 +849,89 @@ mod tests {
         assert_eq!(rejection.target.source, DockDropResolveSource::LeafBody);
         assert_eq!(rejection.target.zone(), Some(DropZone::Center));
         assert_eq!(rejection.reason, DockPolicyError::CenterMergeDisabled);
+    }
+
+    #[test]
+    fn central_leaf_center_respects_central_dock_over_policy() {
+        let root = tabs();
+        let mut policy = DockPolicy::default();
+        policy.set_allow_central_region_dock_over(false);
+        let resolution = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[DockLeafDropTarget {
+                is_central: true,
+                ..leaf(root, root)
+            }],
+            ..DockDropResolverInput::new(point(px(160.0), px(120.0)), &policy)
+        })
+        .expect("central leaf center should resolve to a policy decision");
+
+        let DockDropResolution::Rejected(rejection) = resolution else {
+            panic!("central dock-over should be rejected");
+        };
+        assert_eq!(rejection.target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(rejection.target.zone(), Some(DropZone::Center));
+        assert_eq!(
+            rejection.reason,
+            DockPolicyError::CentralRegionDockOverDisabled
+        );
+    }
+
+    #[test]
+    fn central_tab_bar_reorder_respects_central_dock_over_policy() {
+        let root = tabs();
+        let mut policy = DockPolicy::default();
+        policy.set_allow_central_region_dock_over(false);
+        let resolution = resolve_tab_reorder_drop_with_central(
+            root,
+            0,
+            bounds(100.0, 24.0),
+            point(px(24.0), px(28.0)),
+            true,
+            &policy,
+        )
+        .expect("central tab bar should resolve to a policy decision");
+
+        let DockDropResolution::Rejected(rejection) = resolution else {
+            panic!("central tab-bar dock-over should be rejected");
+        };
+        assert_eq!(rejection.target.source, DockDropResolveSource::TabBar);
+        assert_eq!(rejection.target.zone(), Some(DropZone::Center));
+        assert_eq!(
+            rejection.reason,
+            DockPolicyError::CentralRegionDockOverDisabled
+        );
+    }
+
+    #[test]
+    fn central_edge_splits_do_not_use_central_dock_over_policy() {
+        let root = tabs();
+        let mut policy = DockPolicy::default();
+        policy.set_allow_central_region_dock_over(false);
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[DockLeafDropTarget {
+                is_central: true,
+                ..leaf(root, root)
+            }],
+            ..DockDropResolverInput::new(point(px(12.0), px(120.0)), &policy)
+        })
+        .and_then(DockDropResolution::target)
+        .expect("central inner edge should still be accepted");
+
+        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
+        assert_eq!(target.zone(), Some(DropZone::Left));
+
+        policy.set_allow_edge_split(false);
+        let DockDropResolution::Rejected(rejection) = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[DockLeafDropTarget {
+                is_central: true,
+                ..leaf(root, root)
+            }],
+            ..DockDropResolverInput::new(point(px(12.0), px(120.0)), &policy)
+        })
+        .expect("central inner edge should still resolve to edge policy") else {
+            panic!("disabled edge split should reject central inner edge");
+        };
+        assert_eq!(rejection.reason, DockPolicyError::EdgeSplitDisabled);
     }
 
     #[test]

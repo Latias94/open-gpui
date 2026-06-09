@@ -107,12 +107,59 @@ pub struct DockFloatingContainer {
     pub bounds: Bounds<Pixels>,
 }
 
+/// Dock-space level central region semantics.
+///
+/// The central region is not a special [`DockNode`]. It is durable metadata owned by the dock
+/// space so an empty central area can stay represented without weakening the graph invariant that
+/// ordinary tabs nodes are non-empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockCentralRegion {
+    /// Reachable graph node currently occupying the central region, when it has docked content.
+    pub node: Option<DockNodeId>,
+    /// Whether the central region remains semantically present when it has no node.
+    pub keep_alive_when_empty: bool,
+    /// Whether an empty central region should allow underlying application input to pass through.
+    pub passthrough_when_empty: bool,
+}
+
+impl DockCentralRegion {
+    /// Creates an empty central region with ImGui-like keep-alive semantics.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Creates a central region backed by a reachable graph node.
+    pub fn with_node(node: DockNodeId) -> Self {
+        Self {
+            node: Some(node),
+            ..Self::default()
+        }
+    }
+
+    /// Sets whether an empty central region allows underlying application input to pass through.
+    pub fn with_passthrough_when_empty(mut self, passthrough: bool) -> Self {
+        self.passthrough_when_empty = passthrough;
+        self
+    }
+}
+
+impl Default for DockCentralRegion {
+    fn default() -> Self {
+        Self {
+            node: None,
+            keep_alive_when_empty: true,
+            passthrough_when_empty: false,
+        }
+    }
+}
+
 /// Retained docking graph for one or more logical dock spaces.
 #[derive(Debug, Default)]
 pub struct DockGraph {
     nodes: SlotMap<DockNodeId, DockNode>,
     roots: HashMap<DockSpaceId, DockNodeId>,
     floatings: HashMap<DockSpaceId, Vec<DockFloatingContainer>>,
+    central_regions: HashMap<DockSpaceId, DockCentralRegion>,
 }
 
 impl DockGraph {
@@ -152,6 +199,7 @@ impl DockGraph {
             .roots
             .keys()
             .chain(self.floatings.keys())
+            .chain(self.central_regions.keys())
             .cloned()
             .collect();
         spaces.sort();
@@ -184,6 +232,25 @@ impl DockGraph {
         space: DockSpaceId,
     ) -> &mut Vec<DockFloatingContainer> {
         self.floatings.entry(space).or_default()
+    }
+
+    /// Returns central region semantics for a dock space.
+    pub fn central_region(&self, space: &DockSpaceId) -> Option<&DockCentralRegion> {
+        self.central_regions.get(space)
+    }
+
+    /// Sets central region semantics for a dock space.
+    pub fn set_central_region(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        central: DockCentralRegion,
+    ) {
+        self.central_regions.insert(space.into(), central);
+    }
+
+    /// Removes central region semantics for a dock space.
+    pub fn remove_central_region(&mut self, space: &DockSpaceId) -> Option<DockCentralRegion> {
+        self.central_regions.remove(space)
     }
 }
 

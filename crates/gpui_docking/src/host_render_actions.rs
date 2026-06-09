@@ -36,9 +36,10 @@ impl DockHost {
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tabs_drop_interaction(target_tabs, bounds, position, cx)
+        self.update_tabs_drop_interaction(target_tabs, bounds, position, is_central, cx)
             .finish(cx)
     }
 
@@ -48,10 +49,18 @@ impl DockHost {
         target_index: usize,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        is_central: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tab_reorder_drop_interaction(target_tabs, target_index, bounds, position, cx)
-            .finish(cx)
+        self.update_tab_reorder_drop_interaction(
+            target_tabs,
+            target_index,
+            bounds,
+            position,
+            is_central,
+            cx,
+        )
+        .finish(cx)
     }
 
     pub(crate) fn begin_floating_drag_from_render(
