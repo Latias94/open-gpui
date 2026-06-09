@@ -819,11 +819,7 @@ impl CanvasEditor {
         let committed = self
             .document_mut()
             .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
-        let diff = committed.diff().clone();
-        self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
-        Ok(diff)
+        Ok(self.apply_committed_editor_mutation(committed, Some(kind_registry.as_ref())))
     }
 
     pub(crate) fn apply_prepared_document_mutation(
@@ -831,12 +827,8 @@ impl CanvasEditor {
         prepared: crate::mutation::CanvasPreparedMutation,
     ) -> CanvasDocumentDiff {
         let committed = prepared.apply_to(self.document_mut());
-        let diff = committed.diff().clone();
-        self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
         let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
-        diff
+        self.apply_committed_editor_mutation(committed, Some(kind_registry.as_ref()))
     }
 
     pub(crate) fn apply_prepared_undo_mutation(
@@ -849,6 +841,10 @@ impl CanvasEditor {
         );
         let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
+        if diff.is_empty() {
+            let _ = self.history.pop_undo();
+            return diff;
+        }
         let _ = self.history.pop_undo();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
@@ -867,6 +863,10 @@ impl CanvasEditor {
         );
         let committed = prepared.apply_to(self.document_mut());
         let diff = committed.diff().clone();
+        if diff.is_empty() {
+            let _ = self.history.pop_redo();
+            return diff;
+        }
         let _ = self.history.pop_redo();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
@@ -1048,8 +1048,8 @@ impl CanvasEditor {
         };
 
         let prepared = self.prepare_document_transaction(transaction)?;
-        self.apply_prepared_undo_mutation(prepared);
-        Ok(true)
+        let diff = self.apply_prepared_undo_mutation(prepared);
+        Ok(!diff.is_empty())
     }
 
     pub fn redo(&mut self) -> Result<bool, DocumentError> {
@@ -1058,8 +1058,8 @@ impl CanvasEditor {
         };
 
         let prepared = self.prepare_document_transaction(transaction)?;
-        self.apply_prepared_redo_mutation(prepared);
-        Ok(true)
+        let diff = self.apply_prepared_redo_mutation(prepared);
+        Ok(!diff.is_empty())
     }
 
     pub fn rebuild_index(&mut self) {
@@ -1368,6 +1368,22 @@ impl CanvasEditor {
         Ok(diff)
     }
 
+    fn apply_committed_editor_mutation(
+        &mut self,
+        committed: CanvasCommittedMutation,
+        kind_registry: Option<&CanvasKindRegistry>,
+    ) -> CanvasDocumentDiff {
+        let diff = committed.diff().clone();
+        if diff.is_empty() {
+            return diff;
+        }
+
+        self.history.push_undo(committed.inverse().clone());
+        self.selection.retain_document(self.document.as_ref());
+        self.sync_runtime_committed_with_optional_kind_registry(&committed, kind_registry);
+        diff
+    }
+
     fn apply_transient_transaction(
         &mut self,
         transaction: CanvasTransaction,
@@ -1381,6 +1397,9 @@ impl CanvasEditor {
             .document_mut()
             .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
         let diff = committed.diff().clone();
+        if diff.is_empty() {
+            return Ok(diff);
+        }
         self.selection.retain_document(self.document.as_ref());
         self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
@@ -1391,15 +1410,31 @@ impl CanvasEditor {
         committed: &CanvasCommittedMutation,
         kind_registry: &CanvasKindRegistry,
     ) {
+        self.sync_runtime_committed_with_optional_kind_registry(committed, Some(kind_registry));
+    }
+
+    fn sync_runtime_committed_with_optional_kind_registry(
+        &mut self,
+        committed: &CanvasCommittedMutation,
+        kind_registry: Option<&CanvasKindRegistry>,
+    ) {
         let document = Arc::clone(&self.document);
         let edge_router = Arc::clone(&self.edge_router);
-        self.runtime_mut()
-            .apply_committed_mutation_with_router_and_kind_registry(
+        match kind_registry {
+            Some(kind_registry) => self
+                .runtime_mut()
+                .apply_committed_mutation_with_router_and_kind_registry(
+                    document.as_ref(),
+                    committed,
+                    edge_router.as_ref(),
+                    kind_registry,
+                ),
+            None => self.runtime_mut().apply_committed_mutation_with_router(
                 document.as_ref(),
                 committed,
                 edge_router.as_ref(),
-                kind_registry,
-            );
+            ),
+        }
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
@@ -3758,6 +3793,77 @@ mod tests {
         assert_eq!(editor.history.redo_depth(), 0);
         assert!(editor.document.contains_node(&NodeId::from("b")));
         assert!(!editor.document.contains_node(&NodeId::from("a")));
+    }
+
+    #[test]
+    fn no_op_committed_transactions_do_not_push_history_or_clear_redo() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let relation_transaction = CanvasTransaction::single(DocumentCommand::SetRecordParent {
+            child: CanvasRecordId::Node(NodeId::from("child")),
+            parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+        });
+
+        let first_diff = editor
+            .apply_transaction_with_diff(relation_transaction.clone())
+            .unwrap();
+        assert!(!first_diff.is_empty());
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history.redo_depth(), 1);
+
+        let second_diff = editor
+            .apply_transaction_with_diff(CanvasTransaction::single(
+                DocumentCommand::ClearRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                },
+            ))
+            .unwrap();
+
+        assert!(second_diff.is_empty());
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history.redo_depth(), 1);
+    }
+
+    #[test]
+    fn no_op_undo_and_redo_discard_stale_history_entries() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let noop = CanvasTransaction::single(DocumentCommand::ClearRecordParent {
+            child: CanvasRecordId::Node(NodeId::from("child")),
+        });
+        editor.history.push_undo(noop.clone());
+        editor.history.push_redo(noop);
+
+        assert!(!editor.undo().unwrap());
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history.redo_depth(), 1);
+
+        assert!(!editor.redo().unwrap());
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history.redo_depth(), 0);
     }
 
     #[test]

@@ -708,6 +708,42 @@ fn persistent_transaction_skips_empty_transactions() {
 }
 
 #[test]
+fn persistent_transaction_skips_empty_committed_diff() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "child",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_shape(crate::CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        ))
+        .unwrap();
+    let mut editor = CanvasEditor::new(document);
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::new(7);
+
+    let diff = apply_persistent_transaction(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::single(DocumentCommand::ClearRecordParent {
+            child: CanvasRecordId::Node(NodeId::from("child")),
+        }),
+    )
+    .unwrap();
+
+    assert!(diff.is_empty());
+    assert_eq!(cursor.sequence(), 7);
+    assert!(store.log_entries().is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
+}
+
+#[test]
 fn persistent_transaction_does_not_log_document_failure() {
     let mut editor = CanvasEditor::default();
     let mut store = MemoryCanvasPersistenceStore::default();

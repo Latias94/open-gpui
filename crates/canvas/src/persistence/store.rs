@@ -267,6 +267,10 @@ where
     }
 
     let prepared = editor.prepare_document_transaction(transaction)?;
+    if prepared.committed().diff().is_empty() {
+        let diff = editor.apply_prepared_document_mutation(prepared);
+        return Ok(diff);
+    }
     append_prepared_log_entry(store, cursor, prepared.committed())?;
     let diff = editor.apply_prepared_document_mutation(prepared);
     cursor.advance();
@@ -286,6 +290,10 @@ where
     };
     let transaction = transaction.clone();
     let prepared = editor.prepare_document_transaction(transaction)?;
+    if prepared.committed().diff().is_empty() {
+        editor.apply_prepared_undo_mutation(prepared);
+        return Ok(false);
+    }
     append_prepared_log_entry(store, cursor, prepared.committed())?;
     editor.apply_prepared_undo_mutation(prepared);
     cursor.advance();
@@ -305,6 +313,10 @@ where
     };
     let transaction = transaction.clone();
     let prepared = editor.prepare_document_transaction(transaction)?;
+    if prepared.committed().diff().is_empty() {
+        editor.apply_prepared_redo_mutation(prepared);
+        return Ok(false);
+    }
     append_prepared_log_entry(store, cursor, prepared.committed())?;
     editor.apply_prepared_redo_mutation(prepared);
     cursor.advance();
@@ -498,6 +510,10 @@ where
 {
     match editor.prepare_gesture_commit()? {
         Some(prepared) => {
+            if prepared.committed().diff().is_empty() {
+                editor.apply_prepared_gesture_commit(prepared);
+                return Ok(());
+            }
             append_prepared_log_entry(store, cursor, prepared.committed())?;
             editor.apply_prepared_gesture_commit(prepared);
             cursor.advance();
