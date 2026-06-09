@@ -1,11 +1,12 @@
 use open_gpui::{
-    App, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window, WindowBounds,
-    WindowOptions, div, point, prelude::*, px, rgb, size,
+    App, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
+    Pixels, Render, Styled, Window, WindowBounds, WindowOptions, div, point, prelude::*, px, rgb,
+    size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockLayout, DockPanelDescriptor, DockSpaceId,
-    DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntimeHandle,
-    DockViewportWindowBounds, EditorDockLayoutSpec,
+    DockAction, DockController, DockItemId, DockLayout, DockPanelDescriptor, DockSpaceId,
+    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
+    DockViewportRuntimeHandle, DockViewportWindowBounds, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -21,59 +22,141 @@ struct DemoPanel {
 
 struct RuntimeStatusPanel {
     runtime: DockViewportRuntimeHandle,
+    controller: Entity<DockController>,
+    placement: DockViewportPlacementLayout,
+    primary_bounds: Bounds<Pixels>,
+    secondary_bounds: Bounds<Pixels>,
+    last_operation: Option<String>,
 }
 
 impl RuntimeStatusPanel {
-    fn new(runtime: DockViewportRuntimeHandle) -> Self {
-        Self { runtime }
+    fn new(
+        runtime: DockViewportRuntimeHandle,
+        controller: Entity<DockController>,
+        placement: DockViewportPlacementLayout,
+        primary_bounds: Bounds<Pixels>,
+        secondary_bounds: Bounds<Pixels>,
+    ) -> Self {
+        Self {
+            runtime,
+            controller,
+            placement,
+            primary_bounds,
+            secondary_bounds,
+            last_operation: None,
+        }
+    }
+
+    fn set_operation_log(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.last_operation = Some(message.into());
+        cx.notify();
+    }
+
+    fn set_close_policy(&mut self, policy: DockViewportClosePolicy, cx: &mut Context<Self>) {
+        self.runtime.set_close_policy(policy.clone());
+        self.set_operation_log(format!("set close policy: {policy:?}"), cx);
+    }
+
+    fn open_demo_viewport(&mut self, space: &str, cx: &mut Context<Self>) {
+        let space_id = DockSpaceId::from(space);
+        let fallback_bounds = self.fallback_bounds(&space_id);
+        let options = restored_viewport_options(&self.placement, space_id.clone(), fallback_bounds);
+        match self.runtime.open_viewport(space_id.clone(), options, cx) {
+            Ok(outcome) => self.set_operation_log(
+                format!(
+                    "opened viewport {}: {:?}",
+                    outcome.space.as_str(),
+                    outcome.status
+                ),
+                cx,
+            ),
+            Err(error) => self.set_operation_log(
+                format!("open viewport {} failed: {error}", space_id.as_str()),
+                cx,
+            ),
+        }
+    }
+
+    fn apply_saved_placement(&mut self, cx: &mut Context<Self>) {
+        match self.runtime.apply_placement(&self.placement) {
+            Ok(outcome) => {
+                self.set_operation_log(format!("applied saved placement: {outcome:?}"), cx)
+            }
+            Err(error) => self.set_operation_log(format!("apply placement failed: {error}"), cx),
+        }
+    }
+
+    fn restore_secondary_panels(&mut self, cx: &mut Context<Self>) {
+        let message = self
+            .controller
+            .update(cx, |controller, _| restore_secondary_panels(controller));
+        self.set_operation_log(message, cx);
+    }
+
+    fn restore_outline_panel(&mut self, cx: &mut Context<Self>) {
+        let message = self
+            .controller
+            .update(cx, |controller, _| restore_outline_panel(controller));
+        self.set_operation_log(message, cx);
+    }
+
+    fn fallback_bounds(&self, space: &DockSpaceId) -> Bounds<Pixels> {
+        if space.as_str() == SECONDARY_SPACE {
+            self.secondary_bounds
+        } else {
+            self.primary_bounds
+        }
     }
 }
 
 impl Render for RuntimeStatusPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let runtime = self.runtime.borrow();
-        let adapter = runtime.adapter();
-        let status = runtime.runtime_status();
-        let spaces = adapter
-            .spaces()
-            .into_iter()
-            .map(|space| {
-                let status = if adapter.window_for_space(&space).is_some() {
-                    "open"
-                } else {
-                    "missing"
-                };
-                format!("{}: {}", space.as_str(), status)
-            })
-            .collect::<Vec<_>>();
-        let placement = runtime.export_placement();
-        let lines = vec![
-            format!("close policy: {:?}", runtime.close_policy()),
-            format!("registered viewports: {}", spaces.len()),
-            format!("placement snapshots: {}", placement.viewports.len()),
-            format!("spaces: {}", spaces.join(", ")),
-            format!(
-                "last route: {}",
-                debug_option(status.last_route.as_ref().map(|record| &record.target))
-            ),
-            format!(
-                "last drop: {}",
-                debug_option(status.last_drop_outcome.as_ref().map(|record| &record.kind))
-            ),
-            format!(
-                "last activation: {}",
-                debug_option(status.last_activation.as_ref())
-            ),
-            format!("last close: {}", debug_option(status.last_close.as_ref())),
-            format!(
-                "last should-close: {}",
-                debug_option(status.last_should_close.as_ref())
-            ),
-            format!(
-                "last tear-off: {}",
-                debug_option(status.last_tear_off.as_ref().map(|record| &record.kind))
-            ),
-        ];
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let lines = {
+            let runtime = self.runtime.borrow();
+            let adapter = runtime.adapter();
+            let status = runtime.runtime_status();
+            let spaces = adapter
+                .spaces()
+                .into_iter()
+                .map(|space| {
+                    let status = if adapter.window_for_space(&space).is_some() {
+                        "open"
+                    } else {
+                        "missing"
+                    };
+                    format!("{}: {}", space.as_str(), status)
+                })
+                .collect::<Vec<_>>();
+            let placement = runtime.export_placement();
+            vec![
+                format!("close policy: {:?}", runtime.close_policy()),
+                format!("registered viewports: {}", spaces.len()),
+                format!("placement snapshots: {}", placement.viewports.len()),
+                format!("spaces: {}", spaces.join(", ")),
+                format!(
+                    "last route: {}",
+                    debug_option(status.last_route.as_ref().map(|record| &record.target))
+                ),
+                format!(
+                    "last drop: {}",
+                    debug_option(status.last_drop_outcome.as_ref().map(|record| &record.kind))
+                ),
+                format!(
+                    "last activation: {}",
+                    debug_option(status.last_activation.as_ref())
+                ),
+                format!("last close: {}", debug_option(status.last_close.as_ref())),
+                format!(
+                    "last should-close: {}",
+                    debug_option(status.last_should_close.as_ref())
+                ),
+                format!(
+                    "last tear-off: {}",
+                    debug_option(status.last_tear_off.as_ref().map(|record| &record.kind))
+                ),
+            ]
+        };
+        let last_operation = self.last_operation.clone();
 
         div()
             .flex()
@@ -117,6 +200,222 @@ impl Render for RuntimeStatusPanel {
                             .child(line)
                     })),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(control_button(
+                                "Prevent",
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_close_policy(DockViewportClosePolicy::Prevent, cx);
+                                }),
+                            ))
+                            .child(control_button(
+                                "Retain",
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_close_policy(
+                                        DockViewportClosePolicy::RetainLayout,
+                                        cx,
+                                    );
+                                }),
+                            ))
+                            .child(control_button(
+                                "Merge back",
+                                cx.listener(|this, _, _, cx| {
+                                    this.set_close_policy(
+                                        DockViewportClosePolicy::MergeBack {
+                                            target_space: SPACE.into(),
+                                        },
+                                        cx,
+                                    );
+                                }),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(control_button(
+                                "Open primary",
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_demo_viewport(SPACE, cx);
+                                }),
+                            ))
+                            .child(control_button(
+                                "Open secondary",
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_demo_viewport(SECONDARY_SPACE, cx);
+                                }),
+                            ))
+                            .child(control_button(
+                                "Apply placement",
+                                cx.listener(|this, _, _, cx| {
+                                    this.apply_saved_placement(cx);
+                                }),
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(control_button(
+                                "Restore secondary tabs",
+                                cx.listener(|this, _, _, cx| {
+                                    this.restore_secondary_panels(cx);
+                                }),
+                            ))
+                            .child(control_button(
+                                "Restore outline",
+                                cx.listener(|this, _, _, cx| {
+                                    this.restore_outline_panel(cx);
+                                }),
+                            )),
+                    ),
+            )
+            .when_some(last_operation, |element, operation| {
+                element.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0xecfdf5))
+                        .text_color(rgb(0x065f46))
+                        .child(operation),
+                )
+            })
+    }
+}
+
+fn control_button(
+    label: &str,
+    listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(format!("runtime-control:{label}"))
+        .px_2()
+        .py_1()
+        .border_1()
+        .border_color(rgb(0xcbd5e1))
+        .bg(rgb(0xf8fafc))
+        .hover(|style| style.bg(rgb(0xe2e8f0)))
+        .active(|style| style.opacity(0.78))
+        .cursor_pointer()
+        .text_color(rgb(0x1f2937))
+        .on_click(listener)
+        .child(label.to_string())
+}
+
+fn restore_secondary_panels(controller: &mut DockController) -> String {
+    let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
+    let preview = DockItemId::from("preview");
+    let diff = DockItemId::from("diff");
+    let mut results = Vec::new();
+
+    if controller
+        .graph()
+        .find_item_in_space(&secondary_space, &preview)
+        .is_some()
+    {
+        results.push("preview already in secondary".to_string());
+    } else if controller.graph().contains_item(&preview) {
+        results.push("preview is open outside secondary".to_string());
+    } else {
+        results.push(open_item_result(
+            "preview",
+            controller.apply_action(&DockAction::OpenItem {
+                space: secondary_space.clone(),
+                target_tabs: None,
+                item: preview.clone(),
+                insert_index: None,
+            }),
+        ));
+    }
+
+    let secondary_tabs = controller
+        .graph()
+        .find_item_in_space(&secondary_space, &preview)
+        .or_else(|| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary_space, &diff)
+        })
+        .map(|(tabs, _)| tabs);
+
+    if controller
+        .graph()
+        .find_item_in_space(&secondary_space, &diff)
+        .is_some()
+    {
+        results.push("diff already in secondary".to_string());
+    } else if controller.graph().contains_item(&diff) {
+        results.push("diff is open outside secondary".to_string());
+    } else {
+        results.push(open_item_result(
+            "diff",
+            controller.apply_action(&DockAction::OpenItem {
+                space: secondary_space,
+                target_tabs: secondary_tabs,
+                item: diff,
+                insert_index: None,
+            }),
+        ));
+    }
+
+    results.join("; ")
+}
+
+fn restore_outline_panel(controller: &mut DockController) -> String {
+    let main_space = DockSpaceId::from(SPACE);
+    let outline = DockItemId::from("outline");
+    if controller
+        .graph()
+        .find_item_in_space(&main_space, &outline)
+        .is_some()
+    {
+        return "outline already in primary".to_string();
+    }
+    if controller.graph().contains_item(&outline) {
+        return "outline is open outside primary".to_string();
+    }
+
+    let target_tabs = controller
+        .graph()
+        .find_item_in_space(&main_space, &DockItemId::from("explorer"))
+        .or_else(|| {
+            controller
+                .graph()
+                .find_item_in_space(&main_space, &DockItemId::from("workspace"))
+        })
+        .map(|(tabs, _)| tabs);
+
+    open_item_result(
+        "outline",
+        controller.apply_action(&DockAction::OpenItem {
+            space: main_space,
+            target_tabs,
+            item: outline,
+            insert_index: Some(1),
+        }),
+    )
+}
+
+fn open_item_result(
+    label: &str,
+    result: std::result::Result<
+        open_gpui_docking::DockActionOutcome,
+        open_gpui_docking::DockActionApplyError,
+    >,
+) -> String {
+    match result {
+        Ok(outcome) => format!("opened {label}: {outcome:?}"),
+        Err(error) => format!("open {label} failed: {error}"),
     }
 }
 
@@ -467,14 +766,6 @@ fn main() {
     application().run(|cx: &mut App| {
         let controller = cx.new(|_| build_controller());
         let runtime = DockViewportRuntimeHandle::new(controller.clone());
-        let runtime_panel = cx.new(|_| RuntimeStatusPanel::new(runtime.clone()));
-        controller.update(cx, |controller, _| {
-            controller
-                .attach_panel_view("runtime", runtime_panel)
-                .expect("runtime panel descriptor should exist");
-        });
-        runtime.observe_window_closed(cx).detach();
-
         let primary_bounds = Bounds::centered(None, size(px(920.0), px(640.0)), cx);
         let secondary_bounds = Bounds::new(
             point(
@@ -484,6 +775,21 @@ fn main() {
             size(px(460.0), px(360.0)),
         );
         let placement = saved_viewport_placement(primary_bounds, secondary_bounds);
+        let runtime_panel = cx.new(|_| {
+            RuntimeStatusPanel::new(
+                runtime.clone(),
+                controller.clone(),
+                placement.clone(),
+                primary_bounds,
+                secondary_bounds,
+            )
+        });
+        controller.update(cx, |controller, _| {
+            controller
+                .attach_panel_view("runtime", runtime_panel)
+                .expect("runtime panel descriptor should exist");
+        });
+        runtime.observe_window_closed(cx).detach();
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
         runtime
