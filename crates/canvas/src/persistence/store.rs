@@ -1,7 +1,8 @@
 use crate::{
     CanvasCommittedMutation, CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent,
-    CanvasRecordOperationBatch, CanvasSnapshot, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, DocumentError, tool::CanvasToolEffect,
+    CanvasRecordOperationBatch, CanvasRelationOperationBatch, CanvasSnapshot, CanvasToolId,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentError,
+    tool::CanvasToolEffect,
 };
 use std::{convert::Infallible, error::Error, fmt};
 
@@ -26,6 +27,8 @@ pub struct CanvasLogEntry {
     transaction: CanvasTransaction,
     #[serde(default, alias = "record_operation_batch")]
     committed_record_operation_batch: Option<CanvasRecordOperationBatch>,
+    #[serde(default)]
+    committed_relation_operation_batch: Option<CanvasRelationOperationBatch>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +46,7 @@ impl CanvasLogEntry {
             sequence,
             transaction: transaction.into(),
             committed_record_operation_batch: None,
+            committed_relation_operation_batch: None,
         }
     }
 
@@ -51,6 +55,7 @@ impl CanvasLogEntry {
             sequence,
             transaction: committed.transaction().clone(),
             committed_record_operation_batch: Some(committed.record_operation_batch(sequence)),
+            committed_relation_operation_batch: Some(committed.relation_operation_batch(sequence)),
         }
     }
 
@@ -63,7 +68,9 @@ impl CanvasLogEntry {
     }
 
     pub fn kind(&self) -> CanvasLogEntryKind {
-        if self.committed_record_operation_batch.is_some() {
+        if self.committed_record_operation_batch.is_some()
+            || self.committed_relation_operation_batch.is_some()
+        {
             CanvasLogEntryKind::CommittedMutation
         } else {
             CanvasLogEntryKind::LegacyReplayTransaction
@@ -72,6 +79,10 @@ impl CanvasLogEntry {
 
     pub fn committed_record_operations(&self) -> Option<&CanvasRecordOperationBatch> {
         self.committed_record_operation_batch.as_ref()
+    }
+
+    pub fn committed_relation_operations(&self) -> Option<&CanvasRelationOperationBatch> {
+        self.committed_relation_operation_batch.as_ref()
     }
 
     pub fn is_legacy_replay_entry(&self) -> bool {

@@ -1,6 +1,6 @@
 use crate::{
-    CanvasEdge, CanvasNode, CanvasRecordId, CanvasShape, CanvasTransaction, CanvasValue,
-    DocumentCommand,
+    CanvasEdge, CanvasNode, CanvasRecordGroupRelation, CanvasRecordId, CanvasRecordParentRelation,
+    CanvasShape, CanvasTransaction, CanvasValue, DocumentCommand,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -51,6 +51,47 @@ impl CanvasRecordChange {
         match self {
             Self::Upsert(record) => record.id(),
             Self::Delete(id) => id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CanvasRecordRelation {
+    Parent(CanvasRecordParentRelation),
+    Group(CanvasRecordGroupRelation),
+}
+
+impl CanvasRecordRelation {
+    pub fn relation_id(&self) -> (&CanvasRecordId, &CanvasRecordId) {
+        match self {
+            Self::Parent(relation) => (&relation.child, &relation.parent),
+            Self::Group(relation) => (&relation.group, &relation.member),
+        }
+    }
+}
+
+impl From<CanvasRecordParentRelation> for CanvasRecordRelation {
+    fn from(value: CanvasRecordParentRelation) -> Self {
+        Self::Parent(value)
+    }
+}
+
+impl From<CanvasRecordGroupRelation> for CanvasRecordRelation {
+    fn from(value: CanvasRecordGroupRelation) -> Self {
+        Self::Group(value)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CanvasRelationChange {
+    Upsert(CanvasRecordRelation),
+    Delete(CanvasRecordRelation),
+}
+
+impl CanvasRelationChange {
+    pub fn relation(&self) -> &CanvasRecordRelation {
+        match self {
+            Self::Upsert(relation) | Self::Delete(relation) => relation,
         }
     }
 }
@@ -161,6 +202,72 @@ impl CanvasRecordOperationBatch {
     }
 
     pub fn changes(&self) -> impl Iterator<Item = &CanvasRecordChange> {
+        self.operations.iter().map(|operation| &operation.change)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRelationOperation {
+    pub transaction_sequence: u64,
+    pub operation_index: u64,
+    pub change: CanvasRelationChange,
+}
+
+impl CanvasRelationOperation {
+    pub fn new(
+        transaction_sequence: u64,
+        operation_index: u64,
+        change: CanvasRelationChange,
+    ) -> Self {
+        Self {
+            transaction_sequence,
+            operation_index,
+            change,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRelationOperationBatch {
+    pub transaction_sequence: u64,
+    #[serde(default)]
+    pub origin: Option<CanvasChangeOrigin>,
+    #[serde(default)]
+    pub transaction_metadata: CanvasValue,
+    #[serde(default)]
+    pub operations: Vec<CanvasRelationOperation>,
+}
+
+impl CanvasRelationOperationBatch {
+    pub fn from_relation_changes(
+        transaction_sequence: u64,
+        transaction_metadata: CanvasValue,
+        changes: impl IntoIterator<Item = CanvasRelationChange>,
+    ) -> Self {
+        Self {
+            transaction_sequence,
+            origin: None,
+            transaction_metadata,
+            operations: changes
+                .into_iter()
+                .enumerate()
+                .map(|(index, change)| {
+                    CanvasRelationOperation::new(transaction_sequence, index as u64, change)
+                })
+                .collect(),
+        }
+    }
+
+    pub fn with_origin(mut self, origin: impl Into<CanvasChangeOrigin>) -> Self {
+        self.origin = Some(origin.into());
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.operations.is_empty()
+    }
+
+    pub fn changes(&self) -> impl Iterator<Item = &CanvasRelationChange> {
         self.operations.iter().map(|operation| &operation.change)
     }
 }
@@ -384,5 +491,42 @@ mod tests {
         assert_eq!(batch.transaction_sequence, 7);
         assert!(batch.is_empty());
         assert!(batch.transaction_metadata.is_empty());
+    }
+
+    #[test]
+    fn relation_operation_batches_preserve_order_and_metadata() {
+        let mut metadata = CanvasValue::new();
+        metadata.insert("reason".into(), serde_json::json!("sync"));
+        let changes = vec![
+            CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(
+                CanvasRecordParentRelation::new(NodeId::from("child"), ShapeId::from("frame")),
+            )),
+            CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
+                CanvasRecordGroupRelation::new(ShapeId::from("frame"), NodeId::from("child")),
+            )),
+        ];
+
+        let batch = CanvasRelationOperationBatch::from_relation_changes(
+            42,
+            metadata.clone(),
+            changes.clone(),
+        )
+        .with_origin("client-a");
+
+        assert_eq!(batch.transaction_sequence, 42);
+        assert_eq!(
+            batch.origin.as_ref().map(CanvasChangeOrigin::as_str),
+            Some("client-a")
+        );
+        assert_eq!(batch.transaction_metadata, metadata);
+        assert_eq!(
+            batch
+                .operations
+                .iter()
+                .map(|operation| (operation.transaction_sequence, operation.operation_index))
+                .collect::<Vec<_>>(),
+            vec![(42, 0), (42, 1)]
+        );
+        assert_eq!(batch.changes().cloned().collect::<Vec<_>>(), changes);
     }
 }

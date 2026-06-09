@@ -33,7 +33,8 @@ mod transform;
 
 pub use changes::{
     CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
-    CanvasRecordOperationBatch,
+    CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
+    CanvasRelationOperation, CanvasRelationOperationBatch,
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{

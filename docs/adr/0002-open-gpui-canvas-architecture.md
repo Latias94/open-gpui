@@ -266,14 +266,17 @@ Document transactions expose two record-level views. `DocumentCommand::record_id
 `CanvasTransaction::record_changes` translate the canonical command stream into ordered intent
 changes. `CanvasCommittedMutation` is the semantic view produced by the mutation journal in
 `crates/canvas/src/mutation.rs`: it carries the applied transaction, inverse transaction, actual
-`CanvasDocumentDiff`, and actual record changes after document rules have run. A node deletion that
-removes incident edges therefore produces node and edge delete changes in the committed mutation,
-even when the original command stream only named the node.
+`CanvasDocumentDiff`, actual record changes, and actual relation changes after document rules have
+run. A node deletion that removes incident edges therefore produces node and edge delete changes in
+the committed mutation, even when the original command stream only named the node. If that deletion
+also prunes parent or group relationships, the committed mutation reports relation operations for
+those structural changes instead of only setting a coarse `relations_changed` flag.
 `CanvasRecordOperation` and `CanvasRecordOperationBatch` add the transaction sequence,
 operation index, optional origin, and transaction metadata around either view. New persistence logs
 and future CRDT adapters consume committed mutation batches when they need actual document
-semantics. Command-derived batches are legacy/intent views for transaction-only replay entries and
-inspection tools.
+semantics. `CanvasRelationOperation` and `CanvasRelationOperationBatch` do the same for parent and
+group relationship facts. Command-derived batches are legacy/intent views for transaction-only
+replay entries and inspection tools.
 
 Persistence is defined as a small store trait rather than a concrete database choice. The core
 crate can save a `CanvasCheckpoint`, append ordered `CanvasLogEntry` transactions, load entries
@@ -303,14 +306,15 @@ Applications can connect editor mutations to persistence through `CanvasPersiste
 `apply_persistent_transaction`. The helper prepares a committed mutation against the current editor
 document, appends a monotonic `CanvasLogEntry` through the abstract store, then applies that same
 prepared mutation through `CanvasEditor`. The log entry can carry the committed mutation's actual
-record operation batch, so implicit document effects such as incident edge deletion are visible to
-persistence and future CRDT adapters. This keeps `CanvasEditor` free of concrete storage ownership
-while giving future redb, Loro, and `rkyv` adapters one consistent transaction-log entry point.
+record operation batch and relation operation batch, so implicit document effects such as incident
+edge deletion and relation pruning are visible to persistence and future CRDT adapters. This keeps
+`CanvasEditor` free of concrete storage ownership while giving future redb, Loro, and `rkyv`
+adapters one consistent transaction-log entry point.
 `CanvasLogEntry::from_committed_mutation` is the write path for new durable entries;
 `CanvasLogEntry::from_replay_transaction` is reserved for replaying older transaction-only logs.
 Committed entries report `CanvasLogEntryKind::CommittedMutation` and expose committed record
-operations; replay-only entries report `CanvasLogEntryKind::LegacyReplayTransaction` and only
-preserve enough transaction intent to rebuild document state.
+and relation operations; replay-only entries report `CanvasLogEntryKind::LegacyReplayTransaction`
+and only preserve enough transaction intent to rebuild document state.
 Gesture updates remain outside the persistence log until the active gesture is committed as one
 explicit transaction.
 

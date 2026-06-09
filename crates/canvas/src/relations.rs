@@ -155,6 +155,12 @@ impl CanvasRecordRelations {
 
         self.parents.len() != parent_count || self.groups.len() != group_count
     }
+
+    pub(crate) fn contains_group_relation(&self, relation: &CanvasRecordGroupRelation) -> bool {
+        self.groups
+            .iter()
+            .any(|existing| existing.group == relation.group && existing.member == relation.member)
+    }
 }
 
 #[cfg(test)]

@@ -238,7 +238,8 @@ an ordered intent view, but sync, audit, and CRDT adapters should prefer committ
 they need the actual semantic changes produced by document rules such as incident edge removal.
 The mutation journal is the fact source for those committed mutations: it prepares a normalized
 transaction against a draft, validates the result, derives the inverse transaction, and records the
-actual semantic diff.
+actual semantic diff. It also reports committed relation changes, so parent/group updates and
+relations pruned by record deletion are observable without re-diffing full snapshots.
 
 ```rust
 use open_gpui_canvas::{
@@ -269,6 +270,8 @@ let committed = document
     .unwrap();
 let actual_batch = committed.record_operation_batch(8);
 assert_eq!(actual_batch.operations.len(), 1);
+let relation_batch = committed.relation_operation_batch(8);
+assert!(relation_batch.operations.is_empty());
 ```
 
 ## Register Canvas Kinds
@@ -682,9 +685,10 @@ For tool reducers, use `apply_persistent_tool_intents` so recorded transactions 
 custom tool output stays on the intent surface. The editor owns gesture lifecycle and turns
 selected built-in tool events into internal effects itself. New log entries written by the
 persistence helpers are created from committed mutations, so their record operation batches
-describe actual document effects. `CanvasLogEntry::from_replay_transaction` is reserved for
-replaying or testing older transaction-only logs where only command intent is available; those
-entries are marked `LegacyReplayTransaction` and do not expose committed record operations.
+describe actual document effects and their relation operation batches describe actual parent/group
+structural changes. `CanvasLogEntry::from_replay_transaction` is reserved for replaying or testing
+older transaction-only logs where only command intent is available; those entries are marked
+`LegacyReplayTransaction` and do not expose committed record or relation operations.
 Applications that want one entrypoint can dispatch normalized canvas events through
 `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, or
 `handle_persistent_event_with_tool_registry`; those helpers route built-in tools through the

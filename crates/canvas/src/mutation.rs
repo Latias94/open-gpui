@@ -1,6 +1,7 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecord, CanvasRecordChange,
-    CanvasRecordId, CanvasRecordOperationBatch, CanvasTransaction, DocumentError,
+    CanvasRecordId, CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
+    CanvasRelationOperationBatch, CanvasTransaction, DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -9,6 +10,7 @@ pub struct CanvasCommittedMutation {
     inverse: CanvasTransaction,
     diff: CanvasDocumentDiff,
     record_changes: Vec<CanvasRecordChange>,
+    relation_changes: Vec<CanvasRelationChange>,
 }
 
 impl CanvasCommittedMutation {
@@ -28,11 +30,26 @@ impl CanvasCommittedMutation {
         &self.record_changes
     }
 
+    pub fn relation_changes(&self) -> &[CanvasRelationChange] {
+        &self.relation_changes
+    }
+
     pub fn record_operation_batch(&self, transaction_sequence: u64) -> CanvasRecordOperationBatch {
         CanvasRecordOperationBatch::from_record_changes(
             transaction_sequence,
             self.transaction.metadata.clone(),
             self.record_changes.clone(),
+        )
+    }
+
+    pub fn relation_operation_batch(
+        &self,
+        transaction_sequence: u64,
+    ) -> CanvasRelationOperationBatch {
+        CanvasRelationOperationBatch::from_relation_changes(
+            transaction_sequence,
+            self.transaction.metadata.clone(),
+            self.relation_changes.clone(),
         )
     }
 
@@ -83,11 +100,13 @@ impl CanvasMutationJournal {
 
         let diff = draft.diff_against(document);
         let record_changes = record_changes_from_diff(&draft, &diff);
+        let relation_changes = relation_changes_from_diff(&draft, document);
         let committed = CanvasCommittedMutation {
             transaction,
             inverse,
             diff,
             record_changes,
+            relation_changes,
         };
 
         Ok(CanvasPreparedMutation {
@@ -137,6 +156,49 @@ fn record_changes_from_diff(
     changes
 }
 
+fn relation_changes_from_diff(
+    document: &CanvasDocument,
+    previous: &CanvasDocument,
+) -> Vec<CanvasRelationChange> {
+    let current = document.relations();
+    let previous = previous.relations();
+    let mut changes = Vec::new();
+
+    for relation in previous.parents() {
+        if current.parent_of(&relation.child) != Some(&relation.parent) {
+            changes.push(CanvasRelationChange::Delete(CanvasRecordRelation::Parent(
+                relation.clone(),
+            )));
+        }
+    }
+
+    for relation in current.parents() {
+        if previous.parent_of(&relation.child) != Some(&relation.parent) {
+            changes.push(CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(
+                relation.clone(),
+            )));
+        }
+    }
+
+    for relation in previous.groups() {
+        if !current.contains_group_relation(relation) {
+            changes.push(CanvasRelationChange::Delete(CanvasRecordRelation::Group(
+                relation.clone(),
+            )));
+        }
+    }
+
+    for relation in current.groups() {
+        if !previous.contains_group_relation(relation) {
+            changes.push(CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
+                relation.clone(),
+            )));
+        }
+    }
+
+    changes
+}
+
 fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Option<CanvasRecord> {
     match id {
         CanvasRecordId::Node(id) => document.node(id).cloned().map(CanvasRecord::Node),
@@ -149,7 +211,8 @@ fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Optio
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, DocumentCommand, EdgeId, NodeId,
+        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordGroupRelation, CanvasRecordId,
+        CanvasRecordParentRelation, DocumentCommand, EdgeId, NodeId, ShapeId,
     };
     use open_gpui::{point, px, size};
 
@@ -214,6 +277,166 @@ mod tests {
                 CanvasRecordChange::Delete(CanvasRecordId::Edge(EdgeId::from("a-b"))),
             ]
         );
+        assert_eq!(
+            committed.relation_changes(),
+            &[CanvasRelationChange::Delete(CanvasRecordRelation::Group(
+                CanvasRecordGroupRelation::new(NodeId::from("b"), EdgeId::from("a-b"))
+            ))]
+        );
+    }
+
+    #[test]
+    fn committed_mutation_reports_relation_only_changes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(crate::CanvasShape::new(
+                "frame",
+                open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let mut transaction = CanvasTransaction::new([
+            DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(NodeId::from("child")),
+                parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: CanvasRecordId::Shape(ShapeId::from("frame")),
+                member: CanvasRecordId::Node(NodeId::from("child")),
+            },
+        ]);
+        transaction
+            .metadata
+            .insert("origin".into(), serde_json::json!("test"));
+
+        let committed = document.commit_transaction(transaction).unwrap();
+
+        assert!(committed.diff().relations_changed);
+        assert!(committed.record_changes().is_empty());
+        assert_eq!(
+            committed.relation_changes(),
+            &[
+                CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(
+                    CanvasRecordParentRelation::new(NodeId::from("child"), ShapeId::from("frame"))
+                )),
+                CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
+                    CanvasRecordGroupRelation::new(ShapeId::from("frame"), NodeId::from("child"))
+                )),
+            ]
+        );
+
+        let batch = committed.relation_operation_batch(7);
+        assert_eq!(batch.transaction_sequence, 7);
+        assert_eq!(
+            batch.transaction_metadata.get("origin"),
+            Some(&serde_json::json!("test"))
+        );
+        assert_eq!(
+            batch
+                .operations
+                .iter()
+                .map(|operation| operation.operation_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn committed_mutation_reports_parent_replacement_as_delete_and_upsert() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        for id in ["old-frame", "new-frame"] {
+            document
+                .insert_shape(crate::CanvasShape::new(
+                    id,
+                    open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+                ))
+                .unwrap();
+        }
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("old-frame")),
+                },
+            ))
+            .unwrap();
+
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("new-frame")),
+                },
+            ))
+            .unwrap();
+
+        assert_eq!(
+            committed.relation_changes(),
+            &[
+                CanvasRelationChange::Delete(CanvasRecordRelation::Parent(
+                    CanvasRecordParentRelation::new(
+                        NodeId::from("child"),
+                        ShapeId::from("old-frame")
+                    )
+                )),
+                CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(
+                    CanvasRecordParentRelation::new(
+                        NodeId::from("child"),
+                        ShapeId::from("new-frame")
+                    )
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn committed_mutation_omits_noop_relation_changes() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(crate::CanvasShape::new(
+                "frame",
+                open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let relation_transaction = CanvasTransaction::new([
+            DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(NodeId::from("child")),
+                parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: CanvasRecordId::Shape(ShapeId::from("frame")),
+                member: CanvasRecordId::Node(NodeId::from("child")),
+            },
+        ]);
+        document
+            .commit_transaction(relation_transaction.clone())
+            .unwrap();
+
+        let committed = document.commit_transaction(relation_transaction).unwrap();
+
+        assert!(committed.diff().is_empty());
+        assert!(committed.record_changes().is_empty());
+        assert!(committed.relation_changes().is_empty());
     }
 
     #[test]
