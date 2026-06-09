@@ -1,5 +1,5 @@
 use crate::{
-    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockDropIntent, splitter,
+    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockDropIntent, geometry,
     tab_drop_runtime::DockTabDropRuntime,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
@@ -53,7 +53,7 @@ impl DockInteractionRuntime {
     ) -> Option<DockAction> {
         let drag = self.splitter_drag.as_ref()?;
         let delta = position - drag.start_position;
-        let fractions = splitter::resize_adjacent_fractions(
+        let fractions = geometry::resize_adjacent_split_fractions(
             &drag.initial_fractions,
             drag.initial_fractions.len(),
             drag.handle_index,

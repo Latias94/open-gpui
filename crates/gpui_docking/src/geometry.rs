@@ -1,4 +1,4 @@
-use crate::{DropZone, SplitAxis};
+use crate::{DropZone, SplitAxis, split_fraction};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
 const MAX_EDGE_BAND: f32 = 48.0;
@@ -8,6 +8,15 @@ const MIN_EDGE_BAND: f32 = 8.0;
 pub(crate) struct DockDropGeometry {
     pub(crate) zone: DropZone,
     pub(crate) preview_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockSplitGeometry {
+    pub(crate) pane_bounds: Vec<Bounds<Pixels>>,
+    pub(crate) handle_hit_bounds: Vec<Bounds<Pixels>>,
+    pub(crate) handle_centers: Vec<Pixels>,
+    pub(crate) shares: Vec<f32>,
+    pub(crate) extent: Pixels,
 }
 
 pub(crate) fn resolve_drop_geometry(
@@ -47,45 +56,166 @@ pub(crate) fn resolve_drop_geometry(
     })
 }
 
+pub(crate) fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
+    split_fraction::cleaned_shares(child_count, fractions)
+}
+
+pub(crate) fn split_handle_positions(shares: &[f32]) -> Vec<f32> {
+    let mut cursor = 0.0_f32;
+    shares
+        .iter()
+        .take(shares.len().saturating_sub(1))
+        .map(|share| {
+            cursor += *share;
+            cursor
+        })
+        .collect()
+}
+
+pub(crate) fn split_geometry(
+    axis: SplitAxis,
+    split_bounds: Bounds<Pixels>,
+    child_count: usize,
+    fractions: &[f32],
+    handle_thickness: Pixels,
+) -> DockSplitGeometry {
+    let shares = split_shares(child_count, fractions);
+    let extent = split_extent(axis, split_bounds);
+    let handle_centers = split_handle_centers(axis, split_bounds, &shares);
+    let pane_bounds = split_pane_bounds(axis, split_bounds, &shares);
+    let handle_hit_bounds = handle_centers
+        .iter()
+        .copied()
+        .map(|center| split_handle_hit_bounds(axis, split_bounds, center, handle_thickness))
+        .collect();
+
+    DockSplitGeometry {
+        pane_bounds,
+        handle_hit_bounds,
+        handle_centers,
+        shares,
+        extent,
+    }
+}
+
 pub(crate) fn splitter_handle_bounds(
     axis: SplitAxis,
     split_bounds: Bounds<Pixels>,
     shares: &[f32],
     handle_thickness: Pixels,
 ) -> Vec<Bounds<Pixels>> {
-    if shares.len() < 2 {
-        return Vec::new();
+    split_geometry(axis, split_bounds, shares.len(), shares, handle_thickness).handle_hit_bounds
+}
+
+pub(crate) fn resize_adjacent_split_fractions(
+    fractions: &[f32],
+    child_count: usize,
+    handle_index: usize,
+    split_extent: Pixels,
+    delta: Pixels,
+    min_pane_size: Pixels,
+) -> Option<Vec<f32>> {
+    if child_count < 2 || handle_index + 1 >= child_count {
+        return None;
     }
 
-    let half_thickness = handle_thickness / 2.0;
-    let mut cursor = 0.0_f32;
-    let mut handles = Vec::with_capacity(shares.len().saturating_sub(1));
-
-    for share in shares.iter().take(shares.len().saturating_sub(1)) {
-        cursor += *share;
-        match axis {
-            SplitAxis::Horizontal => {
-                let x = split_bounds.origin.x + split_bounds.size.width * cursor - half_thickness;
-                handles.push(Bounds::new(
-                    point(x, split_bounds.origin.y),
-                    size(handle_thickness, split_bounds.size.height),
-                ));
-            }
-            SplitAxis::Vertical => {
-                let y = split_bounds.origin.y + split_bounds.size.height * cursor - half_thickness;
-                handles.push(Bounds::new(
-                    point(split_bounds.origin.x, y),
-                    size(split_bounds.size.width, handle_thickness),
-                ));
-            }
-        }
+    let extent = f32::from(split_extent);
+    if !extent.is_finite() || extent <= f32::EPSILON {
+        return None;
     }
 
-    handles
+    let mut shares = split_shares(child_count, fractions);
+    let pair_total = shares[handle_index] + shares[handle_index + 1];
+    if !pair_total.is_finite() || pair_total <= f32::EPSILON {
+        return None;
+    }
+
+    let min_fraction = (f32::from(min_pane_size).max(0.0) / extent).clamp(0.0, pair_total / 2.0);
+    let delta_fraction = f32::from(delta) / extent;
+    let next_first =
+        (shares[handle_index] + delta_fraction).clamp(min_fraction, pair_total - min_fraction);
+
+    shares[handle_index] = next_first;
+    shares[handle_index + 1] = pair_total - next_first;
+    split_fraction::normalize_shares(&mut shares);
+    Some(shares)
 }
 
 fn valid_extent(value: f32) -> bool {
     value.is_finite() && value > 0.0
+}
+
+fn split_extent(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
+    match axis {
+        SplitAxis::Horizontal => split_bounds.size.width,
+        SplitAxis::Vertical => split_bounds.size.height,
+    }
+}
+
+fn split_pane_bounds(
+    axis: SplitAxis,
+    split_bounds: Bounds<Pixels>,
+    shares: &[f32],
+) -> Vec<Bounds<Pixels>> {
+    let mut cursor = axis_origin(axis, split_bounds);
+    let extent = split_extent(axis, split_bounds);
+    shares
+        .iter()
+        .map(|share| {
+            let pane_extent = extent * *share;
+            let bounds = match axis {
+                SplitAxis::Horizontal => Bounds::new(
+                    point(cursor, split_bounds.origin.y),
+                    size(pane_extent, split_bounds.size.height),
+                ),
+                SplitAxis::Vertical => Bounds::new(
+                    point(split_bounds.origin.x, cursor),
+                    size(split_bounds.size.width, pane_extent),
+                ),
+            };
+            cursor += pane_extent;
+            bounds
+        })
+        .collect()
+}
+
+fn split_handle_centers(
+    axis: SplitAxis,
+    split_bounds: Bounds<Pixels>,
+    shares: &[f32],
+) -> Vec<Pixels> {
+    let origin = axis_origin(axis, split_bounds);
+    let extent = split_extent(axis, split_bounds);
+    split_handle_positions(shares)
+        .into_iter()
+        .map(|position| origin + extent * position)
+        .collect()
+}
+
+fn split_handle_hit_bounds(
+    axis: SplitAxis,
+    split_bounds: Bounds<Pixels>,
+    center: Pixels,
+    handle_thickness: Pixels,
+) -> Bounds<Pixels> {
+    let half_thickness = handle_thickness / 2.0;
+    match axis {
+        SplitAxis::Horizontal => Bounds::new(
+            point(center - half_thickness, split_bounds.origin.y),
+            size(handle_thickness, split_bounds.size.height),
+        ),
+        SplitAxis::Vertical => Bounds::new(
+            point(split_bounds.origin.x, center - half_thickness),
+            size(split_bounds.size.width, handle_thickness),
+        ),
+    }
+}
+
+fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
+    match axis {
+        SplitAxis::Horizontal => split_bounds.origin.x,
+        SplitAxis::Vertical => split_bounds.origin.y,
+    }
 }
 
 fn edge_band(width: f32, height: f32) -> f32 {
@@ -168,16 +298,115 @@ mod tests {
 
     #[test]
     fn splitter_handle_geometry_matches_fraction_boundaries() {
-        let handles = splitter_handle_bounds(
+        let geometry = split_geometry(
             SplitAxis::Horizontal,
             bounds(400.0, 100.0),
+            2,
             &[0.25, 0.75],
             px(6.0),
         );
 
-        assert_eq!(handles.len(), 1);
-        assert_eq!(handles[0].origin.x, px(107.0));
-        assert_eq!(handles[0].size.width, px(6.0));
-        assert_eq!(handles[0].size.height, px(100.0));
+        assert_eq!(geometry.pane_bounds.len(), 2);
+        assert_eq!(geometry.pane_bounds[0].origin.x, px(10.0));
+        assert_eq!(geometry.pane_bounds[0].size.width, px(100.0));
+        assert_eq!(geometry.pane_bounds[1].origin.x, px(110.0));
+        assert_eq!(geometry.pane_bounds[1].size.width, px(300.0));
+        assert_eq!(geometry.handle_centers, vec![px(110.0)]);
+        assert_eq!(geometry.handle_hit_bounds.len(), 1);
+        assert_eq!(geometry.handle_hit_bounds[0].origin.x, px(107.0));
+        assert_eq!(geometry.handle_hit_bounds[0].size.width, px(6.0));
+        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(100.0));
+    }
+
+    #[test]
+    fn vertical_split_geometry_matches_fraction_boundaries() {
+        let geometry = split_geometry(
+            SplitAxis::Vertical,
+            bounds(200.0, 400.0),
+            2,
+            &[0.25, 0.75],
+            px(8.0),
+        );
+
+        assert_eq!(geometry.pane_bounds[0].origin.y, px(20.0));
+        assert_eq!(geometry.pane_bounds[0].size.height, px(100.0));
+        assert_eq!(geometry.pane_bounds[1].origin.y, px(120.0));
+        assert_eq!(geometry.pane_bounds[1].size.height, px(300.0));
+        assert_eq!(geometry.handle_centers, vec![px(120.0)]);
+        assert_eq!(geometry.handle_hit_bounds[0].origin.y, px(116.0));
+        assert_eq!(geometry.handle_hit_bounds[0].size.height, px(8.0));
+    }
+
+    #[test]
+    fn split_geometry_repairs_fraction_input_once() {
+        let geometry = split_geometry(
+            SplitAxis::Horizontal,
+            bounds(300.0, 100.0),
+            3,
+            &[f32::NAN],
+            px(6.0),
+        );
+
+        assert_eq!(geometry.pane_bounds.len(), 3);
+        assert_eq!(geometry.handle_hit_bounds.len(), 2);
+        assert_close(geometry.shares.iter().sum(), 1.0);
+        assert_close(geometry.shares[0], 0.0);
+        assert_close(geometry.shares[1], 0.5);
+        assert_close(geometry.shares[2], 0.5);
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 0.001,
+            "expected {actual} to be close to {expected}"
+        );
+    }
+
+    #[test]
+    fn positive_resize_delta_grows_first_adjacent_pane() {
+        let next =
+            resize_adjacent_split_fractions(&[0.25, 0.75], 2, 0, px(400.0), px(40.0), px(48.0))
+                .expect("resize should be valid");
+
+        assert_close(next[0], 0.35);
+        assert_close(next[1], 0.65);
+    }
+
+    #[test]
+    fn negative_resize_delta_shrinks_first_adjacent_pane() {
+        let next =
+            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-80.0), px(48.0))
+                .expect("resize should be valid");
+
+        assert_close(next[0], 0.3);
+        assert_close(next[1], 0.7);
+    }
+
+    #[test]
+    fn resize_clamps_at_minimum_pane_size() {
+        let next =
+            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(400.0), px(-300.0), px(100.0))
+                .expect("resize should be valid");
+
+        assert_close(next[0], 0.25);
+        assert_close(next[1], 0.75);
+    }
+
+    #[test]
+    fn impossible_minimum_splits_adjacent_pair_evenly() {
+        let next =
+            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 0, px(120.0), px(100.0), px(80.0))
+                .expect("resize should be valid");
+
+        assert_close(next[0], 0.5);
+        assert_close(next[1], 0.5);
+    }
+
+    #[test]
+    fn invalid_resize_handle_index_returns_none() {
+        assert!(
+            resize_adjacent_split_fractions(&[0.5, 0.5], 2, 1, px(400.0), px(10.0), px(48.0))
+                .is_none()
+        );
     }
 }

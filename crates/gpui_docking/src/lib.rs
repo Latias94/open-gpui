@@ -107,7 +107,6 @@ mod render_floating;
 mod render_split;
 mod render_tabs;
 mod split_fraction;
-mod splitter;
 mod tab_drop_runtime;
 mod viewport;
 mod viewport_close;

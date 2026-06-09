@@ -1,6 +1,6 @@
 use crate::{
     DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry,
-    host_render_session::DockHostRenderSession, split_fraction,
+    host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -25,7 +25,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let shares = split_fraction::cleaned_shares(children.len(), &fractions);
+        let shares = geometry::split_shares(children.len(), &fractions);
         let mut split = div()
             .id(selector.clone())
             .debug_selector(move || selector)
@@ -66,14 +66,10 @@ impl DockHost {
         if shares.len() >= 2 {
             let handle_size = session.splitter_handle_size();
             let handle_offset = -handle_size / 2.0;
-            let mut cursor = 0.0_f32;
-
-            for (index, share) in shares
-                .iter()
-                .take(shares.len().saturating_sub(1))
+            for (index, position) in geometry::split_handle_positions(&shares)
+                .into_iter()
                 .enumerate()
             {
-                cursor += *share;
                 let selector = self.record_debug_selector(
                     DockDebugRegion::SplitterHandle { split: node, index },
                     format!(
@@ -93,13 +89,13 @@ impl DockHost {
 
                 handle = match axis {
                     SplitAxis::Horizontal => handle
-                        .left(relative(cursor))
+                        .left(relative(position))
                         .top(px(0.0))
                         .ml(handle_offset)
                         .h_full()
                         .w(handle_size),
                     SplitAxis::Vertical => handle
-                        .top(relative(cursor))
+                        .top(relative(position))
                         .left(px(0.0))
                         .mt(handle_offset)
                         .w_full()
