@@ -174,18 +174,6 @@ pub enum DockViewportTearOffOpenOutcome {
     CommitFailed(DockViewportTearOffCommitFailure),
 }
 
-impl DockViewportTearOffOpenOutcome {
-    /// Returns the graph action outcome when the tear-off reached workspace commit.
-    pub fn action_outcome(&self) -> Option<DockActionOutcome> {
-        match self {
-            DockViewportTearOffOpenOutcome::Completed(completed) => Some(completed.action),
-            DockViewportTearOffOpenOutcome::Duplicate(_)
-            | DockViewportTearOffOpenOutcome::Cancelled(_)
-            | DockViewportTearOffOpenOutcome::CommitFailed(_) => None,
-        }
-    }
-}
-
 /// Runtime outcome for a viewport-routed drop release.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportDropRouteOutcome {
@@ -214,14 +202,6 @@ pub struct DockViewportActivationTarget {
 }
 
 impl DockViewportDropRouteOutcome {
-    /// Projects a runtime route outcome into a workspace action when one happened.
-    pub fn action_outcome(&self) -> Option<DockActionOutcome> {
-        match self {
-            DockViewportDropRouteOutcome::Action(outcome) => Some(outcome.action),
-            DockViewportDropRouteOutcome::TearOff(outcome) => outcome.action_outcome(),
-        }
-    }
-
     /// Returns the runtime viewport that should be activated after the drop, when known.
     pub fn activation_target(&self) -> Option<DockViewportActivationTarget> {
         match self {
