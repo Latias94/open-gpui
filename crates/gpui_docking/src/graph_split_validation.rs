@@ -1,4 +1,7 @@
-use crate::{DockNodeId, DockOpApplyError, SplitFractionsUpdate};
+#[cfg(test)]
+use crate::SplitFractionsUpdate;
+use crate::{DockNodeId, DockOpApplyError};
+#[cfg(test)]
 use std::collections::HashSet;
 
 use super::{DockGraph, DockNode};
@@ -36,6 +39,7 @@ impl DockGraph {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(in crate::graph) fn validate_split_fraction_updates(
         &self,
         updates: &[SplitFractionsUpdate],

@@ -9,6 +9,7 @@ use crate::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
     },
+    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowHandle, WindowId,
@@ -268,11 +269,11 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     );
     cx.update_entity(&controller, |controller, _| {
         controller
-            .apply_action(&DockAction::MoveTab {
-                source_space: primary_space.clone(),
+            .commit_tab_move(DockWorkspaceMoveTabRequest {
+                source_space: &primary_space,
                 source_tabs,
-                item: item("a"),
-                target_space: other_space.clone(),
+                item: &item("a"),
+                target_space: &other_space,
                 target_tabs: other_tabs,
                 zone: crate::DropZone::Center,
                 insert_index: None,

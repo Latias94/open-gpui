@@ -59,6 +59,7 @@ pub(crate) enum DockOp {
     },
 
     /// Moves an entire tabs node as a group.
+    #[cfg(test)]
     MoveTabs {
         /// The source dock space.
         source_space: DockSpaceId,
@@ -75,6 +76,7 @@ pub(crate) enum DockOp {
     },
 
     /// Moves an entire tabs node into an empty dock space.
+    #[cfg(test)]
     MoveTabsToEmptyDockSpace {
         /// The source dock space.
         source_space: DockSpaceId,
@@ -145,12 +147,14 @@ pub(crate) enum DockOp {
     },
 
     /// Replaces fractions for multiple split nodes.
+    #[cfg(test)]
     SetSplitFractionsMany {
         /// The split fraction updates.
         updates: Vec<SplitFractionsUpdate>,
     },
 
     /// Updates a two-child split using the first child's fraction.
+    #[cfg(test)]
     SetSplitFractionTwo {
         /// The split node to update.
         split: DockNodeId,
@@ -160,6 +164,7 @@ pub(crate) enum DockOp {
 }
 
 /// Fraction update for one split node.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SplitFractionsUpdate {
     /// The split node to update.

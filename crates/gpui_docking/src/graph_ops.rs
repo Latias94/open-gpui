@@ -1,4 +1,6 @@
-use crate::{DockNodeId, DockOp, SplitFractionsUpdate};
+use crate::DockOp;
+#[cfg(test)]
+use crate::{DockNodeId, SplitFractionsUpdate};
 
 use super::DockGraph;
 
@@ -39,6 +41,7 @@ impl DockGraph {
                 }
                 self.move_item_to_empty_space(source_space, item.clone(), target_space)
             }
+            #[cfg(test)]
             DockOp::MoveTabs {
                 source_space,
                 source_tabs,
@@ -54,6 +57,7 @@ impl DockGraph {
                 *zone,
                 *insert_index,
             ),
+            #[cfg(test)]
             DockOp::MoveTabsToEmptyDockSpace {
                 source_space,
                 source_tabs,
@@ -94,6 +98,7 @@ impl DockGraph {
             DockOp::SetSplitFractions { split, fractions } => {
                 self.update_split_fractions(*split, fractions.clone())
             }
+            #[cfg(test)]
             DockOp::SetSplitFractionsMany { updates } => {
                 let mut changed = false;
                 for update in updates {
@@ -101,6 +106,7 @@ impl DockGraph {
                 }
                 changed
             }
+            #[cfg(test)]
             DockOp::SetSplitFractionTwo {
                 split,
                 first_fraction,
@@ -109,6 +115,7 @@ impl DockGraph {
     }
 }
 
+#[cfg(test)]
 impl From<SplitFractionsUpdate> for (DockNodeId, Vec<f32>) {
     fn from(update: SplitFractionsUpdate) -> Self {
         (update.split, update.fractions)

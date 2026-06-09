@@ -1,5 +1,5 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
     DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
@@ -117,6 +117,7 @@ impl DockViewportRuntime {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn pending_tear_off_len(&self) -> usize {
         self.tear_off.len()
     }
@@ -139,6 +140,7 @@ impl DockViewportRuntime {
         self.tear_off.begin(request, target_space.into(), now)
     }
 
+    #[cfg(test)]
     pub(crate) fn expire_tear_off_requests_at(
         &mut self,
         now: DockViewportTearOffTick,
@@ -373,11 +375,11 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.controller.update(cx, |controller, cx| {
-            let outcome = controller.apply_action(&DockAction::MoveItemToEmptyDockSpace {
-                source_space: pending.request.source_space.clone(),
-                item: pending.request.item.clone(),
-                target_space: pending.target_space.clone(),
-            });
+            let outcome = controller.commit_item_to_empty_dock_space(
+                &pending.request.source_space,
+                &pending.request.item,
+                &pending.target_space,
+            );
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())

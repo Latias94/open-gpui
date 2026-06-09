@@ -7,7 +7,8 @@ The docking crate now matches ADR 0002's layering for the current product surfac
 - `DockGraph` and `DockLayout` remain pure logical data; `DockOp` is crate-internal graph mutation
   machinery rather than public application API.
 - `DockWorkspace` and `DockController` own durable commits through public `DockAction` for explicit
-  programmatic commands, while rendered tab drag/drop commits through resolved drop transactions.
+  non-move programmatic commands, while rendered tab drag/drop and viewport tear-off commits through
+  crate-internal move transactions.
 - `DockHost` renders one logical `DockSpaceId` from a shared controller; render snapshots and
   transient interaction sessions live in focused helper modules.
 - `drop_target`, `drop_runtime`, `workspace_transaction`, `interaction`, and `geometry` now form

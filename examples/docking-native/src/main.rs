@@ -3,9 +3,9 @@ use open_gpui::{
     WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use open_gpui_docking::{
-    DockAction, DockController, DockLayout, DockSpaceId, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
-    EditorDockLayoutSpec,
+    DockAction, DockController, DockLayout, DockPanelDescriptor, DockSpaceId,
+    DockViewportPlacement, DockViewportPlacementLayout, DockViewportRuntimeHandle,
+    DockViewportWindowBounds, EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
@@ -97,16 +97,31 @@ fn restored_demo_layout() -> DockLayout {
         )
         .allow_floating(true)
         .allow_platform_viewports(true)
+        .panel_descriptor("explorer", DockPanelDescriptor::new("Explorer"))
+        .panel_descriptor("outline", DockPanelDescriptor::new("Outline"))
+        .panel_descriptor("editor", DockPanelDescriptor::new("Editor"))
+        .panel_descriptor("preview", DockPanelDescriptor::new("Preview"))
+        .panel_descriptor("terminal", DockPanelDescriptor::new("Terminal"))
+        .panel_descriptor("problems", DockPanelDescriptor::new("Problems"))
         .try_build()
         .expect("demo controller setup should validate");
 
+    let main_space = DockSpaceId::from(SPACE);
+    let preview_item: open_gpui_docking::DockItemId = "preview".into();
     controller
-        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
-            source_space: SPACE.into(),
-            item: "preview".into(),
-            target_space: SECONDARY_SPACE.into(),
+        .apply_action(&DockAction::CloseItem {
+            space: main_space.clone(),
+            item: preview_item.clone(),
         })
-        .expect("preview panel should move into the secondary demo dock space");
+        .expect("preview panel should close before reopening into secondary space");
+    controller
+        .apply_action(&DockAction::OpenItem {
+            space: SECONDARY_SPACE.into(),
+            target_tabs: None,
+            item: preview_item,
+            insert_index: None,
+        })
+        .expect("preview panel should reopen into the secondary demo dock space");
     controller
         .apply_action(&DockAction::FloatItemInWindow {
             source_space: SPACE.into(),
@@ -116,8 +131,7 @@ fn restored_demo_layout() -> DockLayout {
         })
         .expect("problems panel should float inside the demo dock space");
 
-    let main_space = DockSpaceId::from(SPACE);
-    let outline_item = "outline".into();
+    let outline_item: open_gpui_docking::DockItemId = "outline".into();
     let (outline_tabs, _) = controller
         .graph()
         .find_item_in_space(&main_space, &outline_item)
@@ -186,7 +200,7 @@ fn build_controller() -> DockController {
                     0x16a34a,
                     &[
                         "Controller-backed rendering is active.",
-                        "Tabs route through DockAction.",
+                        "Tabs route through resolved drop transactions.",
                         "Splits use normalized graph fractions.",
                         "Registered panel factories stay outside the graph.",
                     ],

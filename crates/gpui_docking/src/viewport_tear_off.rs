@@ -35,6 +35,7 @@ pub enum DockViewportTearOffOutcome {
 pub(crate) struct DockViewportTearOffTick(u64);
 
 impl DockViewportTearOffTick {
+    #[cfg(test)]
     pub const fn new(tick: u64) -> Self {
         Self(tick)
     }
@@ -152,6 +153,7 @@ impl Default for DockViewportTearOffMachine {
 }
 
 impl DockViewportTearOffMachine {
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.pending_by_item.len()
     }

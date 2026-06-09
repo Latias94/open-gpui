@@ -44,7 +44,7 @@
 //! close removes the item from the graph while the panel catalog remains available, and reopen
 //! inserts that registered item back into a target tab stack or empty dock space. Ordinary tab
 //! drag/drop uses resolved drop transactions internally rather than asking render code or app code
-//! to construct [`DockAction::MoveTab`].
+//! to construct graph-shaped move commands.
 //! Descriptor-only restored panels can bind GPUI content later through
 //! [`DockPanelRegistry::attach_factory`], [`DockWorkspace::attach_panel_factory`], or
 //! [`DockController::attach_panel_factory`] without rewriting restored titles or close policy.
@@ -138,7 +138,7 @@ mod viewport_tear_off;
 mod workspace;
 mod workspace_action;
 mod workspace_floating_action;
-mod workspace_move_action;
+mod workspace_move_transaction;
 mod workspace_move_validation;
 mod workspace_panel_action;
 mod workspace_panel_lifecycle;
@@ -182,8 +182,10 @@ pub use graph::*;
 pub use host::*;
 pub use ids::*;
 pub use layout::*;
+pub(crate) use op::DockOp;
 pub use op::DockOpApplyError;
-pub(crate) use op::{DockOp, SplitFractionsUpdate};
+#[cfg(test)]
+pub(crate) use op::SplitFractionsUpdate;
 pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;

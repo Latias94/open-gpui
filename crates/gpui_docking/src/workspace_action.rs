@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockItemId, DockNode, DockNodeId, DockOp,
-    DockOpApplyError, DockWorkspace, workspace_move_action::DockWorkspaceMoveTabRequest,
+    DockOpApplyError, DockWorkspace,
 };
 
 impl DockWorkspace {
@@ -11,35 +11,6 @@ impl DockWorkspace {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         match action {
             DockAction::SelectTab { tabs, item } => self.select_tab(*tabs, item),
-            DockAction::MoveTab {
-                source_space,
-                source_tabs,
-                item,
-                target_space,
-                target_tabs,
-                zone,
-                insert_index,
-            } => self.move_tab_action(DockWorkspaceMoveTabRequest {
-                source_space,
-                source_tabs: *source_tabs,
-                item,
-                target_space,
-                target_tabs: *target_tabs,
-                zone: *zone,
-                insert_index: *insert_index,
-            }),
-            DockAction::MoveItemToEmptyDockSpace {
-                source_space,
-                item,
-                target_space,
-            } => self.move_item_to_empty_dock_space_action(source_space, item, target_space),
-            DockAction::MoveTabsToEmptyDockSpace {
-                source_space,
-                source_tabs,
-                target_space,
-            } => {
-                self.move_tabs_to_empty_dock_space_action(source_space, *source_tabs, target_space)
-            }
             DockAction::CloseItem { space, item } => self.close_item_action(space, item),
             DockAction::OpenItem {
                 space,

@@ -1,12 +1,12 @@
-use crate::{DockItemId, DockNodeId, DockOpApplyError, DockPolicyError, DockSpaceId, DropZone};
+use crate::{DockItemId, DockNodeId, DockOpApplyError, DockPolicyError, DockSpaceId};
 use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
 /// Programmatic docking command applied by [`DockWorkspace`](crate::DockWorkspace).
 ///
 /// Rendered drag/drop interactions resolve a full-layout target first and commit through the
-/// workspace transaction path. Use these actions for explicit application commands and advanced
-/// layout scripting where the caller already knows the graph nodes involved.
+/// workspace transaction path. Use these actions for explicit application commands such as
+/// selection, panel close/reopen, floating, and split resize.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockAction {
     /// Selects a tab within one tabs node.
@@ -15,47 +15,6 @@ pub enum DockAction {
         tabs: DockNodeId,
         /// The item to select.
         item: DockItemId,
-    },
-    /// Moves one tab into another tabs node or edge split target.
-    ///
-    /// This is a low-level graph-shaped command. The rendered tab drag/drop path resolves a target
-    /// before converting it into the corresponding workspace mutation.
-    MoveTab {
-        /// The source dock space containing the item.
-        source_space: DockSpaceId,
-        /// The source tabs node where the drag started.
-        source_tabs: DockNodeId,
-        /// The item being moved.
-        item: DockItemId,
-        /// The target dock space receiving the item.
-        target_space: DockSpaceId,
-        /// The target tabs node or split target.
-        target_tabs: DockNodeId,
-        /// The resolved drop zone.
-        zone: DropZone,
-        /// Optional tab insertion index for center drops.
-        insert_index: Option<usize>,
-    },
-    /// Moves one tab into a new empty logical dock space.
-    ///
-    /// Platform-window tear-off uses [`DockViewportRuntime`](crate::DockViewportRuntime) so window
-    /// creation, viewport registration, and graph mutation stay transactional.
-    MoveItemToEmptyDockSpace {
-        /// The source dock space containing the item.
-        source_space: DockSpaceId,
-        /// The item being moved.
-        item: DockItemId,
-        /// The empty target dock space that will receive a root tabs node.
-        target_space: DockSpaceId,
-    },
-    /// Moves an entire tabs node into a new empty logical dock space.
-    MoveTabsToEmptyDockSpace {
-        /// The source dock space containing the tabs node.
-        source_space: DockSpaceId,
-        /// The tabs node being moved.
-        source_tabs: DockNodeId,
-        /// The empty target dock space that will receive the tabs node contents.
-        target_space: DockSpaceId,
     },
     /// Closes one dock item through panel lifecycle policy.
     CloseItem {

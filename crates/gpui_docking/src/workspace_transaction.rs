@@ -2,7 +2,7 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
     DockTransactionError, DockViewportHit, DockWorkspace, DropZone,
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
-    workspace_move_action::DockWorkspaceMoveTabRequest,
+    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 
 pub(crate) struct DockWorkspaceDropRequest<'a> {
@@ -72,7 +72,7 @@ impl DockWorkspace {
                     None,
                 ),
             DockResolvedDropTargetKind::EmptyDockSpace { space } => {
-                self.move_item_to_empty_dock_space_action(source_space, item, &space)
+                self.commit_item_to_empty_dock_space(source_space, item, &space)
             }
             DockResolvedDropTargetKind::KnownViewport { hit } => {
                 Err(viewport_target_error(hit).into())
@@ -93,7 +93,7 @@ impl DockWorkspace {
         zone: DropZone,
         insert_index: Option<usize>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.move_tab_action(DockWorkspaceMoveTabRequest {
+        self.commit_tab_move(DockWorkspaceMoveTabRequest {
             source_space,
             source_tabs,
             item,

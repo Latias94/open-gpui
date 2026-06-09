@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::workspace_move_transaction::DockWorkspaceMoveTabRequest;
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
     DockItemId, DockLayout, DockLayoutValidationError, DockPanel, DockPanelAttachError,
@@ -137,6 +139,24 @@ impl DockController {
         request: DockWorkspaceDropRequest<'_>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.commit_resolved_drop(request)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_tab_move(
+        &mut self,
+        request: DockWorkspaceMoveTabRequest<'_>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_tab_move(request)
+    }
+
+    pub(crate) fn commit_item_to_empty_dock_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .commit_item_to_empty_dock_space(source_space, item, target_space)
     }
 }
 

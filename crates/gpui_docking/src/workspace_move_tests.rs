@@ -1,7 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph,
-    DockNode, DockOpApplyError, DockPolicyError, DockSpaceId, DropZone, SplitAxis,
-    host_test_support::*,
+    DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph, DockNode,
+    DockOpApplyError, DockPolicyError, DockSpaceId, DropZone, SplitAxis, host_test_support::*,
+    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::TestAppContext;
 
@@ -11,16 +11,16 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: left_tabs,
-            item: item("a"),
-            target_space: space(),
+            item: &item("a"),
+            target_space: &space(),
             target_tabs: right_tabs,
             zone: DropZone::Center,
             insert_index: None,
         })
-        .expect("move tab action should be valid");
+        .expect("tab move transaction should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
     let DockNode::Tabs { items, active } = workspace
@@ -40,11 +40,11 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let err = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: right_tabs,
-            item: item("a"),
-            target_space: space(),
+            item: &item("a"),
+            target_space: &space(),
             target_tabs: right_tabs,
             zone: DropZone::Center,
             insert_index: None,
@@ -86,11 +86,11 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let err = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: secondary_tabs,
-            item: item("b"),
-            target_space: space(),
+            item: &item("b"),
+            target_space: &space(),
             target_tabs: main_tabs,
             zone: DropZone::Center,
             insert_index: None,
@@ -116,18 +116,14 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
 }
 
 #[open_gpui::test]
-fn workspace_move_item_to_empty_space_action_creates_detached_root(cx: &mut TestAppContext) {
+fn workspace_move_item_to_empty_space_transaction_creates_detached_root(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let detached = DockSpaceId::from("detached");
 
     let outcome = workspace
-        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
-            source_space: space(),
-            item: item("b"),
-            target_space: detached.clone(),
-        })
+        .commit_item_to_empty_dock_space(&space(), &item("b"), &detached)
         .expect("move to empty dock space should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
@@ -158,7 +154,7 @@ fn workspace_move_item_to_empty_space_action_creates_detached_root(cx: &mut Test
 }
 
 #[open_gpui::test]
-fn workspace_move_tabs_to_empty_space_action_preserves_stack(cx: &mut TestAppContext) {
+fn workspace_move_tabs_to_empty_space_transaction_preserves_stack(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
@@ -183,11 +179,7 @@ fn workspace_move_tabs_to_empty_space_action_preserves_stack(cx: &mut TestAppCon
     let detached = DockSpaceId::from("detached");
 
     let outcome = workspace
-        .apply_action(&DockAction::MoveTabsToEmptyDockSpace {
-            source_space: space(),
-            source_tabs,
-            target_space: detached.clone(),
-        })
+        .commit_tabs_to_empty_dock_space(&space(), source_tabs, &detached)
         .expect("move tabs to empty dock space should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
@@ -211,7 +203,7 @@ fn workspace_move_tabs_to_empty_space_action_preserves_stack(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn workspace_empty_space_actions_reject_existing_target(cx: &mut TestAppContext) {
+fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppContext) {
     let (mut graph, root) = tabs_graph(&["a", "b"], 0);
     let detached = DockSpaceId::from("detached");
     let detached_root = graph.insert_node(DockNode::Tabs {
@@ -223,11 +215,7 @@ fn workspace_empty_space_actions_reject_existing_target(cx: &mut TestAppContext)
     workspace.policy_mut().set_allow_platform_viewports(true);
 
     let err = workspace
-        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
-            source_space: space(),
-            item: item("b"),
-            target_space: detached.clone(),
-        })
+        .commit_item_to_empty_dock_space(&space(), &item("b"), &detached)
         .expect_err("non-empty target should be rejected");
 
     assert_eq!(
@@ -252,7 +240,7 @@ fn workspace_empty_space_actions_reject_existing_target(cx: &mut TestAppContext)
 }
 
 #[open_gpui::test]
-fn workspace_empty_space_actions_reject_floating_only_target(cx: &mut TestAppContext) {
+fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestAppContext) {
     let (mut graph, root) = tabs_graph(&["a", "b"], 0);
     let detached = DockSpaceId::from("detached");
     let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
@@ -272,11 +260,7 @@ fn workspace_empty_space_actions_reject_floating_only_target(cx: &mut TestAppCon
     workspace.policy_mut().set_allow_platform_viewports(true);
 
     let item_err = workspace
-        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
-            source_space: space(),
-            item: item("b"),
-            target_space: detached.clone(),
-        })
+        .commit_item_to_empty_dock_space(&space(), &item("b"), &detached)
         .expect_err("floating-only target should reject item moves");
     assert_eq!(
         item_err,
@@ -286,11 +270,7 @@ fn workspace_empty_space_actions_reject_floating_only_target(cx: &mut TestAppCon
     );
 
     let tabs_err = workspace
-        .apply_action(&DockAction::MoveTabsToEmptyDockSpace {
-            source_space: space(),
-            source_tabs: root,
-            target_space: detached.clone(),
-        })
+        .commit_tabs_to_empty_dock_space(&space(), root, &detached)
         .expect_err("floating-only target should reject tabs moves");
     assert_eq!(
         tabs_err,
@@ -317,17 +297,13 @@ fn workspace_empty_space_actions_reject_floating_only_target(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn workspace_empty_space_actions_require_platform_viewport_policy(cx: &mut TestAppContext) {
+fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     let detached = DockSpaceId::from("detached");
 
     let err = workspace
-        .apply_action(&DockAction::MoveItemToEmptyDockSpace {
-            source_space: space(),
-            item: item("b"),
-            target_space: detached.clone(),
-        })
+        .commit_item_to_empty_dock_space(&space(), &item("b"), &detached)
         .expect_err("platform viewport policy should block detached-space mutation");
 
     assert_eq!(
@@ -351,11 +327,11 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: tabs,
-            item: item("a"),
-            target_space: space(),
+            item: &item("a"),
+            target_space: &space(),
             target_tabs: tabs,
             zone: DropZone::Center,
             insert_index: None,
@@ -384,11 +360,11 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
     );
 
     let outcome = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: tabs,
-            item: item("a"),
-            target_space: space(),
+            item: &item("a"),
+            target_space: &space(),
             target_tabs: tabs,
             zone: DropZone::Center,
             insert_index: Some(3),

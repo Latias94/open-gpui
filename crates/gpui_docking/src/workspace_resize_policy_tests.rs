@@ -1,6 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockNodeId, DockOpApplyError,
     DockPolicyError, DropZone, SplitAxis, host_test_support::*,
+    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -96,11 +97,11 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
     workspace.policy_mut().set_allow_edge_split(false);
 
     let err = workspace
-        .apply_action(&DockAction::MoveTab {
-            source_space: space(),
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
             source_tabs: left_tabs,
-            item: item("a"),
-            target_space: space(),
+            item: &item("a"),
+            target_space: &space(),
             target_tabs: right_tabs,
             zone: DropZone::Right,
             insert_index: None,

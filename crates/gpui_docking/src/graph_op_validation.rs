@@ -65,6 +65,7 @@ impl DockGraph {
                 }
                 Ok(self.apply_op(op))
             }
+            #[cfg(test)]
             DockOp::MoveTabs {
                 source_space,
                 source_tabs,
@@ -106,6 +107,7 @@ impl DockGraph {
                 }
                 Ok(self.apply_op(op))
             }
+            #[cfg(test)]
             DockOp::MoveTabsToEmptyDockSpace {
                 source_space,
                 source_tabs,
@@ -181,10 +183,12 @@ impl DockGraph {
                 self.validate_split_fractions(*split, fractions)?;
                 Ok(self.apply_op(op))
             }
+            #[cfg(test)]
             DockOp::SetSplitFractionsMany { updates } => {
                 self.validate_split_fraction_updates(updates)?;
                 Ok(self.apply_op(op))
             }
+            #[cfg(test)]
             DockOp::SetSplitFractionTwo {
                 split,
                 first_fraction,
@@ -225,6 +229,7 @@ impl DockGraph {
         Ok(())
     }
 
+    #[cfg(test)]
     fn validate_move_tabs(
         &self,
         source_space: &DockSpaceId,

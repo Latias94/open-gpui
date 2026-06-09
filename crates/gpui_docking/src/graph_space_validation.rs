@@ -1,4 +1,6 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId};
+#[cfg(test)]
+use crate::DockNodeId;
+use crate::{DockItemId, DockSpaceId};
 
 use super::DockGraph;
 
@@ -27,6 +29,7 @@ impl DockGraph {
         matches!(target_items.as_slice(), [target_item] if target_item == item)
     }
 
+    #[cfg(test)]
     pub(in crate::graph) fn target_space_is_empty_for_tabs_move(
         &self,
         source_space: &DockSpaceId,

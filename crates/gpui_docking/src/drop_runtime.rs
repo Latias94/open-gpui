@@ -1,10 +1,11 @@
+#[cfg(test)]
+use crate::drop_target::DockDropPreviewIntent;
 use crate::{
     DockNodeId, DockPolicy, DropZone,
     drop_target::{
-        self, DockDropPreviewIntent, DockDropResolution, DockDropResolverInput,
-        DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
-        DockResolvedDropTarget, DockRootDropTarget, DockTabLabelDropTarget,
-        DockTearOffCandidateDropTarget,
+        self, DockDropResolution, DockDropResolverInput, DockEmptySpaceDropTarget,
+        DockFloatingTitleBarDropTarget, DockLeafDropTarget, DockResolvedDropTarget,
+        DockRootDropTarget, DockTabLabelDropTarget, DockTearOffCandidateDropTarget,
     },
 };
 use open_gpui::{Bounds, Pixels, Point};

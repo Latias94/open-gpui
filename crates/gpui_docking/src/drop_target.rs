@@ -185,6 +185,7 @@ pub(crate) struct DockDropResolverInput<'a> {
 }
 
 impl<'a> DockDropResolverInput<'a> {
+    #[cfg(test)]
     pub(crate) fn new(position: Point<Pixels>, policy: &'a DockPolicy) -> Self {
         Self {
             position,

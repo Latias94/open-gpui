@@ -14,7 +14,7 @@ pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
 }
 
 impl DockWorkspace {
-    pub(crate) fn move_tab_action(
+    pub(crate) fn commit_tab_move(
         &mut self,
         request: DockWorkspaceMoveTabRequest<'_>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
@@ -48,7 +48,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn move_item_to_empty_dock_space_action(
+    pub(crate) fn commit_item_to_empty_dock_space(
         &mut self,
         source_space: &DockSpaceId,
         item: &DockItemId,
@@ -62,7 +62,8 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn move_tabs_to_empty_dock_space_action(
+    #[cfg(test)]
+    pub(crate) fn commit_tabs_to_empty_dock_space(
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
