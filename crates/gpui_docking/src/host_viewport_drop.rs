@@ -1,7 +1,7 @@
 use crate::{
     DockHost, DockViewportDropPayload, DockViewportTargetContext,
     drag::{DockDragPayload, DockDragPayloadKind},
-    host_interactions::DockHostInteractionOutcome,
+    host_interaction_outcome::DockHostInteractionOutcome,
 };
 use open_gpui::{Context, Pixels, Point, Window, point};
 

@@ -6,7 +6,7 @@ use crate::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
         DockRootDropTarget, DockTabLabelDropTarget,
     },
-    host_interactions::DockHostInteractionOutcome,
+    host_interaction_outcome::DockHostInteractionOutcome,
 };
 use open_gpui::{Bounds, Context, Pixels, Point};
 
