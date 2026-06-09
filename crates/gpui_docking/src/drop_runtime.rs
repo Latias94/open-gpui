@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::drop_target::DockDropPreviewIntent;
 use crate::{
     DockNodeId, DockPolicy, DropZone,
     drop_target::{
@@ -9,6 +7,14 @@ use crate::{
     },
 };
 use open_gpui::{Bounds, Pixels, Point};
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockDropPreviewSnapshot {
+    target_tabs: DockNodeId,
+    zone: DropZone,
+    insert_index: Option<usize>,
+    preview_bounds: Bounds<Pixels>,
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct DockDropRuntime {
@@ -132,15 +138,15 @@ impl DockDropRuntime {
             None => return false,
         };
         if let Some(existing) = self.target.as_ref()
-            && let Some(existing_intent) = existing.preview_intent()
-            && existing_intent.insert_index.is_some()
-            && existing_intent.preview_bounds.contains(&scene.position)
+            && let Some(existing_preview) = preview_snapshot(existing)
+            && existing_preview.insert_index.is_some()
+            && existing_preview.preview_bounds.contains(&scene.position)
             && target
                 .as_ref()
-                .and_then(DockResolvedDropTarget::preview_intent)
-                .is_some_and(|intent| {
-                    intent.target_tabs == existing_intent.target_tabs
-                        && intent.zone == DropZone::Center
+                .and_then(preview_snapshot)
+                .is_some_and(|preview| {
+                    preview.target_tabs == existing_preview.target_tabs
+                        && preview.zone == DropZone::Center
                 })
         {
             target = Some(existing.clone());
@@ -151,6 +157,10 @@ impl DockDropRuntime {
     pub(crate) fn take_resolved_target(&mut self) -> Option<DockResolvedDropTarget> {
         self.scene = None;
         self.target.take()
+    }
+
+    pub(crate) fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
+        self.target.as_ref()
     }
 
     pub(crate) fn take_resolved_target_excluding_tabs(
@@ -183,18 +193,6 @@ impl DockDropRuntime {
         self.scene.as_mut().expect("scene should be initialized")
     }
 
-    pub(crate) fn preview_bounds(&self, receiver_tabs: DockNodeId) -> Option<Bounds<Pixels>> {
-        let target = self.target.as_ref()?;
-        if !target.matches_drop_receiver(receiver_tabs) {
-            return None;
-        }
-        let intent = target.preview_intent()?;
-        if intent.insert_index.is_some() {
-            return None;
-        }
-        Some(intent.preview_bounds)
-    }
-
     fn replace_target(&mut self, target: Option<DockResolvedDropTarget>) -> bool {
         if self.target == target {
             return false;
@@ -204,11 +202,39 @@ impl DockDropRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) fn preview_intent(&self) -> Option<DockDropPreviewIntent> {
-        self.target
-            .as_ref()
-            .and_then(DockResolvedDropTarget::preview_intent)
+    fn preview_snapshot(&self) -> Option<DockDropPreviewSnapshot> {
+        self.target.as_ref().and_then(preview_snapshot)
     }
+}
+
+fn preview_snapshot(target: &DockResolvedDropTarget) -> Option<DockDropPreviewSnapshot> {
+    let preview_bounds = target.preview_bounds?;
+    let (target_tabs, zone, insert_index) = match target.kind {
+        drop_target::DockResolvedDropTargetKind::TabBar {
+            target_tabs,
+            insert_index,
+        } => (target_tabs, DropZone::Center, Some(insert_index)),
+        drop_target::DockResolvedDropTargetKind::LeafCenter { target_tabs, .. } => {
+            (target_tabs, DropZone::Center, None)
+        }
+        drop_target::DockResolvedDropTargetKind::InnerEdge {
+            target_tabs, zone, ..
+        } => (target_tabs, zone, None),
+        drop_target::DockResolvedDropTargetKind::RootEdge { root, zone, .. } => (root, zone, None),
+        drop_target::DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
+            (target_tabs, DropZone::Center, None)
+        }
+        drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. }
+        | drop_target::DockResolvedDropTargetKind::KnownViewport { .. }
+        | drop_target::DockResolvedDropTargetKind::TearOffCandidate { .. } => return None,
+    };
+
+    Some(DockDropPreviewSnapshot {
+        target_tabs,
+        zone,
+        insert_index,
+        preview_bounds,
+    })
 }
 
 #[cfg(test)]
@@ -240,7 +266,9 @@ mod tests {
             &DockPolicy::default()
         ));
         assert_eq!(
-            runtime.preview_intent().map(|intent| intent.insert_index),
+            runtime
+                .preview_snapshot()
+                .map(|preview| preview.insert_index),
             Some(Some(3))
         );
 
@@ -249,7 +277,9 @@ mod tests {
             &DockPolicy::default()
         ));
         assert_eq!(
-            runtime.preview_intent().map(|intent| intent.insert_index),
+            runtime
+                .preview_snapshot()
+                .map(|preview| preview.insert_index),
             Some(Some(3))
         );
     }
@@ -285,16 +315,14 @@ mod tests {
         let target = runtime
             .take_resolved_target()
             .expect("reorder target should remain available");
-        let intent = target
-            .preview_intent()
-            .expect("tab drop target should project");
-        assert_eq!(intent.zone, DropZone::Center);
-        assert_eq!(intent.insert_index, Some(3));
-        assert!(runtime.preview_intent().is_none());
+        let preview = preview_snapshot(&target).expect("tab drop target should project");
+        assert_eq!(preview.zone, DropZone::Center);
+        assert_eq!(preview.insert_index, Some(3));
+        assert!(runtime.preview_snapshot().is_none());
     }
 
     #[test]
-    fn reorder_target_does_not_render_drop_preview() {
+    fn reorder_target_keeps_insert_index_in_preview_snapshot() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
         let position = point(px(20.0), px(28.0));
@@ -311,7 +339,12 @@ mod tests {
             &DockPolicy::default()
         ));
 
-        assert_eq!(runtime.preview_bounds(tabs), None);
+        assert_eq!(
+            runtime
+                .preview_snapshot()
+                .map(|preview| preview.insert_index),
+            Some(Some(0))
+        );
     }
 
     #[test]

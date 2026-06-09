@@ -419,12 +419,8 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
 
-    let preview = selector_for(
-        &visual,
-        &host,
-        DockDebugRegion::DropPreview { tabs: right_tabs },
-    )
-    .expect("drop preview selector should be emitted");
+    let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
+        .expect("drop preview selector should be emitted");
     let preview_bounds = debug_bounds(&mut visual, &preview);
     assert!(preview_bounds.size.width > px(0.0));
     assert!(preview_bounds.size.height > px(0.0));
@@ -479,6 +475,12 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    target_visual = VisualTestContext::from_window(target_window.into(), cx);
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("empty target should render a host-level drop preview");
+    assert!(debug_bounds(&mut target_visual, &preview).size.width > px(0.0));
+
     target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let target_visual = VisualTestContext::from_window(target_window.into(), cx);
@@ -649,12 +651,7 @@ fn policy_rejected_edge_hover_does_not_render_drop_preview(cx: &mut TestAppConte
     let visual = VisualTestContext::from_window(window.into(), cx);
 
     assert!(
-        selector_for(
-            &visual,
-            &host,
-            DockDebugRegion::DropPreview { tabs: right_tabs }
-        )
-        .is_none(),
+        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
         "policy-rejected edge hover should not render preview"
     );
 }

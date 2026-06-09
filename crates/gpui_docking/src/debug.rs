@@ -33,11 +33,8 @@ pub(crate) enum DockDebugRegion {
         /// Runtime tabs node id.
         node: DockNodeId,
     },
-    /// A tab drag/drop preview overlay for one tabs container.
-    DropPreview {
-        /// Runtime tabs node id.
-        tabs: DockNodeId,
-    },
+    /// The active drag/drop preview overlay for the host.
+    DropPreview,
     /// A tab label for one dock item.
     Tab {
         /// Runtime tabs node id containing the item.

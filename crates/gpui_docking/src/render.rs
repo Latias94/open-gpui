@@ -61,6 +61,10 @@ impl Render for DockHost {
             host = host.child(self.render_floating_container(*floating, &session, cx));
         }
 
+        if let Some(preview) = self.render_host_drop_preview(&session) {
+            host = host.child(preview);
+        }
+
         host
     }
 }
@@ -199,5 +203,29 @@ impl DockHost {
             .text_color(rgb(0xb42318))
             .child(format!("Missing dock node: {}", node.as_u64()))
             .into_any_element()
+    }
+
+    fn render_host_drop_preview(&mut self, session: &DockHostRenderSession) -> Option<AnyElement> {
+        let target = self.interaction().resolved_drop_target()?;
+        let bounds = target.preview_bounds?;
+        let selector = self.record_debug_selector(
+            DockDebugRegion::DropPreview,
+            format!("{}:drop-preview", session.selector_prefix()),
+        );
+
+        Some(
+            div()
+                .id(selector.clone())
+                .debug_selector(move || selector)
+                .absolute()
+                .left(bounds.origin.x)
+                .top(bounds.origin.y)
+                .w(bounds.size.width)
+                .h(bounds.size.height)
+                .border_1()
+                .border_color(rgb(0x2563eb))
+                .bg(rgba(0x60a5fa47))
+                .into_any_element(),
+        )
     }
 }

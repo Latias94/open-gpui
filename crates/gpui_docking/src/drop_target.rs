@@ -5,14 +5,6 @@ use crate::{
 use open_gpui::{Bounds, Pixels, Point, WindowBounds};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropPreviewIntent {
-    pub(crate) target_tabs: DockNodeId,
-    pub(crate) zone: DropZone,
-    pub(crate) insert_index: Option<usize>,
-    pub(crate) preview_bounds: Bounds<Pixels>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockResolvedDropTarget {
     pub(crate) kind: DockResolvedDropTargetKind,
     pub(crate) source: DockDropResolveSource,
@@ -21,53 +13,6 @@ pub(crate) struct DockResolvedDropTarget {
 }
 
 impl DockResolvedDropTarget {
-    pub(crate) fn matches_drop_receiver(&self, receiver_tabs: DockNodeId) -> bool {
-        match self.kind {
-            DockResolvedDropTargetKind::TabBar { target_tabs, .. }
-            | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-            | DockResolvedDropTargetKind::InnerEdge { target_tabs, .. }
-            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-                target_tabs == receiver_tabs
-            }
-            DockResolvedDropTargetKind::RootEdge {
-                root, leaf_tabs, ..
-            } => root == receiver_tabs || leaf_tabs == receiver_tabs,
-            DockResolvedDropTargetKind::EmptyDockSpace { .. }
-            | DockResolvedDropTargetKind::KnownViewport { .. }
-            | DockResolvedDropTargetKind::TearOffCandidate { .. } => false,
-        }
-    }
-
-    pub(crate) fn preview_intent(&self) -> Option<DockDropPreviewIntent> {
-        let preview_bounds = self.preview_bounds?;
-        let (target_tabs, zone, insert_index) = match self.kind {
-            DockResolvedDropTargetKind::TabBar {
-                target_tabs,
-                insert_index,
-            } => (target_tabs, DropZone::Center, Some(insert_index)),
-            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. } => {
-                (target_tabs, DropZone::Center, None)
-            }
-            DockResolvedDropTargetKind::InnerEdge {
-                target_tabs, zone, ..
-            } => (target_tabs, zone, None),
-            DockResolvedDropTargetKind::RootEdge { root, zone, .. } => (root, zone, None),
-            DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-                (target_tabs, DropZone::Center, None)
-            }
-            DockResolvedDropTargetKind::EmptyDockSpace { .. }
-            | DockResolvedDropTargetKind::KnownViewport { .. }
-            | DockResolvedDropTargetKind::TearOffCandidate { .. } => return None,
-        };
-
-        Some(DockDropPreviewIntent {
-            target_tabs,
-            zone,
-            insert_index,
-            preview_bounds,
-        })
-    }
-
     pub(crate) fn zone(&self) -> Option<DropZone> {
         match self.kind {
             DockResolvedDropTargetKind::TabBar { .. }
@@ -522,7 +467,7 @@ mod tests {
 
     #[test]
     fn center_point_resolves_to_center_zone() {
-        let intent = resolve_tabs_drop_with_central(
+        let target = resolve_tabs_drop_with_central(
             tabs(),
             bounds(300.0, 200.0),
             point(px(160.0), px(120.0)),
@@ -530,11 +475,13 @@ mod tests {
             &policy(),
         )
         .and_then(DockDropResolution::target)
-        .and_then(|target| target.preview_intent())
         .expect("point should resolve");
 
-        assert_eq!(intent.zone, DropZone::Center);
-        assert_eq!(intent.preview_bounds.size, size(px(300.0), px(200.0)));
+        assert_eq!(target.zone(), Some(DropZone::Center));
+        assert_eq!(
+            target.preview_bounds.map(|bounds| bounds.size),
+            Some(size(px(300.0), px(200.0)))
+        );
     }
 
     #[test]
@@ -550,8 +497,7 @@ mod tests {
                 &policy()
             )
             .and_then(DockDropResolution::target)
-            .and_then(|target| target.preview_intent())
-            .map(|intent| intent.zone),
+            .and_then(|target| target.zone()),
             Some(DropZone::Left)
         );
         assert_eq!(
@@ -563,8 +509,7 @@ mod tests {
                 &policy()
             )
             .and_then(DockDropResolution::target)
-            .and_then(|target| target.preview_intent())
-            .map(|intent| intent.zone),
+            .and_then(|target| target.zone()),
             Some(DropZone::Right)
         );
         assert_eq!(
@@ -576,8 +521,7 @@ mod tests {
                 &policy()
             )
             .and_then(DockDropResolution::target)
-            .and_then(|target| target.preview_intent())
-            .map(|intent| intent.zone),
+            .and_then(|target| target.zone()),
             Some(DropZone::Top)
         );
         assert_eq!(
@@ -589,8 +533,7 @@ mod tests {
                 &policy()
             )
             .and_then(DockDropResolution::target)
-            .and_then(|target| target.preview_intent())
-            .map(|intent| intent.zone),
+            .and_then(|target| target.zone()),
             Some(DropZone::Bottom)
         );
     }
@@ -622,8 +565,7 @@ mod tests {
                 &policy()
             )
             .and_then(DockDropResolution::target)
-            .and_then(|target| target.preview_intent())
-            .map(|intent| intent.zone),
+            .and_then(|target| target.zone()),
             Some(DropZone::Center)
         );
     }
@@ -661,10 +603,15 @@ mod tests {
             &policy(),
         )
         .and_then(DockDropResolution::target)
-        .and_then(|target| target.preview_intent())
         .expect("left half of the tab should resolve");
-        assert_eq!(before.zone, DropZone::Center);
-        assert_eq!(before.insert_index, Some(2));
+        assert_eq!(before.zone(), Some(DropZone::Center));
+        assert_eq!(
+            before.kind,
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs: tabs(),
+                insert_index: 2,
+            }
+        );
 
         let after = resolve_tab_reorder_drop_with_central(
             tabs(),
@@ -675,10 +622,15 @@ mod tests {
             &policy(),
         )
         .and_then(DockDropResolution::target)
-        .and_then(|target| target.preview_intent())
         .expect("right half of the tab should resolve");
-        assert_eq!(after.zone, DropZone::Center);
-        assert_eq!(after.insert_index, Some(3));
+        assert_eq!(after.zone(), Some(DropZone::Center));
+        assert_eq!(
+            after.kind,
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs: tabs(),
+                insert_index: 3,
+            }
+        );
     }
 
     #[test]
@@ -814,10 +766,10 @@ mod tests {
                 zone: DropZone::Left,
             }
         );
-        assert_eq!(
-            target.preview_intent().map(|intent| intent.target_tabs),
-            Some(root),
-            "outer edge commits against the root node"
+        assert_eq!(target.zone(), Some(DropZone::Left));
+        assert!(
+            target.preview_bounds.is_some(),
+            "outer edge should carry product preview bounds"
         );
     }
 
@@ -839,7 +791,11 @@ mod tests {
             target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace { space }
         );
-        assert!(target.preview_intent().is_none());
+        assert_eq!(
+            target.preview_bounds,
+            Some(bounds(300.0, 200.0)),
+            "empty dock spaces now carry host-overlay preview bounds"
+        );
     }
 
     #[test]
@@ -865,10 +821,8 @@ mod tests {
                 target_tabs,
             }
         );
-        assert_eq!(
-            target.preview_intent().map(|intent| intent.zone),
-            Some(DropZone::Center)
-        );
+        assert_eq!(target.zone(), Some(DropZone::Center));
+        assert_eq!(target.preview_bounds, Some(bounds(220.0, 140.0)));
     }
 
     #[test]

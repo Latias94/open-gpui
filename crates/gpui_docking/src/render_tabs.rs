@@ -6,7 +6,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, black, div, rgb, rgba, white,
+    ParentElement, StatefulInteractiveElement, Styled, black, div, rgb, white,
 };
 
 impl DockHost {
@@ -36,7 +36,7 @@ impl DockHost {
         };
         let stack_payload = DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
 
-        let mut tabs = div()
+        let tabs = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -142,43 +142,9 @@ impl DockHost {
             tab_bar = tab_bar.child(tab);
         }
 
-        tabs = tabs.child(tab_bar);
-        tabs = tabs.child(self.render_panel(&active_item, session, cx));
-        if let Some(preview) = self.render_drop_preview(node, session) {
-            tabs = tabs.child(preview);
-        }
-        tabs.into_any_element()
-    }
-
-    fn render_drop_preview(
-        &mut self,
-        node: DockNodeId,
-        session: &DockHostRenderSession,
-    ) -> Option<AnyElement> {
-        let bounds = self.tab_drop_preview_bounds(node)?;
-        let selector = self.record_debug_selector(
-            DockDebugRegion::DropPreview { tabs: node },
-            format!(
-                "{}:tabs:{}:drop-preview",
-                session.selector_prefix(),
-                node.as_u64()
-            ),
-        );
-
-        Some(
-            div()
-                .id(selector.clone())
-                .debug_selector(move || selector)
-                .absolute()
-                .left(bounds.origin.x)
-                .top(bounds.origin.y)
-                .w(bounds.size.width)
-                .h(bounds.size.height)
-                .border_1()
-                .border_color(rgb(0x2563eb))
-                .bg(rgba(0x60a5fa47))
-                .into_any_element(),
-        )
+        tabs.child(tab_bar)
+            .child(self.render_panel(&active_item, session, cx))
+            .into_any_element()
     }
 
     fn render_panel(

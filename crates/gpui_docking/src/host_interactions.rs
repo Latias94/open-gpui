@@ -332,13 +332,6 @@ impl DockHost {
         Some(DockHostInteractionOutcome::from_commit_result(result, true))
     }
 
-    pub(crate) fn tab_drop_preview_bounds(
-        &self,
-        target_tabs: DockNodeId,
-    ) -> Option<Bounds<Pixels>> {
-        self.interaction().tab_drop_preview_bounds(target_tabs)
-    }
-
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
         self.interaction().splitter_drag()

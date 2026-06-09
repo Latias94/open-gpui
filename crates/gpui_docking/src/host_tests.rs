@@ -243,12 +243,8 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     target_visual.simulate_mouse_move(target, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     let mut target_visual = VisualTestContext::from_window(target_window.into(), cx);
-    let preview = selector_for(
-        &target_visual,
-        &target_host,
-        DockDebugRegion::DropPreview { tabs: target_tabs },
-    )
-    .expect("target host should render a drop preview for cross-window drag");
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .expect("target host should render a drop preview for cross-window drag");
     assert!(debug_bounds(&mut target_visual, &preview).size.width > px(0.0));
 
     target_visual.simulate_mouse_up(target, MouseButton::Left, Modifiers::none());
