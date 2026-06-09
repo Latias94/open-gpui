@@ -1,8 +1,24 @@
 use crate::{
-    DockController, DockGraph, DockNode, DockSpaceId, DockViewportClosePolicy,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockWorkspace, host_test_support::*,
+    DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockViewportClosePolicy, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
+    host_test_support::*,
 };
-use open_gpui::{AppContext as _, TestAppContext, VisualTestContext};
+use open_gpui::{AppContext as _, TestAppContext, VisualTestContext, point, px};
+
+fn tear_off_request(
+    source_space: DockSpaceId,
+    source_tabs: DockNodeId,
+    item: DockItemId,
+) -> DockViewportTearOffRequest {
+    DockViewportTearOffRequest {
+        source_space,
+        source_tabs,
+        item,
+        release_position: point(px(900.0), px(900.0)),
+        suggested_window_bounds: None,
+    }
+}
 
 #[open_gpui::test]
 fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
@@ -44,6 +60,56 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
             .window_for_space(&secondary_space),
         None
     );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(primary_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let outcome = cx
+        .update(|app| {
+            runtime.open_tear_off_viewport(
+                tear_off_request(primary_space.clone(), source_tabs, item("a")),
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("tear-off viewport should open through runtime handle");
+
+    let DockViewportTearOffOpenOutcome::Completed(completed) = outcome else {
+        panic!("tear-off should complete through the handle");
+    };
+    assert_eq!(completed.pending.target_space, detached_space);
+    assert_eq!(runtime.pending_tear_off_len(), 0);
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&detached_space),
+        Some(completed.registration.window)
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&primary_space),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("a")]
+        );
+    });
 }
 
 #[open_gpui::test]

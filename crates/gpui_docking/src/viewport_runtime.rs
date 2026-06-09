@@ -1,8 +1,14 @@
 use crate::{
-    DockController, DockSpaceId, DockViewportAdapter, DockViewportCloseOutcome,
-    DockViewportClosePolicy, DockViewportOpenOutcome, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
-    DockViewportShouldCloseOutcome, viewport_close_gate::DockViewportCloseGate,
+    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
+    DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
+    DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
+    DockViewportTearOffRequest, DockViewportTearOffTick,
+    viewport_close_gate::DockViewportCloseGate,
 };
 use open_gpui::{AnyWindowHandle, App, Entity, Result, WindowId, WindowOptions};
 use std::rc::Rc;
@@ -17,6 +23,8 @@ pub struct DockViewportRuntime {
     controller: Entity<DockController>,
     adapter: DockViewportAdapter,
     close_gate: DockViewportCloseGate,
+    tear_off: DockViewportTearOffMachine,
+    tear_off_tick: DockViewportTearOffTick,
 }
 
 fn install_should_close_hook(
@@ -45,6 +53,8 @@ impl DockViewportRuntime {
             controller,
             adapter: DockViewportAdapter::new(),
             close_gate: DockViewportCloseGate::new(close_policy),
+            tear_off: DockViewportTearOffMachine::default(),
+            tear_off_tick: DockViewportTearOffTick::default(),
         }
     }
 
@@ -60,6 +70,8 @@ impl DockViewportRuntime {
             controller,
             adapter,
             close_gate,
+            tear_off: DockViewportTearOffMachine::default(),
+            tear_off_tick: DockViewportTearOffTick::default(),
         }
     }
 
@@ -105,6 +117,178 @@ impl DockViewportRuntime {
         })
     }
 
+    /// Returns pending tear-off item ids in stable order.
+    pub fn pending_tear_off_items(&self) -> Vec<DockItemId> {
+        self.tear_off.pending_items()
+    }
+
+    /// Returns the number of pending tear-off transactions.
+    pub fn pending_tear_off_len(&self) -> usize {
+        self.tear_off.len()
+    }
+
+    /// Returns the pending tear-off request for an item.
+    pub fn pending_tear_off(&self, item: &DockItemId) -> Option<&DockViewportTearOffPending> {
+        self.tear_off.pending(item)
+    }
+
+    /// Records a tear-off request without opening a window yet.
+    ///
+    /// This supports platform integrations where the release path requests a window and a later
+    /// window-created callback completes the transaction.
+    pub fn begin_tear_off_request(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        target_space: impl Into<DockSpaceId>,
+    ) -> DockViewportTearOffBeginOutcome {
+        let now = self.next_tear_off_tick();
+        self.begin_tear_off_request_at(request, target_space, now)
+    }
+
+    /// Records a tear-off request at an explicit logical clock value.
+    pub fn begin_tear_off_request_at(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        target_space: impl Into<DockSpaceId>,
+        now: DockViewportTearOffTick,
+    ) -> DockViewportTearOffBeginOutcome {
+        self.tear_off.begin(request, target_space.into(), now)
+    }
+
+    /// Cancels a pending tear-off request for an item.
+    pub fn cancel_tear_off_request(
+        &mut self,
+        item: &DockItemId,
+        reason: DockViewportTearOffCancelReason,
+    ) -> Option<DockViewportTearOffCancelled> {
+        self.tear_off.cancel(item, reason)
+    }
+
+    /// Removes stale pending tear-off requests at an explicit logical clock value.
+    pub fn expire_tear_off_requests_at(
+        &mut self,
+        now: DockViewportTearOffTick,
+    ) -> Vec<DockViewportTearOffCancelled> {
+        self.tear_off.expire(now)
+    }
+
+    /// Completes a pending tear-off request after a platform viewport window exists.
+    ///
+    /// The runtime validates that the source item still belongs to its recorded source tabs,
+    /// registers the destination viewport, commits the graph move, and clears pending state.
+    pub fn complete_tear_off_viewport(
+        &mut self,
+        item: &DockItemId,
+        window: impl Into<AnyWindowHandle>,
+        cx: &mut App,
+    ) -> DockViewportTearOffCompletionOutcome {
+        let now = self.next_tear_off_tick();
+        self.complete_tear_off_viewport_at(item, window, now, cx)
+    }
+
+    /// Completes a pending tear-off request at an explicit logical clock value.
+    pub fn complete_tear_off_viewport_at(
+        &mut self,
+        item: &DockItemId,
+        window: impl Into<AnyWindowHandle>,
+        now: DockViewportTearOffTick,
+        cx: &mut App,
+    ) -> DockViewportTearOffCompletionOutcome {
+        let item = item.clone();
+        let readiness = self.prepare_tear_off_completion(&item, now, cx);
+        let pending = match readiness {
+            DockViewportTearOffCompletionPending::Pending(pending) => pending,
+            DockViewportTearOffCompletionPending::Cancelled(cancelled) => {
+                return DockViewportTearOffCompletionOutcome::Cancelled(cancelled);
+            }
+            DockViewportTearOffCompletionPending::Missing => {
+                return DockViewportTearOffCompletionOutcome::MissingPending { item };
+            }
+        };
+
+        let registration = self
+            .adapter
+            .register_viewport_with_outcome(pending.target_space.clone(), window);
+        self.close_gate.sync_adapter(&self.adapter);
+        match self.commit_tear_off_move(&pending, cx) {
+            Ok(action) => {
+                DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted {
+                    pending,
+                    registration,
+                    action,
+                })
+            }
+            Err(error) => {
+                self.adapter.unregister_space(&pending.target_space);
+                self.close_gate.sync_adapter(&self.adapter);
+                DockViewportTearOffCompletionOutcome::CommitFailed(
+                    DockViewportTearOffCommitFailure {
+                        pending,
+                        registration,
+                        error,
+                    },
+                )
+            }
+        }
+    }
+
+    /// Opens a controller-backed viewport window and completes a tear-off transaction.
+    ///
+    /// The graph is not mutated until the destination viewport has opened and registered
+    /// successfully. Duplicate requests for the same item are idempotent and do not open another
+    /// window.
+    pub fn open_tear_off_viewport(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        target_space: impl Into<DockSpaceId>,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> Result<DockViewportTearOffOpenOutcome> {
+        let item = request.item.clone();
+        let begin = self.begin_tear_off_request(request, target_space);
+        let pending = match begin {
+            DockViewportTearOffBeginOutcome::Pending(pending) => pending,
+            DockViewportTearOffBeginOutcome::Duplicate(pending) => {
+                return Ok(DockViewportTearOffOpenOutcome::Duplicate(pending));
+            }
+        };
+
+        let opened = match self.open_viewport(pending.target_space.clone(), options, cx) {
+            Ok(opened) => opened,
+            Err(error) => {
+                self.tear_off
+                    .cancel(&item, DockViewportTearOffCancelReason::Cancelled);
+                return Err(error);
+            }
+        };
+
+        Ok(
+            match self.complete_tear_off_viewport(&item, opened.window, cx) {
+                DockViewportTearOffCompletionOutcome::Completed(completed) => {
+                    DockViewportTearOffOpenOutcome::Completed(completed)
+                }
+                DockViewportTearOffCompletionOutcome::Cancelled(cancelled) => {
+                    self.adapter.unregister_space(&pending.target_space);
+                    self.close_gate.sync_adapter(&self.adapter);
+                    DockViewportTearOffOpenOutcome::Cancelled(cancelled)
+                }
+                DockViewportTearOffCompletionOutcome::MissingPending { item } => {
+                    DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled {
+                        pending,
+                        reason: if self.controller.read(cx).graph().contains_item(&item) {
+                            DockViewportTearOffCancelReason::SourceMoved
+                        } else {
+                            DockViewportTearOffCancelReason::SourceMissing
+                        },
+                    })
+                }
+                DockViewportTearOffCompletionOutcome::CommitFailed(failure) => {
+                    DockViewportTearOffOpenOutcome::CommitFailed(failure)
+                }
+            },
+        )
+    }
+
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.
     ///
     /// Close policy is applied by [`Self::handle_window_should_close`] before GPUI accepts a close.
@@ -148,6 +332,94 @@ impl DockViewportRuntime {
         Ok(outcome)
     }
 
+    fn next_tear_off_tick(&mut self) -> DockViewportTearOffTick {
+        let tick = self.tear_off_tick;
+        self.tear_off_tick = self.tear_off_tick.saturating_add(1);
+        tick
+    }
+
+    fn prepare_tear_off_completion(
+        &mut self,
+        item: &DockItemId,
+        now: DockViewportTearOffTick,
+        cx: &App,
+    ) -> DockViewportTearOffCompletionPending {
+        let Some(pending) = self.tear_off.pending(item).cloned() else {
+            return DockViewportTearOffCompletionPending::Missing;
+        };
+        if pending.is_expired_at(now) {
+            return DockViewportTearOffCompletionPending::Cancelled(
+                self.tear_off
+                    .cancel(item, DockViewportTearOffCancelReason::Expired)
+                    .expect("pending item should still be present"),
+            );
+        }
+
+        match self.tear_off_source_status(&pending, cx) {
+            DockViewportTearOffSourceStatus::Ready => self.tear_off.take_for_completion(item, now),
+            DockViewportTearOffSourceStatus::Missing => {
+                DockViewportTearOffCompletionPending::Cancelled(
+                    self.tear_off
+                        .cancel(item, DockViewportTearOffCancelReason::SourceMissing)
+                        .expect("pending item should still be present"),
+                )
+            }
+            DockViewportTearOffSourceStatus::Moved => {
+                DockViewportTearOffCompletionPending::Cancelled(
+                    self.tear_off
+                        .cancel(item, DockViewportTearOffCancelReason::SourceMoved)
+                        .expect("pending item should still be present"),
+                )
+            }
+        }
+    }
+
+    fn tear_off_source_status(
+        &self,
+        pending: &DockViewportTearOffPending,
+        cx: &App,
+    ) -> DockViewportTearOffSourceStatus {
+        let graph = self.controller.read(cx).graph();
+        graph
+            .find_item_in_space(&pending.request.source_space, &pending.request.item)
+            .map(|(tabs, _)| {
+                if tabs == pending.request.source_tabs {
+                    DockViewportTearOffSourceStatus::Ready
+                } else {
+                    DockViewportTearOffSourceStatus::Moved
+                }
+            })
+            .unwrap_or_else(|| {
+                if graph.contains_item(&pending.request.item) {
+                    DockViewportTearOffSourceStatus::Moved
+                } else {
+                    DockViewportTearOffSourceStatus::Missing
+                }
+            })
+    }
+
+    fn commit_tear_off_move(
+        &self,
+        pending: &DockViewportTearOffPending,
+        cx: &mut App,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.controller.update(cx, |controller, cx| {
+            let outcome = controller.apply_action(&DockAction::MoveItemToEmptyDockSpace {
+                source_space: pending.request.source_space.clone(),
+                item: pending.request.item.clone(),
+                target_space: pending.target_space.clone(),
+            });
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
     /// Exports serializable placement snapshots from the adapter.
     pub fn export_placement(&self) -> DockViewportPlacementLayout {
         self.adapter.export_placement()
@@ -160,4 +432,11 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
         self.adapter.apply_placement(placement)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockViewportTearOffSourceStatus {
+    Ready,
+    Missing,
+    Moved,
 }
