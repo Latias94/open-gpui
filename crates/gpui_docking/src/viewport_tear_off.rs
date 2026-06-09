@@ -84,3 +84,125 @@ impl DockViewportAdapter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DockHost, DockViewportAdapter};
+    use open_gpui::{
+        AnyWindowHandle, Bounds, DisplayId, Pixels, WindowHandle, WindowId, point, px, size,
+    };
+    use slotmap::Key;
+
+    fn space(id: &str) -> DockSpaceId {
+        DockSpaceId::from(id)
+    }
+
+    fn item(id: &str) -> DockItemId {
+        DockItemId::from(id)
+    }
+
+    fn handle(id: u64) -> AnyWindowHandle {
+        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
+    }
+
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    #[test]
+    fn tear_off_release_inside_known_viewport_returns_hit() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        adapter.register_viewport(main.clone(), handle(1));
+        adapter.update_snapshot(
+            &main,
+            Some(DisplayId::new(7)),
+            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+
+        assert_eq!(
+            adapter.resolve_tear_off_request(
+                main.clone(),
+                DockNodeId::null(),
+                item("a"),
+                point(px(115.0), px(225.0)),
+                None,
+                &DockPolicy::default(),
+            ),
+            DockViewportTearOffOutcome::KnownViewport(DockViewportHit {
+                space: main,
+                host_position: point(px(5.0), px(5.0)),
+            })
+        );
+    }
+
+    #[test]
+    fn tear_off_release_outside_viewports_respects_platform_policy() {
+        let adapter = DockViewportAdapter::new();
+        let main = space("main");
+
+        assert_eq!(
+            adapter.resolve_tear_off_request(
+                main,
+                DockNodeId::null(),
+                item("a"),
+                point(px(900.0), px(900.0)),
+                None,
+                &DockPolicy::default(),
+            ),
+            DockViewportTearOffOutcome::Rejected(DockPolicyError::PlatformViewportsDisabled)
+        );
+    }
+
+    #[test]
+    fn tear_off_release_outside_viewports_emits_request_when_enabled() {
+        let adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let item = item("a");
+        let release_position = point(px(900.0), px(900.0));
+        let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
+        let mut policy = DockPolicy::default();
+        policy.set_allow_platform_viewports(true);
+
+        assert_eq!(
+            adapter.resolve_tear_off_request(
+                main.clone(),
+                DockNodeId::null(),
+                item.clone(),
+                release_position,
+                Some(suggested_window_bounds),
+                &policy,
+            ),
+            DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
+                source_space: main,
+                source_tabs: DockNodeId::null(),
+                item,
+                release_position,
+                suggested_window_bounds: Some(suggested_window_bounds),
+            })
+        );
+    }
+
+    #[test]
+    fn stale_viewport_bounds_do_not_block_tear_off_request() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        adapter.register_viewport(main.clone(), handle(1));
+        let mut policy = DockPolicy::default();
+        policy.set_allow_platform_viewports(true);
+
+        assert!(matches!(
+            adapter.resolve_tear_off_request(
+                main,
+                DockNodeId::null(),
+                item("a"),
+                point(px(115.0), px(225.0)),
+                None,
+                &policy,
+            ),
+            DockViewportTearOffOutcome::Requested(_)
+        ));
+    }
+}
