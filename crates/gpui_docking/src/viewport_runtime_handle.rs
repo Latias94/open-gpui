@@ -332,11 +332,6 @@ impl DockViewportRuntimeHandle {
         self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
     }
 
-    /// Handles a GPUI window-closed notification through the shared runtime.
-    pub fn handle_window_closed(&self, window_id: WindowId) -> DockViewportCloseOutcome {
-        self.runtime.borrow_mut().handle_window_closed(window_id)
-    }
-
     /// Handles a GPUI window-closed notification and applies close policies that mutate graph.
     pub fn handle_window_closed_with_app(
         &self,
