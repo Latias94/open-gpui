@@ -31,12 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hybrid overlays, tile indexes, quadtrees, and candidate Rust crates.
 - Added a native `open-gpui-canvas-notes` note-map example with a JSON Canvas fixture, kind
   registry paint/label policy, selected-node overlay placement, and fixture round-trip coverage.
+- Added editor-backed GPUI canvas view helpers that own default input mapping, drag capture,
+  focus, keyboard dispatch, paint-frame construction, and sparse overlay handoff.
 
 ### Changed
 
 - Tightened pre-release canvas APIs by removing compatibility constructors that accepted
   caller-supplied `SpatialIndex` values. Runtime cache ownership now stays centralized in
   `CanvasRuntime`.
+- Extracted built-in canvas tools into state-machine modules while keeping `CanvasEditor` as the
+  mutation, gesture, history, and runtime-sync facade.
+- Moved final runtime query filtering, z-ordering, stale suppression, and precise-hit handoff behind
+  an internal runtime query module. `SpatialIndex` remains a simple oracle/fallback model, and the
+  pre-release `CanvasSpatialIndex` trait was removed.
 - Persistent undo and redo now append the prepared mutation to the log and then apply the same
   prepared mutation in memory, avoiding a second prepare/apply pass.
 - Removed the pre-release `CanvasPaintModel::from_runtime_parts*` constructors so paint snapshots

@@ -19,9 +19,10 @@ command, query, tool, and persistence boundaries over early feature breadth.
   source and target roles while picking endpoints, and connection previews snap to valid target
   endpoints.
 - `CanvasGraph` provides zero-copy graph queries over the canonical document records.
-- `CanvasRuntime` owns runtime caches for spatial hit testing and indexed graph queries. The
-  underlying `SpatialIndex` still exposes the replaceable query boundary for future R-tree, tile,
-  or GPU-assisted indexes.
+- `CanvasRuntime` owns runtime caches for spatial hit testing, edge geometry, and indexed graph
+  queries. Its runtime query module keeps final filtering, ordering, stale-record suppression, and
+  precise hit testing inside canvas-owned code; future R-tree, tile, or GPU-assisted indexes should
+  act as coarse candidate providers.
 - `CanvasGeometryResolver` centralizes record bounds, handle positions, route paths, edge bounds,
   hit areas, endpoint picking, previews, and paint fallback geometry.
 - `CanvasKindRegistry` lets applications register node, edge, and shape kind handlers for
@@ -365,19 +366,10 @@ canvas callback. `CanvasPaintModel` owns a consistent document, runtime, kind-re
 and interaction snapshot; applications construct it from a document or `CanvasEditor` instead of
 assembling those parts by hand.
 
-```rust
-use open_gpui_canvas::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view};
-
-fn view(document: open_gpui_canvas::CanvasDocument) {
-    let model = CanvasPaintModel::new(document, Default::default());
-    let element = canvas_view(model, CanvasPaintOptions::default(), CanvasPaintTheme::default());
-    let _ = element;
-}
-```
-
-Editor-backed applications can use the deeper default view to keep GPUI input wiring inside the
-canvas adapter. The adapter maps mouse, wheel, focus, drag-capture, and keyboard events into
-`CanvasEvent`; the application only decides how an event is applied to its editor.
+Editor-backed applications should start with `canvas_editor_view` or
+`canvas_editor_view_with_frame`. These helpers keep GPUI input wiring inside the canvas adapter:
+mouse, wheel, focus, drag-capture, and keyboard events become renderer-neutral `CanvasEvent` values,
+and the application decides how to apply those events to its editor.
 
 ```rust
 use open_gpui_canvas::{
@@ -405,6 +397,18 @@ fn render_canvas(this: &MyView, cx: &mut open_gpui::Context<MyView>) -> impl ope
 
 fn handle_key_down(view: &mut MyView, event: &open_gpui::KeyDownEvent) {
     let _ = view.editor.handle_event(canvas_editor_key_down_event(event));
+}
+```
+
+Custom renderers and read-only previews can still use the lower-level `canvas_view` path directly.
+
+```rust
+use open_gpui_canvas::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, canvas_view};
+
+fn preview(document: open_gpui_canvas::CanvasDocument) {
+    let model = CanvasPaintModel::new(document, Default::default());
+    let element = canvas_view(model, CanvasPaintOptions::default(), CanvasPaintTheme::default());
+    let _ = element;
 }
 ```
 
@@ -450,10 +454,10 @@ cargo nextest run -p open-gpui-canvas gpui::tests::collect_visible_records_keeps
 cargo bench -p open-gpui-canvas --bench large_canvas
 ```
 
-Use this before and after replacing `SpatialIndex` with an R-tree, tile index, or GPU-assisted
-culling adapter. The important signal is not the absolute number on one machine; it is whether
-large documents continue to route rendering work through visible-record culling instead of
-per-record GPUI elements.
+Use this before and after changing the runtime candidate cache, such as replacing the internal base
+with an R-tree, tile index, packed AABB index, or GPU-assisted culling adapter. The important signal
+is not the absolute number on one machine; it is whether large documents continue to route
+rendering work through visible-record culling instead of per-record GPUI elements.
 
 ## Add A Custom Tool
 

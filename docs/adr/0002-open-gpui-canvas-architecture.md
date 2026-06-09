@@ -84,13 +84,12 @@ bounds, precise hit areas, and endpoint locations. Runtime caches, built-in tool
 previews, culling, and GPUI paint all use this resolver path so a custom router or registered kind
 does not have to be reimplemented in every subsystem.
 
-The native smoke example exercises the interaction boundary without expanding the public adapter
-surface. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
-render, and registers GPUI pointer and wheel listeners from the canvas paint callback where the
-actual canvas bounds are known. `CanvasInputMapper` converts window-space GPUI events into
-canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor.
-The same example tracks focus on the canvas container and dispatches key-down events through
-`CanvasInputMapper::key_down_event`, so Delete, Backspace, and Escape use the same reducer path as
+The native smoke example exercises the interaction boundary through the default editor-backed
+adapter. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
+render, and uses `canvas_editor_view` so GPUI pointer, wheel, focus, drag-capture, and keyboard
+events are registered where the actual canvas bounds are known. `CanvasInputMapper` converts
+window-space GPUI events into canvas-local `CanvasEvent` values, while mutation remains in the
+application-owned editor. Delete, Backspace, and Escape use the same reducer path as
 application-owned keyboard integrations.
 
 Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
