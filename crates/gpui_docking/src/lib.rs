@@ -191,8 +191,8 @@ pub use graph::*;
 pub use host::*;
 pub use ids::*;
 pub use layout::*;
+pub use op::DockGraphMutationError;
 pub(crate) use op::DockOp;
-pub use op::DockOpApplyError;
 #[cfg(test)]
 pub(crate) use op::SplitFractionsUpdate;
 pub use panel::*;

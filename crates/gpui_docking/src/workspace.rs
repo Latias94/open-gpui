@@ -1,5 +1,5 @@
 use crate::{
-    DockGraph, DockItemId, DockOp, DockOpApplyError, DockPanel, DockPanelAttachError,
+    DockGraph, DockGraphMutationError, DockItemId, DockOp, DockPanel, DockPanelAttachError,
     DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
     host::DockHostOptions,
 };
@@ -55,7 +55,7 @@ impl DockWorkspace {
         self.graph = graph;
     }
 
-    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
+    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
         self.graph.apply_op_checked(op)
     }
 

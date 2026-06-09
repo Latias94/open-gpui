@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockItemId, DockNode, DockNodeId, DockOp,
-    DockOpApplyError, DockWorkspace,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId,
+    DockNode, DockNodeId, DockOp, DockWorkspace,
 };
 
 impl DockWorkspace {
@@ -66,10 +66,10 @@ impl DockWorkspace {
         item: &DockItemId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         let Some(node) = self.graph().node(tabs) else {
-            return Err(DockOpApplyError::TabsNodeNotFound { tabs }.into());
+            return Err(DockGraphMutationError::TabsNodeNotFound { tabs }.into());
         };
         let DockNode::Tabs { items, active } = node else {
-            return Err(DockOpApplyError::NodeIsNotTabs { node: tabs }.into());
+            return Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into());
         };
         let Some(next_active) = items.iter().position(|candidate| candidate == item) else {
             return Err(DockActionApplyError::ItemNotInTabs {

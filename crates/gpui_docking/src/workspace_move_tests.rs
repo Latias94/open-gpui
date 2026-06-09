@@ -1,7 +1,7 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph, DockNode,
-    DockOpApplyError, DockPolicyError, DockSpaceId, DropZone, SplitAxis, host_test_support::*,
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
+    DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph,
+    DockGraphMutationError, DockNode, DockPolicyError, DockSpaceId, DropZone, SplitAxis,
+    host_test_support::*, workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::TestAppContext;
 
@@ -99,7 +99,7 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
 
     assert_eq!(
         err,
-        DockActionApplyError::Graph(DockOpApplyError::SourceNodeNotInSpace {
+        DockActionApplyError::Graph(DockGraphMutationError::SourceNodeNotInSpace {
             space: space(),
             node: secondary_tabs,
         })
@@ -220,7 +220,7 @@ fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppCon
 
     assert_eq!(
         err,
-        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+        DockActionApplyError::Graph(DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         })
     );
@@ -264,7 +264,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
         .expect_err("floating-only target should reject item moves");
     assert_eq!(
         item_err,
-        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+        DockActionApplyError::Graph(DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         })
     );
@@ -274,7 +274,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
         .expect_err("floating-only target should reject tabs moves");
     assert_eq!(
         tabs_err,
-        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+        DockActionApplyError::Graph(DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         })
     );

@@ -37,7 +37,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
             })
             .expect_err("missing floating item should be reported"),
-        DockOpApplyError::ItemNotFound {
+        DockGraphMutationError::ItemNotFound {
             space: space(),
             item: item("missing"),
         }
@@ -56,7 +56,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
             })
             .expect_err("floating tabs outside source space should be reported"),
-        DockOpApplyError::SourceNodeNotInSpace {
+        DockGraphMutationError::SourceNodeNotInSpace {
             space: space(),
             node: orphan_tabs,
         }
@@ -69,7 +69,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 floating: missing,
             })
             .expect_err("missing floating container should be reported"),
-        DockOpApplyError::FloatingContainerNotFound {
+        DockGraphMutationError::FloatingContainerNotFound {
             space: space(),
             floating: missing,
         }
@@ -100,7 +100,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 target_tabs: floating_tabs,
             })
             .expect_err("floating cannot merge into its own tabs"),
-        DockOpApplyError::CannotMergeFloatingIntoOwnSubtree {
+        DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
             floating,
             target: floating_tabs,
         }
@@ -114,7 +114,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 target_tabs: orphan_tabs,
             })
             .expect_err("merge target outside space should be reported"),
-        DockOpApplyError::TargetNodeNotInSpace {
+        DockGraphMutationError::TargetNodeNotInSpace {
             space: space(),
             target: orphan_tabs,
         }

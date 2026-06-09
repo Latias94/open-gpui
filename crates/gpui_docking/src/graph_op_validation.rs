@@ -1,15 +1,15 @@
-use crate::{DockItemId, DockNodeId, DockOp, DockOpApplyError, DockSpaceId};
+use crate::{DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockSpaceId};
 
 use super::{DockGraph, DropZone};
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
-    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
+    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
         match op {
             DockOp::SetActiveTab { tabs, active } => {
                 let items = self.require_tabs_node(*tabs)?;
                 if *active >= items.len() {
-                    return Err(DockOpApplyError::ActiveOutOfBounds {
+                    return Err(DockGraphMutationError::ActiveOutOfBounds {
                         tabs: *tabs,
                         active: *active,
                         len: items.len(),
@@ -21,7 +21,7 @@ impl DockGraph {
                 if self.close_item(space, item.clone()) {
                     Ok(true)
                 } else {
-                    Err(DockOpApplyError::ItemNotFound {
+                    Err(DockGraphMutationError::ItemNotFound {
                         space: space.clone(),
                         item: item.clone(),
                     })
@@ -34,12 +34,12 @@ impl DockGraph {
                 ..
             } => {
                 if self.contains_item(item) {
-                    return Err(DockOpApplyError::ItemAlreadyOpen { item: item.clone() });
+                    return Err(DockGraphMutationError::ItemAlreadyOpen { item: item.clone() });
                 }
                 if let Some(target_tabs) = target_tabs {
                     self.validate_open_item_target(space, *target_tabs)?;
                 } else if !self.target_space_is_empty_for_open(space) {
-                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
                         space: space.clone(),
                     });
                 }
@@ -94,12 +94,12 @@ impl DockGraph {
                 target_space,
             } => {
                 if !self.target_space_is_empty_for_item_move(source_space, item, target_space) {
-                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
                         space: target_space.clone(),
                     });
                 }
                 if self.find_item_in_space(source_space, item).is_none() {
-                    return Err(DockOpApplyError::ItemNotFound {
+                    return Err(DockGraphMutationError::ItemNotFound {
                         space: source_space.clone(),
                         item: item.clone(),
                     });
@@ -116,7 +116,7 @@ impl DockGraph {
                     *source_tabs,
                     target_space,
                 ) {
-                    return Err(DockOpApplyError::TargetSpaceNotEmpty {
+                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
                         space: target_space.clone(),
                     });
                 }
@@ -128,7 +128,7 @@ impl DockGraph {
                 source_space, item, ..
             } => {
                 if self.find_item_in_space(source_space, item).is_none() {
-                    return Err(DockOpApplyError::ItemNotFound {
+                    return Err(DockGraphMutationError::ItemNotFound {
                         space: source_space.clone(),
                         item: item.clone(),
                     });
@@ -149,7 +149,7 @@ impl DockGraph {
             }
             | DockOp::RaiseFloating { space, floating } => {
                 if self.floating_container(space, *floating).is_none() {
-                    return Err(DockOpApplyError::FloatingContainerNotFound {
+                    return Err(DockGraphMutationError::FloatingContainerNotFound {
                         space: space.clone(),
                         floating: *floating,
                     });
@@ -162,7 +162,7 @@ impl DockGraph {
                 target_tabs,
             } => {
                 if self.floating_container(space, *floating).is_none() {
-                    return Err(DockOpApplyError::FloatingContainerNotFound {
+                    return Err(DockGraphMutationError::FloatingContainerNotFound {
                         space: space.clone(),
                         floating: *floating,
                     });
@@ -170,7 +170,7 @@ impl DockGraph {
                 self.require_tabs_node(*target_tabs)?;
                 let target_root = self.require_target_node_in_space(space, *target_tabs)?;
                 if target_root == *floating {
-                    return Err(DockOpApplyError::CannotMergeFloatingIntoOwnSubtree {
+                    return Err(DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
                         floating: *floating,
                         target: *target_tabs,
                     });
@@ -203,9 +203,9 @@ impl DockGraph {
         target_space: &DockSpaceId,
         target_tabs: DockNodeId,
         zone: DropZone,
-    ) -> Result<(), DockOpApplyError> {
+    ) -> Result<(), DockGraphMutationError> {
         if self.find_item_in_space(source_space, item).is_none() {
-            return Err(DockOpApplyError::ItemNotFound {
+            return Err(DockGraphMutationError::ItemNotFound {
                 space: source_space.clone(),
                 item: item.clone(),
             });
@@ -221,7 +221,7 @@ impl DockGraph {
         &self,
         space: &DockSpaceId,
         target_tabs: DockNodeId,
-    ) -> Result<(), DockOpApplyError> {
+    ) -> Result<(), DockGraphMutationError> {
         self.require_target_node_in_space(space, target_tabs)?;
         self.require_tabs_node(target_tabs)?;
         Ok(())
@@ -234,7 +234,7 @@ impl DockGraph {
         target_space: &DockSpaceId,
         target_tabs: DockNodeId,
         zone: DropZone,
-    ) -> Result<(), DockOpApplyError> {
+    ) -> Result<(), DockGraphMutationError> {
         self.require_non_empty_tabs_node(source_tabs)?;
         self.require_source_node_in_space(source_space, source_tabs)?;
         self.require_target_node_in_space(target_space, target_tabs)?;

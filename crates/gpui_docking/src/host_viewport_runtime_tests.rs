@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph, DockHost,
-    DockItemId, DockNode, DockOpApplyError, DockSpaceId, DockViewportAdapter,
+    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph,
+    DockGraphMutationError, DockHost, DockItemId, DockNode, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
     DockViewportOpenStatus, DockViewportRuntime, DockViewportShouldCloseStatus,
     DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind, DockViewportTearOffRequest,
@@ -438,7 +438,7 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
     };
     assert_eq!(
         failure.error,
-        DockActionApplyError::Graph(DockOpApplyError::TargetSpaceNotEmpty {
+        DockActionApplyError::Graph(DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached_space.clone()
         })
     );

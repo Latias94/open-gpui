@@ -114,7 +114,7 @@ fn checked_move_tabs_reports_empty_source_tabs() {
                 insert_index: None,
             })
             .expect_err("empty source tabs should be reported"),
-        DockOpApplyError::TabsNodeEmpty { tabs: empty }
+        DockGraphMutationError::TabsNodeEmpty { tabs: empty }
     );
 }
 
@@ -183,7 +183,7 @@ fn checked_open_item_rejects_duplicate_items_without_mutation() {
                 insert_index: Some(1),
             })
             .expect_err("opening an already reachable item should fail"),
-        DockOpApplyError::ItemAlreadyOpen { item: item("a") }
+        DockGraphMutationError::ItemAlreadyOpen { item: item("a") }
     );
 
     let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
@@ -266,7 +266,7 @@ fn checked_move_item_reports_missing_source_item() {
 
     assert_eq!(
         err,
-        DockOpApplyError::ItemNotFound {
+        DockGraphMutationError::ItemNotFound {
             space: space(),
             item: item("missing")
         }
@@ -295,7 +295,7 @@ fn checked_move_item_reports_target_outside_space_without_mutation() {
 
     assert_eq!(
         err,
-        DockOpApplyError::TargetNodeNotInSpace {
+        DockGraphMutationError::TargetNodeNotInSpace {
             space: space(),
             target: orphan
         }
@@ -333,7 +333,7 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
         })
         .expect_err("center target must be tabs");
 
-    assert_eq!(err, DockOpApplyError::NodeIsNotTabs { node: split });
+    assert_eq!(err, DockGraphMutationError::NodeIsNotTabs { node: split });
     graph.assert_canonical_space(&space());
 }
 
@@ -468,7 +468,7 @@ fn checked_empty_space_moves_reject_non_empty_target_without_mutation() {
         .expect_err("non-empty target should be rejected");
     assert_eq!(
         err,
-        DockOpApplyError::TargetSpaceNotEmpty {
+        DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         }
     );
@@ -519,7 +519,7 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
         .expect_err("floating-only target should still be non-empty");
     assert_eq!(
         err,
-        DockOpApplyError::TargetSpaceNotEmpty {
+        DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         }
     );
@@ -533,7 +533,7 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
         .expect_err("floating-only target should reject tab-group moves too");
     assert_eq!(
         err,
-        DockOpApplyError::TargetSpaceNotEmpty {
+        DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached.clone()
         }
     );
@@ -567,7 +567,7 @@ fn checked_empty_same_space_moves_report_missing_source() {
         .expect_err("empty same-space item move should still validate the source item");
     assert_eq!(
         item_err,
-        DockOpApplyError::ItemNotFound {
+        DockGraphMutationError::ItemNotFound {
             space: space(),
             item: item("missing")
         }
@@ -584,7 +584,7 @@ fn checked_empty_same_space_moves_report_missing_source() {
             target_space: space(),
         })
         .expect_err("empty same-space tabs move should still validate the source tabs");
-    assert_eq!(tabs_err, DockOpApplyError::TabsNodeEmpty { tabs });
+    assert_eq!(tabs_err, DockGraphMutationError::TabsNodeEmpty { tabs });
 }
 
 #[test]
@@ -608,7 +608,7 @@ fn checked_move_tabs_to_empty_space_rejects_source_outside_space() {
 
     assert_eq!(
         err,
-        DockOpApplyError::SourceNodeNotInSpace {
+        DockGraphMutationError::SourceNodeNotInSpace {
             space: space(),
             node: other_tabs,
         }

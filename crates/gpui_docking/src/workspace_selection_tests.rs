@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockLayoutNode, DockNode,
-    DockNodeId, DockOpApplyError, DockWorkspace, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphMutationError,
+    DockLayoutNode, DockNode, DockNodeId, DockWorkspace, host_test_support::*,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -76,7 +76,7 @@ fn workspace_rejects_invalid_select_tab_actions(cx: &mut TestAppContext) {
         .expect_err("missing tabs node should fail");
     assert_eq!(
         wrong_node,
-        DockActionApplyError::Graph(DockOpApplyError::TabsNodeNotFound {
+        DockActionApplyError::Graph(DockGraphMutationError::TabsNodeNotFound {
             tabs: DockNodeId::null()
         })
     );

@@ -1,6 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockNode, DockNodeId, DockOpApplyError,
-    DockPolicyError, DropZone, SplitAxis, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockNode,
+    DockNodeId, DockPolicyError, DropZone, SplitAxis, host_test_support::*,
     workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::TestAppContext;
@@ -60,7 +60,7 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
         .expect_err("missing split should fail");
     assert_eq!(
         missing,
-        DockActionApplyError::Graph(DockOpApplyError::SplitNodeNotFound {
+        DockActionApplyError::Graph(DockGraphMutationError::SplitNodeNotFound {
             split: DockNodeId::null()
         })
     );
@@ -73,7 +73,7 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
         .expect_err("tabs node is not a split");
     assert_eq!(
         wrong_kind,
-        DockActionApplyError::Graph(DockOpApplyError::NodeIsNotSplit { node: left_tabs })
+        DockActionApplyError::Graph(DockGraphMutationError::NodeIsNotSplit { node: left_tabs })
     );
 
     let mismatch = workspace
@@ -84,7 +84,7 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
         .expect_err("fraction length mismatch should fail");
     assert_eq!(
         mismatch,
-        DockActionApplyError::Graph(DockOpApplyError::SplitFractionsLenMismatch {
+        DockActionApplyError::Graph(DockGraphMutationError::SplitFractionsLenMismatch {
             split,
             children_len: 2,
             fractions_len: 1

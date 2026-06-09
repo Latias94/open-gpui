@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockItemId, DockNode, DockNodeId, DockOpApplyError, DockSpaceId,
+    DockActionApplyError, DockGraphMutationError, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockWorkspace,
 };
 
@@ -19,10 +19,10 @@ impl<'a> DockWorkspaceMoveValidation<'a> {
         item: &DockItemId,
     ) -> Result<(), DockActionApplyError> {
         let Some(node) = self.workspace.graph().node(source_tabs) else {
-            return Err(DockOpApplyError::TabsNodeNotFound { tabs: source_tabs }.into());
+            return Err(DockGraphMutationError::TabsNodeNotFound { tabs: source_tabs }.into());
         };
         let DockNode::Tabs { items, .. } = node else {
-            return Err(DockOpApplyError::NodeIsNotTabs { node: source_tabs }.into());
+            return Err(DockGraphMutationError::NodeIsNotTabs { node: source_tabs }.into());
         };
         if self
             .workspace
@@ -30,7 +30,7 @@ impl<'a> DockWorkspaceMoveValidation<'a> {
             .root_for_node_in_space(source_space, source_tabs)
             .is_none()
         {
-            return Err(DockOpApplyError::SourceNodeNotInSpace {
+            return Err(DockGraphMutationError::SourceNodeNotInSpace {
                 space: source_space.clone(),
                 node: source_tabs,
             }

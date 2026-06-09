@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::SplitFractionsUpdate;
-use crate::{DockNodeId, DockOpApplyError};
+use crate::{DockGraphMutationError, DockNodeId};
 #[cfg(test)]
 use std::collections::HashSet;
 
@@ -11,21 +11,21 @@ impl DockGraph {
         &self,
         split: DockNodeId,
         fractions: &[f32],
-    ) -> Result<(), DockOpApplyError> {
+    ) -> Result<(), DockGraphMutationError> {
         let Some(node) = self.node(split) else {
-            return Err(DockOpApplyError::SplitNodeNotFound { split });
+            return Err(DockGraphMutationError::SplitNodeNotFound { split });
         };
         let DockNode::Split { children, .. } = node else {
-            return Err(DockOpApplyError::NodeIsNotSplit { node: split });
+            return Err(DockGraphMutationError::NodeIsNotSplit { node: split });
         };
         if children.len() < 2 {
-            return Err(DockOpApplyError::SplitTooFewChildren {
+            return Err(DockGraphMutationError::SplitTooFewChildren {
                 split,
                 children_len: children.len(),
             });
         }
         if fractions.len() != children.len() {
-            return Err(DockOpApplyError::SplitFractionsLenMismatch {
+            return Err(DockGraphMutationError::SplitFractionsLenMismatch {
                 split,
                 children_len: children.len(),
                 fractions_len: fractions.len(),
@@ -33,7 +33,7 @@ impl DockGraph {
         }
         for (index, fraction) in fractions.iter().copied().enumerate() {
             if !fraction.is_finite() || fraction < 0.0 {
-                return Err(DockOpApplyError::SplitFractionInvalid { split, index });
+                return Err(DockGraphMutationError::SplitFractionInvalid { split, index });
             }
         }
         Ok(())
@@ -43,11 +43,11 @@ impl DockGraph {
     pub(in crate::graph) fn validate_split_fraction_updates(
         &self,
         updates: &[SplitFractionsUpdate],
-    ) -> Result<(), DockOpApplyError> {
+    ) -> Result<(), DockGraphMutationError> {
         let mut seen = HashSet::new();
         for update in updates {
             if !seen.insert(update.split) {
-                return Err(DockOpApplyError::DuplicateSplitFractionUpdate {
+                return Err(DockGraphMutationError::DuplicateSplitFractionUpdate {
                     split: update.split,
                 });
             }

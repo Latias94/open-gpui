@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId, DockOpApplyError, DockPolicyError, DockSpaceId};
+use crate::{DockGraphMutationError, DockItemId, DockNodeId, DockPolicyError, DockSpaceId};
 use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
@@ -167,7 +167,7 @@ pub enum DockActionApplyError {
     },
     /// The underlying graph operation failed.
     #[error(transparent)]
-    Graph(#[from] DockOpApplyError),
+    Graph(#[from] DockGraphMutationError),
     /// The action was rejected by workspace policy.
     #[error(transparent)]
     Policy(#[from] DockPolicyError),

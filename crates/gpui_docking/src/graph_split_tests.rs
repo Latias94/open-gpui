@@ -68,7 +68,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
                 fractions: vec![0.5, 0.5],
             })
             .expect_err("missing split should fail"),
-        DockOpApplyError::SplitNodeNotFound {
+        DockGraphMutationError::SplitNodeNotFound {
             split: DockNodeId::null()
         }
     );
@@ -79,7 +79,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
                 fractions: vec![0.5, 0.5],
             })
             .expect_err("tabs node is not a split"),
-        DockOpApplyError::NodeIsNotSplit { node: split_a }
+        DockGraphMutationError::NodeIsNotSplit { node: split_a }
     );
     assert_eq!(
         graph
@@ -88,7 +88,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
                 fractions: vec![1.0],
             })
             .expect_err("fraction length mismatch should fail"),
-        DockOpApplyError::SplitFractionsLenMismatch {
+        DockGraphMutationError::SplitFractionsLenMismatch {
             split,
             children_len: 2,
             fractions_len: 1,
@@ -101,7 +101,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
                 fractions: vec![0.5, f32::NAN],
             })
             .expect_err("invalid fraction should fail"),
-        DockOpApplyError::SplitFractionInvalid { split, index: 1 }
+        DockGraphMutationError::SplitFractionInvalid { split, index: 1 }
     );
     assert_eq!(
         graph
@@ -118,7 +118,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
                 ],
             })
             .expect_err("duplicate split updates should fail before mutation"),
-        DockOpApplyError::DuplicateSplitFractionUpdate { split }
+        DockGraphMutationError::DuplicateSplitFractionUpdate { split }
     );
 
     assert!(

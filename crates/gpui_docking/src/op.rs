@@ -171,9 +171,9 @@ pub(crate) struct SplitFractionsUpdate {
     pub(crate) fractions: Vec<f32>,
 }
 
-/// Error returned by checked dock operation application.
+/// Error returned when a checked graph mutation cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DockOpApplyError {
+pub enum DockGraphMutationError {
     /// The requested tabs node does not exist.
     #[error("tabs node not found: {tabs:?}")]
     TabsNodeNotFound {
