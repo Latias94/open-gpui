@@ -603,7 +603,9 @@ impl DockViewportRuntime {
         let pending = match begin {
             DockViewportTearOffBeginOutcome::Pending(pending) => pending,
             DockViewportTearOffBeginOutcome::Duplicate(pending) => {
-                return Ok(DockViewportTearOffOpenOutcome::Duplicate(pending));
+                let outcome = DockViewportTearOffOpenOutcome::Duplicate(pending);
+                self.status.record_tear_off(&outcome);
+                return Ok(outcome);
             }
         };
 

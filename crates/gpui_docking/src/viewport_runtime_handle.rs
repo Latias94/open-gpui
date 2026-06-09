@@ -148,7 +148,9 @@ impl DockViewportRuntimeHandle {
             match runtime.begin_tear_off_request(request, target_space, cx) {
                 DockViewportTearOffBeginOutcome::Pending(pending) => pending,
                 DockViewportTearOffBeginOutcome::Duplicate(pending) => {
-                    return Ok(DockViewportTearOffOpenOutcome::Duplicate(pending));
+                    let outcome = DockViewportTearOffOpenOutcome::Duplicate(pending);
+                    runtime.record_tear_off_outcome(&outcome);
+                    return Ok(outcome);
                 }
             }
         };

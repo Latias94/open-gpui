@@ -3,7 +3,8 @@ use crate::{
     DockItemId, DockNode, DockOpApplyError, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
     DockViewportOpenStatus, DockViewportRuntime, DockViewportShouldCloseStatus,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind, DockViewportTearOffRequest,
+    DockWorkspace,
     host_test_support::*,
     viewport_tear_off::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
@@ -165,7 +166,7 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
         DockViewportTearOffTick::new(1),
     );
     let second = runtime.begin_tear_off_request_at(
-        tear_off_request(primary_space, source_tabs, item("a")),
+        tear_off_request(primary_space.clone(), source_tabs, item("a")),
         DockSpaceId::from("other"),
         None,
         DockViewportTearOffTick::new(2),
@@ -178,6 +179,30 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
     assert_eq!(existing.target_space, detached_space);
     assert_eq!(runtime.pending_tear_off_len(), 1);
     assert!(runtime.adapter().is_empty());
+
+    let duplicate_open = cx
+        .update(|app| {
+            runtime.open_tear_off_viewport(
+                tear_off_request(primary_space, source_tabs, item("a")),
+                DockSpaceId::from("other"),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("duplicate tear-off should be idempotent");
+    assert!(matches!(
+        duplicate_open,
+        DockViewportTearOffOpenOutcome::Duplicate(_)
+    ));
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_tear_off
+            .as_ref()
+            .map(|record| record.kind),
+        Some(DockViewportTearOffOutcomeKind::Duplicate),
+        "runtime status should record duplicate tear-off outcomes"
+    );
 }
 
 #[open_gpui::test]
