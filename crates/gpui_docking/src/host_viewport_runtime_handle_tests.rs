@@ -601,10 +601,12 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
-        assert_eq!(
-            route.activation_target().map(|target| target.window),
-            Some(opened.window),
-            "known viewport route should carry the destination activation target"
+        assert!(
+            matches!(
+                &route,
+                DockViewportDropRoute::KnownViewport { window, .. } if *window == opened.window
+            ),
+            "known viewport route should carry the destination window"
         );
         runtime.commit_payload_drop_route_with_outcome(
             &source_space,
@@ -726,10 +728,12 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
-        assert_eq!(
-            route.activation_target().map(|target| target.window),
-            Some(opened.window),
-            "known viewport route should carry the destination activation target"
+        assert!(
+            matches!(
+                &route,
+                DockViewportDropRoute::KnownViewport { window, .. } if *window == opened.window
+            ),
+            "known viewport route should carry the destination window"
         );
         runtime.commit_payload_drop_route_with_outcome(
             &source_space,
