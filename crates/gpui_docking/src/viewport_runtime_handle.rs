@@ -146,7 +146,7 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
-    pub fn open_tear_off_viewport(
+    pub(crate) fn open_tear_off_viewport(
         &self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
@@ -302,7 +302,7 @@ impl DockViewportRuntimeHandle {
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     #[allow(clippy::too_many_arguments)]
-    pub fn resolve_payload_drop_route_with_context(
+    pub(crate) fn resolve_payload_drop_route_with_context(
         &self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,
@@ -327,7 +327,7 @@ impl DockViewportRuntimeHandle {
 
     /// Resolves and commits a rendered payload release from a screen-space point.
     #[allow(clippy::too_many_arguments)]
-    pub fn commit_payload_drop_from_screen_with_context(
+    pub(crate) fn commit_payload_drop_from_screen_with_context(
         &self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,

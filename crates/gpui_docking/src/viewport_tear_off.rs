@@ -51,17 +51,17 @@ impl DockViewportDropPayload {
 
 /// Request to open a new platform viewport for a payload released outside known dock viewports.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffRequest {
+pub(crate) struct DockViewportTearOffRequest {
     /// Source dock space containing the dragged payload.
-    pub source_space: DockSpaceId,
+    pub(crate) source_space: DockSpaceId,
     /// Source tabs node where the drag started.
-    pub source_tabs: DockNodeId,
+    pub(crate) source_tabs: DockNodeId,
     /// Payload being torn off.
-    pub payload: DockViewportDropPayload,
+    pub(crate) payload: DockViewportDropPayload,
     /// Release position in screen coordinates.
-    pub release_position: Point<Pixels>,
+    pub(crate) release_position: Point<Pixels>,
     /// Suggested platform window bounds for the new viewport, when known.
-    pub suggested_window_bounds: Option<WindowBounds>,
+    pub(crate) suggested_window_bounds: Option<WindowBounds>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -88,13 +88,13 @@ impl DockViewportTearOffTick {
 
 /// Runtime state for a tear-off request that is waiting for a platform viewport.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffPending {
+pub(crate) struct DockViewportTearOffPending {
     /// Original release request that started the transaction.
-    pub request: DockViewportTearOffRequest,
+    pub(crate) request: DockViewportTearOffRequest,
     /// Empty logical dock space that will receive the torn-off payload.
-    pub target_space: DockSpaceId,
+    pub(crate) target_space: DockSpaceId,
     /// Panel item that should receive GPUI focus after the tear-off completes.
-    pub focus_item: Option<DockItemId>,
+    pub(crate) focus_item: Option<DockItemId>,
     requested_at: DockViewportTearOffTick,
     expires_after_ticks: u64,
 }
@@ -126,33 +126,33 @@ pub enum DockViewportTearOffCancelReason {
 
 /// Cancelled tear-off request and the reason it could not complete.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffCancelled {
+pub(crate) struct DockViewportTearOffCancelled {
     /// Pending request that was removed.
-    pub pending: DockViewportTearOffPending,
+    pub(crate) pending: DockViewportTearOffPending,
     /// Reason the request was removed before commit.
-    pub reason: DockViewportTearOffCancelReason,
+    pub(crate) reason: DockViewportTearOffCancelReason,
 }
 
 /// Completed tear-off request after viewport registration and graph move commit.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffCompleted {
+pub(crate) struct DockViewportTearOffCompleted {
     /// Pending request that completed.
-    pub pending: DockViewportTearOffPending,
+    pub(crate) pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome.
-    pub registration: crate::DockViewportRegisterOutcome,
+    pub(crate) registration: crate::DockViewportRegisterOutcome,
     /// Graph transaction outcome.
-    pub action: crate::DockActionOutcome,
+    pub(crate) action: crate::DockActionOutcome,
 }
 
 /// Tear-off request whose viewport opened but graph commit failed afterward.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportTearOffCommitFailure {
+pub(crate) struct DockViewportTearOffCommitFailure {
     /// Pending request that reached commit.
-    pub pending: DockViewportTearOffPending,
+    pub(crate) pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome before cleanup.
-    pub registration: crate::DockViewportRegisterOutcome,
+    pub(crate) registration: crate::DockViewportRegisterOutcome,
     /// Commit error returned by the docking workspace.
-    pub error: crate::DockActionApplyError,
+    pub(crate) error: crate::DockActionApplyError,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,7 +165,7 @@ pub(crate) enum DockViewportTearOffCompletionOutcome {
 
 /// Outcome of opening a viewport for a tear-off request through the runtime.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportTearOffOpenOutcome {
+pub(crate) enum DockViewportTearOffOpenOutcome {
     /// The dragged payload already had a pending request, so no duplicate window was opened.
     Duplicate(DockViewportTearOffPending),
     /// Viewport registration and graph move both completed.
@@ -178,7 +178,7 @@ pub enum DockViewportTearOffOpenOutcome {
 
 /// Runtime outcome for a viewport-routed drop release.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportDropRouteOutcome {
+pub(crate) enum DockViewportDropRouteOutcome {
     /// The route resolved to a normal workspace action.
     Action(DockViewportDropActionOutcome),
     /// The route opened or reused a platform viewport through the tear-off runtime transaction.
@@ -187,27 +187,27 @@ pub enum DockViewportDropRouteOutcome {
 
 /// Workspace action outcome plus viewport-side effects requested by a routed drop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockViewportDropActionOutcome {
+pub(crate) struct DockViewportDropActionOutcome {
     /// Graph transaction outcome.
-    pub action: DockActionOutcome,
+    pub(crate) action: DockActionOutcome,
     /// Runtime viewport that should become active after the drop, when known.
-    pub activation: Option<DockViewportActivationTarget>,
+    pub(crate) activation: Option<DockViewportActivationTarget>,
 }
 
 /// Runtime viewport activation target selected by a successful drop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockViewportActivationTarget {
+pub(crate) struct DockViewportActivationTarget {
     /// Logical dock space to activate.
-    pub space: DockSpaceId,
+    pub(crate) space: DockSpaceId,
     /// GPUI window rendering the logical dock space.
-    pub window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     /// Active panel item that should receive focus after the window is active.
-    pub focus_item: Option<DockItemId>,
+    pub(crate) focus_item: Option<DockItemId>,
 }
 
 impl DockViewportDropRouteOutcome {
     /// Returns the runtime viewport that should be activated after the drop, when known.
-    pub fn activation_target(&self) -> Option<DockViewportActivationTarget> {
+    pub(crate) fn activation_target(&self) -> Option<DockViewportActivationTarget> {
         match self {
             DockViewportDropRouteOutcome::Action(outcome) => outcome.activation.clone(),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(

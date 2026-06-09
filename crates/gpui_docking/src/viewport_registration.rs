@@ -6,13 +6,13 @@ use open_gpui::AnyWindowHandle;
 
 /// Runtime result of registering or replacing a platform viewport mapping.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockViewportRegisterOutcome {
+pub(crate) struct DockViewportRegisterOutcome {
     /// Logical dock space now rendered by the registered window.
-    pub space: DockSpaceId,
+    pub(crate) space: DockSpaceId,
     /// GPUI window now rendering the logical dock space.
-    pub window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     /// Runtime mappings removed to preserve one-to-one space/window ownership.
-    pub replaced: Vec<DockViewportUnregisterOutcome>,
+    pub(crate) replaced: Vec<DockViewportUnregisterOutcome>,
 }
 
 impl DockViewportAdapter {

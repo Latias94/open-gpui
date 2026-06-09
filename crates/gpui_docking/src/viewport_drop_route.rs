@@ -7,7 +7,7 @@ use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportDropRoute {
+pub(crate) enum DockViewportDropRoute {
     /// The release is still in the source viewport, so the source host should commit locally.
     Local {
         /// Local host position for the release.

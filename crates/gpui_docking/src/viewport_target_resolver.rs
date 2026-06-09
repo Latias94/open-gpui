@@ -3,22 +3,22 @@ use open_gpui::{AnyWindowHandle, Pixels, Point};
 
 /// Result of resolving a screen point into a registered dock viewport.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportHit {
+pub(crate) struct DockViewportHit {
     /// Logical dock space that contains the point.
-    pub space: DockSpaceId,
+    pub(crate) space: DockSpaceId,
     /// Point relative to the dock host bounds.
-    pub host_position: Point<Pixels>,
+    pub(crate) host_position: Point<Pixels>,
 }
 
 /// A viewport hit with the runtime window that produced it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct DockViewportHitCandidate {
+pub(crate) struct DockViewportHitCandidate {
     /// Logical dock space that contains the point.
-    pub space: DockSpaceId,
+    pub(crate) space: DockSpaceId,
     /// GPUI window currently rendering the logical dock space.
-    pub window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     /// Point relative to the dock host bounds.
-    pub host_position: Point<Pixels>,
+    pub(crate) host_position: Point<Pixels>,
 }
 
 impl DockViewportHitCandidate {

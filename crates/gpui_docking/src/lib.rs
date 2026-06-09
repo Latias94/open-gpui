@@ -201,17 +201,25 @@ pub use panel_registry::*;
 pub use policy::*;
 pub(crate) use viewport::*;
 pub use viewport_close::*;
-pub use viewport_drop_route::*;
+pub(crate) use viewport_drop_route::*;
 pub use viewport_open::*;
 pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
-pub use viewport_registration::*;
+pub(crate) use viewport_registration::*;
 pub(crate) use viewport_registry::DockViewportSnapshot;
 pub(crate) use viewport_runtime::*;
 pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;
 pub use viewport_target_context::*;
-pub use viewport_target_resolver::*;
-pub use viewport_tear_off::*;
+pub(crate) use viewport_target_resolver::*;
+pub(crate) use viewport_tear_off::{
+    DockViewportActivationTarget, DockViewportDropActionOutcome, DockViewportDropRouteOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
+    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
+    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
+};
+pub use viewport_tear_off::{DockViewportDropPayload, DockViewportTearOffCancelReason};
 pub use workspace::*;
