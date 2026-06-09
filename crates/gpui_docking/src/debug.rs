@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId};
+use crate::{DockItemId, DockNodeId, drop_preview::DockDropPreviewKind};
 #[cfg(test)]
 use std::collections::HashMap;
 
@@ -35,6 +35,11 @@ pub(crate) enum DockDebugRegion {
     },
     /// The active drag/drop preview overlay for the host.
     DropPreview,
+    /// A viewport route or tear-off preview before host-local target resolution.
+    DropRoutePreview {
+        /// Preview route category.
+        kind: DockDropPreviewKind,
+    },
     /// A tab label for one dock item.
     Tab {
         /// Runtime tabs node id containing the item.

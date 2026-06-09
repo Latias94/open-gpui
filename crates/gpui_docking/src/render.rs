@@ -1,11 +1,13 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, debug::DockDebugRegion, drag::DockDragPayload,
-    drop_runtime::resolution_target, drop_target::DockDropResolution,
+    DockHost, DockNode, DockNodeId,
+    debug::DockDebugRegion,
+    drag::DockDragPayload,
+    drop_preview::{DockDropPreview, DockDropPreviewKind},
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
     AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, Render, Styled, Window, black, div, rgb, rgba,
+    ParentElement, Render, Rgba, Styled, Window, black, div, rgb, rgba,
 };
 
 impl Render for DockHost {
@@ -255,14 +257,18 @@ impl DockHost {
     }
 
     fn render_host_drop_preview(&mut self, session: &DockHostRenderSession) -> Option<AnyElement> {
-        let resolution = self.interaction().drop_resolution()?;
-        let target = resolution_target(resolution)?;
-        let bounds = target.preview_bounds?;
-        let rejected = matches!(resolution, DockDropResolution::Rejected(_));
+        let preview = self.interaction().drop_preview()?;
+        let bounds = preview.bounds;
+        let region = if preview.is_route() {
+            DockDebugRegion::DropRoutePreview { kind: preview.kind }
+        } else {
+            DockDebugRegion::DropPreview
+        };
         let selector = self.record_debug_selector(
-            DockDebugRegion::DropPreview,
+            region,
             format!("{}:drop-preview", session.selector_prefix()),
         );
+        let (border, background) = drop_preview_colors(&preview);
 
         Some(
             div()
@@ -274,17 +280,22 @@ impl DockHost {
                 .w(bounds.size.width)
                 .h(bounds.size.height)
                 .border_1()
-                .border_color(if rejected {
-                    rgb(0xdc2626)
-                } else {
-                    rgb(0x2563eb)
-                })
-                .bg(if rejected {
-                    rgba(0xfca5a547)
-                } else {
-                    rgba(0x60a5fa47)
-                })
+                .border_color(border)
+                .bg(background)
                 .into_any_element(),
         )
+    }
+}
+
+fn drop_preview_colors(preview: &DockDropPreview) -> (Rgba, Rgba) {
+    if preview.rejected {
+        return (rgb(0xdc2626), rgba(0xfca5a547));
+    }
+
+    match preview.kind {
+        DockDropPreviewKind::Local => (rgb(0x2563eb), rgba(0x60a5fa47)),
+        DockDropPreviewKind::KnownViewportRoute => (rgb(0x059669), rgba(0x6ee7b747)),
+        DockDropPreviewKind::TearOffRoute => (rgb(0x7c3aed), rgba(0xc4b5fd47)),
+        DockDropPreviewKind::RejectedRoute => (rgb(0xdc2626), rgba(0xfca5a547)),
     }
 }

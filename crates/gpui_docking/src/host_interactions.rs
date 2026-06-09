@@ -403,6 +403,7 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
+        let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let outcome = if let Some(outcome) = self.commit_runtime_routed_payload_drop_interaction(
             payload,
             release_position,
@@ -414,6 +415,9 @@ impl DockHost {
             let target = self.interaction_mut().take_resolved_drop_target();
             let Some(target) = target else {
                 return DockHostInteractionOutcome::Notify
+                    .merge(DockHostInteractionOutcome::from_session_changed(
+                        route_preview_cleared,
+                    ))
                     .merge(self.finish_floating_drag_interaction());
             };
 
@@ -431,7 +435,39 @@ impl DockHost {
             self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
         };
 
-        outcome.merge(self.finish_floating_drag_interaction())
+        outcome
+            .merge(DockHostInteractionOutcome::from_session_changed(
+                route_preview_cleared,
+            ))
+            .merge(self.finish_floating_drag_interaction())
+    }
+
+    pub(crate) fn update_viewport_drop_route_preview_interaction(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> DockHostInteractionOutcome {
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return DockHostInteractionOutcome::from_session_changed(
+                self.interaction_mut().clear_drop_route_preview(),
+            );
+        };
+
+        let route = runtime.resolve_payload_drop_route_with_context(
+            payload.source_space.clone(),
+            payload.source_tabs,
+            viewport_payload(payload),
+            window_screen_position(window, position),
+            None,
+            &DockViewportTargetContext::from_window(window, cx),
+            cx,
+        );
+        DockHostInteractionOutcome::from_session_changed(
+            self.interaction_mut()
+                .update_drop_route_preview(&route, position),
+        )
     }
 
     fn commit_runtime_routed_payload_drop_interaction(
