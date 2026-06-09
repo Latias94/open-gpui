@@ -24,7 +24,7 @@ impl DockHost {
         ))
     }
 
-    pub(crate) fn update_tabs_drop_interaction(
+    pub(crate) fn update_leaf_drop_scene_interaction(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,
@@ -50,7 +50,7 @@ impl DockHost {
         ))
     }
 
-    pub(crate) fn update_tab_reorder_drop_interaction(
+    pub(crate) fn update_tab_label_drop_scene_interaction(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,

@@ -50,7 +50,7 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    this.update_tabs_drop_scene_from_render(
+                    this.update_leaf_drop_scene_from_render(
                         &payload,
                         node,
                         event.bounds,
@@ -132,7 +132,7 @@ impl DockHost {
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
-                        this.update_tab_reorder_drop_scene_from_render(
+                        this.update_tab_label_drop_scene_from_render(
                             &payload,
                             node,
                             target_index,

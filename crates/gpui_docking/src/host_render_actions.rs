@@ -32,7 +32,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_tabs_drop_scene_from_render(
+    pub(crate) fn update_leaf_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,
@@ -42,7 +42,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tabs_drop_interaction(
+        self.update_leaf_drop_scene_interaction(
             payload,
             target_tabs,
             bounds,
@@ -54,7 +54,7 @@ impl DockHost {
         .finish(cx)
     }
 
-    pub(crate) fn update_tab_reorder_drop_scene_from_render(
+    pub(crate) fn update_tab_label_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,
@@ -65,7 +65,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tab_reorder_drop_interaction(
+        self.update_tab_label_drop_scene_interaction(
             payload,
             target_tabs,
             target_index,
