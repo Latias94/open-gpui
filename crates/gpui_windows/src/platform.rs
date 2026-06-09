@@ -522,6 +522,17 @@ impl Platform for WindowsPlatform {
             .map(|inner| inner.handle)
     }
 
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        let virtual_key = match button {
+            MouseButton::Left => VK_LBUTTON,
+            MouseButton::Right => VK_RBUTTON,
+            MouseButton::Middle => VK_MBUTTON,
+            MouseButton::Navigate(NavigationDirection::Back) => VK_XBUTTON1,
+            MouseButton::Navigate(NavigationDirection::Forward) => VK_XBUTTON2,
+        };
+        Some((unsafe { GetAsyncKeyState(i32::from(virtual_key.0)) } as u16 & 0x8000) != 0)
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,

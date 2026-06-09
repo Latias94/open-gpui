@@ -8,6 +8,7 @@ use open_gpui::{
     px, size,
 };
 use slotmap::Key;
+use std::time::Duration;
 
 #[open_gpui::test]
 fn stale_floating_drag_begin_does_not_leave_transient_drag(cx: &mut TestAppContext) {
@@ -612,6 +613,107 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             );
         })
         .expect("detached viewport should remain live");
+}
+
+#[open_gpui::test]
+fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    let source_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|app| app.has_active_drag()),
+        "active drag should remain while the platform reports the left button as pressed"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().len(),
+        1,
+        "pressed-button polling must not tear off early"
+    );
+
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|app| app.has_active_drag()),
+        "fallback poll should stop the active drag after committing the release"
+    );
+
+    let detached_space = cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")]
+        );
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| space.as_str().starts_with("source:tear-off:a:"))
+            .expect("polled outside release should create a detached viewport space");
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("a")]
+        );
+        detached_space
+    });
+    assert!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&detached_space)
+            .is_some(),
+        "detached space should be registered with a runtime window"
+    );
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
 }
 
 #[open_gpui::test]

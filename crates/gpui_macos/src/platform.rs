@@ -37,9 +37,10 @@ use objc::{
 };
 use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowParams,
+    KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
+    WindowAppearance, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -620,6 +621,19 @@ impl Platform for MacPlatform {
     // window is the first one in the returned vec.
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         Some(MacWindow::ordered_windows())
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        let button_number = match button {
+            MouseButton::Left => 0,
+            MouseButton::Right => 1,
+            MouseButton::Middle => 2,
+            MouseButton::Navigate(NavigationDirection::Back) => 3,
+            MouseButton::Navigate(NavigationDirection::Forward) => 4,
+        };
+        let pressed_buttons: NSUInteger =
+            unsafe { msg_send![class!(NSEvent), pressedMouseButtons] };
+        Some((pressed_buttons & (1 << button_number)) != 0)
     }
 
     fn open_window(

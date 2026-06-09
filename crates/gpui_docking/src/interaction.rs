@@ -13,6 +13,7 @@ pub(crate) struct DockInteractionRuntime {
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
     drop_route_preview: Option<DockDropPreview>,
+    outside_release_poll_running: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -164,6 +165,25 @@ impl DockInteractionRuntime {
         self.set_drop_route_preview(None)
     }
 
+    pub(crate) fn begin_outside_release_poll(&mut self) -> bool {
+        if self.outside_release_poll_running {
+            return false;
+        }
+        self.outside_release_poll_running = true;
+        true
+    }
+
+    pub(crate) fn finish_outside_release_poll(&mut self) -> bool {
+        if !std::mem::take(&mut self.outside_release_poll_running) {
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn outside_release_poll_running(&self) -> bool {
+        self.outside_release_poll_running
+    }
+
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
         self.drop
             .drop_resolution()
@@ -309,5 +329,18 @@ mod tests {
                 .kind,
             crate::drop_preview::DockDropPreviewKind::Local
         );
+    }
+
+    #[test]
+    fn outside_release_poll_tracks_single_running_task() {
+        let mut runtime = DockInteractionRuntime::default();
+
+        assert!(!runtime.outside_release_poll_running());
+        assert!(runtime.begin_outside_release_poll());
+        assert!(runtime.outside_release_poll_running());
+        assert!(!runtime.begin_outside_release_poll());
+        assert!(runtime.finish_outside_release_poll());
+        assert!(!runtime.outside_release_poll_running());
+        assert!(!runtime.finish_outside_release_poll());
     }
 }
