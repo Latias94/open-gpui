@@ -1,8 +1,8 @@
-use crate::{DockNodeId, DockSpaceId};
+use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 #[cfg(test)]
 use std::collections::HashSet;
 
-use super::{DockGraph, DockNode, SplitAxis, normalize_shares};
+use super::{DockGraph, DockNode, SplitAxis};
 
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.

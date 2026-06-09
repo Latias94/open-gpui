@@ -1,3 +1,4 @@
+use crate::split_fraction::{cleaned_shares, normalize_shares};
 use open_gpui::Pixels;
 #[cfg(test)]
 use open_gpui::px;
@@ -34,39 +35,6 @@ pub(crate) fn resize_adjacent_fractions(
     shares[handle_index + 1] = pair_total - next_first;
     normalize_shares(&mut shares);
     Some(shares)
-}
-
-pub(crate) fn cleaned_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
-    let mut shares: Vec<f32> = (0..child_count)
-        .map(|index| fractions.get(index).copied().unwrap_or(1.0))
-        .collect();
-    normalize_shares(&mut shares);
-    shares
-}
-
-fn normalize_shares(shares: &mut Vec<f32>) {
-    for share in shares.iter_mut() {
-        if !share.is_finite() || *share < 0.0 {
-            *share = 0.0;
-        }
-    }
-
-    let sum: f32 = shares.iter().sum();
-    if !sum.is_finite() || sum <= f32::EPSILON {
-        let len = shares.len().max(1);
-        *shares = vec![1.0 / len as f32; len];
-        return;
-    }
-
-    for share in shares.iter_mut() {
-        *share /= sum;
-    }
-
-    if !shares.is_empty() {
-        let rest: f32 = shares.iter().take(shares.len().saturating_sub(1)).sum();
-        let last = shares.len().saturating_sub(1);
-        shares[last] = (1.0 - rest).clamp(0.0, 1.0);
-    }
 }
 
 #[cfg(test)]

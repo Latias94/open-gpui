@@ -1,6 +1,6 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockItemId, DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 
-use super::{DockGraph, DockNode, DropZone, normalize_shares};
+use super::{DockGraph, DockNode, DropZone};
 
 impl DockGraph {
     /// Selects an active tab by index.

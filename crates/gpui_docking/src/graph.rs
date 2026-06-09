@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockItemId, DockNodeId, DockSpaceId, split_fraction};
 use open_gpui::{Bounds, Pixels, Point, Size, point, px, size};
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
@@ -208,7 +208,7 @@ impl DockGraph {
                     return;
                 }
 
-                let shares = cleaned_layout_shares(children.len(), fractions);
+                let shares = split_fraction::cleaned_shares(children.len(), fractions);
                 let mut cursor = 0.0_f32;
                 let width = f32::from(bounds.size.width);
                 let height = f32::from(bounds.size.height);
@@ -492,39 +492,6 @@ struct DockParentIndex {
     root_for: HashMap<DockNodeId, DockNodeId>,
     parent: HashMap<DockNodeId, DockNodeId>,
     split_child_index: HashMap<DockNodeId, usize>,
-}
-
-fn normalize_shares(shares: &mut Vec<f32>) {
-    for share in shares.iter_mut() {
-        if !share.is_finite() || *share < 0.0 {
-            *share = 0.0;
-        }
-    }
-
-    let sum: f32 = shares.iter().sum();
-    if !sum.is_finite() || sum <= f32::EPSILON {
-        let len = shares.len().max(1);
-        *shares = vec![1.0 / len as f32; len];
-        return;
-    }
-
-    for share in shares.iter_mut() {
-        *share /= sum;
-    }
-
-    if !shares.is_empty() {
-        let rest: f32 = shares.iter().take(shares.len().saturating_sub(1)).sum();
-        let last = shares.len().saturating_sub(1);
-        shares[last] = (1.0 - rest).clamp(0.0, 1.0);
-    }
-}
-
-fn cleaned_layout_shares(len: usize, fractions: &[f32]) -> Vec<f32> {
-    let mut shares: Vec<f32> = (0..len)
-        .map(|index| fractions.get(index).copied().unwrap_or(1.0))
-        .collect();
-    normalize_shares(&mut shares);
-    shares
 }
 
 /// Convenience constructor for bounds in tests and examples.

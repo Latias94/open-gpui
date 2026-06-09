@@ -1,6 +1,6 @@
-use crate::{DockNodeId, DockSpaceId};
+use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 
-use super::{DockGraph, DockNode, DropZone, EdgeDockDecision, SplitAxis, normalize_shares};
+use super::{DockGraph, DockNode, DropZone, EdgeDockDecision, SplitAxis};
 
 impl DockGraph {
     pub(in crate::graph) fn insert_edge_docked_child(

@@ -1,6 +1,6 @@
 use crate::{
     DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry,
-    host_render_session::DockHostRenderSession, splitter,
+    host_render_session::DockHostRenderSession, split_fraction,
 };
 use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -25,7 +25,7 @@ impl DockHost {
             DockDebugRegion::Split { node },
             format!("{}:split:{}", session.selector_prefix(), node.as_u64()),
         );
-        let shares = splitter::cleaned_shares(children.len(), &fractions);
+        let shares = split_fraction::cleaned_shares(children.len(), &fractions);
         let mut split = div()
             .id(selector.clone())
             .debug_selector(move || selector)
