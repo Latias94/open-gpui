@@ -1,19 +1,64 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicy, DockPolicyError,
     DockSpaceId, DockViewportAdapter, DockViewportHit, DockViewportTargetContext,
+    workspace_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
 
-/// Request to open a new platform viewport for a tab released outside known dock viewports.
+/// Drag payload carried by a viewport-routed drop release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DockViewportDropPayload {
+    /// One tab item.
+    Item(DockItemId),
+    /// The entire source tabs stack.
+    Tabs,
+}
+
+impl DockViewportDropPayload {
+    pub(crate) fn as_workspace_payload(
+        &self,
+        source_tabs: DockNodeId,
+    ) -> DockWorkspaceDropPayload<'_> {
+        match self {
+            DockViewportDropPayload::Item(item) => {
+                DockWorkspaceDropPayload::Item { source_tabs, item }
+            }
+            DockViewportDropPayload::Tabs => DockWorkspaceDropPayload::Tabs { source_tabs },
+        }
+    }
+
+    pub(crate) fn key(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+    ) -> DockViewportTearOffKey {
+        match self {
+            DockViewportDropPayload::Item(item) => DockViewportTearOffKey::Item(item.clone()),
+            DockViewportDropPayload::Tabs => DockViewportTearOffKey::Tabs {
+                source_space: source_space.clone(),
+                source_tabs: source_tabs.as_u64(),
+            },
+        }
+    }
+
+    pub(crate) fn label(&self) -> String {
+        match self {
+            DockViewportDropPayload::Item(item) => item.as_str().to_string(),
+            DockViewportDropPayload::Tabs => "tabs".to_string(),
+        }
+    }
+}
+
+/// Request to open a new platform viewport for a payload released outside known dock viewports.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockViewportTearOffRequest {
-    /// Source dock space containing the dragged item.
+    /// Source dock space containing the dragged payload.
     pub source_space: DockSpaceId,
     /// Source tabs node where the drag started.
     pub source_tabs: DockNodeId,
-    /// Item being torn off.
-    pub item: DockItemId,
+    /// Payload being torn off.
+    pub payload: DockViewportDropPayload,
     /// Release position in screen coordinates.
     pub release_position: Point<Pixels>,
     /// Suggested platform window bounds for the new viewport, when known.
@@ -58,7 +103,7 @@ impl DockViewportTearOffTick {
 pub struct DockViewportTearOffPending {
     /// Original release request that started the transaction.
     pub request: DockViewportTearOffRequest,
-    /// Empty logical dock space that will receive the torn-off item.
+    /// Empty logical dock space that will receive the torn-off payload.
     pub target_space: DockSpaceId,
     requested_at: DockViewportTearOffTick,
     expires_after_ticks: u64,
@@ -83,9 +128,9 @@ pub enum DockViewportTearOffCancelReason {
     Cancelled,
     /// The pending request exceeded its logical time-to-live.
     Expired,
-    /// The source item no longer exists in the recorded source dock space.
+    /// The source payload no longer exists in the recorded source dock space.
     SourceMissing,
-    /// The source item still exists, but no longer belongs to the recorded source tabs node.
+    /// The source payload still exists, but no longer belongs to the recorded source tabs node.
     SourceMoved,
 }
 
@@ -124,14 +169,14 @@ pub struct DockViewportTearOffCommitFailure {
 pub(crate) enum DockViewportTearOffCompletionOutcome {
     Completed(DockViewportTearOffCompleted),
     Cancelled(DockViewportTearOffCancelled),
-    MissingPending { item: DockItemId },
+    MissingPending { payload: DockViewportDropPayload },
     CommitFailed(DockViewportTearOffCommitFailure),
 }
 
 /// Outcome of opening a viewport for a tear-off request through the runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockViewportTearOffOpenOutcome {
-    /// The dragged item already had a pending request, so no duplicate window was opened.
+    /// The dragged payload already had a pending request, so no duplicate window was opened.
     Duplicate(DockViewportTearOffPending),
     /// Viewport registration and graph move both completed.
     Completed(DockViewportTearOffCompleted),
@@ -190,14 +235,32 @@ impl DockViewportDropRouteOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct DockViewportTearOffMachine {
-    pending_by_item: BTreeMap<DockItemId, DockViewportTearOffPending>,
+    pending_by_key: BTreeMap<DockViewportTearOffKey, DockViewportTearOffPending>,
     ttl_ticks: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DockViewportTearOffKey {
+    Item(DockItemId),
+    Tabs {
+        source_space: DockSpaceId,
+        source_tabs: u64,
+    },
+}
+
+impl DockViewportTearOffKey {
+    pub(crate) fn payload(&self) -> DockViewportDropPayload {
+        match self {
+            DockViewportTearOffKey::Item(item) => DockViewportDropPayload::Item(item.clone()),
+            DockViewportTearOffKey::Tabs { .. } => DockViewportDropPayload::Tabs,
+        }
+    }
 }
 
 impl Default for DockViewportTearOffMachine {
     fn default() -> Self {
         Self {
-            pending_by_item: BTreeMap::new(),
+            pending_by_key: BTreeMap::new(),
             ttl_ticks: 600,
         }
     }
@@ -206,11 +269,14 @@ impl Default for DockViewportTearOffMachine {
 impl DockViewportTearOffMachine {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.pending_by_item.len()
+        self.pending_by_key.len()
     }
 
-    pub(crate) fn pending(&self, item: &DockItemId) -> Option<&DockViewportTearOffPending> {
-        self.pending_by_item.get(item)
+    pub(crate) fn pending(
+        &self,
+        key: &DockViewportTearOffKey,
+    ) -> Option<&DockViewportTearOffPending> {
+        self.pending_by_key.get(key)
     }
 
     pub(crate) fn begin(
@@ -220,7 +286,10 @@ impl DockViewportTearOffMachine {
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
         self.expire(now);
-        if let Some(pending) = self.pending_by_item.get(&request.item) {
+        let key = request
+            .payload
+            .key(&request.source_space, request.source_tabs);
+        if let Some(pending) = self.pending_by_key.get(&key) {
             return DockViewportTearOffBeginOutcome::Duplicate(pending.clone());
         }
 
@@ -230,18 +299,17 @@ impl DockViewportTearOffMachine {
             requested_at: now,
             expires_after_ticks: self.ttl_ticks,
         };
-        self.pending_by_item
-            .insert(pending.request.item.clone(), pending.clone());
+        self.pending_by_key.insert(key, pending.clone());
         DockViewportTearOffBeginOutcome::Pending(pending)
     }
 
     pub(crate) fn cancel(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         reason: DockViewportTearOffCancelReason,
     ) -> Option<DockViewportTearOffCancelled> {
-        self.pending_by_item
-            .remove(item)
+        self.pending_by_key
+            .remove(key)
             .map(|pending| DockViewportTearOffCancelled { pending, reason })
     }
 
@@ -250,36 +318,36 @@ impl DockViewportTearOffMachine {
         now: DockViewportTearOffTick,
     ) -> Vec<DockViewportTearOffCancelled> {
         let expired = self
-            .pending_by_item
+            .pending_by_key
             .iter()
-            .filter_map(|(item, pending)| pending.is_expired_at(now).then_some(item.clone()))
+            .filter_map(|(key, pending)| pending.is_expired_at(now).then_some(key.clone()))
             .collect::<Vec<_>>();
 
         expired
             .iter()
-            .filter_map(|item| self.cancel(item, DockViewportTearOffCancelReason::Expired))
+            .filter_map(|key| self.cancel(key, DockViewportTearOffCancelReason::Expired))
             .collect()
     }
 
     pub(crate) fn take_for_completion(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffCompletionPending {
-        let Some(pending) = self.pending_by_item.get(item) else {
+        let Some(pending) = self.pending_by_key.get(key) else {
             return DockViewportTearOffCompletionPending::Missing;
         };
         if pending.is_expired_at(now) {
             let cancelled = self
-                .cancel(item, DockViewportTearOffCancelReason::Expired)
-                .expect("pending item should still be present");
+                .cancel(key, DockViewportTearOffCancelReason::Expired)
+                .expect("pending payload should still be present");
             return DockViewportTearOffCompletionPending::Cancelled(cancelled);
         }
 
         DockViewportTearOffCompletionPending::Pending(
-            self.pending_by_item
-                .remove(item)
-                .expect("pending item should still be present"),
+            self.pending_by_key
+                .remove(key)
+                .expect("pending payload should still be present"),
         )
     }
 }
@@ -317,7 +385,7 @@ impl DockViewportAdapter {
         DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
             source_space: source_space.into(),
             source_tabs,
-            item: item.into(),
+            payload: DockViewportDropPayload::Item(item.into()),
             release_position,
             suggested_window_bounds,
         })
@@ -405,7 +473,7 @@ mod tests {
             DockViewportTearOffOutcome::Requested(DockViewportTearOffRequest {
                 source_space: main,
                 source_tabs: DockNodeId::null(),
-                item,
+                payload: DockViewportDropPayload::Item(item),
                 release_position,
                 suggested_window_bounds: Some(suggested_window_bounds),
             })
@@ -440,7 +508,7 @@ mod tests {
         let request = DockViewportTearOffRequest {
             source_space: space("main"),
             source_tabs: DockNodeId::null(),
-            item: item("a"),
+            payload: DockViewportDropPayload::Item(item("a")),
             release_position: point(px(900.0), px(900.0)),
             suggested_window_bounds: None,
         };
@@ -461,12 +529,40 @@ mod tests {
     }
 
     #[test]
+    fn tear_off_machine_deduplicates_pending_tab_stacks() {
+        let mut machine = DockViewportTearOffMachine::default();
+        let source = space("main");
+        let request = DockViewportTearOffRequest {
+            source_space: source.clone(),
+            source_tabs: DockNodeId::null(),
+            payload: DockViewportDropPayload::Tabs,
+            release_position: point(px(900.0), px(900.0)),
+            suggested_window_bounds: None,
+        };
+
+        let first = machine.begin(
+            request.clone(),
+            space("detached"),
+            DockViewportTearOffTick::new(1),
+        );
+        let second = machine.begin(request, space("other"), DockViewportTearOffTick::new(2));
+
+        assert!(matches!(first, DockViewportTearOffBeginOutcome::Pending(_)));
+        let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
+            panic!("second stack begin should be idempotent");
+        };
+        assert_eq!(existing.request.source_space, source);
+        assert_eq!(existing.target_space, space("detached"));
+        assert_eq!(machine.len(), 1);
+    }
+
+    #[test]
     fn tear_off_machine_expires_stale_pending_requests() {
         let mut machine = DockViewportTearOffMachine::default();
         let request = DockViewportTearOffRequest {
             source_space: space("main"),
             source_tabs: DockNodeId::null(),
-            item: item("a"),
+            payload: DockViewportDropPayload::Item(item("a")),
             release_position: point(px(900.0), px(900.0)),
             suggested_window_bounds: None,
         };

@@ -71,7 +71,6 @@ impl DockGraph {
         true
     }
 
-    #[cfg(test)]
     pub(in crate::graph) fn insert_items_into_tabs_at(
         &mut self,
         tabs: DockNodeId,

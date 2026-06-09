@@ -1,9 +1,9 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph, DockHost,
     DockItemId, DockNode, DockOpApplyError, DockSpaceId, DockViewportAdapter,
-    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus, DockViewportRuntime,
-    DockViewportShouldCloseStatus, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockWorkspace,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
+    DockViewportOpenStatus, DockViewportRuntime, DockViewportShouldCloseStatus,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
     host_test_support::*,
     viewport_tear_off::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
@@ -24,10 +24,18 @@ fn tear_off_request(
     DockViewportTearOffRequest {
         source_space,
         source_tabs,
-        item,
+        payload: DockViewportDropPayload::Item(item),
         release_position: point(px(900.0), px(900.0)),
         suggested_window_bounds: None,
     }
+}
+
+fn item_tear_off_key(
+    source_space: &DockSpaceId,
+    source_tabs: crate::DockNodeId,
+    item: DockItemId,
+) -> crate::viewport_tear_off::DockViewportTearOffKey {
+    DockViewportDropPayload::Item(item).key(source_space, source_tabs)
 }
 
 #[open_gpui::test]
@@ -204,8 +212,9 @@ fn viewport_runtime_tear_off_cancels_when_source_item_closes_before_window_creat
     });
 
     let outcome = cx.update(|app| {
+        let key = item_tear_off_key(&primary_space, source_tabs, item("a"));
         runtime.complete_tear_off_viewport_at(
-            &item("a"),
+            &key,
             WindowHandle::<DockHost>::new(WindowId::from(930)),
             DockViewportTearOffTick::new(2),
             app,
@@ -282,8 +291,9 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     });
 
     let outcome = cx.update(|app| {
+        let key = item_tear_off_key(&primary_space, source_tabs, item("a"));
         runtime.complete_tear_off_viewport_at(
-            &item("a"),
+            &key,
             WindowHandle::<DockHost>::new(WindowId::from(931)),
             DockViewportTearOffTick::new(2),
             app,
@@ -387,12 +397,8 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
         DockViewportTearOffTick::new(1),
     );
     let outcome = cx.update(|app| {
-        runtime.complete_tear_off_viewport_at(
-            &item("a"),
-            window,
-            DockViewportTearOffTick::new(2),
-            app,
-        )
+        let key = item_tear_off_key(&primary_space, source_tabs, item("a"));
+        runtime.complete_tear_off_viewport_at(&key, window, DockViewportTearOffTick::new(2), app)
     });
 
     let DockViewportTearOffCompletionOutcome::CommitFailed(failure) = outcome else {

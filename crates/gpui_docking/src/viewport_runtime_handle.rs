@@ -1,11 +1,11 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockHost, DockItemId, DockNodeId,
     DockSpaceId, DockTransactionError, DockViewportCloseOutcome, DockViewportClosePolicy,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
-    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
+    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
@@ -135,7 +135,9 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let item = request.item.clone();
+        let key = request
+            .payload
+            .key(&request.source_space, request.source_tabs);
         let pending = {
             let mut runtime = self.runtime.borrow_mut();
             match runtime.begin_tear_off_request(request, target_space) {
@@ -151,13 +153,13 @@ impl DockViewportRuntimeHandle {
             Err(error) => {
                 self.runtime
                     .borrow_mut()
-                    .cancel_tear_off_request(&item, DockViewportTearOffCancelReason::Cancelled);
+                    .cancel_tear_off_request(&key, DockViewportTearOffCancelReason::Cancelled);
                 return Err(error);
             }
         };
 
         let mut runtime = self.runtime.borrow_mut();
-        let completion = runtime.complete_tear_off_viewport(&item, opened.window, cx);
+        let completion = runtime.complete_tear_off_viewport(&key, opened.window, cx);
         Ok(runtime.finish_tear_off_open(pending, completion, cx))
     }
 
@@ -223,8 +225,14 @@ impl DockViewportRuntimeHandle {
         route: DockViewportDropRoute,
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.commit_drop_route_with_outcome(source_space, source_tabs, item, route, cx)?
-            .into_action_result()
+        self.commit_payload_drop_route_with_outcome(
+            source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            route,
+            cx,
+        )?
+        .into_action_result()
     }
 
     pub(crate) fn commit_drop_route_with_outcome(
@@ -235,35 +243,95 @@ impl DockViewportRuntimeHandle {
         route: DockViewportDropRoute,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        if let DockViewportDropRoute::TearOff(request) = route {
-            return self.commit_tear_off_drop_route(source_space, source_tabs, item, request, cx);
-        }
-
-        self.runtime.borrow_mut().commit_drop_route_with_outcome(
+        self.commit_payload_drop_route_with_outcome(
             source_space,
             source_tabs,
-            item,
+            DockViewportDropPayload::Item(item.clone()),
             route,
             cx,
         )
+    }
+
+    pub(crate) fn commit_payload_drop_route(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.commit_payload_drop_route_with_outcome(source_space, source_tabs, payload, route, cx)?
+            .into_action_result()
+    }
+
+    pub(crate) fn commit_payload_drop_route_with_outcome(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        if let DockViewportDropRoute::TearOff(request) = route {
+            return self.commit_tear_off_drop_route(
+                source_space,
+                source_tabs,
+                payload,
+                request,
+                cx,
+            );
+        }
+
+        self.runtime
+            .borrow_mut()
+            .commit_payload_drop_route_with_outcome(source_space, source_tabs, payload, route, cx)
     }
 
     fn commit_tear_off_drop_route(
         &self,
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
-        item: &DockItemId,
+        payload: DockViewportDropPayload,
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         if request.source_space != *source_space
             || request.source_tabs != source_tabs
-            || request.item != *item
+            || request.payload != payload
         {
-            return Err(DockActionApplyError::ItemNotInTabs {
-                tabs: source_tabs,
-                item: item.clone(),
-            });
+            return Err(tear_off_payload_mismatch(source_space, source_tabs));
+        }
+
+        {
+            let runtime = self.runtime.borrow();
+            let graph = runtime.controller().read(cx).graph();
+            match &payload {
+                DockViewportDropPayload::Item(item) => {
+                    if graph
+                        .find_item_in_space(source_space, item)
+                        .is_none_or(|(tabs, _)| tabs != source_tabs)
+                    {
+                        return Err(DockActionApplyError::ItemNotInTabs {
+                            tabs: source_tabs,
+                            item: item.clone(),
+                        });
+                    }
+                }
+                DockViewportDropPayload::Tabs => {
+                    if graph
+                        .root_for_node_in_space(source_space, source_tabs)
+                        .is_none()
+                    {
+                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                    }
+                    if !matches!(
+                        graph.node(source_tabs),
+                        Some(crate::DockNode::Tabs { items, .. }) if !items.is_empty()
+                    ) {
+                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                    }
+                }
+            }
         }
 
         let (target_space, options) = {
@@ -312,6 +380,31 @@ impl DockViewportRuntimeHandle {
         )
     }
 
+    /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_payload_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &DockViewportTargetContext,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        self.runtime
+            .borrow()
+            .resolve_payload_drop_route_with_context(
+                source_space,
+                source_tabs,
+                payload,
+                release_position,
+                suggested_window_bounds,
+                target_context,
+                cx,
+            )
+    }
+
     /// Handles a GPUI window-closed notification through the shared runtime.
     pub fn handle_window_closed(&self, window_id: WindowId) -> DockViewportCloseOutcome {
         self.runtime.borrow_mut().handle_window_closed(window_id)
@@ -351,4 +444,14 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
         self.runtime.borrow_mut().apply_placement(placement)
     }
+}
+
+fn tear_off_payload_mismatch(
+    source_space: &DockSpaceId,
+    source_tabs: DockNodeId,
+) -> DockActionApplyError {
+    DockActionApplyError::Transaction(DockTransactionError::TearOffPayloadMismatch {
+        space: source_space.clone(),
+        tabs: source_tabs,
+    })
 }

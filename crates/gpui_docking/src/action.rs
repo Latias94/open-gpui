@@ -132,6 +132,14 @@ pub enum DockTransactionError {
         /// Platform or GPUI error message returned while opening the window.
         message: String,
     },
+    /// The tear-off route payload did not match the payload being committed.
+    #[error("tear-off payload for dock space {space} and tabs node {tabs:?} did not match")]
+    TearOffPayloadMismatch {
+        /// Source dock space recorded for the payload.
+        space: DockSpaceId,
+        /// Source tabs node recorded for the payload.
+        tabs: DockNodeId,
+    },
 }
 
 /// Error returned when a docking action cannot be applied.

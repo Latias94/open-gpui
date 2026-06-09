@@ -1,6 +1,7 @@
 use crate::{
     DockItemId, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportHit, DockViewportTargetContext, DockViewportTearOffRequest,
+    DockViewportDropPayload, DockViewportHit, DockViewportTargetContext,
+    DockViewportTearOffRequest,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 
@@ -41,6 +42,33 @@ impl DockViewportAdapter {
         policy: &DockPolicy,
         target_context: &DockViewportTargetContext,
     ) -> DockViewportDropRoute {
+        self.resolve_payload_drop_route_with_context(
+            source_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item.into()),
+            release_position,
+            suggested_window_bounds,
+            policy,
+            target_context,
+        )
+    }
+
+    /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    ///
+    /// The route contains viewport-level information only. The payload is carried only when the
+    /// route becomes a tear-off request; local and known-viewport commits receive the payload from
+    /// the caller when the route is committed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_payload_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        policy: &DockPolicy,
+        target_context: &DockViewportTargetContext,
+    ) -> DockViewportDropRoute {
         let source_space = source_space.into();
         if let Some(candidate) = self.resolve_viewport_target(release_position, target_context) {
             if candidate.space == source_space {
@@ -63,7 +91,7 @@ impl DockViewportAdapter {
         DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
             source_space,
             source_tabs,
-            item: item.into(),
+            payload,
             release_position,
             suggested_window_bounds,
         })
@@ -188,7 +216,7 @@ mod tests {
             DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
                 source_space: source,
                 source_tabs,
-                item,
+                payload: DockViewportDropPayload::Item(item),
                 release_position,
                 suggested_window_bounds: Some(suggested_window_bounds),
             })

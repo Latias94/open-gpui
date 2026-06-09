@@ -1,19 +1,19 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
     DockTransactionError, DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
-    DockViewportRuntimeHandle, DockViewportShouldCloseOutcome, DockViewportTargetContext,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
-    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffCancelled, DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
-    DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
-    DockViewportTearOffRequest, DockViewportTearOffTick,
+    DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockResolvedDropTarget,
     viewport_close_gate::DockViewportCloseGate,
     viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
-    workspace_transaction::DockWorkspaceDropRequest,
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
     AnyWindowHandle, App, Bounds, DisplayId, Entity, Pixels, Point, Result, WindowBounds, WindowId,
@@ -227,11 +227,11 @@ impl DockViewportRuntime {
         self.close_gate.sync_adapter(&self.adapter);
     }
 
-    pub(crate) fn commit_drop_route_with_outcome(
+    pub(crate) fn commit_payload_drop_route_with_outcome(
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: crate::DockNodeId,
-        item: &DockItemId,
+        payload: DockViewportDropPayload,
         route: DockViewportDropRoute,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
@@ -246,7 +246,7 @@ impl DockViewportRuntime {
                 return self.commit_tear_off_drop_route(
                     source_space,
                     source_tabs,
-                    item,
+                    payload,
                     request,
                     cx,
                 );
@@ -257,13 +257,13 @@ impl DockViewportRuntime {
         let (target_space, target) = target_space;
         self.controller
             .update(cx, |controller, cx| {
-                let outcome = controller.commit_resolved_drop(DockWorkspaceDropRequest {
-                    source_space,
-                    source_tabs,
-                    item,
-                    target_space: &target_space,
-                    target,
-                });
+                let outcome =
+                    controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                        source_space,
+                        payload: payload.as_workspace_payload(source_tabs),
+                        target_space: &target_space,
+                        target,
+                    });
                 if outcome
                     .as_ref()
                     .map(|outcome| outcome.changed())
@@ -301,18 +301,46 @@ impl DockViewportRuntime {
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: crate::DockNodeId,
-        item: &DockItemId,
+        payload: DockViewportDropPayload,
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         if request.source_space != *source_space
             || request.source_tabs != source_tabs
-            || request.item != *item
+            || request.payload != payload
         {
-            return Err(DockActionApplyError::ItemNotInTabs {
-                tabs: source_tabs,
-                item: item.clone(),
-            });
+            return Err(tear_off_payload_mismatch(source_space, source_tabs));
+        }
+
+        {
+            let graph = self.controller.read(cx).graph();
+            match &payload {
+                DockViewportDropPayload::Item(item) => {
+                    if graph
+                        .find_item_in_space(source_space, item)
+                        .is_none_or(|(tabs, _)| tabs != source_tabs)
+                    {
+                        return Err(DockActionApplyError::ItemNotInTabs {
+                            tabs: source_tabs,
+                            item: item.clone(),
+                        });
+                    }
+                }
+                DockViewportDropPayload::Tabs => {
+                    if graph
+                        .root_for_node_in_space(source_space, source_tabs)
+                        .is_none()
+                    {
+                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                    }
+                    if !matches!(
+                        graph.node(source_tabs),
+                        Some(DockNode::Tabs { items, .. }) if !items.is_empty()
+                    ) {
+                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                    }
+                }
+            }
         }
 
         let target_space = self.next_tear_off_space(&request);
@@ -334,7 +362,7 @@ impl DockViewportRuntime {
         DockSpaceId::new(format!(
             "{}:tear-off:{}:{}",
             request.source_space,
-            request.item.as_str(),
+            request.payload.label(),
             tick.as_u64()
         ))
     }
@@ -387,6 +415,30 @@ impl DockViewportRuntime {
         )
     }
 
+    /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_payload_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: crate::DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &DockViewportTargetContext,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        let policy = self.controller.read(cx).workspace().policy().to_owned();
+        self.adapter.resolve_payload_drop_route_with_context(
+            source_space,
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            &policy,
+            target_context,
+        )
+    }
+
     pub(crate) fn begin_tear_off_request(
         &mut self,
         request: DockViewportTearOffRequest,
@@ -407,10 +459,10 @@ impl DockViewportRuntime {
 
     pub(crate) fn cancel_tear_off_request(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         reason: DockViewportTearOffCancelReason,
     ) -> Option<DockViewportTearOffCancelled> {
-        self.tear_off.cancel(item, reason)
+        self.tear_off.cancel(key, reason)
     }
 
     #[cfg(test)]
@@ -423,30 +475,30 @@ impl DockViewportRuntime {
 
     pub(crate) fn complete_tear_off_viewport(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         window: impl Into<AnyWindowHandle>,
         cx: &mut App,
     ) -> DockViewportTearOffCompletionOutcome {
         let now = self.next_tear_off_tick();
-        self.complete_tear_off_viewport_at(item, window, now, cx)
+        self.complete_tear_off_viewport_at(key, window, now, cx)
     }
 
     pub(crate) fn complete_tear_off_viewport_at(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         window: impl Into<AnyWindowHandle>,
         now: DockViewportTearOffTick,
         cx: &mut App,
     ) -> DockViewportTearOffCompletionOutcome {
-        let item = item.clone();
-        let readiness = self.prepare_tear_off_completion(&item, now, cx);
+        let payload = key.payload();
+        let readiness = self.prepare_tear_off_completion(key, now, cx);
         let pending = match readiness {
             DockViewportTearOffCompletionPending::Pending(pending) => pending,
             DockViewportTearOffCompletionPending::Cancelled(cancelled) => {
                 return DockViewportTearOffCompletionOutcome::Cancelled(cancelled);
             }
             DockViewportTearOffCompletionPending::Missing => {
-                return DockViewportTearOffCompletionOutcome::MissingPending { item };
+                return DockViewportTearOffCompletionOutcome::MissingPending { payload };
             }
         };
 
@@ -489,7 +541,9 @@ impl DockViewportRuntime {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let item = request.item.clone();
+        let key = request
+            .payload
+            .key(&request.source_space, request.source_tabs);
         let begin = self.begin_tear_off_request(request, target_space);
         let pending = match begin {
             DockViewportTearOffBeginOutcome::Pending(pending) => pending,
@@ -502,12 +556,12 @@ impl DockViewportRuntime {
             Ok(opened) => opened,
             Err(error) => {
                 self.tear_off
-                    .cancel(&item, DockViewportTearOffCancelReason::Cancelled);
+                    .cancel(&key, DockViewportTearOffCancelReason::Cancelled);
                 return Err(error);
             }
         };
 
-        let completion = self.complete_tear_off_viewport(&item, opened.window, cx);
+        let completion = self.complete_tear_off_viewport(&key, opened.window, cx);
         Ok(self.finish_tear_off_open(pending, completion, cx))
     }
 
@@ -525,15 +579,22 @@ impl DockViewportRuntime {
                 self.discard_tear_off_target(&pending.target_space);
                 DockViewportTearOffOpenOutcome::Cancelled(cancelled)
             }
-            DockViewportTearOffCompletionOutcome::MissingPending { item } => {
+            DockViewportTearOffCompletionOutcome::MissingPending { .. } => {
                 self.discard_tear_off_target(&pending.target_space);
+                let reason = match self.tear_off_source_status(&pending, cx) {
+                    DockViewportTearOffSourceStatus::Ready => {
+                        DockViewportTearOffCancelReason::Cancelled
+                    }
+                    DockViewportTearOffSourceStatus::Missing => {
+                        DockViewportTearOffCancelReason::SourceMissing
+                    }
+                    DockViewportTearOffSourceStatus::Moved => {
+                        DockViewportTearOffCancelReason::SourceMoved
+                    }
+                };
                 DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled {
                     pending,
-                    reason: if self.controller.read(cx).graph().contains_item(&item) {
-                        DockViewportTearOffCancelReason::SourceMoved
-                    } else {
-                        DockViewportTearOffCancelReason::SourceMissing
-                    },
+                    reason,
                 })
             }
             DockViewportTearOffCompletionOutcome::CommitFailed(failure) => {
@@ -605,35 +666,35 @@ impl DockViewportRuntime {
 
     fn prepare_tear_off_completion(
         &mut self,
-        item: &DockItemId,
+        key: &DockViewportTearOffKey,
         now: DockViewportTearOffTick,
         cx: &App,
     ) -> DockViewportTearOffCompletionPending {
-        let Some(pending) = self.tear_off.pending(item).cloned() else {
+        let Some(pending) = self.tear_off.pending(key).cloned() else {
             return DockViewportTearOffCompletionPending::Missing;
         };
         if pending.is_expired_at(now) {
             return DockViewportTearOffCompletionPending::Cancelled(
                 self.tear_off
-                    .cancel(item, DockViewportTearOffCancelReason::Expired)
-                    .expect("pending item should still be present"),
+                    .cancel(key, DockViewportTearOffCancelReason::Expired)
+                    .expect("pending payload should still be present"),
             );
         }
 
         match self.tear_off_source_status(&pending, cx) {
-            DockViewportTearOffSourceStatus::Ready => self.tear_off.take_for_completion(item, now),
+            DockViewportTearOffSourceStatus::Ready => self.tear_off.take_for_completion(key, now),
             DockViewportTearOffSourceStatus::Missing => {
                 DockViewportTearOffCompletionPending::Cancelled(
                     self.tear_off
-                        .cancel(item, DockViewportTearOffCancelReason::SourceMissing)
-                        .expect("pending item should still be present"),
+                        .cancel(key, DockViewportTearOffCancelReason::SourceMissing)
+                        .expect("pending payload should still be present"),
                 )
             }
             DockViewportTearOffSourceStatus::Moved => {
                 DockViewportTearOffCompletionPending::Cancelled(
                     self.tear_off
-                        .cancel(item, DockViewportTearOffCancelReason::SourceMoved)
-                        .expect("pending item should still be present"),
+                        .cancel(key, DockViewportTearOffCancelReason::SourceMoved)
+                        .expect("pending payload should still be present"),
                 )
             }
         }
@@ -645,22 +706,39 @@ impl DockViewportRuntime {
         cx: &App,
     ) -> DockViewportTearOffSourceStatus {
         let graph = self.controller.read(cx).graph();
-        graph
-            .find_item_in_space(&pending.request.source_space, &pending.request.item)
-            .map(|(tabs, _)| {
-                if tabs == pending.request.source_tabs {
+        match &pending.request.payload {
+            DockViewportDropPayload::Item(item) => graph
+                .find_item_in_space(&pending.request.source_space, item)
+                .map(|(tabs, _)| {
+                    if tabs == pending.request.source_tabs {
+                        DockViewportTearOffSourceStatus::Ready
+                    } else {
+                        DockViewportTearOffSourceStatus::Moved
+                    }
+                })
+                .unwrap_or_else(|| {
+                    if graph.contains_item(item) {
+                        DockViewportTearOffSourceStatus::Moved
+                    } else {
+                        DockViewportTearOffSourceStatus::Missing
+                    }
+                }),
+            DockViewportDropPayload::Tabs => {
+                let source_tabs = pending.request.source_tabs;
+                let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
+                    return DockViewportTearOffSourceStatus::Missing;
+                };
+                if graph
+                    .root_for_node_in_space(&pending.request.source_space, source_tabs)
+                    .is_some()
+                    && !items.is_empty()
+                {
                     DockViewportTearOffSourceStatus::Ready
                 } else {
                     DockViewportTearOffSourceStatus::Moved
                 }
-            })
-            .unwrap_or_else(|| {
-                if graph.contains_item(&pending.request.item) {
-                    DockViewportTearOffSourceStatus::Moved
-                } else {
-                    DockViewportTearOffSourceStatus::Missing
-                }
-            })
+            }
+        }
     }
 
     fn commit_tear_off_move(
@@ -669,11 +747,18 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.controller.update(cx, |controller, cx| {
-            let outcome = controller.commit_item_to_empty_dock_space(
-                &pending.request.source_space,
-                &pending.request.item,
-                &pending.target_space,
-            );
+            let outcome = match &pending.request.payload {
+                DockViewportDropPayload::Item(item) => controller.commit_item_to_empty_dock_space(
+                    &pending.request.source_space,
+                    item,
+                    &pending.target_space,
+                ),
+                DockViewportDropPayload::Tabs => controller.commit_tabs_to_empty_dock_space(
+                    &pending.request.source_space,
+                    pending.request.source_tabs,
+                    &pending.target_space,
+                ),
+            };
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())
@@ -710,4 +795,14 @@ pub(crate) enum DockViewportReusableWindow {
     Missing,
     Reused(AnyWindowHandle),
     Stale,
+}
+
+fn tear_off_payload_mismatch(
+    source_space: &DockSpaceId,
+    source_tabs: crate::DockNodeId,
+) -> DockActionApplyError {
+    DockActionApplyError::Transaction(DockTransactionError::TearOffPayloadMismatch {
+        space: source_space.clone(),
+        tabs: source_tabs,
+    })
 }

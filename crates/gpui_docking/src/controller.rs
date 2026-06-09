@@ -4,8 +4,9 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
     DockItemId, DockLayout, DockLayoutValidationError, DockNodeId, DockPanel, DockPanelAttachError,
     DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
-    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
-    workspace_transaction::DockWorkspaceDropRequest,
+    DockWorkspace, EditorDockLayoutSpec,
+    host::DockHostOptions,
+    workspace_transaction::{DockWorkspaceDropRequest, DockWorkspacePayloadDropRequest},
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 
@@ -141,6 +142,13 @@ impl DockController {
         self.workspace.commit_resolved_drop(request)
     }
 
+    pub(crate) fn commit_resolved_payload_drop(
+        &mut self,
+        request: DockWorkspacePayloadDropRequest<'_>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_resolved_payload_drop(request)
+    }
+
     pub(crate) fn commit_select_tab(
         &mut self,
         tabs: DockNodeId,
@@ -165,6 +173,16 @@ impl DockController {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace
             .commit_item_to_empty_dock_space(source_space, item, target_space)
+    }
+
+    pub(crate) fn commit_tabs_to_empty_dock_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)
     }
 
     pub(crate) fn commit_resize_split(
