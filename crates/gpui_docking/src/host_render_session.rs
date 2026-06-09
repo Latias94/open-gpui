@@ -1,6 +1,6 @@
 use crate::{
     DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, DockWorkspace,
-    panel::DockPanelRenderRegistration,
+    panel_registry::DockPanelRenderRegistration,
 };
 use open_gpui::{AnyView, Context, Pixels};
 use std::collections::HashMap;
