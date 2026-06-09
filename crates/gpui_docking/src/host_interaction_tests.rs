@@ -1,6 +1,7 @@
 use crate::{
     DockController, DockGraph, DockNode, DockNodeId, DockPanel, DockViewportRuntimeHandle,
-    DockWorkspace, SplitAxis, debug::DockDebugRegion, host_test_support::*,
+    DockViewportTargetContext, DockWorkspace, SplitAxis, debug::DockDebugRegion,
+    host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -566,7 +567,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
-    cx.read_entity(&controller, |controller, _| {
+    let detached_space = cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
             vec![item("b")]
@@ -581,6 +582,105 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
             controller.graph().collect_items_in_space(&detached_space),
             vec![item("a")]
         );
+        detached_space
+    });
+    let detached_window = runtime
+        .borrow()
+        .adapter()
+        .window_for_space(&detached_space)
+        .expect("detached space should have a runtime window");
+    let after_drop_context = opened
+        .window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("source viewport should still be live");
+    assert_eq!(
+        after_drop_context.active_window,
+        Some(detached_window.window_id()),
+        "rendered tear-off should activate the new detached viewport"
+    );
+}
+
+#[open_gpui::test]
+fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_disabled(
+    cx: &mut TestAppContext,
+) {
+    let source_space = crate::DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    let source_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(opened.window, cx);
+
+    assert_eq!(
+        runtime.borrow().adapter().len(),
+        1,
+        "disabled platform viewports should not open a detached viewport"
+    );
+    assert!(
+        selector_for(&visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+        "rejected outside release should clear the drop preview"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("b")]
+        );
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should remain")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("b")]);
+        assert_eq!(*active, 0);
     });
 }
 
