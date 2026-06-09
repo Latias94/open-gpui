@@ -415,8 +415,7 @@ enum CandidateKind {
 fn simulate_drag_rebuild(document: &CanvasDocument, selected_nodes: usize) -> usize {
     let mut document = document.clone();
     let ids = document
-        .nodes
-        .keys()
+        .node_ids()
         .take(selected_nodes)
         .cloned()
         .collect::<Vec<_>>();
@@ -424,7 +423,7 @@ fn simulate_drag_rebuild(document: &CanvasDocument, selected_nodes: usize) -> us
 
     for frame in 0..DRAG_FRAMES {
         for id in &ids {
-            let mut node = document.nodes[id].clone();
+            let mut node = document.node(id).unwrap().clone();
             node.position.x += px(1.0 + frame as f32 * 0.01);
             document.update_node(node).unwrap();
         }
@@ -442,8 +441,7 @@ fn simulate_drag_candidate(
 ) -> usize {
     let mut document = document.clone();
     let ids = document
-        .nodes
-        .keys()
+        .node_ids()
         .take(selected_nodes)
         .cloned()
         .collect::<Vec<_>>();
@@ -451,7 +449,7 @@ fn simulate_drag_candidate(
 
     for frame in 0..DRAG_FRAMES {
         for id in &ids {
-            let mut node = document.nodes[id].clone();
+            let mut node = document.node(id).unwrap().clone();
             node.position.x += px(1.0 + frame as f32 * 0.01);
             document.update_node(node).unwrap();
         }
@@ -492,7 +490,7 @@ fn simulate_drag_hybrid_overlay(
 
     for frame in 0..DRAG_FRAMES {
         for id in &selected {
-            let mut node = document.nodes[id].clone();
+            let mut node = document.node(id).unwrap().clone();
             node.position.x += px(1.0 + frame as f32 * 0.01);
             document.update_node(node).unwrap();
         }
@@ -519,7 +517,7 @@ fn simulate_drag_runtime(
     for frame in 0..DRAG_FRAMES {
         let previous = document.clone();
         for id in &selected {
-            let mut node = document.nodes[id].clone();
+            let mut node = document.node(id).unwrap().clone();
             node.position.x += px(1.0 + frame as f32 * 0.01);
             document.update_node(node).unwrap();
         }
@@ -564,7 +562,7 @@ fn stale_record_ids_for_nodes(
         stale_records.insert(CanvasRecordId::Node(node_id.clone()));
     }
 
-    for edge in document.edges.values() {
+    for edge in document.edges() {
         if selected_nodes.contains(&edge.source.node_id)
             || selected_nodes.contains(&edge.target.node_id)
         {
@@ -585,12 +583,7 @@ fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
 }
 
 fn selected_node_ids(document: &CanvasDocument, selected_nodes: usize) -> HashSet<NodeId> {
-    document
-        .nodes
-        .keys()
-        .take(selected_nodes)
-        .cloned()
-        .collect()
+    document.node_ids().take(selected_nodes).cloned().collect()
 }
 
 fn query_matches(record: &HitRecord, viewport: Bounds<Pixels>, options: HitOptions) -> bool {

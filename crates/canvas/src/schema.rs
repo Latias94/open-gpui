@@ -398,19 +398,19 @@ impl CanvasKindRegistry {
         &self,
         document: &crate::CanvasDocument,
     ) -> Result<(), CanvasSchemaError> {
-        for node in document.nodes.values() {
+        for node in document.nodes() {
             if let Some(schema) = self.node_kind(&node.kind) {
                 schema.validate_node(node)?;
             }
         }
 
-        for edge in document.edges.values() {
+        for edge in document.edges() {
             if let Some(schema) = self.edge_kind(&edge.kind) {
                 schema.validate_edge(edge)?;
             }
         }
 
-        for shape in document.shapes.values() {
+        for shape in document.shapes() {
             if let Some(schema) = self.shape_kind(&shape.kind) {
                 schema.validate_shape(shape)?;
             }
@@ -1064,7 +1064,7 @@ mod tests {
                 .unwrap();
 
         assert_eq!(
-            loaded.nodes[&NodeId::from("n")].data.get("title"),
+            loaded.node(&NodeId::from("n")).unwrap().data.get("title"),
             Some(&json!("Snapshot"))
         );
     }
@@ -1089,7 +1089,7 @@ mod tests {
             err,
             DocumentError::Schema(CanvasSchemaError::InvalidData { .. })
         ));
-        assert!(document.nodes.is_empty());
+        assert_eq!(document.node_count(), 0);
     }
 
     fn edge_with_kind(kind: &str) -> CanvasEdge {

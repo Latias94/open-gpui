@@ -71,7 +71,7 @@ impl CanvasCommandGenerator {
             }
         }
 
-        if document.nodes.len() < 2 || rng.bool(2) {
+        if document.node_count() < 2 || rng.bool(2) {
             self.insert_node(rng)
         } else {
             self.insert_shape(rng)
@@ -85,17 +85,17 @@ impl CanvasCommandGenerator {
         rng: &mut TestRng,
     ) -> Option<DocumentCommand> {
         match choice {
-            0 if document.nodes.len() < 32 => Some(self.insert_node(rng)),
-            1 if !document.nodes.is_empty() => Some(self.update_node(document, rng)),
-            2 if document.nodes.len() > 2 => Some(self.remove_node(document, rng)),
-            3 if !document.nodes.is_empty() && document.edges.len() < 48 => {
+            0 if document.node_count() < 32 => Some(self.insert_node(rng)),
+            1 if document.node_count() != 0 => Some(self.update_node(document, rng)),
+            2 if document.node_count() > 2 => Some(self.remove_node(document, rng)),
+            3 if document.node_count() != 0 && document.edge_count() < 48 => {
                 Some(self.insert_edge(document, rng))
             }
-            4 if !document.edges.is_empty() => Some(self.update_edge(document, rng)),
-            5 if !document.edges.is_empty() => Some(self.remove_edge(document, rng)),
-            6 if document.shapes.len() < 32 => Some(self.insert_shape(rng)),
-            7 if !document.shapes.is_empty() => Some(self.update_shape(document, rng)),
-            8 if !document.shapes.is_empty() => Some(self.remove_shape(document, rng)),
+            4 if document.edge_count() != 0 => Some(self.update_edge(document, rng)),
+            5 if document.edge_count() != 0 => Some(self.remove_edge(document, rng)),
+            6 if document.shape_count() < 32 => Some(self.insert_shape(rng)),
+            7 if document.shape_count() != 0 => Some(self.update_shape(document, rng)),
+            8 if document.shape_count() != 0 => Some(self.remove_shape(document, rng)),
             _ => None,
         }
     }
@@ -107,12 +107,12 @@ impl CanvasCommandGenerator {
     }
 
     fn update_node(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        let id = node_id_at(document, rng.usize(document.nodes.len()));
+        let id = node_id_at(document, rng.usize(document.node_count()));
         DocumentCommand::UpdateNode(self.node_with_id(id, rng))
     }
 
     fn remove_node(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        DocumentCommand::RemoveNode(node_id_at(document, rng.usize(document.nodes.len())))
+        DocumentCommand::RemoveNode(node_id_at(document, rng.usize(document.node_count())))
     }
 
     fn insert_edge(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
@@ -122,12 +122,12 @@ impl CanvasCommandGenerator {
     }
 
     fn update_edge(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        let id = edge_id_at(document, rng.usize(document.edges.len()));
+        let id = edge_id_at(document, rng.usize(document.edge_count()));
         DocumentCommand::UpdateEdge(self.edge_with_id(id, document, rng))
     }
 
     fn remove_edge(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        DocumentCommand::RemoveEdge(edge_id_at(document, rng.usize(document.edges.len())))
+        DocumentCommand::RemoveEdge(edge_id_at(document, rng.usize(document.edge_count())))
     }
 
     fn insert_shape(&mut self, rng: &mut TestRng) -> DocumentCommand {
@@ -137,12 +137,12 @@ impl CanvasCommandGenerator {
     }
 
     fn update_shape(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        let id = shape_id_at(document, rng.usize(document.shapes.len()));
+        let id = shape_id_at(document, rng.usize(document.shape_count()));
         DocumentCommand::UpdateShape(self.shape_with_id(id, rng))
     }
 
     fn remove_shape(&mut self, document: &CanvasDocument, rng: &mut TestRng) -> DocumentCommand {
-        DocumentCommand::RemoveShape(shape_id_at(document, rng.usize(document.shapes.len())))
+        DocumentCommand::RemoveShape(shape_id_at(document, rng.usize(document.shape_count())))
     }
 
     fn node_with_id(&mut self, id: NodeId, rng: &mut TestRng) -> CanvasNode {
@@ -176,8 +176,8 @@ impl CanvasCommandGenerator {
         document: &CanvasDocument,
         rng: &mut TestRng,
     ) -> CanvasEdge {
-        let source = node_id_at(document, rng.usize(document.nodes.len()));
-        let target = node_id_at(document, rng.usize(document.nodes.len()));
+        let source = node_id_at(document, rng.usize(document.node_count()));
+        let target = node_id_at(document, rng.usize(document.node_count()));
         let mut edge = CanvasEdge::new(
             id,
             CanvasEndpoint::new(source, None::<crate::HandleId>),
@@ -226,13 +226,13 @@ impl CanvasCommandGenerator {
 }
 
 fn node_id_at(document: &CanvasDocument, index: usize) -> NodeId {
-    document.nodes.keys().nth(index).unwrap().clone()
+    document.node_ids().nth(index).unwrap().clone()
 }
 
 fn edge_id_at(document: &CanvasDocument, index: usize) -> EdgeId {
-    document.edges.keys().nth(index).unwrap().clone()
+    document.edge_ids().nth(index).unwrap().clone()
 }
 
 fn shape_id_at(document: &CanvasDocument, index: usize) -> ShapeId {
-    document.shapes.keys().nth(index).unwrap().clone()
+    document.shape_ids().nth(index).unwrap().clone()
 }

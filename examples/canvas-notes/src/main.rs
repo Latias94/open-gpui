@@ -302,8 +302,8 @@ impl NotesView {
                     )
                     .child(div().text_xs().text_color(rgb(0x64748b)).child(format!(
                         "{} nodes / {} edges",
-                        document.nodes.len(),
-                        document.edges.len()
+                        document.node_count(),
+                        document.edge_count()
                     ))),
             )
             .child(
@@ -368,7 +368,7 @@ impl NotesView {
                 let HitTarget::Node(id) = &placement.target else {
                     return None;
                 };
-                let node = self.editor.document().nodes.get(id)?;
+                let node = self.editor.document().node(id)?;
                 let title = compact_title(&node_title(node), 48);
                 let left = placement.view_bounds.left() + px(10.0);
                 let top = placement.view_bounds.bottom() - px(34.0);
@@ -401,7 +401,7 @@ impl NotesView {
 
     fn selected_node_summary(&self) -> Option<NodeSummary> {
         let id = self.editor.selection().nodes.iter().next()?;
-        let node = self.editor.document().nodes.get(id)?;
+        let node = self.editor.document().node(id)?;
         let title = compact_title(&node_title(node), 80);
         Some(NodeSummary {
             id: node.id.as_str().to_string(),

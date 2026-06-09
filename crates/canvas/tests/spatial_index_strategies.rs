@@ -186,8 +186,7 @@ fn hybrid_overlay_matches_oracle_during_drag_frames() {
 
     for selected_count in [1, 10, 100] {
         let selected_nodes = base_document
-            .nodes
-            .keys()
+            .node_ids()
             .take(selected_count)
             .cloned()
             .collect::<Vec<_>>();
@@ -254,8 +253,7 @@ fn runtime_diff_updates_match_oracle_during_drag_frames() {
         point(px(1_180.0), px(430.0)),
     ];
     let selected_nodes = base_document
-        .nodes
-        .keys()
+        .node_ids()
         .take(10)
         .cloned()
         .collect::<Vec<_>>();
@@ -811,7 +809,7 @@ fn stale_record_ids_for_nodes(
         .map(CanvasRecordId::Node)
         .collect::<HashSet<_>>();
 
-    for edge in document.edges.values() {
+    for edge in document.edges() {
         if selected.contains(&edge.source.node_id) || selected.contains(&edge.target.node_id) {
             stale_records.insert(CanvasRecordId::Edge(edge.id.clone()));
         }
@@ -826,7 +824,7 @@ fn stale_record_ids_for_node_removal(
 ) -> HashSet<CanvasRecordId> {
     let mut stale_records = HashSet::from([CanvasRecordId::Node(removed_node.clone())]);
 
-    for edge in document.edges.values() {
+    for edge in document.edges() {
         if edge.source.node_id == *removed_node || edge.target.node_id == *removed_node {
             stale_records.insert(CanvasRecordId::Edge(edge.id.clone()));
         }
@@ -837,7 +835,7 @@ fn stale_record_ids_for_node_removal(
 
 fn move_selected_nodes(document: &mut CanvasDocument, selected_nodes: &[NodeId], frame: f32) {
     for (index, id) in selected_nodes.iter().enumerate() {
-        let mut node = document.nodes[id].clone();
+        let mut node = document.node(id).unwrap().clone();
         node.position.x += px(frame * 0.75 + index as f32 * 0.01);
         node.position.y += px(frame * 0.25);
         document.update_node(node).unwrap();

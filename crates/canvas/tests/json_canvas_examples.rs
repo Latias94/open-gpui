@@ -10,13 +10,10 @@ const NOTES_SAMPLE: &str = include_str!("../../../examples/canvas-notes/assets/s
 fn imports_canvas_notes_fixture() {
     let document = document_from_json_canvas_str(NOTES_SAMPLE).unwrap();
 
-    assert_eq!(document.nodes.len(), 5);
-    assert_eq!(document.edges.len(), 4);
+    assert_eq!(document.node_count(), 5);
+    assert_eq!(document.edge_count(), 4);
 
-    let question = document
-        .nodes
-        .get(&NodeId::from("research-question"))
-        .unwrap();
+    let question = document.node(&NodeId::from("research-question")).unwrap();
     assert_eq!(question.kind, "text");
     assert_eq!(question.style.fill.as_deref(), Some("#fff7ed"));
     assert!(
@@ -42,7 +39,7 @@ fn imports_canvas_notes_fixture() {
             .is_some()
     );
 
-    let source = document.nodes.get(&NodeId::from("source-doc")).unwrap();
+    let source = document.node(&NodeId::from("source-doc")).unwrap();
     assert_eq!(
         source.data.get("file"),
         Some(&json!(
@@ -52,17 +49,13 @@ fn imports_canvas_notes_fixture() {
     assert_eq!(source.data.get("subpath"), Some(&json!("#summary")));
     assert_eq!(source.data.get("role"), Some(&json!("source")));
 
-    let link = document
-        .nodes
-        .get(&NodeId::from("xyflow-reference"))
-        .unwrap();
+    let link = document.node(&NodeId::from("xyflow-reference")).unwrap();
     assert_eq!(link.kind, "link");
     assert_eq!(link.data.get("url"), Some(&json!("https://xyflow.com/")));
     assert_eq!(link.data.get("confidence"), Some(&json!(0.82)));
 
     let edge = document
-        .edges
-        .get(&EdgeId::from("edge-question-source"))
+        .edge(&EdgeId::from("edge-question-source"))
         .unwrap();
     assert_eq!(edge.source.node_id, NodeId::from("research-question"));
     assert_eq!(
@@ -121,6 +114,6 @@ fn canvas_notes_fixture_round_trips_json_canvas_fields() {
     assert!(serialized.contains("\"backgroundStyle\": \"cover\""));
 
     let reparsed = document_from_json_canvas_str(&serialized).unwrap();
-    assert_eq!(reparsed.nodes.len(), document.nodes.len());
-    assert_eq!(reparsed.edges.len(), document.edges.len());
+    assert_eq!(reparsed.node_count(), document.node_count());
+    assert_eq!(reparsed.edge_count(), document.edge_count());
 }

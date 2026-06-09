@@ -58,26 +58,26 @@ pub(crate) fn transaction_between(
 ) -> CanvasTransaction {
     let mut commands = Vec::new();
 
-    for id in previous.edges.keys() {
-        if !target.edges.contains_key(id) {
+    for id in previous.edge_ids() {
+        if !target.contains_edge(id) {
             commands.push(DocumentCommand::RemoveEdge(id.clone()));
         }
     }
 
-    for id in previous.shapes.keys() {
-        if !target.shapes.contains_key(id) {
+    for id in previous.shape_ids() {
+        if !target.contains_shape(id) {
             commands.push(DocumentCommand::RemoveShape(id.clone()));
         }
     }
 
-    for id in previous.nodes.keys() {
-        if !target.nodes.contains_key(id) {
+    for id in previous.node_ids() {
+        if !target.contains_node(id) {
             commands.push(DocumentCommand::RemoveNode(id.clone()));
         }
     }
 
-    for (id, node) in &target.nodes {
-        match previous.nodes.get(id) {
+    for (id, node) in target.node_entries() {
+        match previous.node(id) {
             None => commands.push(DocumentCommand::InsertNode(node.clone())),
             Some(previous_node) if previous_node != node => {
                 commands.push(DocumentCommand::UpdateNode(node.clone()));
@@ -86,8 +86,8 @@ pub(crate) fn transaction_between(
         }
     }
 
-    for (id, shape) in &target.shapes {
-        match previous.shapes.get(id) {
+    for (id, shape) in target.shape_entries() {
+        match previous.shape(id) {
             None => commands.push(DocumentCommand::InsertShape(shape.clone())),
             Some(previous_shape) if previous_shape != shape => {
                 commands.push(DocumentCommand::UpdateShape(shape.clone()));
@@ -96,8 +96,8 @@ pub(crate) fn transaction_between(
         }
     }
 
-    for (id, edge) in &target.edges {
-        match previous.edges.get(id) {
+    for (id, edge) in target.edge_entries() {
+        match previous.edge(id) {
             None => commands.push(DocumentCommand::InsertEdge(edge.clone())),
             Some(previous_edge) if previous_edge != edge => {
                 commands.push(DocumentCommand::UpdateEdge(edge.clone()));
@@ -155,7 +155,7 @@ mod tests {
     fn gesture_cancel_transaction_restores_baseline() {
         let mut baseline = connected_document();
         let session = CanvasGestureSession::begin(&baseline);
-        let mut moved = baseline.nodes[&NodeId::from("a")].clone();
+        let mut moved = baseline.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(40.0), px(0.0));
         baseline
             .apply_transaction(CanvasTransaction::single(DocumentCommand::UpdateNode(
@@ -173,7 +173,7 @@ mod tests {
     fn transaction_between_updates_edge_after_node_changes() {
         let previous = connected_document();
         let mut target = previous.clone();
-        let mut source = target.nodes[&NodeId::from("a")].clone();
+        let mut source = target.node(&NodeId::from("a")).unwrap().clone();
         source.position = point(px(100.0), px(0.0));
         target.update_node(source).unwrap();
         let changed_edge = CanvasEdge::new(
@@ -188,7 +188,7 @@ mod tests {
         replayed.apply_transaction(transaction).unwrap();
 
         assert_eq!(replayed, target);
-        assert_eq!(replayed.edges[&EdgeId::from("a-b")], changed_edge);
+        assert_eq!(replayed.edge(&EdgeId::from("a-b")).unwrap(), &changed_edge);
     }
 
     fn connected_document() -> CanvasDocument {

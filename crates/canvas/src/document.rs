@@ -619,15 +619,15 @@ pub fn migrate_canvas_snapshot(
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CanvasDocument {
     #[serde(default = "default_document_format_version")]
-    pub format_version: u32,
+    format_version: u32,
     #[serde(default)]
-    pub nodes: IndexMap<NodeId, CanvasNode>,
+    nodes: IndexMap<NodeId, CanvasNode>,
     #[serde(default)]
-    pub edges: IndexMap<EdgeId, CanvasEdge>,
+    edges: IndexMap<EdgeId, CanvasEdge>,
     #[serde(default)]
-    pub shapes: IndexMap<ShapeId, CanvasShape>,
+    shapes: IndexMap<ShapeId, CanvasShape>,
     #[serde(default)]
-    pub metadata: CanvasValue,
+    metadata: CanvasValue,
 }
 
 impl Default for CanvasDocument {
@@ -645,6 +645,90 @@ impl Default for CanvasDocument {
 impl CanvasDocument {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn format_version(&self) -> u32 {
+        self.format_version
+    }
+
+    pub fn metadata(&self) -> &CanvasValue {
+        &self.metadata
+    }
+
+    pub fn node(&self, id: &NodeId) -> Option<&CanvasNode> {
+        self.nodes.get(id)
+    }
+
+    pub fn edge(&self, id: &EdgeId) -> Option<&CanvasEdge> {
+        self.edges.get(id)
+    }
+
+    pub fn shape(&self, id: &ShapeId) -> Option<&CanvasShape> {
+        self.shapes.get(id)
+    }
+
+    pub fn contains_node(&self, id: &NodeId) -> bool {
+        self.nodes.contains_key(id)
+    }
+
+    pub fn contains_edge(&self, id: &EdgeId) -> bool {
+        self.edges.contains_key(id)
+    }
+
+    pub fn contains_shape(&self, id: &ShapeId) -> bool {
+        self.shapes.contains_key(id)
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = &CanvasNode> + '_ {
+        self.nodes.values()
+    }
+
+    pub fn edges(&self) -> impl Iterator<Item = &CanvasEdge> + '_ {
+        self.edges.values()
+    }
+
+    pub fn shapes(&self) -> impl Iterator<Item = &CanvasShape> + '_ {
+        self.shapes.values()
+    }
+
+    pub fn node_entries(&self) -> impl Iterator<Item = (&NodeId, &CanvasNode)> + '_ {
+        self.nodes.iter()
+    }
+
+    pub fn edge_entries(&self) -> impl Iterator<Item = (&EdgeId, &CanvasEdge)> + '_ {
+        self.edges.iter()
+    }
+
+    pub fn shape_entries(&self) -> impl Iterator<Item = (&ShapeId, &CanvasShape)> + '_ {
+        self.shapes.iter()
+    }
+
+    pub fn node_ids(&self) -> impl Iterator<Item = &NodeId> + '_ {
+        self.nodes.keys()
+    }
+
+    pub fn edge_ids(&self) -> impl Iterator<Item = &EdgeId> + '_ {
+        self.edges.keys()
+    }
+
+    pub fn shape_ids(&self) -> impl Iterator<Item = &ShapeId> + '_ {
+        self.shapes.keys()
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn shape_count(&self) -> usize {
+        self.shapes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty() && self.edges.is_empty() && self.shapes.is_empty()
     }
 
     pub fn from_snapshot(snapshot: CanvasSnapshot) -> Result<Self, DocumentError> {

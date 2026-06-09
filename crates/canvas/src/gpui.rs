@@ -618,7 +618,7 @@ pub fn paint_canvas_frame(
     for (record_index, record) in frame.frame.records.iter().enumerate() {
         match &record.target {
             HitTarget::Node(id) => {
-                let Some(node) = model.document.nodes.get(id) else {
+                let Some(node) = model.document.node(id) else {
                     continue;
                 };
                 let style = node_paint_style(model, node, theme);
@@ -644,7 +644,7 @@ pub fn paint_canvas_frame(
                 );
             }
             HitTarget::Shape(id) => {
-                let Some(shape) = model.document.shapes.get(id) else {
+                let Some(shape) = model.document.shape(id) else {
                     continue;
                 };
                 let style = shape_paint_style(model, shape, theme);
@@ -659,7 +659,7 @@ pub fn paint_canvas_frame(
                 );
             }
             HitTarget::Edge(id) => {
-                let Some(edge) = model.document.edges.get(id) else {
+                let Some(edge) = model.document.edge(id) else {
                     continue;
                 };
                 let style = edge_paint_style(model, edge, theme);
@@ -701,7 +701,7 @@ pub fn paint_canvas_frame(
                 );
             }
             HitTarget::Edge(id) => {
-                let Some(edge) = model.document.edges.get(id) else {
+                let Some(edge) = model.document.edge(id) else {
                     continue;
                 };
                 paint_edge(
@@ -1050,13 +1050,11 @@ fn paint_record_label(
     let label = match target {
         HitTarget::Node(id) => model
             .document
-            .nodes
-            .get(id)
+            .node(id)
             .and_then(|node| model.kind_registry.node_label(node)),
         HitTarget::Shape(id) => model
             .document
-            .shapes
-            .get(id)
+            .shape(id)
             .and_then(|shape| model.kind_registry.shape_label(shape)),
         HitTarget::Edge(_) | HitTarget::Handle { .. } => None,
     }?;
@@ -1367,7 +1365,7 @@ mod tests {
     #[test]
     fn collect_visible_records_keeps_large_canvas_frame_bounded() {
         let document = large_grid_document(128, 96);
-        let total_records = document.nodes.len();
+        let total_records = document.node_count();
         let model = CanvasPaintModel::new(
             document,
             CanvasViewport::new(point(px(2_400.0), px(1_800.0)), 1.0).unwrap(),
@@ -1485,7 +1483,7 @@ mod tests {
             CanvasViewport::default(),
             &VerticalDetourRouter,
         );
-        let edge = model.document().edges.get(&EdgeId::from("a-b")).unwrap();
+        let edge = model.document().edge(&EdgeId::from("a-b")).unwrap();
 
         assert_eq!(
             paint_edge_route_path(&model, edge)
@@ -1699,8 +1697,7 @@ mod tests {
 
         let node = model
             .document()
-            .nodes
-            .get(&crate::NodeId::from("painted"))
+            .node(&crate::NodeId::from("painted"))
             .unwrap();
         let node_style = node_paint_style(&model, node, theme);
         assert_eq!(node_style.fill, parse_color("#fff8c5").unwrap());
@@ -1710,8 +1707,7 @@ mod tests {
 
         let shape = model
             .document()
-            .shapes
-            .get(&crate::ShapeId::from("shape"))
+            .shape(&crate::ShapeId::from("shape"))
             .unwrap();
         let shape_style = shape_paint_style(&model, shape, theme);
         assert_eq!(shape_style.fill, parse_color("#ddf4ff").unwrap());
@@ -1719,11 +1715,7 @@ mod tests {
         assert_eq!(shape_style.stroke_width, px(3.0));
         assert_eq!(shape_style.corner_radius, px(4.0));
 
-        let edge = model
-            .document()
-            .edges
-            .get(&crate::EdgeId::from("edge"))
-            .unwrap();
+        let edge = model.document().edge(&crate::EdgeId::from("edge")).unwrap();
         let edge_style = edge_paint_style(&model, edge, theme);
         assert_eq!(edge_style.stroke, parse_color("#d1242f").unwrap());
         assert_eq!(edge_style.stroke_width, px(5.0));
@@ -1974,12 +1966,11 @@ mod tests {
             CanvasPaintOptions::default(),
         );
 
-        assert_eq!(snapshot.document().nodes.len(), 1);
+        assert_eq!(snapshot.document().node_count(), 1);
         assert!(
             !snapshot
                 .document()
-                .nodes
-                .contains_key(&crate::NodeId::from("after-snapshot"))
+                .contains_node(&crate::NodeId::from("after-snapshot"))
         );
         assert!(old_frame.records.iter().all(|record| {
             record.target != HitTarget::Node(crate::NodeId::from("after-snapshot"))

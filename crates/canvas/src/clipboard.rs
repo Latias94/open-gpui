@@ -22,13 +22,13 @@ impl CanvasClipboardPayload {
     pub fn from_document_selection(document: &CanvasDocument, selection: &CanvasSelection) -> Self {
         let nodes = selection
             .selected_nodes()
-            .filter_map(|id| document.nodes.get(id))
+            .filter_map(|id| document.node(id))
             .filter(|node| !node.locked)
             .cloned()
             .collect::<Vec<_>>();
         let shapes = selection
             .selected_shapes()
-            .filter_map(|id| document.shapes.get(id))
+            .filter_map(|id| document.shape(id))
             .filter(|shape| !shape.locked)
             .cloned()
             .collect::<Vec<_>>();
@@ -39,7 +39,7 @@ impl CanvasClipboardPayload {
             .collect::<indexmap::IndexSet<_>>();
         let mut edges = selection
             .selected_edges()
-            .filter_map(|id| document.edges.get(id))
+            .filter_map(|id| document.edge(id))
             .filter(|edge| !edge.locked)
             .cloned()
             .collect::<Vec<_>>();
@@ -49,8 +49,7 @@ impl CanvasClipboardPayload {
             .collect::<indexmap::IndexSet<_>>();
         edges.extend(
             document
-                .edges
-                .values()
+                .edges()
                 .filter(|edge| {
                     !edge.locked
                         && selected_node_ids.contains(&edge.source.node_id)
@@ -90,17 +89,17 @@ impl CanvasClipboardPayload {
     ) -> CanvasPasteTransaction {
         let node_ids = remap_ids(
             self.nodes.iter().map(|node| node.id.as_str()),
-            |id| document.nodes.contains_key(&NodeId::from(id.to_owned())),
+            |id| document.contains_node(&NodeId::from(id.to_owned())),
             unique_node_id,
         );
         let edge_ids = remap_ids(
             self.edges.iter().map(|edge| edge.id.as_str()),
-            |id| document.edges.contains_key(&EdgeId::from(id.to_owned())),
+            |id| document.contains_edge(&EdgeId::from(id.to_owned())),
             unique_edge_id,
         );
         let shape_ids = remap_ids(
             self.shapes.iter().map(|shape| shape.id.as_str()),
-            |id| document.shapes.contains_key(&ShapeId::from(id.to_owned())),
+            |id| document.contains_shape(&ShapeId::from(id.to_owned())),
             unique_shape_id,
         );
 
@@ -290,15 +289,23 @@ mod tests {
         let mut draft = document.clone();
         draft.apply_transaction(pasted.transaction).unwrap();
         assert_eq!(
-            draft.nodes[&NodeId::from("a-copy")].position,
+            draft.node(&NodeId::from("a-copy")).unwrap().position,
             point(px(16.0), px(24.0))
         );
         assert_eq!(
-            draft.edges[&EdgeId::from("a-b-copy")].source.node_id,
+            draft
+                .edge(&EdgeId::from("a-b-copy"))
+                .unwrap()
+                .source
+                .node_id,
             NodeId::from("a-copy")
         );
         assert_eq!(
-            draft.shapes[&ShapeId::from("note-copy")].bounds.origin,
+            draft
+                .shape(&ShapeId::from("note-copy"))
+                .unwrap()
+                .bounds
+                .origin,
             point(px(16.0), px(44.0))
         );
     }

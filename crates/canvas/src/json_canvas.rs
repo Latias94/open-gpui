@@ -119,7 +119,7 @@ impl TryFrom<&CanvasDocument> for JsonCanvas {
     type Error = JsonCanvasError;
 
     fn try_from(document: &CanvasDocument) -> Result<Self, Self::Error> {
-        let mut nodes = document.nodes.values().collect::<Vec<_>>();
+        let mut nodes = document.nodes().collect::<Vec<_>>();
         nodes.sort_by(|a, b| a.z_index.cmp(&b.z_index));
 
         Ok(Self {
@@ -128,8 +128,7 @@ impl TryFrom<&CanvasDocument> for JsonCanvas {
                 .map(JsonCanvasNode::from_canvas_node)
                 .collect::<Result<Vec<_>, _>>()?,
             edges: document
-                .edges
-                .values()
+                .edges()
                 .map(|edge| JsonCanvasEdge::from_canvas_edge(document, edge))
                 .collect::<Result<Vec<_>, _>>()?,
         })
@@ -431,7 +430,7 @@ fn ensure_side_handle(
 fn endpoint_side(document: &CanvasDocument, endpoint: &CanvasEndpoint) -> Option<JsonCanvasSide> {
     let handle_id = endpoint.handle_id.as_ref()?;
     side_from_handle_id(handle_id.as_str()).or_else(|| {
-        let node = document.nodes.get(&endpoint.node_id)?;
+        let node = document.node(&endpoint.node_id)?;
         let handle = node.handle(Some(handle_id))?;
         side_from_handle_position(node, handle)
     })
@@ -582,7 +581,7 @@ mod tests {
 
         let document = document_from_json_canvas_str(input).unwrap();
 
-        let note = document.nodes.get(&NodeId::from("note")).unwrap();
+        let note = document.node(&NodeId::from("note")).unwrap();
         assert_eq!(note.kind, TEXT_NODE_TYPE);
         assert_eq!(note.position, point(px(-10.0), px(20.0)));
         assert_eq!(note.size, size(px(200.0), px(120.0)));
@@ -594,7 +593,7 @@ mod tests {
                 .is_some()
         );
 
-        let file = document.nodes.get(&NodeId::from("file")).unwrap();
+        let file = document.node(&NodeId::from("file")).unwrap();
         assert_eq!(file.data.get(FILE_FIELD), Some(&json!("docs/spec.md")));
         assert_eq!(file.data.get(SUBPATH_FIELD), Some(&json!("#section")));
         assert!(
@@ -602,7 +601,7 @@ mod tests {
                 .is_some()
         );
 
-        let edge = document.edges.get(&EdgeId::from("edge")).unwrap();
+        let edge = document.edge(&EdgeId::from("edge")).unwrap();
         assert_eq!(edge.source.node_id, NodeId::from("note"));
         assert_eq!(
             edge.source.handle_id,
@@ -657,11 +656,19 @@ mod tests {
         let document = document_from_json_canvas_str(input).unwrap();
 
         assert_eq!(
-            document.nodes[&NodeId::from("note")].data.get("customNode"),
+            document
+                .node(&NodeId::from("note"))
+                .unwrap()
+                .data
+                .get("customNode"),
             Some(&json!({ "priority": 2 }))
         );
         assert_eq!(
-            document.edges[&EdgeId::from("edge")].data.get("customEdge"),
+            document
+                .edge(&EdgeId::from("edge"))
+                .unwrap()
+                .data
+                .get("customEdge"),
             Some(&json!(["kept"]))
         );
 

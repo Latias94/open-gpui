@@ -298,9 +298,9 @@ impl CanvasSelection {
     }
 
     pub fn retain_document(&mut self, document: &CanvasDocument) {
-        self.nodes.retain(|id| document.nodes.contains_key(id));
-        self.edges.retain(|id| document.edges.contains_key(id));
-        self.shapes.retain(|id| document.shapes.contains_key(id));
+        self.nodes.retain(|id| document.contains_node(id));
+        self.edges.retain(|id| document.contains_edge(id));
+        self.shapes.retain(|id| document.contains_shape(id));
         self.handles
             .retain(|endpoint| document.validate_endpoint(endpoint).is_ok());
     }
@@ -1244,8 +1244,7 @@ impl CanvasEditor {
                 for id in node_ids {
                     let mut node = self
                         .document
-                        .nodes
-                        .get(id)
+                        .node(id)
                         .ok_or_else(|| DocumentError::MissingNode(id.clone()))?
                         .clone();
                     node.position += delta;
@@ -1461,7 +1460,7 @@ impl CanvasEditor {
                         "{}->{}:{}",
                         source.node_id,
                         target.node_id,
-                        self.document.edges.len()
+                        self.document.edge_count()
                     ));
                     effects.push(CanvasToolEffect::ApplyTransaction(
                         CanvasTransaction::single(DocumentCommand::InsertEdge(CanvasEdge::new(
@@ -1487,7 +1486,7 @@ impl CanvasEditor {
     ) -> impl Iterator<Item = CanvasNode> + 'a {
         selection
             .selected_nodes()
-            .filter_map(|id| self.document.nodes.get(id))
+            .filter_map(|id| self.document.node(id))
             .filter(|node| !node.locked)
             .cloned()
     }
@@ -1508,14 +1507,14 @@ impl CanvasEditor {
         let node_ids = self
             .selection
             .selected_nodes()
-            .filter_map(|id| self.document.nodes.get(id))
+            .filter_map(|id| self.document.node(id))
             .filter(|node| !node.locked && !node.hidden)
             .map(|node| node.id.clone())
             .collect();
         let shape_ids = self
             .selection
             .selected_shapes()
-            .filter_map(|id| self.document.shapes.get(id))
+            .filter_map(|id| self.document.shape(id))
             .filter(|shape| !shape.locked && !shape.hidden)
             .map(|shape| shape.id.clone())
             .collect();
@@ -1656,19 +1655,14 @@ impl CanvasEditor {
         let node_ids = self
             .selection
             .selected_nodes()
-            .filter(|id| {
-                self.document
-                    .nodes
-                    .get(*id)
-                    .is_some_and(|node| !node.locked)
-            })
+            .filter(|id| self.document.node(*id).is_some_and(|node| !node.locked))
             .cloned()
             .collect::<IndexSet<_>>();
 
         let mut commands = Vec::new();
 
         for id in self.selection.selected_edges() {
-            let Some(edge) = self.document.edges.get(id) else {
+            let Some(edge) = self.document.edge(id) else {
                 continue;
             };
             if edge.locked
@@ -1684,7 +1678,7 @@ impl CanvasEditor {
         commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
 
         for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document.shapes.get(id) else {
+            let Some(shape) = self.document.shape(id) else {
                 continue;
             };
             if shape.locked {
@@ -1710,7 +1704,7 @@ impl CanvasEditor {
 
         let mut commands = Vec::new();
         for id in node_ids {
-            let Some(node) = self.document.nodes.get(id) else {
+            let Some(node) = self.document.node(id) else {
                 continue;
             };
             if node.locked {
@@ -1725,7 +1719,7 @@ impl CanvasEditor {
         }
 
         for id in shape_ids {
-            let Some(shape) = self.document.shapes.get(id) else {
+            let Some(shape) = self.document.shape(id) else {
                 continue;
             };
             if shape.locked {
@@ -1762,7 +1756,7 @@ impl CanvasEditor {
         let mut commands = Vec::new();
 
         for id in self.selection.selected_nodes() {
-            let Some(node) = self.document.nodes.get(id) else {
+            let Some(node) = self.document.node(id) else {
                 continue;
             };
             if node.locked {
@@ -1774,7 +1768,7 @@ impl CanvasEditor {
         }
 
         for id in self.selection.selected_edges() {
-            let Some(edge) = self.document.edges.get(id) else {
+            let Some(edge) = self.document.edge(id) else {
                 continue;
             };
             if edge.locked {
@@ -1786,7 +1780,7 @@ impl CanvasEditor {
         }
 
         for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document.shapes.get(id) else {
+            let Some(shape) = self.document.shape(id) else {
                 continue;
             };
             if shape.locked {
@@ -1802,11 +1796,10 @@ impl CanvasEditor {
 
     fn document_z_range(&self) -> Option<(i32, i32)> {
         self.document
-            .nodes
-            .values()
+            .nodes()
             .map(|node| node.z_index)
-            .chain(self.document.edges.values().map(|edge| edge.z_index))
-            .chain(self.document.shapes.values().map(|shape| shape.z_index))
+            .chain(self.document.edges().map(|edge| edge.z_index))
+            .chain(self.document.shapes().map(|shape| shape.z_index))
             .fold(None, |range, z_index| match range {
                 None => Some((z_index, z_index)),
                 Some((min_z, max_z)) => Some((min_z.min(z_index), max_z.max(z_index))),
@@ -1929,7 +1922,7 @@ mod tests {
                 .next()
                 .map(|record| record.target.clone());
 
-            let node_id = NodeId::new(format!("stamp-{}", context.document.nodes.len()));
+            let node_id = NodeId::new(format!("stamp-{}", context.document.node_count()));
             let mut selection = CanvasSelection::default();
             selection.nodes.insert(node_id.clone());
             let mut payload = CanvasValue::new();
@@ -2088,7 +2081,7 @@ mod tests {
             })
             .unwrap();
 
-        let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
+        let node = editor.document.node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
@@ -2098,12 +2091,12 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
+        let node = editor.document.node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(0.0), px(0.0)));
         assert_eq!(editor.history.redo_depth(), 1);
 
         assert!(editor.redo().unwrap());
-        let node = editor.document.nodes.get(&NodeId::from("n1")).unwrap();
+        let node = editor.document.node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
     }
 
@@ -2142,7 +2135,11 @@ mod tests {
 
         assert!(editor.selection.is_empty());
         assert_eq!(
-            editor.document.nodes[&NodeId::from("locked")].position,
+            editor
+                .document
+                .node(&NodeId::from("locked"))
+                .unwrap()
+                .position,
             point(px(0.0), px(0.0))
         );
         assert_eq!(editor.history.undo_depth(), 0);
@@ -2394,17 +2391,17 @@ mod tests {
             })
             .unwrap();
 
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
-        assert!(editor.document.nodes.contains_key(&NodeId::from("b")));
-        assert!(editor.document.edges.is_empty());
-        assert!(editor.document.shapes.is_empty());
+        assert!(!editor.document.contains_node(&NodeId::from("a")));
+        assert!(editor.document.contains_node(&NodeId::from("b")));
+        assert!(editor.document.edge_count() == 0);
+        assert!(editor.document.shape_count() == 0);
         assert!(editor.selection.is_empty());
         assert_eq!(editor.history.undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
-        assert!(editor.document.edges.contains_key(&EdgeId::from("a-b")));
-        assert!(editor.document.shapes.contains_key(&ShapeId::from("shape")));
+        assert!(editor.document.contains_node(&NodeId::from("a")));
+        assert!(editor.document.contains_edge(&EdgeId::from("a-b")));
+        assert!(editor.document.contains_shape(&ShapeId::from("shape")));
     }
 
     #[test]
@@ -2460,23 +2457,12 @@ mod tests {
             })
             .unwrap();
 
+        assert!(editor.document.contains_node(&NodeId::from("locked-node")));
+        assert!(editor.document.contains_edge(&EdgeId::from("locked-edge")));
         assert!(
             editor
                 .document
-                .nodes
-                .contains_key(&NodeId::from("locked-node"))
-        );
-        assert!(
-            editor
-                .document
-                .edges
-                .contains_key(&EdgeId::from("locked-edge"))
-        );
-        assert!(
-            editor
-                .document
-                .shapes
-                .contains_key(&ShapeId::from("locked-shape"))
+                .contains_shape(&ShapeId::from("locked-shape"))
         );
         assert_eq!(editor.history.undo_depth(), 0);
     }
@@ -2529,22 +2515,20 @@ mod tests {
                 .unwrap()
         );
 
-        assert!(editor.document.nodes.contains_key(&NodeId::from("a-copy")));
-        assert!(editor.document.nodes.contains_key(&NodeId::from("b-copy")));
-        assert!(
-            editor
-                .document
-                .edges
-                .contains_key(&EdgeId::from("a-b-copy"))
-        );
+        assert!(editor.document.contains_node(&NodeId::from("a-copy")));
+        assert!(editor.document.contains_node(&NodeId::from("b-copy")));
+        assert!(editor.document.contains_edge(&EdgeId::from("a-b-copy")));
         assert!(
             !editor
                 .document
-                .edges
-                .contains_key(&EdgeId::from("a-outside-copy"))
+                .contains_edge(&EdgeId::from("a-outside-copy"))
         );
         assert_eq!(
-            editor.document.nodes[&NodeId::from("a-copy")].position,
+            editor
+                .document
+                .node(&NodeId::from("a-copy"))
+                .unwrap()
+                .position,
             point(px(20.0), px(30.0))
         );
         assert_eq!(
@@ -2564,13 +2548,8 @@ mod tests {
         );
 
         assert!(editor.undo().unwrap());
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("a-copy")));
-        assert!(
-            !editor
-                .document
-                .edges
-                .contains_key(&EdgeId::from("a-b-copy"))
-        );
+        assert!(!editor.document.contains_node(&NodeId::from("a-copy")));
+        assert!(!editor.document.contains_edge(&EdgeId::from("a-b-copy")));
     }
 
     #[test]
@@ -2594,8 +2573,8 @@ mod tests {
         editor.selection.shapes.insert(ShapeId::from("shape"));
 
         let payload = editor.cut_selection().unwrap().unwrap();
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
-        assert!(!editor.document.shapes.contains_key(&ShapeId::from("shape")));
+        assert!(!editor.document.contains_node(&NodeId::from("a")));
+        assert!(!editor.document.contains_shape(&ShapeId::from("shape")));
         assert!(editor.selection.is_empty());
         assert_eq!(editor.history.undo_depth(), 1);
 
@@ -2604,13 +2583,8 @@ mod tests {
                 .paste_clipboard(&payload, point(px(10.0), px(20.0)))
                 .unwrap()
         );
-        assert!(editor.document.nodes.contains_key(&NodeId::from("a-copy")));
-        assert!(
-            editor
-                .document
-                .shapes
-                .contains_key(&ShapeId::from("shape-copy"))
-        );
+        assert!(editor.document.contains_node(&NodeId::from("a-copy")));
+        assert!(editor.document.contains_shape(&ShapeId::from("shape-copy")));
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("a-copy")]
@@ -2643,7 +2617,10 @@ mod tests {
                 .reorder_selection(CanvasZOrderCommand::BringToFront)
                 .unwrap()
         );
-        assert_eq!(editor.document.nodes[&NodeId::from("back")].z_index, 3);
+        assert_eq!(
+            editor.document.node(&NodeId::from("back")).unwrap().z_index,
+            3
+        );
         assert_eq!(editor.history.undo_depth(), 1);
         assert_eq!(
             editor
@@ -2655,7 +2632,10 @@ mod tests {
         );
 
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.document.nodes[&NodeId::from("back")].z_index, 1);
+        assert_eq!(
+            editor.document.node(&NodeId::from("back")).unwrap().z_index,
+            1
+        );
     }
 
     #[test]
@@ -2730,7 +2710,7 @@ mod tests {
             })
             .unwrap();
 
-        let node = &editor.document.nodes[&NodeId::from("node")];
+        let node = &editor.document.node(&NodeId::from("node")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(20.0)));
         assert_eq!(node.size, size(px(120.0), px(105.0)));
         assert_eq!(editor.history.undo_depth(), 1);
@@ -2743,7 +2723,7 @@ mod tests {
         );
 
         assert!(editor.undo().unwrap());
-        let node = &editor.document.nodes[&NodeId::from("node")];
+        let node = &editor.document.node(&NodeId::from("node")).unwrap();
         assert_eq!(node.size, size(px(100.0), px(80.0)));
     }
 
@@ -2780,7 +2760,7 @@ mod tests {
             })
             .unwrap();
 
-        let node = &editor.document.nodes[&NodeId::from("node")];
+        let node = &editor.document.node(&NodeId::from("node")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(20.0)));
         assert_eq!(node.size, size(px(64.0), px(48.0)));
         assert_eq!(editor.history.undo_depth(), 1);
@@ -2824,7 +2804,10 @@ mod tests {
                 && kind == "reject-resize"
                 && message == "resize is disabled"
         ));
-        assert_eq!(editor.document.nodes[&NodeId::from("node")], original);
+        assert_eq!(
+            editor.document.node(&NodeId::from("node")).unwrap(),
+            &original
+        );
         assert_eq!(editor.history.undo_depth(), 0);
         assert!(
             editor
@@ -2860,14 +2843,22 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            editor.document.shapes[&ShapeId::from("shape")].bounds,
+            editor
+                .document
+                .shape(&ShapeId::from("shape"))
+                .unwrap()
+                .bounds,
             Bounds::new(point(px(30.0), px(45.0)), size(px(80.0), px(55.0)))
         );
 
         editor.handle_event(CanvasEvent::Cancel).unwrap();
 
         assert_eq!(
-            editor.document.shapes[&ShapeId::from("shape")].bounds,
+            editor
+                .document
+                .shape(&ShapeId::from("shape"))
+                .unwrap()
+                .bounds,
             Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)))
         );
         assert_eq!(editor.history.undo_depth(), 0);
@@ -3019,11 +3010,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("a")].position,
+            editor.document.node(&NodeId::from("a")).unwrap().position,
             point(px(10.0), px(20.0))
         );
         assert_eq!(
-            editor.document.nodes[&NodeId::from("b")].position,
+            editor.document.node(&NodeId::from("b")).unwrap().position,
             point(px(210.0), px(20.0))
         );
         assert_eq!(editor.history.undo_depth(), 1);
@@ -3060,7 +3051,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("a")].position,
+            editor.document.node(&NodeId::from("a")).unwrap().position,
             point(px(0.0), px(20.0))
         );
 
@@ -3085,7 +3076,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("a")].position,
+            editor.document.node(&NodeId::from("a")).unwrap().position,
             point(px(0.0), px(25.0))
         );
         assert_eq!(editor.history.undo_depth(), 1);
@@ -3126,7 +3117,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("active")].position,
+            editor
+                .document
+                .node(&NodeId::from("active"))
+                .unwrap()
+                .position,
             point(px(100.0), px(0.0))
         );
         assert!(matches!(
@@ -3249,11 +3244,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("free")].position,
+            editor
+                .document
+                .node(&NodeId::from("free"))
+                .unwrap()
+                .position,
             point(px(10.0), px(20.0))
         );
         assert_eq!(
-            editor.document.nodes[&NodeId::from("locked")].position,
+            editor
+                .document
+                .node(&NodeId::from("locked"))
+                .unwrap()
+                .position,
             point(px(200.0), px(0.0))
         );
         assert_eq!(editor.history.undo_depth(), 1);
@@ -3316,14 +3319,14 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(editor.document.edges.len(), 1);
+        assert_eq!(editor.document.edge_count(), 1);
         assert_eq!(editor.history.undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert!(editor.document.edges.is_empty());
+        assert!(editor.document.edge_count() == 0);
 
         assert!(editor.redo().unwrap());
-        assert_eq!(editor.document.edges.len(), 1);
+        assert_eq!(editor.document.edge_count(), 1);
     }
 
     #[test]
@@ -3358,7 +3361,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.document.edges.is_empty());
+        assert!(editor.document.edge_count() == 0);
         assert_eq!(editor.history.undo_depth(), 0);
     }
 
@@ -3398,7 +3401,7 @@ mod tests {
             })
             .unwrap();
 
-        let edge = editor.document.edges.values().next().unwrap();
+        let edge = editor.document.edges().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
     }
@@ -3435,7 +3438,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(editor.state, ToolState::Idle));
-        assert!(editor.document.edges.is_empty());
+        assert!(editor.document.edge_count() == 0);
         assert_eq!(editor.history.undo_depth(), 0);
     }
 
@@ -3476,7 +3479,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(editor.state, ToolState::Idle));
-        assert!(editor.document.edges.is_empty());
+        assert!(editor.document.edge_count() == 0);
         assert_eq!(editor.history.undo_depth(), 0);
     }
 
@@ -3510,7 +3513,7 @@ mod tests {
         assert_eq!(tool.last_tool_id, Some(CanvasToolId::from("stamp")));
         assert_eq!(tool.last_hit, Some(HitTarget::Node(NodeId::from("anchor"))));
 
-        let stamped = editor.document.nodes.get(&NodeId::from("stamp-1")).unwrap();
+        let stamped = editor.document.node(&NodeId::from("stamp-1")).unwrap();
         assert_eq!(stamped.position, point(px(110.0), px(55.0)));
         assert_eq!(editor.history.undo_depth(), 1);
         assert_eq!(
@@ -3526,7 +3529,7 @@ mod tests {
         ));
 
         assert!(editor.undo().unwrap());
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("stamp-1")));
+        assert!(!editor.document.contains_node(&NodeId::from("stamp-1")));
     }
 
     #[test]
@@ -3594,7 +3597,7 @@ mod tests {
             )
             .unwrap();
 
-        let stamped = editor.document.nodes.get(&NodeId::from("stamp-1")).unwrap();
+        let stamped = editor.document.node(&NodeId::from("stamp-1")).unwrap();
         assert_eq!(stamped.position, point(px(110.0), px(55.0)));
         assert_eq!(editor.history.undo_depth(), 1);
         assert!(registry.remove(&CanvasToolId::from("stamp")).is_some());
@@ -3702,8 +3705,8 @@ mod tests {
 
         assert_eq!(editor.history.undo_depth(), 1);
         assert_eq!(editor.history.redo_depth(), 0);
-        assert!(editor.document.nodes.contains_key(&NodeId::from("b")));
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(editor.document.contains_node(&NodeId::from("b")));
+        assert!(!editor.document.contains_node(&NodeId::from("a")));
     }
 
     #[test]
@@ -3737,7 +3740,10 @@ mod tests {
         editor.apply(DocumentCommand::InsertNode(note)).unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("note")]
+            editor
+                .document
+                .node(&NodeId::from("note"))
+                .unwrap()
                 .data
                 .get("title"),
             Some(&json!("Migrated"))
@@ -3764,7 +3770,7 @@ mod tests {
                 ..
             }) if id == NodeId::from("invalid") && kind == "note"
         ));
-        assert!(!editor.document.nodes.contains_key(&NodeId::from("invalid")));
+        assert!(!editor.document.contains_node(&NodeId::from("invalid")));
         assert_eq!(editor.history.undo_depth(), 1);
     }
 
@@ -3782,7 +3788,10 @@ mod tests {
         editor.set_kind_registry(registry).unwrap();
 
         assert_eq!(
-            editor.document.nodes[&NodeId::from("note")]
+            editor
+                .document
+                .node(&NodeId::from("note"))
+                .unwrap()
                 .data
                 .get("title"),
             Some(&json!("Migrated"))
@@ -3818,7 +3827,10 @@ mod tests {
             }) if id == NodeId::from("note")
         ));
         assert_eq!(
-            editor.document.nodes[&NodeId::from("note")]
+            editor
+                .document
+                .node(&NodeId::from("note"))
+                .unwrap()
                 .data
                 .get("title"),
             Some(&json!(false))
@@ -3840,7 +3852,7 @@ mod tests {
             ))
             .unwrap();
 
-        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(editor.document.contains_node(&NodeId::from("a")));
         assert_eq!(editor.history.undo_depth(), 1);
         assert!(
             editor
@@ -3865,7 +3877,7 @@ mod tests {
             )))
             .unwrap();
 
-        assert!(editor.document.nodes.contains_key(&NodeId::from("a")));
+        assert!(editor.document.contains_node(&NodeId::from("a")));
         assert_eq!(editor.history.undo_depth(), 0);
         assert!(
             editor
@@ -3907,7 +3919,7 @@ mod tests {
                 ..
             }) if id == NodeId::from("note")
         ));
-        assert_eq!(editor.document.nodes[&NodeId::from("note")], note);
+        assert_eq!(editor.document.node(&NodeId::from("note")).unwrap(), &note);
         assert_eq!(editor.history.undo_depth(), 1);
     }
 
@@ -3934,10 +3946,10 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.nodes[&NodeId::from("a")], second);
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &second);
         assert_eq!(editor.history.undo_depth(), 2);
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.document.nodes[&NodeId::from("a")], original);
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
     }
 
     #[test]
@@ -3960,7 +3972,7 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.nodes[&NodeId::from("a")], original);
+        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
         assert_eq!(editor.history.undo_depth(), undo_depth);
     }
 
@@ -4124,7 +4136,7 @@ mod tests {
             ]
         );
 
-        let mut target = editor.document().nodes[&NodeId::from("b")].clone();
+        let mut target = editor.document().node(&NodeId::from("b")).unwrap().clone();
         target.position = point(px(40.0), px(0.0));
         editor.apply(DocumentCommand::UpdateNode(target)).unwrap();
 

@@ -263,21 +263,21 @@ where
     let document = resolver.document();
     let mut records = Vec::new();
 
-    for node in document.nodes.values() {
+    for node in document.nodes() {
         records.extend(refresh_records_with_resolver(
             resolver,
             &CanvasRecordId::Node(node.id.clone()),
         ));
     }
 
-    for shape in document.shapes.values() {
+    for shape in document.shapes() {
         records.extend(refresh_records_with_resolver(
             resolver,
             &CanvasRecordId::Shape(shape.id.clone()),
         ));
     }
 
-    for edge in document.edges.values() {
+    for edge in document.edges() {
         records.extend(refresh_records_with_resolver(
             resolver,
             &CanvasRecordId::Edge(edge.id.clone()),
@@ -299,7 +299,7 @@ where
 
     match record_id {
         CanvasRecordId::Node(id) => {
-            let Some(node) = document.nodes.get(id) else {
+            let Some(node) = document.node(id) else {
                 return records;
             };
 
@@ -325,7 +325,7 @@ where
             }
         }
         CanvasRecordId::Edge(id) => {
-            let Some(edge) = document.edges.get(id) else {
+            let Some(edge) = document.edge(id) else {
                 return records;
             };
 
@@ -340,7 +340,7 @@ where
             }
         }
         CanvasRecordId::Shape(id) => {
-            let Some(shape) = document.shapes.get(id) else {
+            let Some(shape) = document.shape(id) else {
                 return records;
             };
 
@@ -423,7 +423,7 @@ fn dirty_incident_edges(
     node_id: &crate::NodeId,
     dirty: &mut IndexSet<CanvasRecordId>,
 ) {
-    for edge in document.edges.values() {
+    for edge in document.edges() {
         if edge.source.node_id == *node_id || edge.target.node_id == *node_id {
             dirty.insert(CanvasRecordId::Edge(edge.id.clone()));
         }
@@ -492,7 +492,7 @@ mod tests {
         let mut cache =
             CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
 
-        let mut moved = document.nodes[&NodeId::from("a")].clone();
+        let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(200.0), px(0.0));
         let diff = document
             .apply_transaction_with_diff(crate::CanvasTransaction::single(
@@ -541,7 +541,7 @@ mod tests {
         let mut cache =
             CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
 
-        let mut moved = document.nodes[&NodeId::from("a")].clone();
+        let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(40.0), px(0.0));
         let diff = document
             .apply_transaction_with_diff(crate::CanvasTransaction::single(

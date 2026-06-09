@@ -263,8 +263,7 @@ impl CanvasRuntime {
         match record_id {
             CanvasRecordId::Node(id) => {
                 for edge in document
-                    .edges
-                    .values()
+                    .edges()
                     .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
                 {
                     self.refresh_edge_geometry(
@@ -276,7 +275,7 @@ impl CanvasRuntime {
                 }
             }
             CanvasRecordId::Edge(id) => {
-                let Some(edge) = document.edges.get(id) else {
+                let Some(edge) = document.edge(id) else {
                     self.edge_geometries.shift_remove(id);
                     return;
                 };
@@ -302,7 +301,7 @@ impl CanvasRuntime {
         match record_id {
             CanvasRecordId::Node(id) => {
                 self.edge_geometries.retain(|edge_id, _| {
-                    document.edges.get(edge_id).is_some_and(|edge| {
+                    document.edge(edge_id).is_some_and(|edge| {
                         edge.source.node_id != *id && edge.target.node_id != *id
                     })
                 });
@@ -326,8 +325,7 @@ where
     let resolver =
         CanvasGeometryResolver::with_router_and_kind_registry(document, router, kind_registry);
     document
-        .edges
-        .values()
+        .edges()
         .filter_map(|edge| {
             resolver
                 .edge_geometry(edge)
@@ -364,7 +362,7 @@ mod tests {
     fn runtime_applies_diff_to_spatial_and_graph_indexes() {
         let mut document = connected_document();
         let mut runtime = CanvasRuntime::rebuild(&document);
-        let mut moved = document.nodes[&NodeId::from("a")].clone();
+        let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(100.0), px(0.0));
 
         let diff = document
@@ -442,7 +440,7 @@ mod tests {
     fn runtime_updates_edge_geometry_with_router_after_node_diff() {
         let mut document = connected_document();
         let mut runtime = CanvasRuntime::rebuild_with_router(&document, &VerticalDetourRouter);
-        let mut moved = document.nodes[&NodeId::from("b")].clone();
+        let mut moved = document.node(&NodeId::from("b")).unwrap().clone();
         moved.position = point(px(40.0), px(0.0));
 
         let diff = document
@@ -595,7 +593,7 @@ mod tests {
         let mut document = connected_registry_document();
         let registry = geometry_registry();
         let mut runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
-        let mut moved = document.nodes[&NodeId::from("a")].clone();
+        let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(10.0), px(0.0));
 
         let diff = document

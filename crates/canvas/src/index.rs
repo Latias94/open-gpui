@@ -528,7 +528,7 @@ mod tests {
     fn custom_router_flows_through_incremental_edge_refresh() {
         let mut document = connected_document_for_router();
         let mut index = SpatialIndex::rebuild_with_router(&document, &VerticalDetourRouter);
-        let mut target = document.nodes[&NodeId::from("b")].clone();
+        let mut target = document.node(&NodeId::from("b")).unwrap().clone();
         target.position = point(px(40.0), px(0.0));
 
         let previous = document.clone();
@@ -681,7 +681,7 @@ mod tests {
             .unwrap();
 
         let mut document = previous.clone();
-        let mut node = document.nodes.get(&NodeId::from("a")).unwrap().clone();
+        let mut node = document.node(&NodeId::from("a")).unwrap().clone();
         node.position = point(px(40.0), px(0.0));
         document.update_node(node).unwrap();
 
@@ -725,7 +725,7 @@ mod tests {
             .unwrap();
 
         let mut document = previous.clone();
-        let mut edge = document.edges.get(&EdgeId::from("a-b")).unwrap().clone();
+        let mut edge = document.edge(&EdgeId::from("a-b")).unwrap().clone();
         edge.route = CanvasEdgeRoute::polyline([point(px(60.0), px(80.0))]);
         edge.route.interaction_width = px(20.0);
         document.update_edge(edge).unwrap();

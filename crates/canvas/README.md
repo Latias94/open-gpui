@@ -317,7 +317,11 @@ document
     .unwrap();
 
 assert_eq!(
-    document.nodes[&NodeId::from("note-1")].data.get("title"),
+    document
+        .node(&NodeId::from("note-1"))
+        .unwrap()
+        .data
+        .get("title"),
     Some(&json!("Migrated title"))
 );
 ```
@@ -503,7 +507,7 @@ let mut store = MemoryCanvasPersistenceStore::default();
 store.save_checkpoint(CanvasCheckpoint::new(1, &document)).unwrap();
 
 let restored = load_canvas_document(&store).unwrap();
-assert_eq!(restored.nodes.len(), 0);
+assert_eq!(restored.node_count(), 0);
 
 let mut editor = open_gpui_canvas::CanvasEditor::new(restored);
 let mut cursor = CanvasPersistenceCursor::new(1);

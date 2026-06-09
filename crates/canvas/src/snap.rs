@@ -177,7 +177,7 @@ fn selection_bounds(
     let mut bounds = None;
 
     for id in selection.selected_nodes() {
-        let Some(node) = document.nodes.get(id) else {
+        let Some(node) = document.node(id) else {
             continue;
         };
         if node.locked || node.hidden {
@@ -187,7 +187,7 @@ fn selection_bounds(
     }
 
     for id in selection.selected_shapes() {
-        let Some(shape) = document.shapes.get(id) else {
+        let Some(shape) = document.shape(id) else {
             continue;
         };
         if shape.locked || shape.hidden {
@@ -232,13 +232,13 @@ fn candidate_bounds(
     );
     let mut candidates = Vec::new();
 
-    candidates.extend(document.nodes.values().filter_map(|node| {
+    candidates.extend(document.nodes().filter_map(|node| {
         (!node.locked && !node.hidden).then(|| CandidateBounds {
             record_key: format!("node:{}", node.id),
             bounds: resolver.node_bounds(node),
         })
     }));
-    candidates.extend(document.shapes.values().filter_map(|shape| {
+    candidates.extend(document.shapes().filter_map(|shape| {
         (!shape.locked && !shape.hidden).then(|| CandidateBounds {
             record_key: format!("shape:{}", shape.id),
             bounds: resolver.shape_bounds(shape),

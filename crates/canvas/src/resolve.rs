@@ -82,8 +82,7 @@ where
     ) -> Result<Point<Pixels>, DocumentError> {
         let node = self
             .document
-            .nodes
-            .get(&endpoint.node_id)
+            .node(&endpoint.node_id)
             .ok_or_else(|| DocumentError::MissingNode(endpoint.node_id.clone()))?;
 
         if let Some(handle_id) = &endpoint.handle_id {
@@ -167,7 +166,7 @@ where
 
         match &record.target {
             HitTarget::Node(id) => {
-                let Some(node) = self.document.nodes.get(id) else {
+                let Some(node) = self.document.node(id) else {
                     return false;
                 };
                 self.kind_registry
@@ -178,7 +177,7 @@ where
             }
             HitTarget::Handle { .. } => true,
             HitTarget::Shape(id) => {
-                let Some(shape) = self.document.shapes.get(id) else {
+                let Some(shape) = self.document.shape(id) else {
                     return false;
                 };
                 self.kind_registry
@@ -188,7 +187,7 @@ where
                     .unwrap_or(true)
             }
             HitTarget::Edge(id) => {
-                let Some(edge) = self.document.edges.get(id) else {
+                let Some(edge) = self.document.edge(id) else {
                     return false;
                 };
                 if let Some(edge_geometry) = edge_geometry {
@@ -214,7 +213,7 @@ where
         for record in records {
             match &record.target {
                 HitTarget::Handle { node_id, handle_id } => {
-                    let node = self.document.nodes.get(node_id)?;
+                    let node = self.document.node(node_id)?;
                     let handle = node.handle(Some(handle_id))?;
                     return handle
                         .is_pickable_connection_endpoint(role)

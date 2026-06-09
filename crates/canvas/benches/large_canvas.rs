@@ -17,8 +17,8 @@ const ROW_GAP: f32 = 120.0;
 fn large_canvas_benches(c: &mut Criterion) {
     let document = build_grid_document(GRID_COLUMNS, GRID_ROWS);
     let index = SpatialIndex::rebuild(&document);
-    let node_count = document.nodes.len();
-    let edge_count = document.edges.len();
+    let node_count = document.node_count();
+    let edge_count = document.edge_count();
 
     c.bench_with_input(
         BenchmarkId::new("spatial_index_rebuild", node_count + edge_count),
@@ -107,8 +107,12 @@ fn labeled_kind_registry() -> CanvasKindRegistry {
 
 fn labeled_grid_document(document: &CanvasDocument) -> CanvasDocument {
     let mut document = document.clone();
-    for node in document.nodes.values_mut() {
+    let nodes = document.nodes().cloned().collect::<Vec<_>>();
+    for mut node in nodes {
         node.kind = LABELED_NODE_KIND.to_string();
+        document
+            .update_node(node)
+            .expect("benchmark labeled nodes should preserve document integrity");
     }
     document
 }

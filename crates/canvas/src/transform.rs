@@ -41,7 +41,7 @@ pub fn canvas_transform_handles(
     let mut handles = Vec::new();
 
     for id in selection.selected_nodes() {
-        let Some(node) = document.nodes.get(id) else {
+        let Some(node) = document.node(id) else {
             continue;
         };
         if node.locked || node.hidden {
@@ -55,7 +55,7 @@ pub fn canvas_transform_handles(
     }
 
     for id in selection.selected_shapes() {
-        let Some(shape) = document.shapes.get(id) else {
+        let Some(shape) = document.shape(id) else {
             continue;
         };
         if shape.locked || shape.hidden {

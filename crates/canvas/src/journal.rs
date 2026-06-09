@@ -137,9 +137,9 @@ fn record_changes_from_diff(
 
 fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Option<CanvasRecord> {
     match id {
-        CanvasRecordId::Node(id) => document.nodes.get(id).cloned().map(CanvasRecord::Node),
-        CanvasRecordId::Edge(id) => document.edges.get(id).cloned().map(CanvasRecord::Edge),
-        CanvasRecordId::Shape(id) => document.shapes.get(id).cloned().map(CanvasRecord::Shape),
+        CanvasRecordId::Node(id) => document.node(id).cloned().map(CanvasRecord::Node),
+        CanvasRecordId::Edge(id) => document.edge(id).cloned().map(CanvasRecord::Edge),
+        CanvasRecordId::Shape(id) => document.shape(id).cloned().map(CanvasRecord::Shape),
     }
 }
 

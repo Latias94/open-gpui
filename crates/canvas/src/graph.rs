@@ -27,11 +27,11 @@ impl<'a> CanvasGraph<'a> {
     }
 
     pub fn node(&self, id: &NodeId) -> Option<&'a CanvasNode> {
-        self.document.nodes.get(id)
+        self.document.node(id)
     }
 
     pub fn edge(&self, id: &EdgeId) -> Option<&'a CanvasEdge> {
-        self.document.edges.get(id)
+        self.document.edge(id)
     }
 
     pub fn endpoint_node(&self, endpoint: &CanvasEndpoint) -> Option<&'a CanvasNode> {
@@ -83,8 +83,7 @@ impl<'a> CanvasGraph<'a> {
     {
         let document = self.document;
         document
-            .edges
-            .values()
+            .edges()
             .filter(move |edge| edge_matches_node(edge, node_id, direction))
     }
 
@@ -98,8 +97,7 @@ impl<'a> CanvasGraph<'a> {
     {
         let document = self.document;
         document
-            .edges
-            .values()
+            .edges()
             .filter(move |edge| edge.source.node_id == *source && edge.target.node_id == *target)
     }
 
@@ -117,8 +115,7 @@ impl<'a> CanvasGraph<'a> {
     {
         let document = self.document;
         document
-            .edges
-            .values()
+            .edges()
             .filter_map(move |edge| neighbor_node_id(edge, node_id, direction))
     }
 
@@ -170,7 +167,7 @@ pub struct CanvasGraphIndex {
 impl CanvasGraphIndex {
     pub fn rebuild(document: &CanvasDocument) -> Self {
         let mut index = Self::default();
-        for edge in document.edges.values() {
+        for edge in document.edges() {
             index.insert_edge(edge);
         }
         index
@@ -203,7 +200,7 @@ impl CanvasGraphIndex {
 
         for record_id in diff.updated.iter().chain(&diff.inserted) {
             if let CanvasRecordId::Edge(edge_id) = record_id
-                && let Some(edge) = document.edges.get(edge_id)
+                && let Some(edge) = document.edge(edge_id)
             {
                 let endpoints = CanvasGraphEndpointIds::from_edge(edge);
                 affected_nodes.insert(endpoints.source.clone());
@@ -360,7 +357,7 @@ impl CanvasGraphIndex {
         let mut incoming = IndexSet::new();
         let mut incident = IndexSet::new();
 
-        for edge in document.edges.values() {
+        for edge in document.edges() {
             let is_source = edge.source.node_id == *node_id;
             let is_target = edge.target.node_id == *node_id;
 
@@ -403,11 +400,11 @@ impl<'a> CanvasIndexedGraph<'a> {
     }
 
     pub fn node(&self, id: &NodeId) -> Option<&'a CanvasNode> {
-        self.document.nodes.get(id)
+        self.document.node(id)
     }
 
     pub fn edge(&self, id: &EdgeId) -> Option<&'a CanvasEdge> {
-        self.document.edges.get(id)
+        self.document.edge(id)
     }
 
     pub fn endpoint_node(&self, endpoint: &CanvasEndpoint) -> Option<&'a CanvasNode> {
@@ -428,7 +425,7 @@ impl<'a> CanvasIndexedGraph<'a> {
     {
         self.index
             .outgoing_edge_ids(node_id)
-            .filter_map(|edge_id| self.document.edges.get(edge_id))
+            .filter_map(|edge_id| self.document.edge(edge_id))
     }
 
     pub fn incoming_edges<'q>(
@@ -440,7 +437,7 @@ impl<'a> CanvasIndexedGraph<'a> {
     {
         self.index
             .incoming_edge_ids(node_id)
-            .filter_map(|edge_id| self.document.edges.get(edge_id))
+            .filter_map(|edge_id| self.document.edge(edge_id))
     }
 
     pub fn incident_edges<'q>(
@@ -452,7 +449,7 @@ impl<'a> CanvasIndexedGraph<'a> {
     {
         self.index
             .incident_edge_ids(node_id)
-            .filter_map(|edge_id| self.document.edges.get(edge_id))
+            .filter_map(|edge_id| self.document.edge(edge_id))
     }
 
     pub fn edges_for_node<'q>(
@@ -480,7 +477,7 @@ impl<'a> CanvasIndexedGraph<'a> {
     {
         self.index
             .edge_ids_between(source, target)
-            .filter_map(|edge_id| self.document.edges.get(edge_id))
+            .filter_map(|edge_id| self.document.edge(edge_id))
     }
 
     pub fn has_edge_between(&self, source: &NodeId, target: &NodeId) -> bool {
@@ -502,9 +499,8 @@ impl<'a> CanvasIndexedGraph<'a> {
                     .filter_map(move |edge_id| {
                         let endpoints = self.index.edge_endpoints(edge_id)?;
                         self.document
-                            .nodes
-                            .get_key_value(&endpoints.source)
-                            .map(|(id, _)| id)
+                            .contains_node(&endpoints.source)
+                            .then_some(&endpoints.source)
                     }),
             ),
             CanvasEdgeDirection::Outgoing => Box::new(
@@ -513,9 +509,8 @@ impl<'a> CanvasIndexedGraph<'a> {
                     .filter_map(move |edge_id| {
                         let endpoints = self.index.edge_endpoints(edge_id)?;
                         self.document
-                            .nodes
-                            .get_key_value(&endpoints.target)
-                            .map(|(id, _)| id)
+                            .contains_node(&endpoints.target)
+                            .then_some(&endpoints.target)
                     }),
             ),
             CanvasEdgeDirection::Any => Box::new(self.index.incident_edge_ids(node_id).filter_map(
@@ -527,9 +522,8 @@ impl<'a> CanvasIndexedGraph<'a> {
                         &endpoints.source
                     };
                     self.document
-                        .nodes
-                        .get_key_value(neighbor_id)
-                        .map(|(id, _)| id)
+                        .contains_node(neighbor_id)
+                        .then_some(neighbor_id)
                 },
             )),
         }
