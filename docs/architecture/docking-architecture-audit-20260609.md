@@ -6,8 +6,8 @@ The docking crate now matches ADR 0002's layering for the current product surfac
 
 - `DockGraph`, `DockOp`, and `DockLayout` remain pure logical data.
 - `DockWorkspace` and `DockController` own durable commits through `DockAction`.
-- `DockHost` renders one logical `DockSpaceId` and delegates source ownership, render snapshots,
-  and transient interaction sessions to focused helper modules.
+- `DockHost` renders one logical `DockSpaceId` from a shared controller; render snapshots and
+  transient interaction sessions live in focused helper modules.
 - `DockViewportRuntime` and `DockViewportRuntimeHandle` are the product path for GPUI platform
   windows; `DockViewportAdapter` remains the lower-level mapping, coordinate, and placement
   primitive.
@@ -47,6 +47,8 @@ Panel lifecycle:
   metadata presence.
 - `attach_view` and `attach_factory` bind restored metadata to live view state without rewriting
   titles or close policy.
+- Live GPUI view resolution stays crate-private through the render snapshot path; public
+  `DockPanelRegistration` exposes descriptor metadata only.
 
 Test locality:
 

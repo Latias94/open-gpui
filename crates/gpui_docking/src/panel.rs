@@ -1,7 +1,4 @@
-use crate::{
-    DockPanelDescriptor,
-    panel_view::{DockPanelViewError, DockPanelViewHandle},
-};
+use crate::{DockPanelDescriptor, panel_view::DockPanelViewHandle};
 use open_gpui::{AnyView, App};
 use std::fmt;
 
@@ -70,23 +67,5 @@ impl DockPanel {
     /// Returns whether the panel can be closed by future interaction layers.
     pub fn is_closable(&self) -> bool {
         self.descriptor().is_closable()
-    }
-
-    /// Returns the already-instantiated GPUI view used as this panel's rendered root.
-    ///
-    /// Lazy panels instantiate when rendered through [`Self::resolve_view`]. Before that happens,
-    /// this method returns [`DockPanelViewError::LazyViewNotInstantiated`].
-    pub fn view(&self) -> Result<&AnyView, DockPanelViewError> {
-        self.view.view()
-    }
-
-    /// Returns true when this panel has an instantiated view.
-    pub fn has_view(&self) -> bool {
-        self.view.has_view()
-    }
-
-    /// Returns the panel view, instantiating lazy panels on first render.
-    pub fn resolve_view(&self, cx: &mut App) -> AnyView {
-        self.view.resolve_view(cx)
     }
 }

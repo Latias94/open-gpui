@@ -176,7 +176,6 @@ pub use op::*;
 pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;
-pub use panel_view::*;
 pub use policy::*;
 pub use viewport::*;
 pub use viewport_close::*;

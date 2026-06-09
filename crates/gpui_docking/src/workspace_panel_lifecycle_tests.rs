@@ -68,11 +68,8 @@ fn workspace_close_item_action_uses_metadata_without_instantiating_lazy_panel(
     assert_eq!(outcome, DockActionOutcome::Changed);
     assert_eq!(observed_instantiations.get(), 0);
     assert!(
-        !workspace
-            .panels()
-            .get(&item("lazy"))
-            .expect("panel registration should remain available")
-            .has_view()
+        workspace.panels().has_view_lifecycle(&item("lazy")),
+        "closing from metadata should keep lazy view lifecycle available"
     );
     let DockNode::Tabs { items, .. } = workspace
         .graph()
@@ -158,11 +155,10 @@ fn workspace_open_item_action_reopens_registered_lazy_panel_without_instantiatin
             item: item("b"),
         })
         .expect("registered panel should close");
-    let closed = workspace
-        .panels()
-        .get(&item("b"))
-        .expect("panel registration should survive close");
-    assert!(!closed.has_view());
+    assert!(
+        workspace.panels().has_view_lifecycle(&item("b")),
+        "closed panel should keep lazy view lifecycle available"
+    );
 
     let outcome = workspace
         .apply_action(&DockAction::OpenItem {
@@ -176,11 +172,8 @@ fn workspace_open_item_action_reopens_registered_lazy_panel_without_instantiatin
     assert_eq!(outcome, DockActionOutcome::Changed);
     assert_eq!(observed_instantiations.get(), 0);
     assert!(
-        !workspace
-            .panels()
-            .get(&item("b"))
-            .expect("reopened panel registration should remain lazy")
-            .has_view()
+        workspace.panels().has_view_lifecycle(&item("b")),
+        "reopened panel registration should remain lazy without instantiating"
     );
     let DockNode::Tabs { items, active } = workspace
         .graph()

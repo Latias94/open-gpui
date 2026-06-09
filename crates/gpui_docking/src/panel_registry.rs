@@ -1,6 +1,6 @@
 use crate::{
     DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
-    panel_view::{DockPanelViewError, DockPanelViewHandle, DockPanelViewStore},
+    panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
 use open_gpui::{AnyView, App};
 use thiserror::Error;
@@ -15,12 +15,6 @@ pub(crate) struct DockPanelRenderRegistration {
     view: DockPanelViewHandle,
 }
 
-#[derive(Debug, Clone)]
-struct DockPanelEntrySnapshot {
-    descriptor: DockPanelDescriptor,
-    view: DockPanelViewHandle,
-}
-
 impl DockPanelRenderRegistration {
     fn new(view: DockPanelViewHandle) -> Self {
         Self { view }
@@ -31,101 +25,33 @@ impl DockPanelRenderRegistration {
     }
 }
 
-impl DockPanelEntrySnapshot {
-    fn new(descriptor: &DockPanelDescriptor, view: DockPanelViewHandle) -> Self {
-        Self {
-            descriptor: descriptor.clone(),
-            view,
-        }
-    }
-
-    fn descriptor(&self) -> &DockPanelDescriptor {
-        &self.descriptor
-    }
-
-    fn title(&self) -> &str {
-        self.descriptor.title()
-    }
-
-    fn is_closable(&self) -> bool {
-        self.descriptor.is_closable()
-    }
-
-    fn view(&self) -> Result<&AnyView, DockPanelViewError> {
-        self.view.view()
-    }
-
-    fn has_view(&self) -> bool {
-        self.view.has_view()
-    }
-
-    fn resolve_view(&self, cx: &mut App) -> AnyView {
-        self.view.resolve_view(cx)
-    }
-}
-
 /// Registry entry snapshot for one dock panel.
 ///
-/// This is the public read seam over the split registry: callers can read stable metadata and, when
-/// needed, resolve the live GPUI view lifecycle without requiring metadata storage and view storage
-/// to be the same map entry.
+/// This is the public read seam over the split registry: callers can read stable metadata for an
+/// item that also has live view lifecycle state, without exposing the GPUI view handle itself.
 #[derive(Debug, Clone)]
 pub struct DockPanelRegistration {
-    entry: DockPanelEntrySnapshot,
+    descriptor: DockPanelDescriptor,
 }
 
 impl DockPanelRegistration {
-    fn new(entry: DockPanelEntrySnapshot) -> Self {
-        Self { entry }
+    fn new(descriptor: DockPanelDescriptor) -> Self {
+        Self { descriptor }
     }
 
     /// Returns panel metadata without touching live view state.
     pub fn descriptor(&self) -> &DockPanelDescriptor {
-        self.entry.descriptor()
+        &self.descriptor
     }
 
     /// Returns the panel title shown in tab chrome.
     pub fn title(&self) -> &str {
-        self.entry.title()
+        self.descriptor.title()
     }
 
     /// Returns whether the panel can be closed by panel lifecycle policy.
     pub fn is_closable(&self) -> bool {
-        self.entry.is_closable()
-    }
-
-    /// Returns the already-instantiated GPUI view used as this panel's rendered root.
-    pub fn view(&self) -> Result<&AnyView, DockPanelViewError> {
-        self.entry.view()
-    }
-
-    /// Returns true when this panel has an instantiated view.
-    pub fn has_view(&self) -> bool {
-        self.entry.has_view()
-    }
-
-    /// Returns the panel view, instantiating lazy panels on first render.
-    pub fn resolve_view(&self, cx: &mut App) -> AnyView {
-        self.entry.resolve_view(cx)
-    }
-}
-
-/// Result of resolving a dock item against a panel registry.
-#[derive(Debug)]
-pub enum DockPanelResolution<'a> {
-    /// The dock item has descriptor metadata and registered view lifecycle state.
-    Registered(DockPanelRegistration),
-    /// The dock item exists in the graph but has no registered view lifecycle state.
-    Missing {
-        /// The missing dock item id.
-        item: &'a DockItemId,
-    },
-}
-
-impl DockPanelResolution<'_> {
-    /// Returns true when the item has no registered panel content.
-    pub fn is_missing(&self) -> bool {
-        matches!(self, Self::Missing { .. })
+        self.descriptor.is_closable()
     }
 }
 
@@ -223,7 +149,14 @@ impl DockPanelRegistry {
 
     /// Returns a registered panel by dock item id.
     pub fn get(&self, item: &DockItemId) -> Option<DockPanelRegistration> {
-        self.entry_snapshot(item).map(DockPanelRegistration::new)
+        if !self.views.contains(item) {
+            return None;
+        }
+
+        self.catalog
+            .descriptor(item)
+            .cloned()
+            .map(DockPanelRegistration::new)
     }
 
     /// Returns descriptor-only panel metadata.
@@ -253,13 +186,6 @@ impl DockPanelRegistry {
         self.views.view(item).map(DockPanelRenderRegistration::new)
     }
 
-    /// Resolves a dock item to either registered live content or a missing-content state.
-    pub fn resolve<'a>(&'a self, item: &'a DockItemId) -> DockPanelResolution<'a> {
-        self.get(item)
-            .map(DockPanelResolution::Registered)
-            .unwrap_or(DockPanelResolution::Missing { item })
-    }
-
     /// Returns true when a dock item has registered metadata.
     pub fn contains(&self, item: &DockItemId) -> bool {
         self.catalog().contains(item)
@@ -275,13 +201,6 @@ impl DockPanelRegistry {
         self.catalog().is_empty()
     }
 
-    fn entry_snapshot(&self, item: &DockItemId) -> Option<DockPanelEntrySnapshot> {
-        Some(DockPanelEntrySnapshot::new(
-            self.catalog.descriptor(item)?,
-            self.views.view(item)?,
-        ))
-    }
-
     fn attach_view_handle(
         &mut self,
         item: DockItemId,
@@ -294,7 +213,7 @@ impl DockPanelRegistry {
         let previous = self
             .views
             .register(item, view)
-            .map(|view| DockPanelRegistration::new(DockPanelEntrySnapshot::new(&descriptor, view)));
+            .map(|_| DockPanelRegistration::new(descriptor));
         Ok(previous)
     }
 }
@@ -302,7 +221,7 @@ impl DockPanelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockItemId, DockPanelDescriptor, DockPanelViewError};
+    use crate::{DockItemId, DockPanelDescriptor};
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
@@ -331,11 +250,6 @@ mod tests {
 
         assert_eq!(registration.title(), "Lazy");
         assert!(registration.is_closable());
-        assert!(!registration.has_view());
-        assert!(matches!(
-            registration.view(),
-            Err(DockPanelViewError::LazyViewNotInstantiated)
-        ));
     }
 
     #[test]
@@ -362,7 +276,7 @@ mod tests {
         assert!(registry.get(&item).is_none());
         assert!(registry.render_registration(&item).is_none());
         assert!(
-            registry.resolve(&item).is_missing(),
+            registry.get(&item).is_none(),
             "descriptor-only registration should not pretend live content is available"
         );
     }
@@ -387,11 +301,6 @@ mod tests {
         assert!(registry.has_view_lifecycle(&item));
         assert_eq!(registration.title(), "Restored");
         assert!(!registration.is_closable());
-        assert!(!registration.has_view());
-        assert!(matches!(
-            registration.view(),
-            Err(DockPanelViewError::LazyViewNotInstantiated)
-        ));
     }
 
     #[test]
@@ -419,10 +328,6 @@ mod tests {
             .expect("replacement should return previous registration");
 
         assert_eq!(previous.title(), "Editor");
-        assert!(matches!(
-            previous.view(),
-            Err(DockPanelViewError::LazyViewNotInstantiated)
-        ));
     }
 
     #[test]
@@ -441,9 +346,5 @@ mod tests {
             .expect("updating metadata should preserve the view handle");
         assert!(registry.has_view_lifecycle(&item));
         assert_eq!(registration.title(), "Renamed");
-        assert!(matches!(
-            registration.view(),
-            Err(DockPanelViewError::LazyViewNotInstantiated)
-        ));
     }
 }

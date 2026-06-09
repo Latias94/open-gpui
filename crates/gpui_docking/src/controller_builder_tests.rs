@@ -40,7 +40,7 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
         .get(&item("explorer"))
         .expect("builder should register explorer panel");
     assert_eq!(explorer.title(), "Explorer");
-    assert!(!explorer.has_view());
+    assert!(controller.panels().has_view_lifecycle(&item("explorer")));
     assert!(controller.panels().contains(&item("editor")));
     let terminal = controller
         .panels()

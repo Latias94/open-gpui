@@ -1,6 +1,4 @@
-use crate::{
-    DockController, DockPanelViewError, DockWorkspace, debug::DockDebugRegion, host_test_support::*,
-};
+use crate::{DockController, DockWorkspace, debug::DockDebugRegion, host_test_support::*};
 use open_gpui::{AnyView, App, AppContext as _, TestAppContext, VisualTestContext, px, size};
 use std::{cell::Cell, rc::Rc};
 
@@ -45,19 +43,7 @@ fn registry_descriptor_lookup_does_not_instantiate_lazy_panel(_cx: &mut TestAppC
         0,
         "metadata lookup should not instantiate lazy panel view"
     );
-    assert!(
-        !registry
-            .get(&item("lazy"))
-            .expect("lazy panel should remain registered")
-            .has_view()
-    );
-    assert!(matches!(
-        registry
-            .get(&item("lazy"))
-            .expect("lazy panel should remain registered")
-            .view(),
-        Err(DockPanelViewError::LazyViewNotInstantiated)
-    ));
+    assert!(registry.has_view_lifecycle(&item("lazy")));
 }
 
 #[open_gpui::test]
@@ -70,19 +56,11 @@ fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut Test
         factory_calls.set(factory_calls.get() + 1);
         cx.new(|_| TestPanel { label: "lazy" }).into()
     });
-    let panel = workspace
-        .panels()
-        .get(&item("lazy"))
-        .expect("panel should be registered")
-        .clone();
-
-    assert!(!panel.has_view());
+    assert!(workspace.panels().has_view_lifecycle(&item("lazy")));
     assert_eq!(calls.get(), 0);
 
     let (window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
     assert_eq!(calls.get(), 1);
-    assert!(panel.has_view());
-    assert!(panel.view().is_ok());
     assert!(
         selector_for(
             &visual,
