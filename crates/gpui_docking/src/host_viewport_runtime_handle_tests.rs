@@ -1,10 +1,10 @@
 use crate::{
     DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportClosePolicy, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
-    host_test_support::*,
+    DockViewportClosePolicy, DockViewportDropRoute, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffRequest, DockWorkspace, host_test_support::*,
 };
-use open_gpui::{AppContext as _, TestAppContext, VisualTestContext, point, px};
+use open_gpui::{AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px};
 
 fn tear_off_request(
     source_space: DockSpaceId,
@@ -110,6 +110,143 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
             vec![item("a")]
         );
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open through runtime handle");
+    let target_window_bounds = opened
+        .window
+        .update(cx, |_, window, _| window.window_bounds())
+        .expect("target window should be live");
+    let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    assert!(runtime.update_viewport_snapshot(
+        &target_space,
+        None,
+        target_window_bounds,
+        host_bounds
+    ));
+    let target_point = point(
+        target_window_bounds.get_bounds().origin.x + px(20.0),
+        target_window_bounds.get_bounds().origin.y + px(40.0),
+    );
+
+    let route = cx.update(|app| {
+        runtime.resolve_drop_route_with_context(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            target_point,
+            Some(target_window_bounds),
+            &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
+            app,
+        )
+    });
+
+    assert_eq!(
+        route,
+        DockViewportDropRoute::KnownViewport {
+            hit: crate::DockViewportHit {
+                space: target_space,
+                host_position: point(px(20.0), px(40.0)),
+            },
+            window: opened.window,
+        }
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let release_position = point(px(900.0), px(900.0));
+
+    let rejected = cx.update(|app| {
+        runtime.resolve_drop_route_with_context(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            release_position,
+            None,
+            &DockViewportTargetContext::new(),
+            app,
+        )
+    });
+    assert!(
+        matches!(
+            rejected,
+            DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled)
+        ),
+        "default workspace policy should reject outside-all-viewports route"
+    );
+
+    cx.update_entity(&controller, |controller, _| {
+        controller.policy_mut().set_allow_platform_viewports(true);
+    });
+    let tear_off = cx.update(|app| {
+        runtime.resolve_drop_route_with_context(
+            source_space.clone(),
+            source_tabs,
+            item("a"),
+            release_position,
+            None,
+            &DockViewportTargetContext::new(),
+            app,
+        )
+    });
+    assert!(matches!(
+        tear_off,
+        DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+            source_space: routed_source,
+            source_tabs: routed_tabs,
+            item: routed_item,
+            release_position: routed_position,
+            suggested_window_bounds: None,
+        }) if routed_source == source_space
+            && routed_tabs == source_tabs
+            && routed_item == item("a")
+            && routed_position == release_position
+    ));
 }
 
 #[open_gpui::test]

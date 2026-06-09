@@ -1,10 +1,14 @@
 use crate::{
-    DockController, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
-    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
+    DockController, DockItemId, DockNodeId, DockSpaceId, DockViewportCloseOutcome,
+    DockViewportClosePolicy, DockViewportDropRoute, DockViewportOpenOutcome,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
+    DockViewportRuntime, DockViewportShouldCloseOutcome, DockViewportTargetContext,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
 };
-use open_gpui::{App, Entity, Result, Subscription, WindowId, WindowOptions};
+use open_gpui::{
+    App, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription, WindowBounds, WindowId,
+    WindowOptions,
+};
 use std::{
     cell::{Ref, RefCell},
     rc::Rc,
@@ -86,6 +90,47 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .open_tear_off_viewport(request, target_space, options, cx)
+    }
+
+    /// Updates display, window, and host bounds for a registered viewport.
+    ///
+    /// Returns true when the stored runtime snapshot changed.
+    pub fn update_viewport_snapshot(
+        &self,
+        space: &DockSpaceId,
+        display_id: Option<DisplayId>,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+    ) -> bool {
+        self.runtime.borrow_mut().update_viewport_snapshot(
+            space,
+            display_id,
+            window_bounds,
+            host_bounds,
+        )
+    }
+
+    /// Resolves a rendered tab release into a runtime route without mutating the graph.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        item: impl Into<DockItemId>,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &DockViewportTargetContext,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        self.runtime.borrow().resolve_drop_route_with_context(
+            source_space,
+            source_tabs,
+            item,
+            release_position,
+            suggested_window_bounds,
+            target_context,
+            cx,
+        )
     }
 
     /// Handles a GPUI window-closed notification through the shared runtime.

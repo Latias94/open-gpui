@@ -1,0 +1,197 @@
+use crate::{
+    DockItemId, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockViewportHit, DockViewportTargetContext, DockViewportTearOffRequest,
+};
+use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
+
+/// Runtime route for a rendered drag release before workspace mutation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockViewportDropRoute {
+    /// The release is still in the source viewport, so the source host should commit locally.
+    Local {
+        /// Local host position for the release.
+        host_position: Point<Pixels>,
+    },
+    /// The release landed inside another registered viewport.
+    KnownViewport {
+        /// Destination viewport hit.
+        hit: DockViewportHit,
+        /// Runtime window that owns the destination host.
+        window: AnyWindowHandle,
+    },
+    /// The release landed outside all registered viewports and may open a new platform viewport.
+    TearOff(DockViewportTearOffRequest),
+    /// The release landed outside all registered viewports, but policy forbids opening one.
+    Rejected(DockPolicyError),
+}
+
+impl DockViewportAdapter {
+    /// Resolves a rendered tab release into a runtime route without mutating the graph.
+    ///
+    /// `KnownViewport` is a route result, not a workspace target. Callers must resolve the
+    /// destination host's local scene before committing a workspace transaction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        item: impl Into<DockItemId>,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        policy: &DockPolicy,
+        target_context: &DockViewportTargetContext,
+    ) -> DockViewportDropRoute {
+        let source_space = source_space.into();
+        if let Some(candidate) = self.resolve_viewport_target(release_position, target_context) {
+            if candidate.space == source_space {
+                return DockViewportDropRoute::Local {
+                    host_position: candidate.host_position,
+                };
+            }
+
+            let window = candidate.window;
+            return DockViewportDropRoute::KnownViewport {
+                hit: candidate.into_hit(),
+                window,
+            };
+        }
+
+        if let Err(reason) = policy.validate_platform_viewports() {
+            return DockViewportDropRoute::Rejected(reason);
+        }
+
+        DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+            source_space,
+            source_tabs,
+            item: item.into(),
+            release_position,
+            suggested_window_bounds,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockPolicy,
+        viewport_test_support::{bounds, handle, item, space},
+    };
+    use open_gpui::{DisplayId, WindowBounds, point, px};
+    use slotmap::Key;
+
+    #[test]
+    fn drop_route_treats_source_viewport_hit_as_local() {
+        let main = space("main");
+        let window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(main.clone(), window);
+        adapter.update_snapshot(
+            &main,
+            Some(DisplayId::new(7)),
+            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+
+        assert_eq!(
+            adapter.resolve_drop_route_with_context(
+                main,
+                DockNodeId::null(),
+                item("a"),
+                point(px(115.0), px(225.0)),
+                None,
+                &DockPolicy::default(),
+                &DockViewportTargetContext::new(),
+            ),
+            DockViewportDropRoute::Local {
+                host_position: point(px(5.0), px(5.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn drop_route_uses_viewport_arbitration_for_known_viewport() {
+        let source = space("source");
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let alpha_window = handle(1);
+        let zeta_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(alpha.clone(), alpha_window);
+        adapter.register_viewport(zeta.clone(), zeta_window);
+
+        for space in [&alpha, &zeta] {
+            adapter.update_snapshot(
+                space,
+                None,
+                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let route = adapter.resolve_drop_route_with_context(
+            source,
+            DockNodeId::null(),
+            item("a"),
+            point(px(120.0), px(140.0)),
+            None,
+            &DockPolicy::default(),
+            &DockViewportTargetContext::new().with_active_window(zeta_window),
+        );
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                hit: DockViewportHit {
+                    space: zeta,
+                    host_position: point(px(20.0), px(40.0)),
+                },
+                window: zeta_window,
+            }
+        );
+    }
+
+    #[test]
+    fn drop_route_outside_all_viewports_uses_tear_off_policy() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let release_position = point(px(900.0), px(900.0));
+        let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
+        let adapter = DockViewportAdapter::new();
+
+        assert_eq!(
+            adapter.resolve_drop_route_with_context(
+                source.clone(),
+                source_tabs,
+                item.clone(),
+                release_position,
+                Some(suggested_window_bounds),
+                &DockPolicy::default(),
+                &DockViewportTargetContext::new(),
+            ),
+            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled)
+        );
+
+        let mut policy = DockPolicy::default();
+        policy.set_allow_platform_viewports(true);
+        assert_eq!(
+            adapter.resolve_drop_route_with_context(
+                source.clone(),
+                source_tabs,
+                item.clone(),
+                release_position,
+                Some(suggested_window_bounds),
+                &policy,
+                &DockViewportTargetContext::new(),
+            ),
+            DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+                source_space: source,
+                source_tabs,
+                item,
+                release_position,
+                suggested_window_bounds: Some(suggested_window_bounds),
+            })
+        );
+    }
+}

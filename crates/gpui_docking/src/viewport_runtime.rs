@@ -1,16 +1,19 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
-    DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
-    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffCancelled, DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
     DockViewportTearOffRequest, DockViewportTearOffTick,
     viewport_close_gate::DockViewportCloseGate,
 };
-use open_gpui::{AnyWindowHandle, App, Entity, Result, WindowId, WindowOptions};
+use open_gpui::{
+    AnyWindowHandle, App, Bounds, DisplayId, Entity, Pixels, Point, Result, WindowBounds, WindowId,
+    WindowOptions,
+};
 use std::rc::Rc;
 
 /// Owner for controller-backed platform viewport lifecycle.
@@ -120,6 +123,44 @@ impl DockViewportRuntime {
     #[cfg(test)]
     pub(crate) fn pending_tear_off_len(&self) -> usize {
         self.tear_off.len()
+    }
+
+    /// Updates display, window, and host bounds for a registered viewport.
+    ///
+    /// Returns true when the stored runtime snapshot changed.
+    pub fn update_viewport_snapshot(
+        &mut self,
+        space: &DockSpaceId,
+        display_id: Option<DisplayId>,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+    ) -> bool {
+        self.adapter
+            .update_snapshot(space, display_id, window_bounds, host_bounds)
+    }
+
+    /// Resolves a rendered tab release into a runtime route without mutating the graph.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: crate::DockNodeId,
+        item: impl Into<DockItemId>,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &DockViewportTargetContext,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        let policy = self.controller.read(cx).workspace().policy().to_owned();
+        self.adapter.resolve_drop_route_with_context(
+            source_space,
+            source_tabs,
+            item,
+            release_position,
+            suggested_window_bounds,
+            &policy,
+            target_context,
+        )
     }
 
     pub(crate) fn begin_tear_off_request(
