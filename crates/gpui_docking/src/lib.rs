@@ -133,6 +133,7 @@ mod workspace_move_validation;
 mod workspace_panel_action;
 mod workspace_panel_lifecycle;
 mod workspace_resize_action;
+mod workspace_transaction;
 
 #[cfg(test)]
 mod host_floating_tests;

@@ -147,6 +147,20 @@ impl DockActionOutcome {
 
 /// Error returned when a docking action cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DockTransactionError {
+    /// A viewport target must first be resolved in that viewport's local layout.
+    #[error("viewport target for dock space {space} requires host-local resolution")]
+    ViewportTargetRequiresLocalResolution {
+        /// The viewport space that was hit.
+        space: DockSpaceId,
+    },
+    /// Tear-off drops require the viewport runtime state machine.
+    #[error("tear-off target requires viewport runtime transaction")]
+    TearOffRequiresViewportRuntime,
+}
+
+/// Error returned when a docking action cannot be applied.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockActionApplyError {
     /// The selected item was not found in the target tabs node.
     #[error("dock item {item} not found in tabs node {tabs:?}")]
@@ -174,4 +188,7 @@ pub enum DockActionApplyError {
     /// The action was rejected by workspace policy.
     #[error(transparent)]
     Policy(#[from] DockPolicyError),
+    /// The higher-level docking transaction could not be completed.
+    #[error(transparent)]
+    Transaction(#[from] DockTransactionError),
 }

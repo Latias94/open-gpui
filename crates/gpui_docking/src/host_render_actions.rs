@@ -1,4 +1,7 @@
-use crate::{DockAction, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId};
+use crate::{
+    DockAction, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId,
+    workspace_transaction::DockWorkspaceDropRequest,
+};
 use open_gpui::{Bounds, Context, Pixels, Point};
 
 impl DockHost {
@@ -24,20 +27,14 @@ impl DockHost {
             cx.notify();
             return false;
         };
-        let Some(intent) = target.intent() else {
-            cx.notify();
-            return false;
-        };
 
-        self.commit_action_from_render(
-            DockAction::MoveTab {
-                source_space,
+        self.commit_resolved_drop_from_render(
+            DockWorkspaceDropRequest {
+                source_space: &source_space,
                 source_tabs,
-                item,
-                target_space,
-                target_tabs: intent.target_tabs,
-                zone: intent.zone,
-                insert_index: intent.insert_index,
+                item: &item,
+                target_space: &target_space,
+                target,
             },
             cx,
         )
@@ -173,6 +170,28 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockActionOutcome> {
         let outcome = self.apply_action_from_host(&action, cx).ok()?;
+        if outcome.changed() {
+            cx.notify();
+        }
+        Some(outcome)
+    }
+
+    fn commit_resolved_drop_from_render(
+        &mut self,
+        request: DockWorkspaceDropRequest<'_>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.try_commit_resolved_drop_from_render(request, cx)
+            .map(|outcome| outcome.changed())
+            .unwrap_or(false)
+    }
+
+    fn try_commit_resolved_drop_from_render(
+        &mut self,
+        request: DockWorkspaceDropRequest<'_>,
+        cx: &mut Context<Self>,
+    ) -> Option<DockActionOutcome> {
+        let outcome = self.commit_resolved_drop_from_host(request, cx).ok()?;
         if outcome.changed() {
             cx.notify();
         }

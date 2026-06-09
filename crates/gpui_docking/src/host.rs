@@ -3,6 +3,7 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockSpaceId,
     interaction::DockInteractionRuntime, workspace::DockWorkspace,
+    workspace_transaction::DockWorkspaceDropRequest,
 };
 use open_gpui::{AppContext as _, Context, Entity, Pixels, px};
 
@@ -83,6 +84,25 @@ impl DockHost {
         let controller = self.controller.clone();
         cx.update_entity(&controller, |controller, cx| {
             let outcome = controller.apply_action(action);
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })
+    }
+
+    pub(crate) fn commit_resolved_drop_from_host(
+        &mut self,
+        request: DockWorkspaceDropRequest<'_>,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        let controller = self.controller.clone();
+        cx.update_entity(&controller, |controller, cx| {
+            let outcome = controller.commit_resolved_drop(request);
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())
