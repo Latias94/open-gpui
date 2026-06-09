@@ -835,10 +835,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_docking::{DockGraph, DockNode};
+    use open_gpui_docking::{DockActionOutcome, DockGraph, DockNode, DockNodeId};
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
+    }
+
+    fn tabs_items(graph: &DockGraph, tabs: DockNodeId) -> (Vec<DockItemId>, usize) {
+        let DockNode::Tabs { items, active } = graph.node(tabs).expect("tabs node should exist")
+        else {
+            panic!("node should be tabs");
+        };
+        (items.clone(), *active)
     }
 
     #[test]
@@ -910,6 +918,152 @@ mod tests {
                 "{id} descriptor should be registered for native dogfood"
             );
         }
+    }
+
+    #[test]
+    fn dogfood_restore_controls_reopen_registered_panels() {
+        let mut controller = build_controller();
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let outline = item("outline");
+
+        assert_eq!(
+            controller
+                .close_item(secondary.clone(), preview.clone())
+                .expect("preview should close from secondary dogfood stack"),
+            DockActionOutcome::Changed
+        );
+        assert_eq!(
+            controller
+                .close_item(secondary.clone(), diff.clone())
+                .expect("diff should close from secondary dogfood stack"),
+            DockActionOutcome::Changed
+        );
+        assert!(
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .is_none()
+        );
+        assert!(
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &diff)
+                .is_none()
+        );
+
+        assert_eq!(
+            restore_secondary_panels(&mut controller),
+            "opened preview: Changed; opened diff: Changed"
+        );
+        let (preview_tabs, preview_index) = controller
+            .graph()
+            .find_item_in_space(&secondary, &preview)
+            .expect("preview should reopen into secondary dogfood stack");
+        let (diff_tabs, diff_index) = controller
+            .graph()
+            .find_item_in_space(&secondary, &diff)
+            .expect("diff should reopen into secondary dogfood stack");
+        assert_eq!(preview_tabs, diff_tabs);
+        assert_eq!(preview_index, 0);
+        assert_eq!(diff_index, 1);
+
+        assert_eq!(
+            controller
+                .close_item(primary.clone(), outline.clone())
+                .expect("outline should close while descriptor remains registered"),
+            DockActionOutcome::Changed
+        );
+        assert!(
+            controller
+                .graph()
+                .find_item_in_space(&primary, &outline)
+                .is_none()
+        );
+
+        assert_eq!(
+            restore_outline_panel(&mut controller),
+            "opened outline: Changed"
+        );
+        assert!(
+            controller
+                .graph()
+                .find_item_in_space(&primary, &outline)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn dogfood_whole_stack_can_float_and_merge_back_without_reordering() {
+        let mut controller = build_controller();
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let editor = item("editor");
+        let (secondary_tabs, _) = controller
+            .graph()
+            .find_item_in_space(&secondary, &preview)
+            .expect("secondary dogfood stack should contain preview");
+        let (secondary_items, secondary_active) = tabs_items(controller.graph(), secondary_tabs);
+        assert_eq!(secondary_items, vec![preview.clone(), diff.clone()]);
+        let secondary_active_item = secondary_items[secondary_active].clone();
+
+        assert_eq!(
+            controller
+                .float_tabs_in_window(
+                    secondary.clone(),
+                    secondary_tabs,
+                    primary.clone(),
+                    Bounds::new(point(px(560.0), px(96.0)), size(px(320.0), px(220.0))),
+                )
+                .expect("secondary stack should float into primary dogfood space"),
+            DockActionOutcome::Changed
+        );
+        assert_eq!(controller.graph().root(&secondary), None);
+        assert_eq!(
+            controller.graph().floating_containers(&primary).len(),
+            2,
+            "primary should keep its existing problems floating stack plus the moved secondary stack"
+        );
+        let moved_floating = controller
+            .graph()
+            .floating_containers(&primary)
+            .iter()
+            .find(|floating| {
+                controller.graph().collect_items_in_subtree(floating.node)
+                    == vec![preview.clone(), diff.clone()]
+            })
+            .expect("moved secondary stack should be represented as a primary floating container")
+            .node;
+        let (editor_tabs, _) = controller
+            .graph()
+            .find_item_in_space(&primary, &editor)
+            .expect("editor target stack should stay in primary space");
+
+        assert_eq!(
+            controller
+                .merge_floating_into(primary.clone(), moved_floating, editor_tabs)
+                .expect("moved stack should merge into primary editor tabs"),
+            DockActionOutcome::Changed
+        );
+        assert!(
+            controller
+                .graph()
+                .floating_containers(&primary)
+                .iter()
+                .all(|floating| floating.node != moved_floating)
+        );
+        let (items, active) = tabs_items(controller.graph(), editor_tabs);
+        let expected_items = vec![editor, preview, diff];
+        let expected_active = expected_items
+            .iter()
+            .position(|item| item == &secondary_active_item)
+            .expect("merged stack should keep its active item");
+        assert_eq!(items, expected_items);
+        assert_eq!(active, expected_active);
     }
 
     #[test]
