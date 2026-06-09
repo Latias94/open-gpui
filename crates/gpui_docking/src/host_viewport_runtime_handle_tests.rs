@@ -264,10 +264,10 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     );
 
     let route = cx.update(|app| {
-        runtime.resolve_drop_route_with_context(
+        runtime.resolve_payload_drop_route_with_context(
             source_space.clone(),
             source_tabs,
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
@@ -304,10 +304,10 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
     let release_position = point(px(900.0), px(900.0));
 
     let rejected = cx.update(|app| {
-        runtime.resolve_drop_route_with_context(
+        runtime.resolve_payload_drop_route_with_context(
             source_space.clone(),
             source_tabs,
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
             &DockViewportTargetContext::new(),
@@ -326,10 +326,10 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
         controller.policy_mut().set_allow_platform_viewports(true);
     });
     let tear_off = cx.update(|app| {
-        runtime.resolve_drop_route_with_context(
+        runtime.resolve_payload_drop_route_with_context(
             source_space.clone(),
             source_tabs,
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
             &DockViewportTargetContext::new(),
@@ -373,10 +373,10 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
 
     let outcome = cx
         .update(|app| {
-            let route = runtime.resolve_drop_route_with_context(
+            let route = runtime.resolve_payload_drop_route_with_context(
                 source_space.clone(),
                 source_tabs,
-                item("a"),
+                DockViewportDropPayload::Item(item("a")),
                 release_position,
                 Some(suggested_window_bounds),
                 &DockViewportTargetContext::new(),
@@ -578,10 +578,10 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         target_window_bounds.get_bounds().origin.y + px(100.0),
     );
     let result = cx.update(|app| {
-        let route = runtime.resolve_drop_route_with_context(
+        let route = runtime.resolve_payload_drop_route_with_context(
             source_space.clone(),
             source_tabs,
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
@@ -690,10 +690,10 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     ));
 
     let result = cx.update(|app| {
-        let route = runtime.resolve_drop_route_with_context(
+        let route = runtime.resolve_payload_drop_route_with_context(
             source_space.clone(),
             source_tabs,
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             runtime
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),

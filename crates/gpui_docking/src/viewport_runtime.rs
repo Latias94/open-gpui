@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockNode, DockSpaceId,
     DockTransactionError, DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
@@ -389,30 +389,6 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
     ) -> Option<Point<Pixels>> {
         self.host_scenes.screen_position(space)
-    }
-
-    /// Resolves a rendered tab release into a runtime route without mutating the graph.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_drop_route_with_context(
-        &self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: crate::DockNodeId,
-        item: impl Into<DockItemId>,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        target_context: &DockViewportTargetContext,
-        cx: &App,
-    ) -> DockViewportDropRoute {
-        let policy = self.controller.read(cx).workspace().policy().to_owned();
-        self.adapter.resolve_drop_route_with_context(
-            source_space,
-            source_tabs,
-            item,
-            release_position,
-            suggested_window_bounds,
-            &policy,
-            target_context,
-        )
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.

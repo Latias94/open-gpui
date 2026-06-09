@@ -1,5 +1,5 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportHit, DockViewportTargetContext,
     DockViewportTearOffRequest,
 };
@@ -27,32 +27,6 @@ pub enum DockViewportDropRoute {
 }
 
 impl DockViewportAdapter {
-    /// Resolves a rendered tab release into a runtime route without mutating the graph.
-    ///
-    /// `KnownViewport` is a route result, not a workspace target. Callers must resolve the
-    /// destination host's local scene before committing a workspace transaction.
-    #[allow(clippy::too_many_arguments)]
-    pub fn resolve_drop_route_with_context(
-        &self,
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        item: impl Into<DockItemId>,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        policy: &DockPolicy,
-        target_context: &DockViewportTargetContext,
-    ) -> DockViewportDropRoute {
-        self.resolve_payload_drop_route_with_context(
-            source_space,
-            source_tabs,
-            DockViewportDropPayload::Item(item.into()),
-            release_position,
-            suggested_window_bounds,
-            policy,
-            target_context,
-        )
-    }
-
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     ///
     /// The route contains viewport-level information only. The payload is carried only when the
@@ -122,10 +96,10 @@ mod tests {
         );
 
         assert_eq!(
-            adapter.resolve_drop_route_with_context(
+            adapter.resolve_payload_drop_route_with_context(
                 main,
                 DockNodeId::null(),
-                item("a"),
+                DockViewportDropPayload::Item(item("a")),
                 point(px(115.0), px(225.0)),
                 None,
                 &DockPolicy::default(),
@@ -157,10 +131,10 @@ mod tests {
             );
         }
 
-        let route = adapter.resolve_drop_route_with_context(
+        let route = adapter.resolve_payload_drop_route_with_context(
             source,
             DockNodeId::null(),
-            item("a"),
+            DockViewportDropPayload::Item(item("a")),
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
@@ -189,10 +163,10 @@ mod tests {
         let adapter = DockViewportAdapter::new();
 
         assert_eq!(
-            adapter.resolve_drop_route_with_context(
+            adapter.resolve_payload_drop_route_with_context(
                 source.clone(),
                 source_tabs,
-                item.clone(),
+                DockViewportDropPayload::Item(item.clone()),
                 release_position,
                 Some(suggested_window_bounds),
                 &DockPolicy::default(),
@@ -204,10 +178,10 @@ mod tests {
         let mut policy = DockPolicy::default();
         policy.set_allow_platform_viewports(true);
         assert_eq!(
-            adapter.resolve_drop_route_with_context(
+            adapter.resolve_payload_drop_route_with_context(
                 source.clone(),
                 source_tabs,
-                item.clone(),
+                DockViewportDropPayload::Item(item.clone()),
                 release_position,
                 Some(suggested_window_bounds),
                 &policy,
