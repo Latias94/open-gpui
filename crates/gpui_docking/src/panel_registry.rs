@@ -113,9 +113,9 @@ impl DockPanelRegistration {
 /// Result of resolving a dock item against a panel registry.
 #[derive(Debug)]
 pub enum DockPanelResolution<'a> {
-    /// The dock item has registered panel content.
+    /// The dock item has descriptor metadata and registered view lifecycle state.
     Registered(DockPanelRegistration),
-    /// The dock item exists in the graph but has no registered live content.
+    /// The dock item exists in the graph but has no registered view lifecycle state.
     Missing {
         /// The missing dock item id.
         item: &'a DockItemId,
@@ -236,6 +236,15 @@ impl DockPanelRegistry {
         self.catalog().descriptor(item)
     }
 
+    /// Returns true when a dock item has registered GPUI view lifecycle state.
+    ///
+    /// This is distinct from [`Self::contains`], which reports descriptor metadata. Restored
+    /// descriptor-only panels can be known to docking policy and tab chrome before application code
+    /// attaches eager or lazy view content.
+    pub fn has_view_lifecycle(&self, item: &DockItemId) -> bool {
+        self.views.contains(item)
+    }
+
     pub(crate) fn render_registration(
         &self,
         item: &DockItemId,
@@ -348,6 +357,7 @@ mod tests {
         assert_eq!(descriptor.title(), "Restored");
         assert!(!descriptor.is_closable());
         assert!(registry.contains(&item));
+        assert!(!registry.has_view_lifecycle(&item));
         assert_eq!(registry.len(), 1);
         assert!(registry.get(&item).is_none());
         assert!(registry.render_registration(&item).is_none());
@@ -374,6 +384,7 @@ mod tests {
         let registration = registry
             .get(&item)
             .expect("attached view lifecycle should complete registration");
+        assert!(registry.has_view_lifecycle(&item));
         assert_eq!(registration.title(), "Restored");
         assert!(!registration.is_closable());
         assert!(!registration.has_view());
@@ -428,6 +439,7 @@ mod tests {
         let registration = registry
             .get(&item)
             .expect("updating metadata should preserve the view handle");
+        assert!(registry.has_view_lifecycle(&item));
         assert_eq!(registration.title(), "Renamed");
         assert!(matches!(
             registration.view(),

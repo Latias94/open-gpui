@@ -115,8 +115,8 @@ fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppCon
         .expect("closable descriptor-only panel should close");
     assert_eq!(outcome, DockActionOutcome::Changed);
     assert!(
-        workspace.panels().get(&item("restored")).is_none(),
-        "descriptor-only metadata should not create live content"
+        !workspace.panels().has_view_lifecycle(&item("restored")),
+        "descriptor-only metadata should not create view lifecycle state"
     );
 
     let outcome = workspace

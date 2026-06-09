@@ -80,6 +80,10 @@ impl DockPanelViewStore {
     pub(crate) fn view(&self, item: &DockItemId) -> Option<DockPanelViewHandle> {
         self.views.get(item).cloned()
     }
+
+    pub(crate) fn contains(&self, item: &DockItemId) -> bool {
+        self.views.contains_key(item)
+    }
 }
 
 impl DockPanelViewLifecycle {

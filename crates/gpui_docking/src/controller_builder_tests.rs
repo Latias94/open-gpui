@@ -56,7 +56,7 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
     assert_eq!(terminal.title(), "Terminal");
     assert!(!terminal.is_closable());
     assert!(
-        controller.panels().get(&item("terminal")).is_none(),
+        !controller.panels().has_view_lifecycle(&item("terminal")),
         "descriptor-only builder entries should not bind view lifecycle"
     );
 }
