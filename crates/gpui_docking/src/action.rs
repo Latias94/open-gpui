@@ -2,7 +2,11 @@ use crate::{DockItemId, DockNodeId, DockOpApplyError, DockPolicyError, DockSpace
 use open_gpui::{Bounds, Pixels};
 use thiserror::Error;
 
-/// Docking interaction emitted by GPUI render adapters.
+/// Programmatic docking command applied by [`DockWorkspace`](crate::DockWorkspace).
+///
+/// Rendered drag/drop interactions resolve a full-layout target first and commit through the
+/// workspace transaction path. Use these actions for explicit application commands and advanced
+/// layout scripting where the caller already knows the graph nodes involved.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DockAction {
     /// Selects a tab within one tabs node.
@@ -13,6 +17,9 @@ pub enum DockAction {
         item: DockItemId,
     },
     /// Moves one tab into another tabs node or edge split target.
+    ///
+    /// This is a low-level graph-shaped command. The rendered tab drag/drop path resolves a target
+    /// before converting it into the corresponding workspace mutation.
     MoveTab {
         /// The source dock space containing the item.
         source_space: DockSpaceId,
@@ -30,6 +37,9 @@ pub enum DockAction {
         insert_index: Option<usize>,
     },
     /// Moves one tab into a new empty logical dock space.
+    ///
+    /// Platform-window tear-off uses [`DockViewportRuntime`](crate::DockViewportRuntime) so window
+    /// creation, viewport registration, and graph mutation stay transactional.
     MoveItemToEmptyDockSpace {
         /// The source dock space containing the item.
         source_space: DockSpaceId,

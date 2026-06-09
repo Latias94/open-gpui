@@ -5,9 +5,13 @@
 The docking crate now matches ADR 0002's layering for the current product surface:
 
 - `DockGraph`, `DockOp`, and `DockLayout` remain pure logical data.
-- `DockWorkspace` and `DockController` own durable commits through `DockAction`.
+- `DockWorkspace` and `DockController` own durable commits through `DockAction` for explicit
+  programmatic commands, while rendered tab drag/drop commits through resolved drop transactions.
 - `DockHost` renders one logical `DockSpaceId` from a shared controller; render snapshots and
   transient interaction sessions live in focused helper modules.
+- `drop_target`, `workspace_transaction`, `interaction`, and `geometry` now form the interaction
+  foundation: resolver, commit transaction, pointer session, and split/drop math each have one
+  authority.
 - `DockViewportRuntime` and `DockViewportRuntimeHandle` are the product path for GPUI platform
   windows; `DockViewportAdapter` remains the lower-level mapping, coordinate, and placement
   primitive.
@@ -27,6 +31,18 @@ Host depth:
 - `crates/gpui_docking/src/host_render_actions.rs` is the render-callback commit entry point.
 - Render modules build elements and collect pointer facts; they do not directly own workspace
   commit policy or viewport runtime mapping.
+
+Interaction foundation:
+
+- `crates/gpui_docking/src/drop_target.rs` resolves tab bars, leaves, root edges, floating title
+  bars, empty dock spaces, known viewports, and tear-off candidates into one resolved target shape.
+- `crates/gpui_docking/src/workspace_transaction.rs` commits resolved drop targets, so render code
+  no longer constructs graph-shaped `MoveTab` commands for ordinary drag/drop.
+- `crates/gpui_docking/src/geometry.rs` is the split and drop geometry authority for render
+  bounds, hit testing, resize fractions, and central-region remaining space allocation.
+- `DockCentralRegion` is dock-space metadata, not a special graph node. It can stay alive while
+  empty, expose passthrough semantics to render, and mark the root subtree used by central drop
+  policy.
 
 Viewport productization:
 
@@ -64,8 +80,8 @@ Test locality:
 - Legacy compatibility pressure around graph-based `DockHost` and `DockController` constructors,
   host-owned state accessors, the `DockHostSource` owned/controller split, and context-free
   viewport target helpers has been removed from the public docking API.
-- Add richer product behavior through the existing seams: tab reorder, whole-stack drag, viewport
-  release polish, focus restoration, and accessibility behavior.
+- Add richer product behavior through the existing seams: whole-stack drag, viewport release polish,
+  focus restoration, and accessibility behavior.
 - Continue splitting future viewport or graph code only when the extracted module passes the
   deletion test and gives callers a smaller, deeper interface.
 - Revisit whether `host_test_support` should share a smaller ID fixture with graph and viewport

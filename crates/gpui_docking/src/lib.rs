@@ -8,6 +8,11 @@
 //!   rendered hosts.
 //! - [`DockHost`] renders one logical [`DockSpaceId`], with transient splitter, floating, and
 //!   drop-preview sessions kept in the crate's interaction runtime.
+//! - Tab drag/drop resolves pointer facts into a crate-internal full-layout target first; preview
+//!   and commit both consume that resolved target so render callbacks do not assemble graph-shaped
+//!   move commands.
+//! - Split layout, splitter hit testing, drop preview rectangles, and central-region remaining
+//!   space allocation are computed by shared geometry helpers.
 //! - [`DockPanelRegistry`] maps item ids to [`DockPanelDescriptor`] metadata and GPUI view
 //!   lifecycle state without storing either in the graph.
 //! - [`DockPanelCatalog`] exposes descriptor-only metadata for policy, restore, and tab chrome
@@ -18,8 +23,11 @@
 //!   [`DockViewportRuntimeHandle`] keeps GPUI application callbacks ergonomic.
 //!
 //! Common GPUI applications should start with [`DockController::builder`], register lazy panel
-//! factories, and mount a controller-backed [`DockHost`]. Advanced callers can keep using
-//! [`DockGraph`], [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly.
+//! factories, and mount a controller-backed [`DockHost`]. Rendered tab movement, splitter resize,
+//! floating drag, and viewport tear-off flow through the crate's interaction, transaction, geometry,
+//! and viewport-runtime modules. Advanced callers can still use [`DockGraph`],
+//! [`DockLayoutBuilder`], [`DockWorkspace`], and [`DockAction`] directly for explicit programmatic
+//! layout operations.
 //! In-window floating and platform viewport tear-off are separate [`DockPolicy`] capabilities so
 //! applications can enable platform windows without changing graph-backed floating behavior.
 //! Multi-window applications should keep one [`DockController`] as the graph and panel owner, wrap
@@ -34,7 +42,9 @@
 //! as the hovered-window signal.
 //! Panel close/reopen flows should use [`DockAction::CloseItem`] and [`DockAction::OpenItem`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
-//! inserts that registered item back into a target tab stack or empty dock space.
+//! inserts that registered item back into a target tab stack or empty dock space. Ordinary tab
+//! drag/drop uses resolved drop transactions internally rather than asking render code or app code
+//! to construct [`DockAction::MoveTab`].
 //! Descriptor-only restored panels can bind GPUI content later through
 //! [`DockPanelRegistry::attach_factory`], [`DockWorkspace::attach_panel_factory`], or
 //! [`DockController::attach_panel_factory`] without rewriting restored titles or close policy.

@@ -190,13 +190,6 @@ pub(crate) enum DockDropResolution {
 }
 
 impl DockDropResolution {
-    pub(crate) fn intent(self) -> Option<DockDropIntent> {
-        match self {
-            Self::Valid(target) => target.intent(),
-            Self::Rejected(_) => None,
-        }
-    }
-
     pub(crate) fn target(self) -> Option<DockResolvedDropTarget> {
         match self {
             Self::Valid(target) => Some(target),
@@ -263,15 +256,6 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     None
 }
 
-pub(crate) fn resolve_tabs_drop(
-    target_tabs: DockNodeId,
-    bounds: Bounds<Pixels>,
-    position: Point<Pixels>,
-    policy: &DockPolicy,
-) -> Option<DockDropResolution> {
-    resolve_tabs_drop_with_central(target_tabs, bounds, position, false, policy)
-}
-
 pub(crate) fn resolve_tabs_drop_with_central(
     target_tabs: DockNodeId,
     bounds: Bounds<Pixels>,
@@ -289,23 +273,6 @@ pub(crate) fn resolve_tabs_drop_with_central(
         leaves: &leaf,
         ..DockDropResolverInput::new(position, policy)
     })
-}
-
-pub(crate) fn resolve_tab_reorder_drop(
-    target_tabs: DockNodeId,
-    target_index: usize,
-    bounds: Bounds<Pixels>,
-    position: Point<Pixels>,
-    policy: &DockPolicy,
-) -> Option<DockDropResolution> {
-    resolve_tab_reorder_drop_with_central(
-        target_tabs,
-        target_index,
-        bounds,
-        position,
-        false,
-        policy,
-    )
 }
 
 pub(crate) fn resolve_tab_reorder_drop_with_central(
@@ -537,13 +504,15 @@ mod tests {
 
     #[test]
     fn center_point_resolves_to_center_zone() {
-        let intent = resolve_tabs_drop(
+        let intent = resolve_tabs_drop_with_central(
             tabs(),
             bounds(300.0, 200.0),
             point(px(160.0), px(120.0)),
+            false,
             &policy(),
         )
-        .and_then(DockDropResolution::intent)
+        .and_then(DockDropResolution::target)
+        .and_then(|target| target.intent())
         .expect("point should resolve");
 
         assert_eq!(intent.zone, DropZone::Center);
@@ -555,27 +524,55 @@ mod tests {
         let bounds = bounds(300.0, 200.0);
 
         assert_eq!(
-            resolve_tabs_drop(tabs(), bounds, point(px(12.0), px(120.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .map(|intent| intent.zone),
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds,
+                point(px(12.0), px(120.0)),
+                false,
+                &policy()
+            )
+            .and_then(DockDropResolution::target)
+            .and_then(|target| target.intent())
+            .map(|intent| intent.zone),
             Some(DropZone::Left)
         );
         assert_eq!(
-            resolve_tabs_drop(tabs(), bounds, point(px(308.0), px(120.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .map(|intent| intent.zone),
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds,
+                point(px(308.0), px(120.0)),
+                false,
+                &policy()
+            )
+            .and_then(DockDropResolution::target)
+            .and_then(|target| target.intent())
+            .map(|intent| intent.zone),
             Some(DropZone::Right)
         );
         assert_eq!(
-            resolve_tabs_drop(tabs(), bounds, point(px(160.0), px(22.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .map(|intent| intent.zone),
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds,
+                point(px(160.0), px(22.0)),
+                false,
+                &policy()
+            )
+            .and_then(DockDropResolution::target)
+            .and_then(|target| target.intent())
+            .map(|intent| intent.zone),
             Some(DropZone::Top)
         );
         assert_eq!(
-            resolve_tabs_drop(tabs(), bounds, point(px(160.0), px(218.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .map(|intent| intent.zone),
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds,
+                point(px(160.0), px(218.0)),
+                false,
+                &policy()
+            )
+            .and_then(DockDropResolution::target)
+            .and_then(|target| target.intent())
+            .map(|intent| intent.zone),
             Some(DropZone::Bottom)
         );
     }
@@ -583,10 +580,11 @@ mod tests {
     #[test]
     fn outside_points_do_not_resolve() {
         assert!(
-            resolve_tabs_drop(
+            resolve_tabs_drop_with_central(
                 tabs(),
                 bounds(300.0, 200.0),
                 point(px(500.0), px(120.0)),
+                false,
                 &policy()
             )
             .is_none()
@@ -598,9 +596,16 @@ mod tests {
         let bounds = bounds(36.0, 36.0);
 
         assert_eq!(
-            resolve_tabs_drop(tabs(), bounds, point(px(28.0), px(38.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .map(|intent| intent.zone),
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds,
+                point(px(28.0), px(38.0)),
+                false,
+                &policy()
+            )
+            .and_then(DockDropResolution::target)
+            .and_then(|target| target.intent())
+            .map(|intent| intent.zone),
             Some(DropZone::Center)
         );
     }
@@ -609,10 +614,11 @@ mod tests {
     fn disabled_edge_split_returns_rejection_without_intent() {
         let mut policy = DockPolicy::default();
         policy.set_allow_edge_split(false);
-        let resolution = resolve_tabs_drop(
+        let resolution = resolve_tabs_drop_with_central(
             tabs(),
             bounds(300.0, 200.0),
             point(px(12.0), px(120.0)),
+            false,
             &policy,
         )
         .expect("edge point should resolve to a policy result");
@@ -628,17 +634,31 @@ mod tests {
     fn tab_reorder_drop_uses_target_tab_half_as_insert_index() {
         let bounds = bounds(100.0, 24.0);
 
-        let before =
-            resolve_tab_reorder_drop(tabs(), 2, bounds, point(px(24.0), px(28.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .expect("left half of the tab should resolve");
+        let before = resolve_tab_reorder_drop_with_central(
+            tabs(),
+            2,
+            bounds,
+            point(px(24.0), px(28.0)),
+            false,
+            &policy(),
+        )
+        .and_then(DockDropResolution::target)
+        .and_then(|target| target.intent())
+        .expect("left half of the tab should resolve");
         assert_eq!(before.zone, DropZone::Center);
         assert_eq!(before.insert_index, Some(2));
 
-        let after =
-            resolve_tab_reorder_drop(tabs(), 2, bounds, point(px(90.0), px(28.0)), &policy())
-                .and_then(DockDropResolution::intent)
-                .expect("right half of the tab should resolve");
+        let after = resolve_tab_reorder_drop_with_central(
+            tabs(),
+            2,
+            bounds,
+            point(px(90.0), px(28.0)),
+            false,
+            &policy(),
+        )
+        .and_then(DockDropResolution::target)
+        .and_then(|target| target.intent())
+        .expect("right half of the tab should resolve");
         assert_eq!(after.zone, DropZone::Center);
         assert_eq!(after.insert_index, Some(3));
     }
@@ -648,11 +668,12 @@ mod tests {
         let mut policy = DockPolicy::default();
         policy.set_allow_center_merge(false);
 
-        let DockDropResolution::Rejected(rejection) = resolve_tab_reorder_drop(
+        let DockDropResolution::Rejected(rejection) = resolve_tab_reorder_drop_with_central(
             tabs(),
             0,
             bounds(100.0, 24.0),
             point(px(24.0), px(28.0)),
+            false,
             &policy,
         )
         .expect("point inside the tab should resolve to a policy result") else {

@@ -54,6 +54,13 @@ In-window floating containers and platform floating windows remain separate conc
 `DockNode::Floating` is layout data inside a dock host. A platform floating window is created by
 GPUI platform-window machinery.
 
+Follow-up implementation note, 2026-06-09: rendered docking interactions now pass through
+crate-internal interaction and transaction modules before mutating the graph. Render callbacks
+collect pointer facts, the drop resolver produces a resolved target, the workspace transaction
+validates and commits that target, and viewport tear-off uses `DockViewportRuntime` to coordinate
+window creation before graph mutation. `DockAction` and `DockOp` remain useful low-level data
+interfaces, but they are not the common render drag/drop interface.
+
 ## Architecture
 
 ```mermaid
