@@ -4,8 +4,8 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportRouteTarget,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
-    debug::DockDebugRegion, drag::DockDragPayload, drop_runtime::DockHostDropSceneFact,
-    drop_target::DockLeafDropTarget, host_test_support::*,
+    debug::DockDebugRegion, drag::DockDragPayload, drop_preview::DockDropPreviewKind,
+    drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
@@ -1059,6 +1059,118 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         assert_eq!(items, &vec![item("b"), item("a")]);
         assert_eq!(*active, 1);
     });
+}
+
+#[open_gpui::test]
+fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window.window_id(),
+        target_bounds,
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+
+    let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let source_window = source_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let source_window_bounds = source_window
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("source window should be live");
+    let target_screen_position = point(
+        target_bounds.get_bounds().origin.x + px(120.0),
+        target_bounds.get_bounds().origin.y + px(100.0),
+    );
+    let route_position_in_source_window = point(
+        target_screen_position.x - source_window_bounds.origin.x,
+        target_screen_position.y - source_window_bounds.origin.y,
+    );
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+
+    source_window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                floating_bounds(0.0, 0.0, 360.0, 220.0),
+                route_position_in_source_window,
+                window,
+                cx,
+            );
+        })
+        .expect("source host should update route preview");
+    cx.run_until_parked();
+    let source_visual = VisualTestContext::from_window(source_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: DockDropPreviewKind::KnownViewportRoute
+            }
+        )
+        .is_some(),
+        "known viewport route should render through the route preview selector"
+    );
+    assert!(
+        selector_for(&source_visual, &source_host, DockDebugRegion::DropPreview).is_none(),
+        "known viewport route preview should not be exposed as a local drop preview"
+    );
 }
 
 #[open_gpui::test]
