@@ -3,7 +3,8 @@ use open_gpui::{BenchAppContext, Bounds, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry,
     CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasViewport, SpatialIndex, collect_visible_records, prepaint_canvas_frame,
+    CanvasTransaction, CanvasViewport, DocumentCommand, SpatialIndex, collect_visible_records,
+    prepaint_canvas_frame,
 };
 
 const LABELED_NODE_KIND: &str = "benchmark-labeled-node";
@@ -107,18 +108,21 @@ fn labeled_kind_registry() -> CanvasKindRegistry {
 
 fn labeled_grid_document(document: &CanvasDocument) -> CanvasDocument {
     let mut document = document.clone();
-    let nodes = document.nodes().cloned().collect::<Vec<_>>();
-    for mut node in nodes {
-        node.kind = LABELED_NODE_KIND.to_string();
-        document
-            .update_node(node)
-            .expect("benchmark labeled nodes should preserve document integrity");
-    }
+    let commands = document
+        .nodes()
+        .cloned()
+        .map(|mut node| {
+            node.kind = LABELED_NODE_KIND.to_string();
+            DocumentCommand::UpdateNode(node)
+        })
+        .collect::<Vec<_>>();
+    apply_commands(&mut document, commands);
     document
 }
 
 fn build_grid_document(columns: usize, rows: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for row in 0..rows {
         for column in 0..columns {
@@ -129,23 +133,29 @@ fn build_grid_document(columns: usize, rows: usize) -> CanvasDocument {
                 size(px(NODE_WIDTH), px(NODE_HEIGHT)),
             );
             node.z_index = (row * columns + column) as i32;
-            document
-                .insert_node(node)
-                .expect("benchmark grid node ids should be unique");
+            commands.push(DocumentCommand::InsertNode(node));
 
             if column > 0 {
-                document
-                    .insert_edge(CanvasEdge::new(
-                        edge_id(row, column - 1, row, column),
-                        CanvasEndpoint::new(node_id(row, column - 1), None::<String>),
-                        CanvasEndpoint::new(id, None::<String>),
-                    ))
-                    .expect("benchmark horizontal edge endpoints should exist");
+                commands.push(DocumentCommand::InsertEdge(CanvasEdge::new(
+                    edge_id(row, column - 1, row, column),
+                    CanvasEndpoint::new(node_id(row, column - 1), None::<String>),
+                    CanvasEndpoint::new(id, None::<String>),
+                )));
             }
         }
     }
 
+    apply_commands(&mut document, commands);
     document
+}
+
+fn apply_commands(
+    document: &mut CanvasDocument,
+    commands: impl IntoIterator<Item = DocumentCommand>,
+) {
+    document
+        .apply_transaction(CanvasTransaction::new(commands))
+        .expect("benchmark document commands should be valid");
 }
 
 fn node_id(row: usize, column: usize) -> String {

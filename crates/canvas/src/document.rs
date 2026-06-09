@@ -776,7 +776,7 @@ impl CanvasDocument {
         }
     }
 
-    pub fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
+    pub(crate) fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
         match command {
             DocumentCommand::InsertNode(node) => self.insert_node(node),
             DocumentCommand::UpdateNode(node) => self.update_node(node),
@@ -788,14 +788,6 @@ impl CanvasDocument {
             DocumentCommand::UpdateShape(shape) => self.update_shape(shape),
             DocumentCommand::RemoveShape(id) => self.remove_shape(&id).map(drop),
         }
-    }
-
-    pub fn apply_with_kind_registry(
-        &mut self,
-        command: DocumentCommand,
-        kind_registry: &CanvasKindRegistry,
-    ) -> Result<(), DocumentError> {
-        self.apply(kind_registry.normalize_command(command)?)
     }
 
     pub fn apply_transaction(
@@ -854,7 +846,7 @@ impl CanvasDocument {
         })
     }
 
-    pub fn insert_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+    pub(crate) fn insert_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
         if self.nodes.contains_key(&node.id) {
             return Err(DocumentError::DuplicateNode(node.id));
         }
@@ -864,7 +856,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn update_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+    pub(crate) fn update_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
         if !self.nodes.contains_key(&node.id) {
             return Err(DocumentError::MissingNode(node.id));
         }
@@ -877,7 +869,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn remove_node(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
+    pub(crate) fn remove_node(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
         let Some(node) = self.nodes.shift_remove(id) else {
             return Err(DocumentError::MissingNode(id.clone()));
         };
@@ -887,7 +879,7 @@ impl CanvasDocument {
         Ok(node)
     }
 
-    pub fn insert_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+    pub(crate) fn insert_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
         if self.edges.contains_key(&edge.id) {
             return Err(DocumentError::DuplicateEdge(edge.id));
         }
@@ -897,7 +889,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn update_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+    pub(crate) fn update_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
         if !self.edges.contains_key(&edge.id) {
             return Err(DocumentError::MissingEdge(edge.id));
         }
@@ -907,13 +899,13 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn remove_edge(&mut self, id: &EdgeId) -> Result<CanvasEdge, DocumentError> {
+    pub(crate) fn remove_edge(&mut self, id: &EdgeId) -> Result<CanvasEdge, DocumentError> {
         self.edges
             .shift_remove(id)
             .ok_or_else(|| DocumentError::MissingEdge(id.clone()))
     }
 
-    pub fn insert_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
+    pub(crate) fn insert_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
         if self.shapes.contains_key(&shape.id) {
             return Err(DocumentError::DuplicateShape(shape.id));
         }
@@ -922,7 +914,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn update_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
+    pub(crate) fn update_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
         if !self.shapes.contains_key(&shape.id) {
             return Err(DocumentError::MissingShape(shape.id));
         }
@@ -931,7 +923,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub fn remove_shape(&mut self, id: &ShapeId) -> Result<CanvasShape, DocumentError> {
+    pub(crate) fn remove_shape(&mut self, id: &ShapeId) -> Result<CanvasShape, DocumentError> {
         self.shapes
             .shift_remove(id)
             .ok_or_else(|| DocumentError::MissingShape(id.clone()))

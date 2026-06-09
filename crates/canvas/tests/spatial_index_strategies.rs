@@ -2,7 +2,8 @@ use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
     CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasRuntime,
-    CanvasShape, HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
+    CanvasShape, CanvasTransaction, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
+    SpatialIndex,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -223,7 +224,7 @@ fn hybrid_overlay_suppresses_deleted_node_and_incident_edges() {
     let removed = NodeId::from("node-0-1");
     let stale_records = stale_record_ids_for_node_removal(&base_document, &removed);
 
-    document.remove_node(&removed).unwrap();
+    apply_command(&mut document, DocumentCommand::RemoveNode(removed));
     let oracle = SpatialIndex::rebuild(&document);
     let hybrid =
         HybridOverlayCandidate::new(base_index.records().to_vec(), Vec::new(), stale_records);
@@ -834,12 +835,14 @@ fn stale_record_ids_for_node_removal(
 }
 
 fn move_selected_nodes(document: &mut CanvasDocument, selected_nodes: &[NodeId], frame: f32) {
+    let mut commands = Vec::new();
     for (index, id) in selected_nodes.iter().enumerate() {
         let mut node = document.node(id).unwrap().clone();
         node.position.x += px(frame * 0.75 + index as f32 * 0.01);
         node.position.y += px(frame * 0.25);
-        document.update_node(node).unwrap();
+        commands.push(DocumentCommand::UpdateNode(node));
     }
+    apply_commands(document, commands);
 }
 
 fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
@@ -877,6 +880,19 @@ fn options_match(record: &HitRecord, options: HitOptions) -> bool {
 fn point_query_bounds(point: Point<Pixels>, margin: Pixels) -> Bounds<Pixels> {
     let extent = margin.max(px(1.0));
     Bounds::centered_at(point, size(extent * 2.0, extent * 2.0))
+}
+
+fn apply_command(document: &mut CanvasDocument, command: DocumentCommand) {
+    apply_commands(document, [command]);
+}
+
+fn apply_commands(
+    document: &mut CanvasDocument,
+    commands: impl IntoIterator<Item = DocumentCommand>,
+) {
+    document
+        .apply_transaction(CanvasTransaction::new(commands))
+        .unwrap();
 }
 
 fn rstar_envelope(bounds: Bounds<Pixels>) -> RStarAabb<[f32; 2]> {
@@ -925,6 +941,7 @@ fn hit_options() -> [HitOptions; 6] {
 
 fn grid_document(columns: usize, rows: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for row in 0..rows {
         for column in 0..columns {
@@ -935,25 +952,25 @@ fn grid_document(columns: usize, rows: usize) -> CanvasDocument {
                 size(px(96.0), px(56.0)),
             );
             node.z_index = (row * columns + column) as i32;
-            document.insert_node(node).unwrap();
+            commands.push(DocumentCommand::InsertNode(node));
 
             if column > 0 {
-                document
-                    .insert_edge(CanvasEdge::new(
-                        format!("edge-{row}-{}-{row}-{column}", column - 1),
-                        CanvasEndpoint::new(format!("node-{row}-{}", column - 1), None::<String>),
-                        CanvasEndpoint::new(id, None::<String>),
-                    ))
-                    .unwrap();
+                commands.push(DocumentCommand::InsertEdge(CanvasEdge::new(
+                    format!("edge-{row}-{}-{row}-{column}", column - 1),
+                    CanvasEndpoint::new(format!("node-{row}-{}", column - 1), None::<String>),
+                    CanvasEndpoint::new(id, None::<String>),
+                )));
             }
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn dense_overlap_document() -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for index in 0..24 {
         let mut node = CanvasNode::new(
@@ -962,17 +979,19 @@ fn dense_overlap_document() -> CanvasDocument {
             size(px(80.0), px(80.0)),
         );
         node.z_index = index;
-        document.insert_node(node).unwrap();
+        commands.push(DocumentCommand::InsertNode(node));
     }
 
     let mut shape = CanvasShape::new("shape-top", bounds(52.0, 52.0, 70.0, 70.0));
     shape.z_index = 40;
-    document.insert_shape(shape).unwrap();
+    commands.push(DocumentCommand::InsertShape(shape));
+    apply_commands(&mut document, commands);
     document
 }
 
 fn clustered_document() -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for cluster in 0..4 {
         let base_x = cluster as f32 * 600.0;
@@ -987,24 +1006,24 @@ fn clustered_document() -> CanvasDocument {
                 size(px(64.0), px(44.0)),
             );
             node.z_index = (cluster * 100 + index) as i32;
-            document.insert_node(node).unwrap();
+            commands.push(DocumentCommand::InsertNode(node));
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn long_edge_document() -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
     for index in 0..8 {
         let node_id = format!("long-{index}");
-        document
-            .insert_node(CanvasNode::new(
-                node_id.clone(),
-                point(px(index as f32 * 420.0), px((index % 2) as f32 * 260.0)),
-                size(px(80.0), px(52.0)),
-            ))
-            .unwrap();
+        commands.push(DocumentCommand::InsertNode(CanvasNode::new(
+            node_id.clone(),
+            point(px(index as f32 * 420.0), px((index % 2) as f32 * 260.0)),
+            size(px(80.0), px(52.0)),
+        )));
 
         if index > 0 {
             let mut edge = CanvasEdge::new(
@@ -1013,9 +1032,10 @@ fn long_edge_document() -> CanvasDocument {
                 CanvasEndpoint::new(node_id, None::<String>),
             );
             edge.z_index = 100 + index as i32;
-            document.insert_edge(edge).unwrap();
+            commands.push(DocumentCommand::InsertEdge(edge));
         }
     }
+    apply_commands(&mut document, commands);
     document
 }
 
@@ -1027,18 +1047,24 @@ fn mixed_document() -> CanvasDocument {
     wide.z_index = 200;
     wide.handles
         .push(CanvasHandle::new("out", point(px(40.0), px(20.0))));
-    document.insert_node(wide).unwrap();
 
     let mut shape = CanvasShape::new("shape-wide", bounds(500.0, 110.0, 48.0, 48.0));
     shape.kind = "padded".to_string();
     shape.z_index = 210;
-    document.insert_shape(shape).unwrap();
+    apply_commands(
+        &mut document,
+        [
+            DocumentCommand::InsertNode(wide),
+            DocumentCommand::InsertShape(shape),
+        ],
+    );
 
     document
 }
 
 fn visibility_document() -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     let mut node = CanvasNode::new(
         "handles",
@@ -1047,7 +1073,7 @@ fn visibility_document() -> CanvasDocument {
     );
     node.handles
         .push(CanvasHandle::new("out", point(px(96.0), px(50.0))));
-    document.insert_node(node).unwrap();
+    commands.push(DocumentCommand::InsertNode(node));
 
     let mut hidden = CanvasNode::new(
         "hidden",
@@ -1056,7 +1082,7 @@ fn visibility_document() -> CanvasDocument {
     );
     hidden.hidden = true;
     hidden.z_index = 10;
-    document.insert_node(hidden).unwrap();
+    commands.push(DocumentCommand::InsertNode(hidden));
 
     let mut locked = CanvasNode::new(
         "locked",
@@ -1065,8 +1091,9 @@ fn visibility_document() -> CanvasDocument {
     );
     locked.locked = true;
     locked.z_index = 20;
-    document.insert_node(locked).unwrap();
+    commands.push(DocumentCommand::InsertNode(locked));
 
+    apply_commands(&mut document, commands);
     document
 }
 

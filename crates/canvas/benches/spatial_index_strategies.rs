@@ -2,8 +2,9 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasPaintModel,
-    CanvasPaintOptions, CanvasRecordId, CanvasRuntime, CanvasShape, CanvasViewport, HitOptions,
-    HitRecord, HitTarget, NodeId, SpatialIndex, collect_visible_records,
+    CanvasPaintOptions, CanvasRecordId, CanvasRuntime, CanvasShape, CanvasTransaction,
+    CanvasViewport, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId, SpatialIndex,
+    collect_visible_records,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -422,11 +423,7 @@ fn simulate_drag_rebuild(document: &CanvasDocument, selected_nodes: usize) -> us
     let mut count = 0;
 
     for frame in 0..DRAG_FRAMES {
-        for id in &ids {
-            let mut node = document.node(id).unwrap().clone();
-            node.position.x += px(1.0 + frame as f32 * 0.01);
-            document.update_node(node).unwrap();
-        }
+        move_selected_nodes(&mut document, &ids, frame);
 
         count += SpatialIndex::rebuild(&document).records().len();
     }
@@ -448,11 +445,7 @@ fn simulate_drag_candidate(
     let mut count = 0;
 
     for frame in 0..DRAG_FRAMES {
-        for id in &ids {
-            let mut node = document.node(id).unwrap().clone();
-            node.position.x += px(1.0 + frame as f32 * 0.01);
-            document.update_node(node).unwrap();
-        }
+        move_selected_nodes(&mut document, &ids, frame);
 
         let records = SpatialIndex::rebuild(&document).records().to_vec();
         count += match kind {
@@ -489,11 +482,7 @@ fn simulate_drag_hybrid_overlay(
     let mut count = 0;
 
     for frame in 0..DRAG_FRAMES {
-        for id in &selected {
-            let mut node = document.node(id).unwrap().clone();
-            node.position.x += px(1.0 + frame as f32 * 0.01);
-            document.update_node(node).unwrap();
-        }
+        move_selected_nodes(&mut document, &selected, frame);
 
         let oracle = SpatialIndex::rebuild(&document);
         let overlay_records = overlay_records_for_stale_ids(&oracle, &stale_records);
@@ -516,11 +505,7 @@ fn simulate_drag_runtime(
 
     for frame in 0..DRAG_FRAMES {
         let previous = document.clone();
-        for id in &selected {
-            let mut node = document.node(id).unwrap().clone();
-            node.position.x += px(1.0 + frame as f32 * 0.01);
-            document.update_node(node).unwrap();
-        }
+        move_selected_nodes(&mut document, &selected, frame);
 
         let diff = document.diff_against(&previous);
         runtime.apply_diff(&document, &diff);
@@ -586,6 +571,22 @@ fn selected_node_ids(document: &CanvasDocument, selected_nodes: usize) -> HashSe
     document.node_ids().take(selected_nodes).cloned().collect()
 }
 
+fn move_selected_nodes<'a>(
+    document: &mut CanvasDocument,
+    selected: impl IntoIterator<Item = &'a NodeId>,
+    frame: usize,
+) {
+    let commands = selected
+        .into_iter()
+        .map(|id| {
+            let mut node = document.node(id).unwrap().clone();
+            node.position.x += px(1.0 + frame as f32 * 0.01);
+            DocumentCommand::UpdateNode(node)
+        })
+        .collect::<Vec<_>>();
+    apply_commands(document, commands);
+}
+
 fn query_matches(record: &HitRecord, viewport: Bounds<Pixels>, options: HitOptions) -> bool {
     options_match(record, options) && record.bounds.intersects(&viewport)
 }
@@ -614,6 +615,15 @@ fn point_query_bounds(point: Point<Pixels>, margin: Pixels) -> Bounds<Pixels> {
     Bounds::centered_at(point, size(extent * 2.0, extent * 2.0))
 }
 
+fn apply_commands(
+    document: &mut CanvasDocument,
+    commands: impl IntoIterator<Item = DocumentCommand>,
+) {
+    document
+        .apply_transaction(CanvasTransaction::new(commands))
+        .expect("benchmark document commands should be valid");
+}
+
 fn rstar_envelope(bounds: Bounds<Pixels>) -> RStarAabb<[f32; 2]> {
     let [min_x, min_y, max_x, max_y] = aabb_extents(bounds);
     RStarAabb::from_corners([min_x, min_y], [max_x, max_y])
@@ -631,6 +641,7 @@ fn aabb_extents(bounds: Bounds<Pixels>) -> [f32; 4] {
 
 fn grid_document(columns: usize, rows: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for row in 0..rows {
         for column in 0..columns {
@@ -641,25 +652,25 @@ fn grid_document(columns: usize, rows: usize) -> CanvasDocument {
                 size(px(96.0), px(56.0)),
             );
             node.z_index = (row * columns + column) as i32;
-            document.insert_node(node).unwrap();
+            commands.push(DocumentCommand::InsertNode(node));
 
             if column > 0 {
-                document
-                    .insert_edge(CanvasEdge::new(
-                        edge_id(row, column - 1, row, column),
-                        CanvasEndpoint::new(node_id(row, column - 1), None::<String>),
-                        CanvasEndpoint::new(id, None::<String>),
-                    ))
-                    .unwrap();
+                commands.push(DocumentCommand::InsertEdge(CanvasEdge::new(
+                    edge_id(row, column - 1, row, column),
+                    CanvasEndpoint::new(node_id(row, column - 1), None::<String>),
+                    CanvasEndpoint::new(id, None::<String>),
+                )));
             }
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn dense_overlap_document(count: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for index in 0..count {
         let mut node = CanvasNode::new(
@@ -671,14 +682,16 @@ fn dense_overlap_document(count: usize) -> CanvasDocument {
             size(px(96.0), px(96.0)),
         );
         node.z_index = index as i32;
-        document.insert_node(node).unwrap();
+        commands.push(DocumentCommand::InsertNode(node));
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn clustered_document(clusters: usize, nodes_per_cluster: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for cluster in 0..clusters {
         let base_x = (cluster % 10) as f32 * 700.0;
@@ -693,42 +706,42 @@ fn clustered_document(clusters: usize, nodes_per_cluster: usize) -> CanvasDocume
                 size(px(64.0), px(44.0)),
             );
             node.z_index = (cluster * nodes_per_cluster + index) as i32;
-            document.insert_node(node).unwrap();
+            commands.push(DocumentCommand::InsertNode(node));
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn long_edge_document(count: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for index in 0..count {
         let id = format!("long-{index}");
-        document
-            .insert_node(CanvasNode::new(
-                id.clone(),
-                point(px(index as f32 * 24.0), px((index % 20) as f32 * 140.0)),
-                size(px(72.0), px(44.0)),
-            ))
-            .unwrap();
+        commands.push(DocumentCommand::InsertNode(CanvasNode::new(
+            id.clone(),
+            point(px(index as f32 * 24.0), px((index % 20) as f32 * 140.0)),
+            size(px(72.0), px(44.0)),
+        )));
 
         if index > 0 {
-            document
-                .insert_edge(CanvasEdge::new(
-                    format!("long-edge-{}-{index}", index - 1),
-                    CanvasEndpoint::new(format!("long-{}", index - 1), None::<String>),
-                    CanvasEndpoint::new(id, None::<String>),
-                ))
-                .unwrap();
+            commands.push(DocumentCommand::InsertEdge(CanvasEdge::new(
+                format!("long-edge-{}-{index}", index - 1),
+                CanvasEndpoint::new(format!("long-{}", index - 1), None::<String>),
+                CanvasEndpoint::new(id, None::<String>),
+            )));
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
 fn mixed_document(count: usize) -> CanvasDocument {
     let mut document = CanvasDocument::default();
+    let mut commands = Vec::new();
 
     for index in 0..count {
         let mut node = CanvasNode::new(
@@ -750,7 +763,7 @@ fn mixed_document(count: usize) -> CanvasDocument {
             node.handles
                 .push(CanvasHandle::new("out", point(px(68.0), px(21.0))));
         }
-        document.insert_node(node).unwrap();
+        commands.push(DocumentCommand::InsertNode(node));
 
         if index % 7 == 0 {
             let mut shape = CanvasShape::new(
@@ -764,10 +777,11 @@ fn mixed_document(count: usize) -> CanvasDocument {
                 ),
             );
             shape.z_index = index as i32 + 10_000;
-            document.insert_shape(shape).unwrap();
+            commands.push(DocumentCommand::InsertShape(shape));
         }
     }
 
+    apply_commands(&mut document, commands);
     document
 }
 
