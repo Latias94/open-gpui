@@ -1,6 +1,6 @@
 use crate::mutation::CanvasMutationJournal;
 use crate::{
-    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasTransaction,
+    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasRecordId, CanvasTransaction,
     DocumentCommand, DocumentError,
 };
 
@@ -106,14 +106,73 @@ pub(crate) fn transaction_between(
         }
     }
 
+    append_relation_commands(previous, target, &mut commands);
+
     CanvasTransaction::new(commands)
+}
+
+fn append_relation_commands(
+    previous: &CanvasDocument,
+    target: &CanvasDocument,
+    commands: &mut Vec<DocumentCommand>,
+) {
+    for relation in previous.relations().parents() {
+        if target.relations().parent_of(&relation.child) != Some(&relation.parent)
+            && target.relations().parent_of(&relation.child).is_none()
+            && document_contains_record(target, &relation.child)
+        {
+            commands.push(DocumentCommand::ClearRecordParent {
+                child: relation.child.clone(),
+            });
+        }
+    }
+
+    for relation in target.relations().parents() {
+        if previous.relations().parent_of(&relation.child) != Some(&relation.parent) {
+            commands.push(DocumentCommand::SetRecordParent {
+                child: relation.child.clone(),
+                parent: relation.parent.clone(),
+            });
+        }
+    }
+
+    for relation in previous.relations().groups() {
+        if !target.relations().contains_group_relation(relation)
+            && document_contains_record(target, &relation.group)
+            && document_contains_record(target, &relation.member)
+        {
+            commands.push(DocumentCommand::RemoveRecordFromGroup {
+                group: relation.group.clone(),
+                member: relation.member.clone(),
+            });
+        }
+    }
+
+    for relation in target.relations().groups() {
+        if !previous.relations().contains_group_relation(relation) {
+            commands.push(DocumentCommand::AddRecordToGroup {
+                group: relation.group.clone(),
+                member: relation.member.clone(),
+            });
+        }
+    }
+}
+
+fn document_contains_record(document: &CanvasDocument, id: &CanvasRecordId) -> bool {
+    match id {
+        CanvasRecordId::Node(id) => document.contains_node(id),
+        CanvasRecordId::Edge(id) => document.contains_edge(id),
+        CanvasRecordId::Shape(id) => document.contains_shape(id),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, EdgeId, NodeId};
-    use open_gpui::{point, px, size};
+    use crate::{
+        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, CanvasShape, EdgeId, NodeId,
+    };
+    use open_gpui::{Bounds, point, px, size};
 
     #[test]
     fn gesture_commit_coalesces_transient_updates() {
@@ -191,6 +250,79 @@ mod tests {
         assert_eq!(replayed.edge(&EdgeId::from("a-b")).unwrap(), &changed_edge);
     }
 
+    #[test]
+    fn transaction_between_preserves_relation_updates() {
+        let previous = related_document();
+        let mut target = previous.clone();
+
+        target
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape("frame-b".into()),
+                },
+                DocumentCommand::RemoveRecordFromGroup {
+                    group: CanvasRecordId::Shape("group-a".into()),
+                    member: CanvasRecordId::Node(NodeId::from("member")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape("group-b".into()),
+                    member: CanvasRecordId::Node(NodeId::from("member")),
+                },
+            ]))
+            .unwrap();
+
+        let transaction = transaction_between(&previous, &target);
+        assert_eq!(
+            transaction.commands,
+            vec![
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape("frame-b".into()),
+                },
+                DocumentCommand::RemoveRecordFromGroup {
+                    group: CanvasRecordId::Shape("group-a".into()),
+                    member: CanvasRecordId::Node(NodeId::from("member")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape("group-b".into()),
+                    member: CanvasRecordId::Node(NodeId::from("member")),
+                },
+            ]
+        );
+
+        let mut replayed = previous;
+        replayed.apply_transaction(transaction).unwrap();
+
+        assert_eq!(replayed, target);
+    }
+
+    #[test]
+    fn transaction_between_preserves_parent_removal() {
+        let previous = related_document();
+        let mut target = previous.clone();
+        target
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::ClearRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                },
+            ))
+            .unwrap();
+
+        let transaction = transaction_between(&previous, &target);
+        assert_eq!(
+            transaction.commands,
+            vec![DocumentCommand::ClearRecordParent {
+                child: CanvasRecordId::Node(NodeId::from("child")),
+            }]
+        );
+
+        let mut replayed = previous;
+        replayed.apply_transaction(transaction).unwrap();
+
+        assert_eq!(replayed, target);
+    }
+
     fn connected_document() -> CanvasDocument {
         let mut document = CanvasDocument::default();
         document
@@ -213,6 +345,40 @@ mod tests {
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
+            .unwrap();
+        document
+    }
+
+    fn related_document() -> CanvasDocument {
+        let mut document = CanvasDocument::default();
+        for id in ["child", "member"] {
+            document
+                .insert_node(CanvasNode::new(
+                    id,
+                    point(px(0.0), px(0.0)),
+                    size(px(10.0), px(10.0)),
+                ))
+                .unwrap();
+        }
+        for id in ["frame-a", "frame-b", "group-a", "group-b"] {
+            document
+                .insert_shape(CanvasShape::new(
+                    id,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+                ))
+                .unwrap();
+        }
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape("frame-a".into()),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape("group-a".into()),
+                    member: CanvasRecordId::Node(NodeId::from("member")),
+                },
+            ]))
             .unwrap();
         document
     }

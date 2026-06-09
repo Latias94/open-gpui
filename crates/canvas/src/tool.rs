@@ -966,9 +966,13 @@ impl CanvasEditor {
         prepared: CanvasPreparedGestureCommit,
     ) -> CanvasDocumentDiff {
         let diff = prepared.committed().diff().clone();
+        self.gesture = None;
+        if diff.is_empty() {
+            return diff;
+        }
+
         self.history
             .push_undo(prepared.committed().inverse().clone());
-        self.gesture = None;
         self.selection.retain_document(self.document.as_ref());
         let kind_registry = Arc::clone(&self.kind_registry);
         self.sync_runtime_committed_with_kind_registry(
@@ -4107,6 +4111,77 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 2);
         assert!(editor.undo().unwrap());
         assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+    }
+
+    #[test]
+    fn gesture_commit_records_relation_updates() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::SetRecordParent {
+                        child: child.clone(),
+                        parent: frame.clone(),
+                    },
+                )),
+                CanvasToolEffect::CommitGesture,
+            ])
+            .unwrap();
+
+        assert_eq!(editor.document.relations().parent_of(&child), Some(&frame));
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert_eq!(editor.document.relations().parent_of(&child), None);
+    }
+
+    #[test]
+    fn empty_gesture_commit_does_not_push_history() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::ClearRecordParent {
+                        child: CanvasRecordId::Node(NodeId::from("child")),
+                    },
+                )),
+            ])
+            .unwrap();
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::CommitGesture)
+            .unwrap();
+
+        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(editor.is_tool_state_idle());
     }
 
     #[test]

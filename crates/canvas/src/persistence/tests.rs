@@ -3,7 +3,7 @@ use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
     CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId,
     CanvasRecordKind, CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError,
-    CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
+    CanvasSelection, CanvasShape, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
     CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError,
     EdgeId, NodeId, PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
@@ -1255,6 +1255,106 @@ fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
         restored.node(&NodeId::from("a")).unwrap().position,
         point(px(40.0), px(0.0))
     );
+}
+
+#[test]
+fn persistent_tool_effects_commit_relation_gesture_as_one_log_entry() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "child",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_shape(CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        ))
+        .unwrap();
+
+    let mut editor = CanvasEditor::new(document.clone());
+    let mut store = MemoryCanvasPersistenceStore::default();
+    store
+        .save_checkpoint(CanvasCheckpoint::new(0, &document))
+        .unwrap();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let child = CanvasRecordId::Node(NodeId::from("child"));
+    let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+
+    apply_persistent_tool_effects(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        [
+            CanvasToolEffect::BeginGesture,
+            CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: child.clone(),
+                    parent: frame.clone(),
+                },
+            )),
+            CanvasToolEffect::CommitGesture,
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(cursor.sequence(), 1);
+    assert_eq!(store.log_entries().len(), 1);
+    assert_eq!(editor.history().undo_depth(), 1);
+    assert_eq!(
+        editor.document().relations().parent_of(&child),
+        Some(&frame)
+    );
+
+    let relation_batch = store.log_entries()[0]
+        .committed_relation_operations()
+        .unwrap();
+    assert_eq!(relation_batch.operations.len(), 1);
+    assert!(matches!(
+        &relation_batch.operations[0].change,
+        CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(relation))
+            if relation.child == child && relation.parent == frame
+    ));
+
+    let restored = load_canvas_document(&store).unwrap();
+    assert_eq!(restored.relations().parent_of(&child), Some(&frame));
+}
+
+#[test]
+fn persistent_empty_gesture_commit_does_not_log_or_push_history() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "child",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    let mut editor = CanvasEditor::new(document);
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::new(5);
+
+    apply_persistent_tool_effects(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        [
+            CanvasToolEffect::BeginGesture,
+            CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                DocumentCommand::ClearRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                },
+            )),
+            CanvasToolEffect::CommitGesture,
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(cursor.sequence(), 5);
+    assert!(store.log_entries().is_empty());
+    assert_eq!(editor.history().undo_depth(), 0);
 }
 
 #[test]
