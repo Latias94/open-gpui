@@ -1,11 +1,12 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockHost, DockItemId, DockNodeId,
-    DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
-    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffRequest, drop_runtime::DockHostDropSceneFact,
-    viewport_runtime::DockViewportReusableWindow,
+    DockSpaceId, DockTransactionError, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
+    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
     App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription,
@@ -134,9 +135,30 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        self.runtime
-            .borrow_mut()
-            .open_tear_off_viewport(request, target_space, options, cx)
+        let item = request.item.clone();
+        let pending = {
+            let mut runtime = self.runtime.borrow_mut();
+            match runtime.begin_tear_off_request(request, target_space) {
+                DockViewportTearOffBeginOutcome::Pending(pending) => pending,
+                DockViewportTearOffBeginOutcome::Duplicate(pending) => {
+                    return Ok(DockViewportTearOffOpenOutcome::Duplicate(pending));
+                }
+            }
+        };
+
+        let opened = match self.open_viewport(pending.target_space.clone(), options, cx) {
+            Ok(opened) => opened,
+            Err(error) => {
+                self.runtime
+                    .borrow_mut()
+                    .cancel_tear_off_request(&item, DockViewportTearOffCancelReason::Cancelled);
+                return Err(error);
+            }
+        };
+
+        let mut runtime = self.runtime.borrow_mut();
+        let completion = runtime.complete_tear_off_viewport(&item, opened.window, cx);
+        Ok(runtime.finish_tear_off_open(pending, completion, cx))
     }
 
     /// Updates display, window, and host bounds for a registered viewport.
@@ -201,9 +223,63 @@ impl DockViewportRuntimeHandle {
         route: DockViewportDropRoute,
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.runtime
-            .borrow_mut()
-            .commit_drop_route(source_space, source_tabs, item, route, cx)
+        self.commit_drop_route_with_outcome(source_space, source_tabs, item, route, cx)?
+            .into_action_result()
+    }
+
+    pub(crate) fn commit_drop_route_with_outcome(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &DockItemId,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        if let DockViewportDropRoute::TearOff(request) = route {
+            return self.commit_tear_off_drop_route(source_space, source_tabs, item, request, cx);
+        }
+
+        self.runtime.borrow_mut().commit_drop_route_with_outcome(
+            source_space,
+            source_tabs,
+            item,
+            route,
+            cx,
+        )
+    }
+
+    fn commit_tear_off_drop_route(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &DockItemId,
+        request: DockViewportTearOffRequest,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        if request.source_space != *source_space
+            || request.source_tabs != source_tabs
+            || request.item != *item
+        {
+            return Err(DockActionApplyError::ItemNotInTabs {
+                tabs: source_tabs,
+                item: item.clone(),
+            });
+        }
+
+        let (target_space, options) = {
+            let mut runtime = self.runtime.borrow_mut();
+            let target_space = runtime.next_tear_off_space(&request);
+            let options = runtime.tear_off_window_options(&request);
+            (target_space, options)
+        };
+
+        self.open_tear_off_viewport(request, target_space, options, cx)
+            .map(DockViewportDropRouteOutcome::TearOff)
+            .map_err(|error| {
+                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
+                    message: error.to_string(),
+                })
+            })
     }
 
     pub(crate) fn last_host_scene_screen_position(

@@ -1,10 +1,11 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
-    DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
-    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffCancelled, DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockTransactionError, DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
+    DockViewportRuntimeHandle, DockViewportShouldCloseOutcome, DockViewportTargetContext,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffMachine, DockViewportTearOffOpenOutcome, DockViewportTearOffPending,
     DockViewportTearOffRequest, DockViewportTearOffTick,
@@ -16,7 +17,7 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, App, Bounds, DisplayId, Entity, Pixels, Point, Result, WindowBounds, WindowId,
-    WindowOptions,
+    WindowOptions, px, size,
 };
 use std::rc::Rc;
 
@@ -226,14 +227,14 @@ impl DockViewportRuntime {
         self.close_gate.sync_adapter(&self.adapter);
     }
 
-    pub(crate) fn commit_drop_route(
+    pub(crate) fn commit_drop_route_with_outcome(
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: crate::DockNodeId,
         item: &DockItemId,
         route: DockViewportDropRoute,
         cx: &mut App,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let target_space = match route {
             DockViewportDropRoute::Local { host_position } => {
                 self.resolve_route_target(source_space, host_position, cx)?
@@ -241,30 +242,38 @@ impl DockViewportRuntime {
             DockViewportDropRoute::KnownViewport { hit, .. } => {
                 self.resolve_route_target(&hit.space, hit.host_position, cx)?
             }
-            DockViewportDropRoute::TearOff(_) => {
-                return Err(crate::DockTransactionError::TearOffRequiresViewportRuntime.into());
+            DockViewportDropRoute::TearOff(request) => {
+                return self.commit_tear_off_drop_route(
+                    source_space,
+                    source_tabs,
+                    item,
+                    request,
+                    cx,
+                );
             }
             DockViewportDropRoute::Rejected(error) => return Err(error.into()),
         };
 
         let (target_space, target) = target_space;
-        self.controller.update(cx, |controller, cx| {
-            let outcome = controller.commit_resolved_drop(DockWorkspaceDropRequest {
-                source_space,
-                source_tabs,
-                item,
-                target_space: &target_space,
-                target,
-            });
-            if outcome
-                .as_ref()
-                .map(|outcome| outcome.changed())
-                .unwrap_or(false)
-            {
-                cx.notify();
-            }
-            outcome
-        })
+        self.controller
+            .update(cx, |controller, cx| {
+                let outcome = controller.commit_resolved_drop(DockWorkspaceDropRequest {
+                    source_space,
+                    source_tabs,
+                    item,
+                    target_space: &target_space,
+                    target,
+                });
+                if outcome
+                    .as_ref()
+                    .map(|outcome| outcome.changed())
+                    .unwrap_or(false)
+                {
+                    cx.notify();
+                }
+                outcome
+            })
+            .map(DockViewportDropRouteOutcome::Action)
     }
 
     fn resolve_route_target(
@@ -286,6 +295,65 @@ impl DockViewportRuntime {
             );
         };
         Ok((target_space.clone(), target))
+    }
+
+    pub(crate) fn commit_tear_off_drop_route(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        item: &DockItemId,
+        request: DockViewportTearOffRequest,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        if request.source_space != *source_space
+            || request.source_tabs != source_tabs
+            || request.item != *item
+        {
+            return Err(DockActionApplyError::ItemNotInTabs {
+                tabs: source_tabs,
+                item: item.clone(),
+            });
+        }
+
+        let target_space = self.next_tear_off_space(&request);
+        let options = self.tear_off_window_options(&request);
+        self.open_tear_off_viewport(request, target_space, options, cx)
+            .map(DockViewportDropRouteOutcome::TearOff)
+            .map_err(|error| {
+                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
+                    message: error.to_string(),
+                })
+            })
+    }
+
+    pub(crate) fn next_tear_off_space(
+        &mut self,
+        request: &DockViewportTearOffRequest,
+    ) -> DockSpaceId {
+        let tick = self.next_tear_off_tick();
+        DockSpaceId::new(format!(
+            "{}:tear-off:{}:{}",
+            request.source_space,
+            request.item.as_str(),
+            tick.as_u64()
+        ))
+    }
+
+    pub(crate) fn tear_off_window_options(
+        &self,
+        request: &DockViewportTearOffRequest,
+    ) -> WindowOptions {
+        let window_bounds = request.suggested_window_bounds.unwrap_or_else(|| {
+            WindowBounds::Windowed(Bounds::new(
+                request.release_position,
+                size(px(360.0), px(240.0)),
+            ))
+        });
+
+        WindowOptions {
+            window_bounds: Some(window_bounds),
+            ..Default::default()
+        }
     }
 
     pub(crate) fn last_host_scene_screen_position(
@@ -335,6 +403,14 @@ impl DockViewportRuntime {
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
         self.tear_off.begin(request, target_space.into(), now)
+    }
+
+    pub(crate) fn cancel_tear_off_request(
+        &mut self,
+        item: &DockItemId,
+        reason: DockViewportTearOffCancelReason,
+    ) -> Option<DockViewportTearOffCancelled> {
+        self.tear_off.cancel(item, reason)
     }
 
     #[cfg(test)]
@@ -431,32 +507,45 @@ impl DockViewportRuntime {
             }
         };
 
-        Ok(
-            match self.complete_tear_off_viewport(&item, opened.window, cx) {
-                DockViewportTearOffCompletionOutcome::Completed(completed) => {
-                    DockViewportTearOffOpenOutcome::Completed(completed)
-                }
-                DockViewportTearOffCompletionOutcome::Cancelled(cancelled) => {
-                    self.adapter.unregister_space(&pending.target_space);
-                    self.host_scenes.unregister_space(&pending.target_space);
-                    self.close_gate.sync_adapter(&self.adapter);
-                    DockViewportTearOffOpenOutcome::Cancelled(cancelled)
-                }
-                DockViewportTearOffCompletionOutcome::MissingPending { item } => {
-                    DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled {
-                        pending,
-                        reason: if self.controller.read(cx).graph().contains_item(&item) {
-                            DockViewportTearOffCancelReason::SourceMoved
-                        } else {
-                            DockViewportTearOffCancelReason::SourceMissing
-                        },
-                    })
-                }
-                DockViewportTearOffCompletionOutcome::CommitFailed(failure) => {
-                    DockViewportTearOffOpenOutcome::CommitFailed(failure)
-                }
-            },
-        )
+        let completion = self.complete_tear_off_viewport(&item, opened.window, cx);
+        Ok(self.finish_tear_off_open(pending, completion, cx))
+    }
+
+    pub(crate) fn finish_tear_off_open(
+        &mut self,
+        pending: DockViewportTearOffPending,
+        completion: DockViewportTearOffCompletionOutcome,
+        cx: &App,
+    ) -> DockViewportTearOffOpenOutcome {
+        match completion {
+            DockViewportTearOffCompletionOutcome::Completed(completed) => {
+                DockViewportTearOffOpenOutcome::Completed(completed)
+            }
+            DockViewportTearOffCompletionOutcome::Cancelled(cancelled) => {
+                self.discard_tear_off_target(&pending.target_space);
+                DockViewportTearOffOpenOutcome::Cancelled(cancelled)
+            }
+            DockViewportTearOffCompletionOutcome::MissingPending { item } => {
+                self.discard_tear_off_target(&pending.target_space);
+                DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled {
+                    pending,
+                    reason: if self.controller.read(cx).graph().contains_item(&item) {
+                        DockViewportTearOffCancelReason::SourceMoved
+                    } else {
+                        DockViewportTearOffCancelReason::SourceMissing
+                    },
+                })
+            }
+            DockViewportTearOffCompletionOutcome::CommitFailed(failure) => {
+                DockViewportTearOffOpenOutcome::CommitFailed(failure)
+            }
+        }
+    }
+
+    fn discard_tear_off_target(&mut self, target_space: &DockSpaceId) {
+        self.adapter.unregister_space(target_space);
+        self.host_scenes.unregister_space(target_space);
+        self.close_gate.sync_adapter(&self.adapter);
     }
 
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.

@@ -126,6 +126,12 @@ pub enum DockTransactionError {
     /// Tear-off drops require the viewport runtime state machine.
     #[error("tear-off target requires viewport runtime transaction")]
     TearOffRequiresViewportRuntime,
+    /// The viewport runtime could not open a platform window for a tear-off request.
+    #[error("tear-off viewport open failed: {message}")]
+    TearOffViewportOpenFailed {
+        /// Platform or GPUI error message returned while opening the window.
+        message: String,
+    },
 }
 
 /// Error returned when a docking action cannot be applied.

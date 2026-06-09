@@ -1,9 +1,10 @@
 use crate::{
     DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId, DockTransactionError,
-    DockViewportClosePolicy, DockViewportDropRoute, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffRequest, DockWorkspace, debug::DockDebugRegion,
-    drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget, host_test_support::*,
+    DockViewportClosePolicy, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
+    debug::DockDebugRegion, drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget,
+    host_test_support::*,
 };
 use open_gpui::{AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px};
 
@@ -248,6 +249,97 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             && routed_item == item("a")
             && routed_position == release_position
     ));
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    let release_position = point(px(900.0), px(900.0));
+    let suggested_window_bounds =
+        WindowBounds::Windowed(floating_bounds(880.0, 880.0, 360.0, 240.0));
+
+    let outcome = cx
+        .update(|app| {
+            let route = runtime.resolve_drop_route_with_context(
+                source_space.clone(),
+                source_tabs,
+                item("a"),
+                release_position,
+                Some(suggested_window_bounds),
+                &DockViewportTargetContext::new(),
+                app,
+            );
+            runtime.commit_drop_route_with_outcome(
+                &source_space,
+                source_tabs,
+                &item("a"),
+                route,
+                app,
+            )
+        })
+        .expect("tear-off route should commit through runtime handle");
+
+    let DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(completed)) =
+        outcome
+    else {
+        panic!("tear-off route should open a viewport and complete the move");
+    };
+    assert_eq!(completed.action, crate::DockActionOutcome::Changed);
+    assert_eq!(completed.pending.request.release_position, release_position);
+    assert_eq!(
+        completed.pending.request.suggested_window_bounds,
+        Some(suggested_window_bounds)
+    );
+    assert_eq!(
+        completed.pending.target_space.as_str(),
+        "source:tear-off:a:0"
+    );
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&completed.pending.target_space),
+        Some(completed.registration.window)
+    );
+    let opened_window = completed
+        .registration
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("tear-off viewport should render DockHost");
+    let opened_host = opened_window
+        .root(cx)
+        .expect("tear-off viewport should expose DockHost root");
+    cx.read_entity(&opened_host, |host, _| {
+        assert!(
+            host.viewport_runtime().is_some(),
+            "tear-off viewport should keep the runtime-aware host path for dock-back"
+        );
+    });
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")]
+        );
+        assert_eq!(
+            controller
+                .graph()
+                .collect_items_in_space(&completed.pending.target_space),
+            vec![item("a")]
+        );
+    });
 }
 
 #[open_gpui::test]

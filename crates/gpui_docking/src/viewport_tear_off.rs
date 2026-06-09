@@ -1,6 +1,6 @@
 use crate::{
-    DockItemId, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportHit, DockViewportTargetContext,
+    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicy, DockPolicyError,
+    DockSpaceId, DockViewportAdapter, DockViewportHit, DockViewportTargetContext,
 };
 use open_gpui::{Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
@@ -38,6 +38,10 @@ impl DockViewportTearOffTick {
     #[cfg(test)]
     pub const fn new(tick: u64) -> Self {
         Self(tick)
+    }
+
+    pub(crate) const fn as_u64(self) -> u64 {
+        self.0
     }
 
     pub const fn saturating_add(self, ticks: u64) -> Self {
@@ -135,6 +139,53 @@ pub enum DockViewportTearOffOpenOutcome {
     Cancelled(DockViewportTearOffCancelled),
     /// The viewport registered, but the graph move failed and runtime mapping was cleaned up.
     CommitFailed(DockViewportTearOffCommitFailure),
+}
+
+impl DockViewportTearOffOpenOutcome {
+    /// Returns the graph action outcome when the tear-off reached workspace commit.
+    pub fn action_outcome(&self) -> Option<DockActionOutcome> {
+        match self {
+            DockViewportTearOffOpenOutcome::Completed(completed) => Some(completed.action),
+            DockViewportTearOffOpenOutcome::Duplicate(_)
+            | DockViewportTearOffOpenOutcome::Cancelled(_)
+            | DockViewportTearOffOpenOutcome::CommitFailed(_) => None,
+        }
+    }
+}
+
+/// Runtime outcome for a viewport-routed drop release.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockViewportDropRouteOutcome {
+    /// The route resolved to a normal workspace action.
+    Action(DockActionOutcome),
+    /// The route opened or reused a platform viewport through the tear-off runtime transaction.
+    TearOff(DockViewportTearOffOpenOutcome),
+}
+
+impl DockViewportDropRouteOutcome {
+    /// Projects a runtime route outcome into a workspace action when one happened.
+    pub fn action_outcome(&self) -> Option<DockActionOutcome> {
+        match self {
+            DockViewportDropRouteOutcome::Action(outcome) => Some(*outcome),
+            DockViewportDropRouteOutcome::TearOff(outcome) => outcome.action_outcome(),
+        }
+    }
+
+    pub(crate) fn into_action_result(self) -> Result<DockActionOutcome, DockActionApplyError> {
+        match self {
+            DockViewportDropRouteOutcome::Action(action) => Ok(action),
+            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
+                completed,
+            )) => Ok(completed.action),
+            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Duplicate(_))
+            | DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Cancelled(_)) => {
+                Ok(DockActionOutcome::Unchanged)
+            }
+            DockViewportDropRouteOutcome::TearOff(
+                DockViewportTearOffOpenOutcome::CommitFailed(failure),
+            ) => Err(failure.error),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
