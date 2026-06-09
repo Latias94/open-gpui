@@ -18,7 +18,7 @@ struct DockDropPreviewSnapshot {
 
 #[derive(Debug, Default)]
 pub(crate) struct DockDropRuntime {
-    target: Option<DockResolvedDropTarget>,
+    resolution: Option<DockDropResolution>,
     scene: Option<DockHostDropScene>,
 }
 
@@ -132,35 +132,36 @@ impl DockDropRuntime {
     }
 
     fn resolve_scene(&mut self, scene: &DockHostDropScene, policy: &DockPolicy) -> bool {
-        let mut target = match scene.resolved_target(policy) {
-            Some(target) => Some(target),
+        let mut resolution = match scene.resolve_drop(policy) {
+            Some(resolution) => Some(resolution),
             None if scene.clear_on_miss => None,
             None => return false,
         };
-        if let Some(existing) = self.target.as_ref()
+        if let Some(existing) = self.resolution.as_ref().and_then(valid_target)
             && let Some(existing_preview) = preview_snapshot(existing)
             && existing_preview.insert_index.is_some()
             && existing_preview.preview_bounds.contains(&scene.position)
-            && target
+            && resolution
                 .as_ref()
+                .and_then(valid_target)
                 .and_then(preview_snapshot)
                 .is_some_and(|preview| {
                     preview.target_tabs == existing_preview.target_tabs
                         && preview.zone == DropZone::Center
                 })
         {
-            target = Some(existing.clone());
+            resolution = Some(DockDropResolution::Valid(existing.clone()));
         }
-        self.replace_target(target)
+        self.replace_resolution(resolution)
     }
 
     pub(crate) fn take_resolved_target(&mut self) -> Option<DockResolvedDropTarget> {
         self.scene = None;
-        self.target.take()
+        self.resolution.take().and_then(DockDropResolution::target)
     }
 
-    pub(crate) fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
-        self.target.as_ref()
+    pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
+        self.resolution.as_ref()
     }
 
     pub(crate) fn take_resolved_target_excluding_tabs(
@@ -176,9 +177,9 @@ impl DockDropRuntime {
                     .without_tabs_targets(source_tabs)
                     .resolved_target(policy)
             })
-            .or_else(|| self.target.take());
+            .or_else(|| self.resolution.take().and_then(DockDropResolution::target));
         self.scene = None;
-        self.target = None;
+        self.resolution = None;
         target
     }
 
@@ -193,17 +194,36 @@ impl DockDropRuntime {
         self.scene.as_mut().expect("scene should be initialized")
     }
 
-    fn replace_target(&mut self, target: Option<DockResolvedDropTarget>) -> bool {
-        if self.target == target {
+    fn replace_resolution(&mut self, resolution: Option<DockDropResolution>) -> bool {
+        if self.resolution == resolution {
             return false;
         }
-        self.target = target;
+        self.resolution = resolution;
         true
     }
 
     #[cfg(test)]
     fn preview_snapshot(&self) -> Option<DockDropPreviewSnapshot> {
-        self.target.as_ref().and_then(preview_snapshot)
+        self.resolution
+            .as_ref()
+            .and_then(resolution_target)
+            .and_then(preview_snapshot)
+    }
+}
+
+pub(crate) fn resolution_target(
+    resolution: &DockDropResolution,
+) -> Option<&DockResolvedDropTarget> {
+    match resolution {
+        DockDropResolution::Valid(target) => Some(target),
+        DockDropResolution::Rejected(rejection) => Some(&rejection.target),
+    }
+}
+
+fn valid_target(resolution: &DockDropResolution) -> Option<&DockResolvedDropTarget> {
+    match resolution {
+        DockDropResolution::Valid(target) => Some(target),
+        DockDropResolution::Rejected(_) => None,
     }
 }
 

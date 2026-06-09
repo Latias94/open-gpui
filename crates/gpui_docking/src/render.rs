@@ -1,5 +1,6 @@
 use crate::{
     DockHost, DockNode, DockNodeId, debug::DockDebugRegion, drag::DockDragPayload,
+    drop_runtime::resolution_target, drop_target::DockDropResolution,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -206,8 +207,10 @@ impl DockHost {
     }
 
     fn render_host_drop_preview(&mut self, session: &DockHostRenderSession) -> Option<AnyElement> {
-        let target = self.interaction().resolved_drop_target()?;
+        let resolution = self.interaction().drop_resolution()?;
+        let target = resolution_target(resolution)?;
         let bounds = target.preview_bounds?;
+        let rejected = matches!(resolution, DockDropResolution::Rejected(_));
         let selector = self.record_debug_selector(
             DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
@@ -223,8 +226,16 @@ impl DockHost {
                 .w(bounds.size.width)
                 .h(bounds.size.height)
                 .border_1()
-                .border_color(rgb(0x2563eb))
-                .bg(rgba(0x60a5fa47))
+                .border_color(if rejected {
+                    rgb(0xdc2626)
+                } else {
+                    rgb(0x2563eb)
+                })
+                .bg(if rejected {
+                    rgba(0xfca5a547)
+                } else {
+                    rgba(0x60a5fa47)
+                })
                 .into_any_element(),
         )
     }

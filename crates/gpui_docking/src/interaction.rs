@@ -1,7 +1,7 @@
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
-    drop_target::DockResolvedDropTarget,
+    drop_target::{DockDropResolution, DockResolvedDropTarget},
     geometry,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
@@ -148,8 +148,8 @@ impl DockInteractionRuntime {
         self.drop.take_resolved_target()
     }
 
-    pub(crate) fn resolved_drop_target(&self) -> Option<&DockResolvedDropTarget> {
-        self.drop.resolved_target()
+    pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
+        self.drop.drop_resolution()
     }
 
     pub(crate) fn take_resolved_target_excluding_tabs(

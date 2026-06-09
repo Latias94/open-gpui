@@ -618,7 +618,9 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn policy_rejected_edge_hover_does_not_render_drop_preview(cx: &mut TestAppContext) {
+fn policy_rejected_edge_hover_renders_rejected_drop_preview_without_commit(
+    cx: &mut TestAppContext,
+) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace =
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
@@ -648,11 +650,22 @@ fn policy_rejected_edge_hover_does_not_render_drop_preview(cx: &mut TestAppConte
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    let visual = VisualTestContext::from_window(window.into(), cx);
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
 
+    let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
+        .expect("policy-rejected edge hover should render a rejected preview");
+    assert!(debug_bounds(&mut visual, &preview).size.width > px(0.0));
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
     assert!(
-        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
-        "policy-rejected edge hover should not render preview"
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "rejected release should leave the source panel in place"
+    );
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
+        "rejected release should leave the target panel in place"
     );
 }
 
