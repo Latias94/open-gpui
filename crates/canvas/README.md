@@ -56,8 +56,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   keeping transient selection changes out of the committed editor state.
 - Idle Escape cancels also clear the current selection, so the same key exits both active gestures
   and passive multi-selection states.
-- The built-in select tool uses pointer-move modifiers for shift-constrained node translation,
-  locking to the first shifted move's dominant axis while the modifier remains held.
+- The built-in select tool uses pointer-move modifiers for shift-constrained node and shape
+  translation, locking to the first shifted move's dominant axis while the modifier remains held.
 - `CanvasPersistenceStore` defines checkpoint plus ordered transaction-log replay without pulling
   redb, Loro, or rkyv into the default build.
 - `CanvasPersistenceCodec` and `CanvasPersistenceByteStore` separate typed canvas records from
@@ -367,9 +367,11 @@ and interaction snapshot; applications construct it from a document or `CanvasEd
 assembling those parts by hand.
 
 Editor-backed applications should start with `canvas_editor_view` or
-`canvas_editor_view_with_frame`. These helpers keep GPUI input wiring inside the canvas adapter:
-mouse, wheel, focus, drag-capture, and keyboard events become renderer-neutral `CanvasEvent` values,
-and the application decides how to apply those events to its editor.
+`canvas_editor_view_with_frame`. These helpers keep canvas-bounds-dependent GPUI input wiring inside
+the canvas adapter: mouse, wheel, focus, and drag-capture events become renderer-neutral
+`CanvasEvent` values, and the application decides how to apply those events to its editor.
+Keyboard events are owned by the focused element and should be forwarded explicitly through
+`canvas_editor_key_down_event` or `CanvasEditorInputHandler::dispatch_key_down`.
 
 ```rust
 use open_gpui_canvas::{

@@ -111,15 +111,12 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                 }
 
                 match hit {
-                    Some(HitTarget::Node(id)) => {
+                    Some(target @ (HitTarget::Node(_) | HitTarget::Shape(_))) => {
                         let mut selection = editor.selection.clone();
-                        if !selection.nodes.contains(&id) {
-                            selection.replace_with(HitTarget::Node(id.clone()));
+                        if !selection.contains_target(&target) {
+                            selection.replace_with(target);
                         }
-                        let node_ids = editor
-                            .document_nodes_for_selection(&selection)
-                            .map(|node| node.id)
-                            .collect();
+                        let (node_ids, shape_ids) = editor.translatable_selection_ids(&selection);
                         vec![
                             CanvasToolEffect::BeginGesture,
                             CanvasToolEffect::SetSelection(selection),
@@ -128,6 +125,7 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                                 last: document_position,
                                 constraint_axis: None,
                                 node_ids,
+                                shape_ids,
                                 snap_guides: Vec::new(),
                             }),
                         ]
@@ -165,6 +163,7 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                 ToolState::Translating {
                     last,
                     node_ids,
+                    shape_ids,
                     origin,
                     constraint_axis,
                     ..
@@ -188,7 +187,7 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                     .map(|axis| constrained_drag_position(origin, document_position, axis))
                     .unwrap_or(document_position);
                 let raw_delta = document_position - *last;
-                let snap = editor.snap_delta_for_translation(raw_delta, node_ids);
+                let snap = editor.snap_delta_for_translation(raw_delta, node_ids, shape_ids);
                 let delta = snap.delta;
                 let mut commands = Vec::new();
                 for id in node_ids {
@@ -200,6 +199,15 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                     node.position += delta;
                     commands.push(DocumentCommand::UpdateNode(node));
                 }
+                for id in shape_ids {
+                    let mut shape = editor
+                        .document
+                        .shape(id)
+                        .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
+                        .clone();
+                    shape.bounds.origin += delta;
+                    commands.push(DocumentCommand::UpdateShape(shape));
+                }
 
                 vec![
                     CanvasToolEffect::UpdateGesture(CanvasTransaction::new(commands)),
@@ -208,6 +216,7 @@ impl BuiltInCanvasToolReducer for SelectToolStateMachine {
                         last: *last + delta,
                         constraint_axis,
                         node_ids: node_ids.clone(),
+                        shape_ids: shape_ids.clone(),
                         snap_guides: snap.guides,
                     }),
                 ]

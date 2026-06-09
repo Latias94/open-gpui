@@ -5,7 +5,7 @@ use crate::transform::{
 use crate::{
     CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
     CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasNode, CanvasPasteTransaction, CanvasRuntime, CanvasSnapGuide,
+    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasSnapGuide,
     CanvasTransaction, CanvasValue, CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand,
     DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
     connection_hit_options, snap_delta_for_resize_selection, snap_delta_for_selection,
@@ -167,6 +167,7 @@ pub enum ToolState {
         last: Point<Pixels>,
         constraint_axis: Option<Axis>,
         node_ids: Vec<NodeId>,
+        shape_ids: Vec<ShapeId>,
         snap_guides: Vec<CanvasSnapGuide>,
     },
     Resizing {
@@ -1095,15 +1096,22 @@ impl CanvasEditor {
         Ok(self.event_effects_with_custom_tool(event, reducer)?)
     }
 
-    fn document_nodes_for_selection<'a>(
-        &'a self,
-        selection: &'a CanvasSelection,
-    ) -> impl Iterator<Item = CanvasNode> + 'a {
-        selection
+    fn translatable_selection_ids(
+        &self,
+        selection: &CanvasSelection,
+    ) -> (Vec<NodeId>, Vec<ShapeId>) {
+        let node_ids = selection
             .selected_nodes()
-            .filter_map(|id| self.document.node(id))
-            .filter(|node| !node.locked)
+            .filter(|id| self.document.node(id).is_some_and(|node| !node.locked))
             .cloned()
+            .collect();
+        let shape_ids = selection
+            .selected_shapes()
+            .filter(|id| self.document.shape(id).is_some_and(|shape| !shape.locked))
+            .cloned()
+            .collect();
+
+        (node_ids, shape_ids)
     }
 
     fn transform_handle_at(&self, point: Point<Pixels>) -> Option<CanvasTransformHandle> {
@@ -1141,9 +1149,11 @@ impl CanvasEditor {
         &self,
         delta: Point<Pixels>,
         node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
     ) -> crate::snap::CanvasSnapResult {
         let mut selection = CanvasSelection::default();
         selection.nodes.extend(node_ids.iter().cloned());
+        selection.shapes.extend(shape_ids.iter().cloned());
         snap_delta_for_selection(
             self.document.as_ref(),
             &selection,
@@ -1365,60 +1375,109 @@ impl CanvasEditor {
     }
 
     fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
-        let Some((min_z, max_z)) = self.document_z_range() else {
+        let mut records = self.z_order_records();
+        if !records.iter().any(|record| record.selected) {
             return CanvasTransaction::default();
         };
-        let mut commands = Vec::new();
 
-        for id in self.selection.selected_nodes() {
-            let Some(node) = self.document.node(id) else {
-                continue;
-            };
-            if node.locked {
-                continue;
-            }
-            let mut node = node.clone();
-            node.z_index = next_z_index(node.z_index, min_z, max_z, command);
-            commands.push(DocumentCommand::UpdateNode(node));
+        let original_order = records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect::<Vec<_>>();
+        reorder_z_order_records(&mut records, command);
+        if records
+            .iter()
+            .map(|record| &record.id)
+            .eq(original_order.iter())
+        {
+            return CanvasTransaction::default();
         }
 
-        for id in self.selection.selected_edges() {
-            let Some(edge) = self.document.edge(id) else {
-                continue;
-            };
-            if edge.locked {
-                continue;
-            }
-            let mut edge = edge.clone();
-            edge.z_index = next_z_index(edge.z_index, min_z, max_z, command);
-            commands.push(DocumentCommand::UpdateEdge(edge));
-        }
-
-        for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document.shape(id) else {
-                continue;
-            };
-            if shape.locked {
-                continue;
-            }
-            let mut shape = shape.clone();
-            shape.z_index = next_z_index(shape.z_index, min_z, max_z, command);
-            commands.push(DocumentCommand::UpdateShape(shape));
-        }
+        let min_z = records
+            .iter()
+            .map(|record| record.z_index)
+            .min()
+            .unwrap_or_default();
+        let base_z = normalized_z_order_base(min_z, records.len());
+        let commands = records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                let z_index = normalized_z_index(base_z, index);
+                (z_index != record.z_index)
+                    .then(|| self.z_order_update_command(&record.id, z_index))
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
 
         CanvasTransaction::new(commands)
     }
 
-    fn document_z_range(&self) -> Option<(i32, i32)> {
-        self.document
-            .nodes()
-            .map(|node| node.z_index)
-            .chain(self.document.edges().map(|edge| edge.z_index))
-            .chain(self.document.shapes().map(|shape| shape.z_index))
-            .fold(None, |range, z_index| match range {
-                None => Some((z_index, z_index)),
-                Some((min_z, max_z)) => Some((min_z.min(z_index), max_z.max(z_index))),
-            })
+    fn z_order_records(&self) -> Vec<ZOrderRecord> {
+        let mut ordinal = 0;
+        let mut records = Vec::new();
+
+        records.extend(self.document.nodes().map(|node| {
+            let record = ZOrderRecord {
+                id: CanvasRecordId::Node(node.id.clone()),
+                z_index: node.z_index,
+                ordinal,
+                selected: self.selection.nodes.contains(&node.id) && !node.locked,
+            };
+            ordinal += 1;
+            record
+        }));
+        records.extend(self.document.shapes().map(|shape| {
+            let record = ZOrderRecord {
+                id: CanvasRecordId::Shape(shape.id.clone()),
+                z_index: shape.z_index,
+                ordinal,
+                selected: self.selection.shapes.contains(&shape.id) && !shape.locked,
+            };
+            ordinal += 1;
+            record
+        }));
+        records.extend(self.document.edges().map(|edge| {
+            let record = ZOrderRecord {
+                id: CanvasRecordId::Edge(edge.id.clone()),
+                z_index: edge.z_index,
+                ordinal,
+                selected: self.selection.edges.contains(&edge.id) && !edge.locked,
+            };
+            ordinal += 1;
+            record
+        }));
+
+        records.sort_by(|left, right| {
+            left.z_index
+                .cmp(&right.z_index)
+                .then_with(|| left.ordinal.cmp(&right.ordinal))
+        });
+        records
+    }
+
+    fn z_order_update_command(
+        &self,
+        record_id: &CanvasRecordId,
+        z_index: i32,
+    ) -> Option<DocumentCommand> {
+        match record_id {
+            CanvasRecordId::Node(id) => {
+                let mut node = self.document.node(id)?.clone();
+                node.z_index = z_index;
+                Some(DocumentCommand::UpdateNode(node))
+            }
+            CanvasRecordId::Edge(id) => {
+                let mut edge = self.document.edge(id)?.clone();
+                edge.z_index = z_index;
+                Some(DocumentCommand::UpdateEdge(edge))
+            }
+            CanvasRecordId::Shape(id) => {
+                let mut shape = self.document.shape(id)?.clone();
+                shape.z_index = z_index;
+                Some(DocumentCommand::UpdateShape(shape))
+            }
+        }
     }
 
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
@@ -1487,13 +1546,79 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
     }
 }
 
-fn next_z_index(current: i32, min_z: i32, max_z: i32, command: CanvasZOrderCommand) -> i32 {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ZOrderRecord {
+    id: CanvasRecordId,
+    z_index: i32,
+    ordinal: usize,
+    selected: bool,
+}
+
+fn reorder_z_order_records(records: &mut Vec<ZOrderRecord>, command: CanvasZOrderCommand) {
     match command {
-        CanvasZOrderCommand::BringToFront => max_z.saturating_add(1),
-        CanvasZOrderCommand::BringForward => current.saturating_add(1),
-        CanvasZOrderCommand::SendBackward => current.saturating_sub(1),
-        CanvasZOrderCommand::SendToBack => min_z.saturating_sub(1),
+        CanvasZOrderCommand::BringToFront => {
+            let mut selected = Vec::new();
+            records.retain(|record| {
+                if record.selected {
+                    selected.push(record.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            records.extend(selected);
+        }
+        CanvasZOrderCommand::SendToBack => {
+            let mut selected = Vec::new();
+            records.retain(|record| {
+                if record.selected {
+                    selected.push(record.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            selected.extend(records.iter().cloned());
+            *records = selected;
+        }
+        CanvasZOrderCommand::BringForward => {
+            let mut index = records.len();
+            while index > 0 {
+                index -= 1;
+                if !records[index].selected {
+                    continue;
+                }
+                let next = index + 1;
+                if next < records.len() && !records[next].selected {
+                    records.swap(index, next);
+                }
+            }
+        }
+        CanvasZOrderCommand::SendBackward => {
+            for index in 0..records.len() {
+                if !records[index].selected {
+                    continue;
+                }
+                if index > 0 && !records[index - 1].selected {
+                    records.swap(index - 1, index);
+                }
+            }
+        }
     }
+}
+
+fn normalized_z_order_base(min_z: i32, record_count: usize) -> i32 {
+    let max_offset = record_count.saturating_sub(1).min(i32::MAX as usize) as i32;
+    if min_z > i32::MAX.saturating_sub(max_offset) {
+        i32::MAX - max_offset
+    } else {
+        min_z
+    }
+}
+
+fn normalized_z_index(base_z: i32, index: usize) -> i32 {
+    let offset = index.min(i32::MAX as usize) as i32;
+    base_z.saturating_add(offset)
 }
 
 #[cfg(test)]
@@ -1713,6 +1838,51 @@ mod tests {
         assert!(editor.redo().unwrap());
         let node = editor.document.node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
+    }
+
+    #[test]
+    fn select_tool_translates_shape() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(10.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(30.0), px(25.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(30.0), px(25.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let shape = editor.document.shape(&ShapeId::from("shape")).unwrap();
+        assert_eq!(shape.bounds.origin, point(px(20.0), px(15.0)));
+        assert_eq!(
+            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            vec![ShapeId::from("shape")]
+        );
+        assert_eq!(editor.history.undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        let shape = editor.document.shape(&ShapeId::from("shape")).unwrap();
+        assert_eq!(shape.bounds.origin, point(px(0.0), px(0.0)));
     }
 
     #[test]
@@ -2234,7 +2404,7 @@ mod tests {
         );
         assert_eq!(
             editor.document.node(&NodeId::from("back")).unwrap().z_index,
-            3
+            2
         );
         assert_eq!(editor.history.undo_depth(), 1);
         assert_eq!(
@@ -2250,6 +2420,142 @@ mod tests {
         assert_eq!(
             editor.document.node(&NodeId::from("back")).unwrap().z_index,
             1
+        );
+    }
+
+    #[test]
+    fn bring_forward_crosses_sparse_adjacent_layer() {
+        let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        back.z_index = 1;
+        let mut front = CanvasShape::new(
+            "front",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        front.z_index = 10;
+        let mut document = CanvasDocument::default();
+        document.insert_node(back).unwrap();
+        document.insert_shape(front).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("back"));
+
+        assert!(
+            editor
+                .reorder_selection(CanvasZOrderCommand::BringForward)
+                .unwrap()
+        );
+
+        assert_eq!(
+            editor
+                .runtime
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .map(|record| record.target.clone()),
+            Some(HitTarget::Node(NodeId::from("back")))
+        );
+        assert!(
+            editor.document.node(&NodeId::from("back")).unwrap().z_index
+                > editor
+                    .document
+                    .shape(&ShapeId::from("front"))
+                    .unwrap()
+                    .z_index
+        );
+    }
+
+    #[test]
+    fn send_backward_crosses_duplicate_adjacent_layer() {
+        let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        back.z_index = 0;
+        let mut front = CanvasShape::new(
+            "front",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        front.z_index = 0;
+        let mut document = CanvasDocument::default();
+        document.insert_node(back).unwrap();
+        document.insert_shape(front).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.shapes.insert(ShapeId::from("front"));
+
+        assert!(
+            editor
+                .reorder_selection(CanvasZOrderCommand::SendBackward)
+                .unwrap()
+        );
+
+        assert_eq!(
+            editor
+                .runtime
+                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .next()
+                .map(|record| record.target.clone()),
+            Some(HitTarget::Node(NodeId::from("back")))
+        );
+        assert!(
+            editor
+                .document
+                .shape(&ShapeId::from("front"))
+                .unwrap()
+                .z_index
+                < editor.document.node(&NodeId::from("back")).unwrap().z_index
+        );
+    }
+
+    #[test]
+    fn z_order_multi_select_preserves_relative_order_across_record_kinds() {
+        let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.z_index = 0;
+        let mut shape = CanvasShape::new(
+            "shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        shape.z_index = 1;
+        let mut edge = CanvasEdge::new(
+            "edge",
+            CanvasEndpoint::new("node", None::<&str>),
+            CanvasEndpoint::new("node", None::<&str>),
+        );
+        edge.z_index = 2;
+        let mut top = CanvasShape::new(
+            "top",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        top.z_index = 3;
+        let mut document = CanvasDocument::default();
+        document.insert_node(node).unwrap();
+        document.insert_shape(shape).unwrap();
+        document.insert_shape(top).unwrap();
+        document.insert_edge(edge).unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor.selection.nodes.insert(NodeId::from("node"));
+        editor.selection.edges.insert(EdgeId::from("edge"));
+
+        assert!(
+            editor
+                .reorder_selection(CanvasZOrderCommand::BringToFront)
+                .unwrap()
+        );
+
+        let hits = editor
+            .runtime
+            .hit_test(
+                point(px(50.0), px(50.0)),
+                HitOptions {
+                    include_handles: false,
+                    margin: px(24.0),
+                    ..HitOptions::default()
+                },
+            )
+            .map(|record| record.target.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            hits,
+            vec![
+                HitTarget::Edge(EdgeId::from("edge")),
+                HitTarget::Node(NodeId::from("node")),
+                HitTarget::Shape(ShapeId::from("top")),
+                HitTarget::Shape(ShapeId::from("shape")),
+            ]
         );
     }
 
@@ -2583,7 +2889,7 @@ mod tests {
     }
 
     #[test]
-    fn translating_selected_node_moves_all_selected_nodes() {
+    fn translating_selected_record_moves_node_and_shape_selection() {
         let mut document = CanvasDocument::default();
         document
             .insert_node(CanvasNode::new(
@@ -2599,9 +2905,16 @@ mod tests {
                 size(px(100.0), px(100.0)),
             ))
             .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(400.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
         let mut editor = CanvasEditor::new(document);
         editor.selection.nodes.insert(NodeId::from("a"));
         editor.selection.nodes.insert(NodeId::from("b"));
+        editor.selection.shapes.insert(ShapeId::from("shape"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2631,6 +2944,15 @@ mod tests {
         assert_eq!(
             editor.document.node(&NodeId::from("b")).unwrap().position,
             point(px(210.0), px(20.0))
+        );
+        assert_eq!(
+            editor
+                .document
+                .shape(&ShapeId::from("shape"))
+                .unwrap()
+                .bounds
+                .origin,
+            point(px(410.0), px(20.0))
         );
         assert_eq!(editor.history.undo_depth(), 1);
     }

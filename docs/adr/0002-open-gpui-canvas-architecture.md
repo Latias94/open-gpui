@@ -86,11 +86,13 @@ does not have to be reimplemented in every subsystem.
 
 The native smoke example exercises the interaction boundary through the default editor-backed
 adapter. The view owns a mutable `CanvasEditor`, snapshots it into `CanvasPaintModel` for each
-render, and uses `canvas_editor_view` so GPUI pointer, wheel, focus, drag-capture, and keyboard
-events are registered where the actual canvas bounds are known. `CanvasInputMapper` converts
-window-space GPUI events into canvas-local `CanvasEvent` values, while mutation remains in the
-application-owned editor. Delete, Backspace, and Escape use the same reducer path as
-application-owned keyboard integrations.
+render, and uses `canvas_editor_view` so GPUI pointer, wheel, focus, and drag-capture events are
+registered where the actual canvas bounds are known. Keyboard events are forwarded by the
+focus-owning element through `canvas_editor_key_down_event` or
+`CanvasEditorInputHandler::dispatch_key_down`, because key delivery belongs to the focused GPUI
+element rather than the paint callback. `CanvasInputMapper` converts window-space GPUI events into
+canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor. Delete,
+Backspace, and Escape use the same reducer path as application-owned keyboard integrations.
 
 Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
 copy of selection and tool state, `CanvasPaintFrame` marks selected records and computes transient
@@ -100,7 +102,7 @@ editor state into the renderer or rendering every record as a GPUI element.
 
 Record visibility and interaction lock state are separate. Hidden records are omitted from default
 paint and hit-test paths unless explicitly included. Locked records remain visible for culling and
-painting, but default hit tests, box selection, endpoint picking, and node translation skip them.
+painting, but default hit tests, box selection, endpoint picking, and record translation skip them.
 `HitOptions::include_locked` keeps diagnostics and editor-specific inspection tools possible
 without making locked records accidentally interactive.
 Handle visibility and connection roles are enforced before the connect tool creates an edge.
@@ -142,9 +144,9 @@ aborted blank clicks or marquee gestures restore the pre-gesture selection rathe
 transient selection mutations.
 When the editor is idle, the same Cancel event clears the current selection so Escape acts as a
 single dismissal key across active gestures and passive selection states.
-Shift-constrained node translation uses pointer-move modifiers, chooses the dominant axis from the
-first shifted move, and preserves that axis while Shift remains held so graph layouts can align
-nodes without a separate transform mode.
+Shift-constrained node and shape translation uses pointer-move modifiers, chooses the dominant axis
+from the first shifted move, and preserves that axis while Shift remains held so graph layouts can
+align records without a separate transform mode.
 Product editing commands live on `CanvasEditor` for the same reason. Delete, copy, cut, paste,
 duplicate, undo, redo, and z-order changes all pass through the editor's mutation path so
 selection pruning, undo history, runtime cache sync, schema validation, persistence logging, and

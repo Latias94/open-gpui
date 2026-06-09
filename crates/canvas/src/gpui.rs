@@ -2292,6 +2292,7 @@ mod tests {
             last: point(px(20.0), px(20.0)),
             constraint_axis: None,
             node_ids: vec![crate::NodeId::from("selected")],
+            shape_ids: Vec::new(),
             snap_guides: vec![CanvasSnapGuide {
                 axis: CanvasSnapAxis::Horizontal,
                 document_start: point(px(40.0), px(10.0)),
