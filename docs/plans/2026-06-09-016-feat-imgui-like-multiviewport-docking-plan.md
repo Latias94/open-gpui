@@ -9,10 +9,11 @@ date: 2026-06-09
 
 ## Summary
 
-Close the remaining product gap between the current retained docking foundation and an ImGui-like
-multi-viewport docking experience. The next phase should wire the existing resolver, transaction,
-geometry, and viewport runtime seams into real cross-window drag, dock-back, tear-off, whole-stack
-drag, preview, close, and focus behavior.
+Close the remaining product gap between the retained docking foundation and an ImGui-like
+multi-viewport docking experience. The core release path now uses the resolver, transaction,
+geometry, and viewport runtime seams for cross-window drag, dock-back, tear-off, whole-stack drag,
+preview, close, and activation behavior; this plan remains active for dogfood, visual polish,
+documentation alignment, and deletion-audit proof.
 
 ---
 
@@ -378,10 +379,11 @@ target-unavailable rejection when a valid target host scene is available.
 existing invariant that graph mutation occurs only after the new viewport opens and registers. The
 tear-off route is a viewport-runtime outcome, not a workspace-local resolved target.
 
-**Technical design:** This unit must first prove how GPUI reports release outside all registered
-viewports. If current window-local drag events cannot observe that release, add or plan the minimal
-GPUI/platform primitive for global mouse-up, platform pointer capture, or native drag-session
-completion before claiming the outside-all-windows user flow complete.
+**Technical design:** The product path now uses the runtime tear-off transaction plus a host-local
+outside-release polling fallback. GPUI remains the input authority: supported platforms can report
+global left-button state through the optional platform seam, while unsupported platforms fall back
+to normal GPUI window-event delivery. Remaining proof is native dogfood across platform backends,
+not an unimplemented architecture primitive.
 
 **Patterns to follow:** `crates/gpui_docking/src/viewport_tear_off.rs`,
 `repo-ref/fret/ecosystem/fret-docking/src/runtime/tear_off.rs`, and
@@ -432,10 +434,10 @@ without collapsing a stack into one tab.
 - `crates/gpui_docking/src/host_interaction_tests.rs`
 - `crates/gpui_docking/src/host_floating_tests.rs`
 
-**Approach:** Replace item-only payload assumptions with a `DockDragSource` shape that can
-represent one item or one tabs node. Add stack move requests that preserve item order and active
-index. Use existing `FloatTabsInWindow` and graph operations where possible, and introduce only
-the missing transaction projection needed for stack dock-back.
+**Approach:** Keep item and tabs-stack drags on the shared `DockDragSource` payload shape. Stack
+move requests preserve item order and active index across local drops, viewport-routed drops,
+floating merge, and tear-off. Continue dogfooding the product paths while keeping any additional
+transaction projection behind workspace/runtime seams.
 
 **Patterns to follow:** `DockAction::FloatTabsInWindow`,
 `crates/gpui_docking/src/workspace_floating_transaction.rs`, and Dear ImGui
@@ -669,9 +671,10 @@ should make the runtime path easy while keeping single-window hosts lightweight.
 - GPUI may not deliver drag-move events to non-source windows on every platform. If so, the
   coordinator needs platform hovered-window or window-stack signals to resolve the target under the
   drag, and this may require a small GPUI primitive outside the docking crate.
-- GPUI may not deliver mouse-up or drag-completion events when release happens outside every GPUI
-  window. U3 must prove current platform behavior or introduce a minimal capture/completion
-  primitive before outside-all-windows tear-off can be considered product-complete.
+- Release outside every GPUI window now depends on the optional platform mouse-button state seam
+  plus host-local polling. The remaining risk is backend coverage and correctness: unsupported
+  platforms return `None`, so native dogfood must verify that fallback behavior remains explicit
+  instead of silently claiming tear-off completion.
 - Storing host entities in runtime would be acceptable runtime state, but it must stay separate
   from `DockViewportAdapter`'s serializable placement snapshots and from `DockGraph`.
 - Whole-stack drag can invalidate source tabs while a drag is active. Stack transactions need
