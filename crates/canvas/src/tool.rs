@@ -382,15 +382,15 @@ pub enum CanvasToolEffect {
 
 #[derive(Clone, Copy)]
 pub struct CanvasToolContext<'a> {
-    pub document: &'a CanvasDocument,
-    pub viewport: &'a CanvasViewport,
-    pub tool: &'a CanvasTool,
-    pub state: &'a ToolState,
-    pub runtime: &'a CanvasRuntime,
-    pub edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
-    pub kind_registry: &'a CanvasKindRegistry,
-    pub selection: &'a CanvasSelection,
-    pub history: &'a CanvasHistory,
+    document: &'a CanvasDocument,
+    viewport: &'a CanvasViewport,
+    tool: &'a CanvasTool,
+    state: &'a ToolState,
+    runtime: &'a CanvasRuntime,
+    edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
+    kind_registry: &'a CanvasKindRegistry,
+    selection: &'a CanvasSelection,
+    history: &'a CanvasHistory,
 }
 
 impl fmt::Debug for CanvasToolContext<'_> {
@@ -410,6 +410,42 @@ impl fmt::Debug for CanvasToolContext<'_> {
 }
 
 impl CanvasToolContext<'_> {
+    pub fn document(&self) -> &CanvasDocument {
+        self.document
+    }
+
+    pub fn viewport(&self) -> &CanvasViewport {
+        self.viewport
+    }
+
+    pub fn tool(&self) -> &CanvasTool {
+        self.tool
+    }
+
+    pub fn state(&self) -> &ToolState {
+        self.state
+    }
+
+    pub fn runtime(&self) -> &CanvasRuntime {
+        self.runtime
+    }
+
+    pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
+        self.edge_router
+    }
+
+    pub fn kind_registry(&self) -> &CanvasKindRegistry {
+        self.kind_registry
+    }
+
+    pub fn selection(&self) -> &CanvasSelection {
+        self.selection
+    }
+
+    pub fn history(&self) -> &CanvasHistory {
+        self.history
+    }
+
     pub fn active_custom_tool_id(&self) -> Option<&CanvasToolId> {
         self.tool.custom_id()
     }
@@ -1606,7 +1642,7 @@ mod tests {
                 .next()
                 .map(|record| record.target.clone());
 
-            let node_id = NodeId::new(format!("stamp-{}", context.document.node_count()));
+            let node_id = NodeId::new(format!("stamp-{}", context.document().node_count()));
             let mut selection = CanvasSelection::default();
             selection.nodes.insert(node_id.clone());
             let mut payload = CanvasValue::new();

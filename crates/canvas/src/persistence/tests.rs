@@ -59,7 +59,7 @@ impl CanvasToolReducer for PersistentStampTool {
 
         let node_id = NodeId::new(format!(
             "persistent-stamp-{}",
-            context.document.node_count()
+            context.document().node_count()
         ));
         Ok(vec![
             CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
