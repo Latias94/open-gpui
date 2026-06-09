@@ -35,6 +35,9 @@
 //! Panel close/reopen flows should use [`DockAction::CloseItem`] and [`DockAction::OpenItem`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
 //! inserts that registered item back into a target tab stack or empty dock space.
+//! Descriptor-only restored panels can bind GPUI content later through
+//! [`DockPanelRegistry::attach_factory`], [`DockWorkspace::attach_panel_factory`], or
+//! [`DockController::attach_panel_factory`] without rewriting restored titles or close policy.
 //!
 //! ```rust,no_run
 //! use open_gpui::{AnyView, App};
