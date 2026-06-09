@@ -357,6 +357,11 @@ as nearest point, distance to point, and hit test by geometry rather than only b
 **Verification:** The unit is complete when edge hit testing and edge painting consume the same
 resolved geometry data.
 
+**Implementation outcome:** `CanvasResolvedEdgeGeometry` now owns edge hit radius, nearest-point,
+distance, and point-containment semantics. Runtime hit testing consumes cached resolved edge
+geometry, and GPUI paint frames now carry view-space edge geometry derived from the same runtime
+geometry instead of recalculating route paths in the paint adapter.
+
 ### U6. Runtime Query Module
 
 **Goal:** Concentrate query filtering, ordering, stale suppression, dirty incident refresh, and

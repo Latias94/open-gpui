@@ -1,10 +1,11 @@
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEditor,
     CanvasEndpoint, CanvasEvent, CanvasGeometryResolver, CanvasKey, CanvasKeyModifiers,
-    CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRouteSegment,
-    CanvasRuntime, CanvasSelection, CanvasShape, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
-    CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions, HitTarget,
-    PointerButton, ToolState, canvas_transform_handles, connection_hit_options,
+    CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasRoutePath,
+    CanvasRouteSegment, CanvasRuntime, CanvasSelection, CanvasShape, CanvasSnapAxis,
+    CanvasSnapGuide, CanvasStyle, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport,
+    HitOptions, HitTarget, PointerButton, ToolState, canvas_transform_handles,
+    connection_hit_options,
 };
 use open_gpui::{
     App, Bounds, Canvas, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Hsla,
@@ -289,10 +290,16 @@ pub struct CanvasPaintRecord {
     pub document_bounds: Bounds<Pixels>,
     pub view_bounds: Bounds<Pixels>,
     pub label: Option<CanvasPaintLabel>,
+    pub edge_geometry: Option<CanvasPaintEdgeGeometry>,
     pub z_index: i32,
     pub hidden: bool,
     pub locked: bool,
     pub selected: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanvasPaintEdgeGeometry {
+    pub view_path: CanvasRoutePath,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -745,11 +752,13 @@ pub fn collect_visible_records(
         .query_with_options(visible_document_bounds, hit_options)
         .map(|record| {
             let target = record.target.clone();
+            let edge_geometry = paint_edge_geometry(model, &target);
             CanvasPaintRecord {
                 label: paint_record_label(model, &target, record.bounds),
                 target,
                 document_bounds: record.bounds,
                 view_bounds: model.viewport.document_bounds_to_view(record.bounds),
+                edge_geometry,
                 z_index: record.z_index,
                 hidden: record.hidden,
                 locked: record.locked,
@@ -886,12 +895,14 @@ pub fn paint_canvas_frame(
                 let Some(edge) = model.document.edge(id) else {
                     continue;
                 };
+                let Some(edge_geometry) = &record.edge_geometry else {
+                    continue;
+                };
                 let style = edge_paint_style(model, edge, theme);
                 paint_edge(
                     window,
                     canvas_bounds,
-                    model,
-                    edge,
+                    edge_geometry,
                     style.stroke,
                     style.stroke_width,
                 );
@@ -925,14 +936,16 @@ pub fn paint_canvas_frame(
                 );
             }
             HitTarget::Edge(id) => {
-                let Some(edge) = model.document.edge(id) else {
+                if model.document.edge(id).is_none() {
+                    continue;
+                }
+                let Some(edge_geometry) = &record.edge_geometry else {
                     continue;
                 };
                 paint_edge(
                     window,
                     canvas_bounds,
-                    model,
-                    edge,
+                    edge_geometry,
                     theme.selection_stroke,
                     theme.selection_stroke_width,
                 );
@@ -1309,28 +1322,57 @@ fn label_document_bounds(bounds: Bounds<Pixels>, inset: Pixels) -> Bounds<Pixels
     bounds.inset(inset.min(max_inset))
 }
 
+fn paint_edge_geometry(
+    model: &CanvasPaintModel,
+    target: &HitTarget,
+) -> Option<CanvasPaintEdgeGeometry> {
+    let HitTarget::Edge(id) = target else {
+        return None;
+    };
+    let geometry = model.runtime.edge_geometry(id)?;
+    Some(CanvasPaintEdgeGeometry {
+        view_path: route_path_to_view(&geometry.path, model.viewport),
+    })
+}
+
+fn route_path_to_view(path: &CanvasRoutePath, viewport: CanvasViewport) -> CanvasRoutePath {
+    CanvasRoutePath::new(path.segments.iter().map(|segment| match segment {
+        CanvasRouteSegment::Line { from, to } => CanvasRouteSegment::Line {
+            from: viewport.document_to_view(*from),
+            to: viewport.document_to_view(*to),
+        },
+        CanvasRouteSegment::CubicBezier {
+            from,
+            control_1,
+            control_2,
+            to,
+        } => CanvasRouteSegment::CubicBezier {
+            from: viewport.document_to_view(*from),
+            control_1: viewport.document_to_view(*control_1),
+            control_2: viewport.document_to_view(*control_2),
+            to: viewport.document_to_view(*to),
+        },
+    }))
+}
+
 fn paint_edge(
     window: &mut Window,
     canvas_bounds: Bounds<Pixels>,
-    model: &CanvasPaintModel,
-    edge: &CanvasEdge,
+    geometry: &CanvasPaintEdgeGeometry,
     stroke: Hsla,
     stroke_width: Pixels,
 ) {
     let mut builder = PathBuilder::stroke(stroke_width);
-    let Some(path) = paint_edge_route_path(model, edge).cloned() else {
-        return;
-    };
 
     let mut current = None;
-    for segment in path.segments {
+    for segment in &geometry.view_path.segments {
         match segment {
             CanvasRouteSegment::Line { from, to } => {
-                let from = document_to_window_point(model, canvas_bounds, from);
+                let from = *from + canvas_bounds.origin;
                 if current != Some(from) {
                     builder.move_to(from);
                 }
-                let to = document_to_window_point(model, canvas_bounds, to);
+                let to = *to + canvas_bounds.origin;
                 builder.line_to(to);
                 current = Some(to);
             }
@@ -1340,15 +1382,15 @@ fn paint_edge(
                 control_2,
                 to,
             } => {
-                let from = document_to_window_point(model, canvas_bounds, from);
+                let from = *from + canvas_bounds.origin;
                 if current != Some(from) {
                     builder.move_to(from);
                 }
-                let to = document_to_window_point(model, canvas_bounds, to);
+                let to = *to + canvas_bounds.origin;
                 builder.cubic_bezier_to(
                     to,
-                    document_to_window_point(model, canvas_bounds, control_1),
-                    document_to_window_point(model, canvas_bounds, control_2),
+                    *control_1 + canvas_bounds.origin,
+                    *control_2 + canvas_bounds.origin,
                 );
                 current = Some(to);
             }
@@ -1358,24 +1400,6 @@ fn paint_edge(
     if let Ok(path) = builder.build() {
         window.paint_path(path, stroke);
     }
-}
-
-fn paint_edge_route_path<'a>(
-    model: &'a CanvasPaintModel,
-    edge: &CanvasEdge,
-) -> Option<&'a crate::CanvasRoutePath> {
-    model
-        .runtime
-        .edge_geometry(&edge.id)
-        .map(|geometry| &geometry.path)
-}
-
-fn document_to_window_point(
-    model: &CanvasPaintModel,
-    canvas_bounds: Bounds<Pixels>,
-    point: Point<Pixels>,
-) -> Point<Pixels> {
-    model.viewport.document_to_view(point) + canvas_bounds.origin
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1700,29 +1724,37 @@ mod tests {
     }
 
     #[test]
-    fn edge_paint_route_comes_only_from_runtime_geometry() {
+    fn edge_paint_geometry_comes_from_runtime_geometry_as_view_path() {
         let document = connected_edge_document();
         let model = CanvasPaintModel::new_with_router(
             document,
-            CanvasViewport::default(),
+            CanvasViewport::new(point(px(0.0), px(0.0)), 2.0).unwrap(),
             &VerticalDetourRouter,
         );
-        let edge = model.document().edge(&EdgeId::from("a-b")).unwrap();
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(200.0))),
+            CanvasPaintOptions::default(),
+        );
+        let edge_record = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Edge(EdgeId::from("a-b")))
+            .unwrap();
 
         assert_eq!(
-            paint_edge_route_path(&model, edge)
+            edge_record
+                .edge_geometry
+                .as_ref()
                 .unwrap()
+                .view_path
                 .document_points(),
             vec![
-                point(px(5.0), px(5.0)),
-                point(px(5.0), px(80.0)),
-                point(px(25.0), px(5.0)),
+                point(px(10.0), px(10.0)),
+                point(px(10.0), px(160.0)),
+                point(px(50.0), px(10.0)),
             ]
         );
-
-        let mut unresolved_edge = edge.clone();
-        unresolved_edge.id = EdgeId::from("missing");
-        assert!(paint_edge_route_path(&model, &unresolved_edge).is_none());
     }
 
     #[test]

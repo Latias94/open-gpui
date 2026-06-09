@@ -10,6 +10,35 @@ use open_gpui::{Bounds, Pixels, Point, px};
 pub struct CanvasResolvedEdgeGeometry {
     pub path: CanvasRoutePath,
     pub bounds: Bounds<Pixels>,
+    pub hit_radius: Pixels,
+}
+
+impl CanvasResolvedEdgeGeometry {
+    pub fn contains_point(&self, point: Point<Pixels>, margin: Pixels) -> bool {
+        let radius = (self.hit_radius + margin).as_f32().max(0.0);
+        let Some(distance_squared) = self.distance_to_point_squared(point) else {
+            return false;
+        };
+        distance_squared <= radius * radius
+    }
+
+    pub fn distance_to_point_squared(&self, point: Point<Pixels>) -> Option<f32> {
+        self.nearest_point_to_route(point)
+            .map(|nearest| nearest.distance_squared)
+    }
+
+    pub fn nearest_point(&self, point: Point<Pixels>) -> Option<Point<Pixels>> {
+        self.nearest_point_to_route(point)
+            .map(|nearest| nearest.point)
+    }
+
+    fn nearest_point_to_route(&self, point: Point<Pixels>) -> Option<NearestPoint> {
+        self.path
+            .segments
+            .iter()
+            .filter_map(|segment| segment_nearest_point(segment, point))
+            .min_by(|left, right| left.distance_squared.total_cmp(&right.distance_squared))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -125,9 +154,11 @@ where
             }
         };
 
+        let hit_radius = edge_interaction_radius(edge);
         Ok(CanvasResolvedEdgeGeometry {
             path,
-            bounds: bounds.dilate(edge_interaction_radius(edge)),
+            bounds: bounds.dilate(hit_radius),
+            hit_radius,
         })
     }
 
@@ -191,12 +222,7 @@ where
                     return false;
                 };
                 if let Some(edge_geometry) = edge_geometry {
-                    return edge_geometry_contains_point(
-                        edge,
-                        edge_geometry,
-                        point,
-                        options.margin,
-                    );
+                    return edge_geometry.contains_point(point, options.margin);
                 }
 
                 self.edge_contains_point(edge, point, options.margin)
@@ -259,25 +285,8 @@ where
         margin: Pixels,
     ) -> Result<bool, DocumentError> {
         let geometry = self.edge_geometry(edge)?;
-        Ok(route_contains_point(
-            &geometry.path,
-            point,
-            edge_interaction_radius(edge) + margin,
-        ))
+        Ok(geometry.contains_point(point, margin))
     }
-}
-
-fn edge_geometry_contains_point(
-    edge: &CanvasEdge,
-    geometry: &CanvasResolvedEdgeGeometry,
-    point: Point<Pixels>,
-    margin: Pixels,
-) -> bool {
-    route_contains_point(
-        &geometry.path,
-        point,
-        edge_interaction_radius(edge) + margin,
-    )
 }
 
 fn edge_interaction_radius(edge: &CanvasEdge) -> Pixels {
@@ -296,45 +305,49 @@ fn edge_interaction_radius(edge: &CanvasEdge) -> Pixels {
     interaction_width * 0.5
 }
 
-fn route_contains_point(path: &CanvasRoutePath, point: Point<Pixels>, radius: Pixels) -> bool {
-    let radius = radius.as_f32().max(0.0);
-    let radius_squared = radius * radius;
-    path.segments
-        .iter()
-        .any(|segment| segment_distance_squared(segment, point) <= radius_squared)
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct NearestPoint {
+    point: Point<Pixels>,
+    distance_squared: f32,
 }
 
-fn segment_distance_squared(segment: &CanvasRouteSegment, point: Point<Pixels>) -> f32 {
+fn segment_nearest_point(
+    segment: &CanvasRouteSegment,
+    point: Point<Pixels>,
+) -> Option<NearestPoint> {
     match segment {
         CanvasRouteSegment::Line { from, to } => {
-            point_to_line_segment_distance_squared(point, *from, *to)
+            Some(point_to_line_segment_nearest_point(point, *from, *to))
         }
         CanvasRouteSegment::CubicBezier {
             from,
             control_1,
             control_2,
             to,
-        } => cubic_bezier_distance_squared(point, *from, *control_1, *control_2, *to),
+        } => cubic_bezier_nearest_point(point, *from, *control_1, *control_2, *to),
     }
 }
 
-fn cubic_bezier_distance_squared(
+fn cubic_bezier_nearest_point(
     point: Point<Pixels>,
     from: Point<Pixels>,
     control_1: Point<Pixels>,
     control_2: Point<Pixels>,
     to: Point<Pixels>,
-) -> f32 {
+) -> Option<NearestPoint> {
     const STEPS: usize = 24;
 
-    let mut closest = f32::INFINITY;
+    let mut closest = None;
     let mut previous = from;
     for step in 1..=STEPS {
         let t = step as f32 / STEPS as f32;
         let current = cubic_bezier_point(from, control_1, control_2, to, t);
-        closest = closest.min(point_to_line_segment_distance_squared(
-            point, previous, current,
-        ));
+        let nearest = point_to_line_segment_nearest_point(point, previous, current);
+        if closest
+            .is_none_or(|closest: NearestPoint| nearest.distance_squared < closest.distance_squared)
+        {
+            closest = Some(nearest);
+        }
         previous = current;
     }
     closest
@@ -360,13 +373,13 @@ fn cubic_bezier_point(
     )
 }
 
-fn point_to_line_segment_distance_squared(
+fn point_to_line_segment_nearest_point(
     point: Point<Pixels>,
     from: Point<Pixels>,
     to: Point<Pixels>,
-) -> f32 {
-    let px = point.x.as_f32();
-    let py = point.y.as_f32();
+) -> NearestPoint {
+    let point_x = point.x.as_f32();
+    let point_y = point.y.as_f32();
     let ax = from.x.as_f32();
     let ay = from.y.as_f32();
     let bx = to.x.as_f32();
@@ -376,17 +389,23 @@ fn point_to_line_segment_distance_squared(
     let length_squared = dx * dx + dy * dy;
 
     if length_squared <= f32::EPSILON {
-        let dx = px - ax;
-        let dy = py - ay;
-        return dx * dx + dy * dy;
+        let dx = point_x - ax;
+        let dy = point_y - ay;
+        return NearestPoint {
+            point: from,
+            distance_squared: dx * dx + dy * dy,
+        };
     }
 
-    let t = (((px - ax) * dx + (py - ay) * dy) / length_squared).clamp(0.0, 1.0);
+    let t = (((point_x - ax) * dx + (point_y - ay) * dy) / length_squared).clamp(0.0, 1.0);
     let nearest_x = ax + t * dx;
     let nearest_y = ay + t * dy;
-    let dx = px - nearest_x;
-    let dy = py - nearest_y;
-    dx * dx + dy * dy
+    let dx = point_x - nearest_x;
+    let dy = point_y - nearest_y;
+    NearestPoint {
+        point: Point::new(px(nearest_x), px(nearest_y)),
+        distance_squared: dx * dx + dy * dy,
+    }
 }
 
 fn record_options_match(record: &HitRecord, options: HitOptions) -> bool {
@@ -405,7 +424,7 @@ pub fn connection_hit_options() -> HitOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasNode, HandleRole};
+    use crate::{CanvasEdge, CanvasHandle, CanvasNode, CanvasStyle, HandleRole};
     use open_gpui::{point, px, size};
 
     #[test]
@@ -459,5 +478,48 @@ mod tests {
             resolver.connection_endpoint_at(&records, CanvasConnectionEndpointRole::Source),
             None
         );
+    }
+
+    #[test]
+    fn resolved_edge_geometry_answers_nearest_point_and_hit() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.style = CanvasStyle {
+            stroke: Some("#0969da".to_string()),
+            stroke_width: px(4.0),
+            fill: None,
+        };
+        document.insert_edge(edge.clone()).unwrap();
+
+        let geometry = CanvasGeometryResolver::new(&document)
+            .edge_geometry(&edge)
+            .unwrap();
+
+        assert_eq!(geometry.hit_radius, px(6.0));
+        assert_eq!(
+            geometry.nearest_point(point(px(40.0), px(8.0))).unwrap(),
+            point(px(40.0), px(5.0))
+        );
+        assert!(geometry.contains_point(point(px(40.0), px(10.5)), Pixels::ZERO));
+        assert!(!geometry.contains_point(point(px(40.0), px(11.5)), Pixels::ZERO));
+        assert!(geometry.contains_point(point(px(40.0), px(11.5)), px(1.0)));
     }
 }
