@@ -7,6 +7,7 @@
 mod changes;
 mod clipboard;
 mod document;
+mod format;
 mod geometry;
 mod geometry_facts;
 mod gesture;
@@ -35,12 +36,15 @@ pub use changes::{
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,
+    CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape,
+    CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue, DocumentCommand, DocumentError,
+    EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+};
+pub use format::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
-    CANVAS_SNAPSHOT_MIGRATIONS, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasSnapshotMigration, CanvasStyle,
-    CanvasTransaction, CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole,
-    NodeId, ShapeId, migrate_canvas_snapshot,
+    CANVAS_SNAPSHOT_MIGRATIONS, CanvasSnapshotMigration, default_document_format_version,
+    migrate_canvas_snapshot, validate_canvas_document_format_version,
 };
 pub use geometry::{CanvasViewport, TransformError};
 pub use geometry_facts::{

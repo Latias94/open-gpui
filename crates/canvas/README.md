@@ -606,6 +606,9 @@ For byte-oriented stores, wrap a `CanvasPersistenceByteStore` with
 `CanvasPersistenceByteStoreAdapter`. The default `CanvasJsonPersistenceCodec` writes an explicit
 envelope containing the codec version, document format version, record kind, sequence, and typed
 payload.
+Document format support and snapshot migration facts live in the `CanvasFormat` boundary, so byte
+stores and future codecs validate the same supported document-version range without duplicating
+snapshot rules.
 
 ```rust
 use open_gpui_canvas::{

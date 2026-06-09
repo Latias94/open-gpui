@@ -5,22 +5,15 @@ use serde_json::{Map, Value};
 use std::fmt;
 use thiserror::Error;
 
+use crate::format::{
+    CANVAS_DOCUMENT_FORMAT_VERSION, default_document_format_version, migrate_canvas_snapshot,
+};
 use crate::geometry_facts::CanvasGeometryFacts;
 use crate::mutation::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
 
 pub type CanvasValue = Map<String, Value>;
-
-pub const CANVAS_DOCUMENT_FORMAT_VERSION: u32 = 1;
-pub const CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION: u32 = 1;
-pub const CANVAS_SNAPSHOT_MIGRATIONS: &[CanvasSnapshotMigration] = &[];
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CanvasSnapshotMigration {
-    pub from_version: u32,
-    pub to_version: u32,
-}
 
 macro_rules! canvas_id {
     ($name:ident) => {
@@ -586,34 +579,6 @@ impl CanvasSnapshot {
     pub fn migrate_to_current(self) -> Result<Self, DocumentError> {
         migrate_canvas_snapshot(self)
     }
-}
-
-pub fn migrate_canvas_snapshot(
-    mut snapshot: CanvasSnapshot,
-) -> Result<CanvasSnapshot, DocumentError> {
-    if snapshot.format_version < CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION
-        || snapshot.format_version > CANVAS_DOCUMENT_FORMAT_VERSION
-    {
-        return Err(DocumentError::UnsupportedFormatVersion {
-            expected: CANVAS_DOCUMENT_FORMAT_VERSION,
-            found: snapshot.format_version,
-        });
-    }
-
-    for migration in CANVAS_SNAPSHOT_MIGRATIONS {
-        if snapshot.format_version == migration.from_version {
-            snapshot.format_version = migration.to_version;
-        }
-    }
-
-    if snapshot.format_version != CANVAS_DOCUMENT_FORMAT_VERSION {
-        return Err(DocumentError::UnsupportedFormatVersion {
-            expected: CANVAS_DOCUMENT_FORMAT_VERSION,
-            found: snapshot.format_version,
-        });
-    }
-
-    Ok(snapshot)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1248,10 +1213,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_document_format_version() -> u32 {
-    CANVAS_DOCUMENT_FORMAT_VERSION
-}
-
 fn default_kind() -> String {
     "default".to_string()
 }
@@ -1268,6 +1229,7 @@ fn default_edge_interaction_width() -> Pixels {
 mod tests {
     use super::*;
     use crate::test_support::{CanvasCommandGenerator, TestRng};
+    use crate::{CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION, CANVAS_SNAPSHOT_MIGRATIONS};
     use open_gpui::{point, px, size};
 
     #[test]

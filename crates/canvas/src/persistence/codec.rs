@@ -1,4 +1,5 @@
 use super::{CanvasCheckpoint, CanvasLogEntry};
+use crate::{DocumentError, validate_canvas_document_format_version};
 use std::{error::Error, fmt};
 
 pub const CANVAS_PERSISTENCE_CODEC_VERSION: u32 = 1;
@@ -245,14 +246,11 @@ fn validate_persistence_envelope(
         });
     }
 
-    if envelope.document_format_version < crate::CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION
-        || envelope.document_format_version > crate::CANVAS_DOCUMENT_FORMAT_VERSION
+    if let Err(DocumentError::UnsupportedFormatVersion { expected, found }) =
+        validate_canvas_document_format_version(envelope.document_format_version)
     {
         return Err(
-            CanvasPersistenceCodecError::UnsupportedDocumentFormatVersion {
-                expected: crate::CANVAS_DOCUMENT_FORMAT_VERSION,
-                found: envelope.document_format_version,
-            },
+            CanvasPersistenceCodecError::UnsupportedDocumentFormatVersion { expected, found },
         );
     }
 

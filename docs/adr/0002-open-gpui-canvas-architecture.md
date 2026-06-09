@@ -329,6 +329,8 @@ Current v1 snapshots migrate as a no-op, future versions are rejected, and versi
 minimum supported format are rejected before validation. The migration table is intentionally empty
 for v1, but tests require future entries to be monotonic and contiguous so redb, Loro, and `rkyv`
 adapters do not need to guess which schema they are reading.
+Those version facts live in the `CanvasFormat` module. Persistence codecs keep codec-version checks
+local, but delegate document-format support to the same boundary used by snapshot migration.
 
 ## Tool Model
 
