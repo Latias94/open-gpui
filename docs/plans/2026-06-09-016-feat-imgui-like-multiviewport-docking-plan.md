@@ -24,13 +24,13 @@ data, `DockAction` no longer exposes graph-shaped move commands for rendered dra
 owns platform-window mappings, and `DockPanelRegistry` separates descriptor metadata from live
 views.
 
-The remaining gap is no longer primarily architectural depth. It is the product path that turns
-those seams into an ImGui-like experience: dragging a tab or stack across GPUI windows, previewing
-the target in the destination viewport, releasing to dock back, releasing outside all viewports to
-tear off, restoring focus, and handling close decisions without graph/window corruption. Today
-multiple viewports can be opened, and the resolver vocabulary includes `KnownViewport` and
-`TearOffCandidate`, but the rendered host release path is still tab-receiver oriented and cannot
-complete non-tab targets end to end.
+The remaining gap is no longer primarily architectural depth. It is the product hardening path
+that turns those seams into a shippable ImGui-like experience: dogfooding tab and stack drags across
+GPUI windows, validating previews in source and destination viewports, releasing to dock back,
+releasing outside all viewports to tear off, restoring focus, and handling close decisions without
+graph/window corruption. On the current branch the rendered host release path already routes
+through host drop scenes and viewport runtime transactions; this plan remains active for visual
+polish, manual dogfood, documentation alignment, and deletion of any stale compatibility paths.
 
 The plan keeps ADR 0002 intact. Platform windows, focus, retained views, and event routing stay
 owned by GPUI. Docking adds a runtime coordinator and host-local drop scene, not a second window or
@@ -136,15 +136,15 @@ Out of scope:
 
 | Capability | ImGui reference | Current open-gpui implication | Priority |
 |---|---|---|---|
-| Tab drag and reorder | `repo-ref/imgui/imgui.cpp:19629`, `repo-ref/imgui/imgui.cpp:21358` | Single-tab drag exists, but release is still tied to tab receivers instead of one full scene. | P0 |
-| Dock-back across viewports | `repo-ref/imgui/imgui.cpp:21390`, `repo-ref/imgui/imgui.cpp:21466` | `KnownViewport` can be resolved, but commit currently returns local-resolution-required. | P0 |
-| Tear-off to platform window | `repo-ref/imgui/imgui.cpp:18527`, `repo-ref/imgui/imgui.cpp:17483` | Runtime transaction exists, but rendered drag release does not call it. | P0 |
-| Whole window or stack drag | `repo-ref/imgui/imgui.cpp:5412`, `repo-ref/imgui/imgui.cpp:18527` | `FloatTabsInWindow` exists, but rendered payloads are item-only. | P0 |
-| Hover, active, and z-order arbitration | `repo-ref/imgui/imgui.cpp:16852`, `repo-ref/imgui/imgui.cpp:16866` | Crate-private `DockViewportTargetContext` has the right fields; product paths must supply them consistently. | P0 |
-| Dock preview boxes | `repo-ref/imgui/imgui.cpp:19957`, `repo-ref/imgui/imgui.cpp:20045` | Resolved target preview is present, but UI projects it back to tab-only bounds. | P1 |
-| Central node | `repo-ref/imgui/imgui_internal.h:1995`, `repo-ref/imgui/imgui_internal.h:2060` | `DockCentralRegion` exists; passthrough and preview/commit agreement need product tests. | P1 |
-| Window close semantics | `repo-ref/imgui/imgui.cpp:19666`, `repo-ref/imgui/backends/imgui_impl_win32.cpp:1458` | Viewport should-close exists; tab, stack, panel veto, and viewport merge/retain behavior need UI paths. | P1 |
-| Platform viewport backend | `repo-ref/imgui/imgui.h:4215`, `repo-ref/imgui/backends/imgui_impl_win32.cpp:1486` | GPUI owns windows; docking needs runtime-level bounds, focus, and activation policy. | P1 |
+| Tab drag and reorder | `repo-ref/imgui/imgui.cpp:19629`, `repo-ref/imgui/imgui.cpp:21358` | Rendered release uses the host drop scene; continue dogfood for reorder polish and stale preview cleanup. | P0 |
+| Dock-back across viewports | `repo-ref/imgui/imgui.cpp:21390`, `repo-ref/imgui/imgui.cpp:21466` | `KnownViewport` routes through the destination host scene before commit; keep validating stale-scene rejection and activation. | P0 |
+| Tear-off to platform window | `repo-ref/imgui/imgui.cpp:18527`, `repo-ref/imgui/imgui.cpp:17483` | Rendered outside release and release polling call the runtime tear-off transaction; manual platform dogfood remains. | P0 |
+| Whole window or stack drag | `repo-ref/imgui/imgui.cpp:5412`, `repo-ref/imgui/imgui.cpp:18527` | Drag payloads support item and tabs-stack moves across local, viewport, and tear-off paths. | P0 |
+| Hover, active, and z-order arbitration | `repo-ref/imgui/imgui.cpp:16852`, `repo-ref/imgui/imgui.cpp:16866` | Crate-private `DockViewportTargetContext` is supplied by product paths; continue platform-signal dogfood. | P0 |
+| Dock preview boxes | `repo-ref/imgui/imgui.cpp:19957`, `repo-ref/imgui/imgui.cpp:20045` | Preview now flows from resolved targets and routes; remaining work is visual polish and deletion-audit proof. | P1 |
+| Central node | `repo-ref/imgui/imgui_internal.h:1995`, `repo-ref/imgui/imgui_internal.h:2060` | Central layout, hit testing, and passthrough have test coverage; continue preview/commit agreement dogfood. | P1 |
+| Window close semantics | `repo-ref/imgui/imgui.cpp:19666`, `repo-ref/imgui/backends/imgui_impl_win32.cpp:1458` | Panel close, viewport retain/prevent/merge-back, activation, and focus paths are test-covered; native dogfood remains. | P1 |
+| Platform viewport backend | `repo-ref/imgui/imgui.h:4215`, `repo-ref/imgui/backends/imgui_impl_win32.cpp:1486` | GPUI owns windows; docking runtime now owns mappings, placement, bounds, focus requests, and activation policy. | P1 |
 | Persistence | `repo-ref/imgui/imgui.cpp:21474` | `DockLayout` and `DockViewportPlacementLayout` are already separated; restore edge cases are follow-up. | P2 |
 
 ---
@@ -163,8 +163,8 @@ Out of scope:
   runtime host/drop-scene mappings or a crate-private coordinator, but `DockGraph` and
   `DockLayout` remain pure logical data.
 - KTD4. **Unify preview and commit around the resolved target:** Product preview should draw from
-  `DockResolvedDropTarget` directly. `DockDropPreviewIntent` and tab-only preview accessors become
-  deletion candidates after replacement.
+  `DockResolvedDropTarget` directly. `DockDropPreviewIntent` and tab-only preview accessors should
+  remain absent from production code after replacement.
 - KTD5. **Make tear-off a user release transaction:** A release outside all registered viewports
   should create or reuse a target dock space, open the platform viewport, register it, validate the
   source, commit the move, and clean up as one runtime outcome.
@@ -258,8 +258,8 @@ tab labels, leaves, root bounds, floating title bars, empty spaces, and central-
 host coordinate system. Viewport hits and outside-all-viewport tear-off candidates are produced by
 the viewport coordinator in U2/U3 and then routed back into a host-local scene or viewport-runtime
 transaction. `DockHost` updates `DockInteractionRuntime` with the scene and pointer position, and
-`DockDropRuntime` stores one host-local resolved target. Receiver-specific methods such as
-`take_tab_drop_target(target_tabs)` become transitional and should disappear by U5.
+`DockDropRuntime` stores one host-local resolved target. Receiver-specific methods such as old
+tab-drop target accessors should remain deleted after the unified scene path replaces them.
 
 **Execution note:** Start with characterization tests for current tab reorder, leaf center drop,
 and central dock-over behavior, then replace the API.
@@ -459,8 +459,8 @@ separate transaction request types where validation differs.
 
 ### U5. Product Drop Preview And Obsolete Preview Deletion
 
-**Goal:** Render ImGui-like drop previews from `DockResolvedDropTarget` directly and delete the
-tab-only preview projection once replaced.
+**Goal:** Keep drop previews driven by resolved targets/routes, polish the ImGui-like visuals, and
+prove the tab-only preview projection stays deleted.
 
 **Requirements:** R2, R7, R8, R12
 
@@ -478,12 +478,11 @@ tab-only preview projection once replaced.
 - `crates/gpui_docking/src/host_render_tests.rs`
 - `crates/gpui_docking/src/host_interaction_tests.rs`
 
-**Approach:** Add a preview renderer that accepts `DockResolvedDropTarget` and draws the correct
-product preview for tab reorder, center merge, inner edge, outer root edge, floating merge, empty
-space, known viewport route, tear-off route, and rejected policy. Delete or narrow
-`DockDropPreviewIntent`, `DockResolvedDropTarget::preview_intent()`,
-`tab_drop_preview_bounds`, and receiver-specific preview selectors after the new preview path is
-covered.
+**Approach:** Maintain the preview renderer that accepts resolved local targets and viewport routes,
+then polish the product preview for tab reorder, center merge, inner edge, outer root edge,
+floating merge, empty space, known viewport route, tear-off route, and rejected policy. Keep
+`DockDropPreviewIntent`, `DockResolvedDropTarget::preview_intent()`, `tab_drop_preview_bounds`, and
+receiver-specific preview selectors out of production code.
 
 **Patterns to follow:** Dear ImGui `repo-ref/imgui/imgui.cpp:19957` and
 `repo-ref/imgui/imgui.cpp:20045`, while preserving the existing GPUI element style in
@@ -502,8 +501,8 @@ covered.
 - Removing tab-only preview helpers does not remove test-visible debug selectors for the new
   preview types.
 
-**Verification:** There is one preview data path from `DockDropRuntime` to render; no production
-code calls `DockResolvedDropTarget::preview_intent()` after the unit lands.
+**Verification:** There is one preview data path from `DockDropRuntime` to render; production code
+does not reintroduce `DockResolvedDropTarget::preview_intent()` or tab-only preview helpers.
 
 ### U6. Viewport Close, Focus, And Activation Semantics
 
