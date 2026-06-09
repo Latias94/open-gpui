@@ -79,6 +79,9 @@ Viewport productization:
 - Tear-off pending state tracks item and tabs-stack payloads, duplicate requests, expiration,
   source-moved/source-missing cancellation, commit failure cleanup, and controller-backed viewport
   registration.
+- Viewport close policy now covers retain, prevent, and merge-back behavior. Merge-back close moves
+  closing viewport content into an explicit fallback dock space before unregistering the runtime
+  mapping.
 - `crates/gpui_docking/src/host_outside_release.rs` gives rendered drags a host-local polling
   fallback for release outside every GPUI window while preserving GPUI as the input authority.
 - `Platform::mouse_button_is_pressed` is optional: macOS implements it with
@@ -108,6 +111,9 @@ Native dogfood:
   into the primary viewport.
 - The primary viewport starts with an in-window floating stack and a non-closable pinned tab, so
   manual dogfood covers floating merge and rendered close-policy behavior.
+- The runtime status panel exposes close-policy switching, placement reapply, viewport reopen, and
+  descriptor-backed panel restore controls so close/reopen paths can be exercised without code
+  changes.
 
 Test locality:
 
@@ -127,7 +133,7 @@ Test locality:
   Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
   until a reliable platform primitive is available.
 - Add richer product behavior through the existing seams: route-preview polish, focus restoration,
-  accessibility behavior, and any explicit merge-back viewport close policy.
+  accessibility behavior, and broader backend coverage for outside-window release polling.
 - Continue splitting future viewport or graph code only when the extracted module passes the
   deletion test and gives callers a smaller, deeper interface.
 - Revisit whether `host_test_support` should share a smaller ID fixture with graph and viewport

@@ -69,6 +69,9 @@ destination host before graph mutation. Item and whole-stack drag payloads share
 successful routed drops activate the destination viewport. Tab close chrome reads descriptor
 metadata from `DockPanelCatalog` and commits through the same panel lifecycle transaction used by
 programmatic close actions.
+Viewport close policy is explicit: retain-on-close preserves layout while removing the runtime
+mapping, prevent installs a GPUI should-close veto for runtime-opened windows, and merge-back moves
+the closing viewport's content into a configured fallback dock space before cleanup.
 GPUI exposes an optional platform mouse-button state seam, and rendered docking drags use a
 host-local polling fallback while a drag is active. This lets release outside every GPUI window
 complete through the same viewport tear-off transaction on platforms that can report global button
@@ -174,5 +177,4 @@ Decision: rejected.
 - Tests should continue separating graph layout state, workspace/controller transactions, GPUI
   rendering, and platform-window routing.
 - Future work should expand unsupported platform backends where the OS provides reliable button
-  state, add richer focus/accessibility polish, and introduce any explicit merge-back viewport
-  close policy without weakening the graph/runtime boundary.
+  state, and add richer focus/accessibility polish without weakening the graph/runtime boundary.
