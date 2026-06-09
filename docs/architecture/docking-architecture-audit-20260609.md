@@ -47,6 +47,15 @@ Panel lifecycle:
 - `attach_view` and `attach_factory` bind restored metadata to live view state without rewriting
   titles or close policy.
 
+Test locality:
+
+- `crates/gpui_docking/src/viewport_test_support.rs` keeps viewport mapping, placement, close, and
+  target tests on one shared set of window/space/bounds fixtures.
+- `crates/gpui_docking/src/graph_test_support.rs` keeps graph, layout, controller-builder, and
+  fixture tests on one shared item/space/root-tabs fixture.
+- The remaining local fixtures are intentionally domain-specific, such as geometry-only bounds or
+  interaction-runtime bounds.
+
 ## Residual Backlog
 
 - Keep shrinking legacy compatibility pressure around `DockHost::new`, `DockHost::with_options`,
@@ -55,3 +64,5 @@ Panel lifecycle:
   release polish, focus restoration, and accessibility behavior.
 - Continue splitting future viewport or graph code only when the extracted module passes the
   deletion test and gives callers a smaller, deeper interface.
+- Revisit whether `host_test_support` should share a smaller ID fixture with graph and viewport
+  support after the next host/render test cleanup.
