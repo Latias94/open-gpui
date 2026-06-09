@@ -55,7 +55,7 @@ fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_pan
     let observed_instantiations = instantiations.clone();
     workspace.register_panel_factory(item("lazy"), "Lazy", move |cx| {
         instantiations.set(instantiations.get() + 1);
-        cx.new(|_| TestPanel { label: "Lazy" }).into()
+        cx.new(|cx| TestPanel::new("Lazy", cx)).into()
     });
 
     let outcome = workspace
@@ -146,7 +146,7 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
     let observed_instantiations = instantiations.clone();
     workspace.register_panel_factory("b", "B", move |cx| {
         instantiations.set(instantiations.get() + 1);
-        cx.new(|_| TestPanel { label: "B" }).into()
+        cx.new(|cx| TestPanel::new("B", cx)).into()
     });
 
     workspace

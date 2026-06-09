@@ -93,6 +93,8 @@ pub struct DockViewportTearOffPending {
     pub request: DockViewportTearOffRequest,
     /// Empty logical dock space that will receive the torn-off payload.
     pub target_space: DockSpaceId,
+    /// Panel item that should receive GPUI focus after the tear-off completes.
+    pub focus_item: Option<DockItemId>,
     requested_at: DockViewportTearOffTick,
     expires_after_ticks: u64,
 }
@@ -199,6 +201,8 @@ pub struct DockViewportActivationTarget {
     pub space: DockSpaceId,
     /// GPUI window rendering the logical dock space.
     pub window: AnyWindowHandle,
+    /// Active panel item that should receive focus after the window is active.
+    pub focus_item: Option<DockItemId>,
 }
 
 impl DockViewportDropRouteOutcome {
@@ -211,6 +215,7 @@ impl DockViewportDropRouteOutcome {
             )) => Some(DockViewportActivationTarget {
                 space: completed.pending.target_space.clone(),
                 window: completed.registration.window,
+                focus_item: completed.pending.focus_item.clone(),
             }),
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::Duplicate(_)
@@ -287,6 +292,7 @@ impl DockViewportTearOffMachine {
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: DockSpaceId,
+        focus_item: Option<DockItemId>,
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
         self.expire(now);
@@ -300,6 +306,7 @@ impl DockViewportTearOffMachine {
         let pending = DockViewportTearOffPending {
             request,
             target_space,
+            focus_item,
             requested_at: now,
             expires_after_ticks: self.ttl_ticks,
         };
@@ -383,9 +390,15 @@ mod tests {
         let first = machine.begin(
             request.clone(),
             space("detached"),
+            None,
             DockViewportTearOffTick::new(1),
         );
-        let second = machine.begin(request, space("other"), DockViewportTearOffTick::new(2));
+        let second = machine.begin(
+            request,
+            space("other"),
+            None,
+            DockViewportTearOffTick::new(2),
+        );
 
         assert!(matches!(first, DockViewportTearOffBeginOutcome::Pending(_)));
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
@@ -410,9 +423,15 @@ mod tests {
         let first = machine.begin(
             request.clone(),
             space("detached"),
+            None,
             DockViewportTearOffTick::new(1),
         );
-        let second = machine.begin(request, space("other"), DockViewportTearOffTick::new(2));
+        let second = machine.begin(
+            request,
+            space("other"),
+            None,
+            DockViewportTearOffTick::new(2),
+        );
 
         assert!(matches!(first, DockViewportTearOffBeginOutcome::Pending(_)));
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
@@ -434,7 +453,12 @@ mod tests {
             suggested_window_bounds: None,
         };
 
-        machine.begin(request, space("detached"), DockViewportTearOffTick::new(1));
+        machine.begin(
+            request,
+            space("detached"),
+            None,
+            DockViewportTearOffTick::new(1),
+        );
         assert!(machine.expire(DockViewportTearOffTick::new(601)).is_empty());
         let expired = machine.expire(DockViewportTearOffTick::new(602));
 

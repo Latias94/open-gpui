@@ -2,7 +2,7 @@ use crate::{
     DockFloatingContainer, DockHost, DockItemId, DockNode, DockNodeId, DockSpaceId, DockWorkspace,
     panel_registry::DockPanelRenderRegistration,
 };
-use open_gpui::{AnyView, Context, Pixels};
+use open_gpui::{AnyView, Context, Pixels, Window};
 use std::collections::HashMap;
 
 pub(crate) enum DockHostPanelRenderResolution {
@@ -227,6 +227,17 @@ impl DockHostRenderSession {
                 prefix: self.missing_panel_prefix.clone(),
                 item: item.clone(),
             })
+    }
+
+    pub(crate) fn request_panel_focus(
+        &self,
+        item: &DockItemId,
+        window: &mut Window,
+        cx: &mut Context<DockHost>,
+    ) -> bool {
+        self.panels
+            .get(item)
+            .is_some_and(|panel| panel.request_focus(window, cx))
     }
 
     fn subtree_contains(&self, root: DockNodeId, target: DockNodeId) -> bool {

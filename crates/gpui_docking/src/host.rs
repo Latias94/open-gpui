@@ -44,6 +44,7 @@ pub struct DockHost {
     space: DockSpaceId,
     viewport_runtime: Option<DockViewportRuntimeHandle>,
     viewport_scene_window: Option<WindowId>,
+    pending_panel_focus: Option<DockItemId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
@@ -62,6 +63,7 @@ impl DockHost {
             space: space.into(),
             viewport_runtime: None,
             viewport_scene_window: None,
+            pending_panel_focus: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
@@ -227,6 +229,18 @@ impl DockHost {
 
     pub(crate) fn viewport_scene_window(&self) -> Option<WindowId> {
         self.viewport_scene_window
+    }
+
+    pub(crate) fn request_panel_focus(&mut self, item: DockItemId) -> bool {
+        if self.pending_panel_focus.as_ref() == Some(&item) {
+            return false;
+        }
+        self.pending_panel_focus = Some(item);
+        true
+    }
+
+    pub(crate) fn take_pending_panel_focus(&mut self) -> Option<DockItemId> {
+        self.pending_panel_focus.take()
     }
 
     #[cfg(test)]

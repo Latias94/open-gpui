@@ -140,7 +140,7 @@ impl DockViewportRuntimeHandle {
             .key(&request.source_space, request.source_tabs);
         let pending = {
             let mut runtime = self.runtime.borrow_mut();
-            match runtime.begin_tear_off_request(request, target_space) {
+            match runtime.begin_tear_off_request(request, target_space, cx) {
                 DockViewportTearOffBeginOutcome::Pending(pending) => pending,
                 DockViewportTearOffBeginOutcome::Duplicate(pending) => {
                     return Ok(DockViewportTearOffOpenOutcome::Duplicate(pending));

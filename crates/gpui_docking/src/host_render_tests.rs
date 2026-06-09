@@ -1,8 +1,8 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId, SplitAxis,
-    debug::DockDebugRegion, host_test_support::*,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId, DockWorkspace,
+    SplitAxis, debug::DockDebugRegion, host_test_support::*,
 };
-use open_gpui::{TestAppContext, px, size};
+use open_gpui::{AppContext as _, Focusable, TestAppContext, px, size};
 use slotmap::Key;
 
 #[open_gpui::test]
@@ -43,6 +43,26 @@ fn single_tabs_render_active_panel_and_all_tab_labels(cx: &mut TestAppContext) {
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
         "inactive panel should not be mounted"
     );
+}
+
+#[open_gpui::test]
+fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph(&["a"], 0);
+    let panel = test_view(cx, "A");
+    let expected_focus = cx.read_entity(&panel, |panel, cx| panel.focus_handle(cx));
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_panel_focus(item("a")));
+        cx.notify();
+    });
+    visual.run_until_parked();
+
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(expected_focus));
+    });
 }
 
 #[open_gpui::test]

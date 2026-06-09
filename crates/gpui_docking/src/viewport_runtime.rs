@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockNode, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
     DockTransactionError, DockViewportActivationTarget, DockViewportAdapter,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropActionOutcome,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
@@ -262,6 +262,7 @@ impl DockViewportRuntime {
         };
 
         let (target_space, target) = target_space;
+        let focus_item = self.focus_item_for_payload(&payload, source_tabs, cx);
         let action = self.controller.update(cx, |controller, cx| {
             let outcome =
                 controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
@@ -279,7 +280,7 @@ impl DockViewportRuntime {
             }
             outcome
         })?;
-        let activation = self.activate_viewport_for_space(&target_space, cx);
+        let activation = self.activate_viewport_for_space(&target_space, focus_item, cx);
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome { action, activation },
         ))
@@ -450,18 +451,22 @@ impl DockViewportRuntime {
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
+        cx: &App,
     ) -> DockViewportTearOffBeginOutcome {
+        let focus_item = self.focus_item_for_request(&request, cx);
         let now = self.next_tear_off_tick();
-        self.begin_tear_off_request_at(request, target_space, now)
+        self.begin_tear_off_request_at(request, target_space, focus_item, now)
     }
 
     pub(crate) fn begin_tear_off_request_at(
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
+        focus_item: Option<DockItemId>,
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
-        self.tear_off.begin(request, target_space.into(), now)
+        self.tear_off
+            .begin(request, target_space.into(), focus_item, now)
     }
 
     pub(crate) fn cancel_tear_off_request(
@@ -554,7 +559,7 @@ impl DockViewportRuntime {
         let key = request
             .payload
             .key(&request.source_space, request.source_tabs);
-        let begin = self.begin_tear_off_request(request, target_space);
+        let begin = self.begin_tear_off_request(request, target_space, cx);
         let pending = match begin {
             DockViewportTearOffBeginOutcome::Pending(pending) => pending,
             DockViewportTearOffBeginOutcome::Duplicate(pending) => {
@@ -622,14 +627,40 @@ impl DockViewportRuntime {
     fn activate_viewport_for_space(
         &mut self,
         target_space: &DockSpaceId,
+        focus_item: Option<DockItemId>,
         cx: &mut App,
     ) -> Option<DockViewportActivationTarget> {
         match self.reusable_window_for_space(target_space, cx) {
             DockViewportReusableWindow::Reused(window) => Some(DockViewportActivationTarget {
                 space: target_space.clone(),
                 window,
+                focus_item,
             }),
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
+        }
+    }
+
+    fn focus_item_for_request(
+        &self,
+        request: &DockViewportTearOffRequest,
+        cx: &App,
+    ) -> Option<DockItemId> {
+        self.focus_item_for_payload(&request.payload, request.source_tabs, cx)
+    }
+
+    fn focus_item_for_payload(
+        &self,
+        payload: &DockViewportDropPayload,
+        source_tabs: crate::DockNodeId,
+        cx: &App,
+    ) -> Option<DockItemId> {
+        match payload {
+            DockViewportDropPayload::Item(item) => Some(item.clone()),
+            DockViewportDropPayload::Tabs => self
+                .controller
+                .read(cx)
+                .graph()
+                .active_item_in_tabs(source_tabs),
         }
     }
 

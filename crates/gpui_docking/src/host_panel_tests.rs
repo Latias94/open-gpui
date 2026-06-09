@@ -30,7 +30,7 @@ fn registry_descriptor_lookup_does_not_instantiate_lazy_panel(_cx: &mut TestAppC
     let factory_calls = calls.clone();
     registry.register_factory("lazy", "Lazy", move |cx| {
         factory_calls.set(factory_calls.get() + 1);
-        cx.new(|_| TestPanel { label: "lazy" }).into()
+        cx.new(|cx| TestPanel::new("lazy", cx)).into()
     });
 
     let descriptor = registry
@@ -54,7 +54,7 @@ fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut Test
     let factory_calls = calls.clone();
     workspace.register_panel_factory("lazy", "Lazy", move |cx| {
         factory_calls.set(factory_calls.get() + 1);
-        cx.new(|_| TestPanel { label: "lazy" }).into()
+        cx.new(|cx| TestPanel::new("lazy", cx)).into()
     });
     assert!(workspace.panels().has_view_lifecycle(&item("lazy")));
     assert_eq!(calls.get(), 0);
@@ -79,7 +79,7 @@ fn lazy_panel_factory_instantiates_on_first_render_and_reuses_view(cx: &mut Test
 #[open_gpui::test]
 fn panel_factory_accepts_app_context_without_host_context(cx: &mut TestAppContext) {
     fn app_context_panel(cx: &mut App) -> AnyView {
-        cx.new(|_| TestPanel { label: "app" }).into()
+        cx.new(|cx| TestPanel::new("app", cx)).into()
     }
 
     let (graph, _root) = tabs_graph(&["app"], 0);
@@ -103,12 +103,12 @@ fn inactive_lazy_panel_title_does_not_instantiate_view(cx: &mut TestAppContext) 
     let active_factory_calls = active_calls.clone();
     workspace.register_panel_factory("active", "Active", move |cx| {
         active_factory_calls.set(active_factory_calls.get() + 1);
-        cx.new(|_| TestPanel { label: "active" }).into()
+        cx.new(|cx| TestPanel::new("active", cx)).into()
     });
     let inactive_factory_calls = inactive_calls.clone();
     workspace.register_panel_factory("inactive", "Inactive", move |cx| {
         inactive_factory_calls.set(inactive_factory_calls.get() + 1);
-        cx.new(|_| TestPanel { label: "inactive" }).into()
+        cx.new(|cx| TestPanel::new("inactive", cx)).into()
     });
 
     let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
@@ -146,7 +146,7 @@ fn lazy_panel_state_stays_out_of_layout_export(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["lazy"], 0);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_factory("lazy", "Lazy Panel", |cx| {
-        cx.new(|_| TestPanel { label: "lazy" }).into()
+        cx.new(|cx| TestPanel::new("lazy", cx)).into()
     });
     let controller = cx.new(|_| DockController::new(workspace));
 

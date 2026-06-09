@@ -45,9 +45,21 @@ impl DockHostInteractionOutcome {
         let changed = self.changed();
         let should_notify = self.should_notify();
         if let Some(activation) = self.activation_target() {
-            let _ = activation
-                .window
-                .update(cx, |_, window, _| window.activate_window());
+            let activation_space = activation.space;
+            let focus_item = activation.focus_item;
+            let _ = activation.window.update(cx, move |view, window, cx| {
+                window.activate_window();
+                if let Some(focus_item) = focus_item
+                    && let Ok(host) = view.downcast::<DockHost>()
+                {
+                    host.update(cx, |host, cx| {
+                        if host.space() == &activation_space && host.request_panel_focus(focus_item)
+                        {
+                            cx.notify();
+                        }
+                    });
+                }
+            });
         }
         if should_notify {
             cx.notify();
@@ -135,6 +147,7 @@ mod tests {
             activation: Some(crate::DockViewportActivationTarget {
                 space: space(),
                 window,
+                focus_item: Some(crate::DockItemId::from("a")),
             }),
         });
         let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed.clone()));
@@ -144,6 +157,12 @@ mod tests {
         assert_eq!(
             outcome.activation_target().map(|target| target.window),
             Some(window)
+        );
+        assert_eq!(
+            outcome
+                .activation_target()
+                .and_then(|target| target.focus_item),
+            Some(crate::DockItemId::from("a"))
         );
     }
 }
@@ -385,7 +404,8 @@ impl DockHost {
                     .merge(self.finish_floating_drag_interaction());
             };
 
-            self.commit_resolved_payload_drop_interaction(
+            let focus_item = self.focus_item_for_drag_payload(payload, cx);
+            let outcome = self.commit_resolved_payload_drop_interaction(
                 DockWorkspacePayloadDropRequest {
                     source_space: &payload.source_space,
                     payload: workspace_payload(payload),
@@ -394,7 +414,8 @@ impl DockHost {
                 },
                 cx,
                 true,
-            )
+            );
+            self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
         };
 
         outcome.merge(self.finish_floating_drag_interaction())
@@ -446,10 +467,11 @@ impl DockHost {
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
-        DockHostInteractionOutcome::from_commit_result(
+        let outcome = DockHostInteractionOutcome::from_commit_result(
             self.commit_select_tab_from_host(tabs, item, cx),
             notify_on_unchanged,
-        )
+        );
+        self.with_panel_focus(outcome, item.clone())
     }
 
     fn commit_close_item_interaction(
@@ -531,6 +553,57 @@ impl DockHost {
             self.commit_raise_floating_from_host(space, floating, cx),
             notify_on_unchanged,
         )
+    }
+
+    fn focus_item_for_drag_payload(
+        &self,
+        payload: &DockDragPayload,
+        cx: &Context<Self>,
+    ) -> Option<DockItemId> {
+        match &payload.kind {
+            DockDragPayloadKind::Item { item } => Some(item.clone()),
+            DockDragPayloadKind::Tabs => self.with_workspace(cx, |workspace| {
+                workspace.graph().active_item_in_tabs(payload.source_tabs)
+            }),
+        }
+    }
+
+    fn with_panel_focus(
+        &mut self,
+        outcome: DockHostInteractionOutcome,
+        item: DockItemId,
+    ) -> DockHostInteractionOutcome {
+        if matches!(outcome, DockHostInteractionOutcome::Rejected(_)) {
+            return outcome;
+        }
+        if self.request_panel_focus(item) {
+            outcome.merge(DockHostInteractionOutcome::Notify)
+        } else {
+            outcome
+        }
+    }
+
+    fn with_panel_focus_after_local_drop(
+        &mut self,
+        outcome: DockHostInteractionOutcome,
+        item: Option<DockItemId>,
+        cx: &Context<DockHost>,
+    ) -> DockHostInteractionOutcome {
+        let Some(item) = item else {
+            return outcome;
+        };
+        if matches!(outcome, DockHostInteractionOutcome::Rejected(_)) {
+            return outcome;
+        }
+        if !self.with_workspace(cx, |workspace| {
+            workspace
+                .graph()
+                .find_item_in_space(self.space(), &item)
+                .is_some()
+        }) {
+            return outcome;
+        }
+        self.with_panel_focus(outcome, item)
     }
 }
 

@@ -160,11 +160,13 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
     let first = runtime.begin_tear_off_request_at(
         tear_off_request(primary_space.clone(), source_tabs, item("a")),
         detached_space.clone(),
+        None,
         DockViewportTearOffTick::new(1),
     );
     let second = runtime.begin_tear_off_request_at(
         tear_off_request(primary_space, source_tabs, item("a")),
         DockSpaceId::from("other"),
+        None,
         DockViewportTearOffTick::new(2),
     );
 
@@ -200,6 +202,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_closes_before_window_creat
     runtime.begin_tear_off_request_at(
         tear_off_request(primary_space.clone(), source_tabs, item("a")),
         detached_space.clone(),
+        None,
         DockViewportTearOffTick::new(1),
     );
     cx.update_entity(&controller, |controller, _| {
@@ -274,6 +277,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     runtime.begin_tear_off_request_at(
         tear_off_request(primary_space.clone(), source_tabs, item("a")),
         detached_space.clone(),
+        None,
         DockViewportTearOffTick::new(1),
     );
     cx.update_entity(&controller, |controller, _| {
@@ -345,6 +349,7 @@ fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
     runtime.begin_tear_off_request_at(
         tear_off_request(primary_space.clone(), source_tabs, item("a")),
         detached_space.clone(),
+        None,
         DockViewportTearOffTick::new(1),
     );
     let expired = runtime.expire_tear_off_requests_at(DockViewportTearOffTick::new(602));
@@ -394,6 +399,7 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
     runtime.begin_tear_off_request_at(
         tear_off_request(primary_space.clone(), source_tabs, item("a")),
         detached_space.clone(),
+        None,
         DockViewportTearOffTick::new(1),
     );
     let outcome = cx.update(|app| {

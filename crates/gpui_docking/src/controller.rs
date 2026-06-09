@@ -7,7 +7,7 @@ use crate::{
     DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
-use open_gpui::{AnyView, Bounds, Pixels};
+use open_gpui::{AnyView, Bounds, Entity, Focusable, Pixels, Render};
 
 /// Shared owner for one logical docking workspace.
 ///
@@ -78,6 +78,20 @@ impl DockController {
         self.workspace.register_panel_view(item, title, view)
     }
 
+    /// Registers a focusable GPUI view as panel content for a dock item.
+    pub fn register_focusable_panel_view<V>(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        title: impl Into<String>,
+        view: Entity<V>,
+    ) -> Option<DockPanel>
+    where
+        V: Focusable + Render,
+    {
+        self.workspace
+            .register_focusable_panel_view(item, title, view)
+    }
+
     /// Registers a GPUI view factory as lazy panel content for a dock item.
     pub fn register_panel_factory(
         &mut self,
@@ -86,6 +100,20 @@ impl DockController {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.workspace.register_panel_factory(item, title, factory)
+    }
+
+    /// Registers a focusable GPUI view factory as lazy panel content for a dock item.
+    pub fn register_focusable_panel_factory<V>(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
+    ) -> Option<DockPanel>
+    where
+        V: Focusable + Render,
+    {
+        self.workspace
+            .register_focusable_panel_factory(item, title, factory)
     }
 
     /// Attaches GPUI view content to existing panel metadata.
@@ -97,6 +125,18 @@ impl DockController {
         self.workspace.attach_panel_view(item, view)
     }
 
+    /// Attaches focusable GPUI view content to existing panel metadata.
+    pub fn attach_focusable_panel_view<V>(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        view: Entity<V>,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
+    where
+        V: Focusable + Render,
+    {
+        self.workspace.attach_focusable_panel_view(item, view)
+    }
+
     /// Attaches a GPUI view factory to existing panel metadata.
     pub fn attach_panel_factory(
         &mut self,
@@ -104,6 +144,18 @@ impl DockController {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
         self.workspace.attach_panel_factory(item, factory)
+    }
+
+    /// Attaches a lazy focusable GPUI view factory to existing panel metadata.
+    pub fn attach_focusable_panel_factory<V>(
+        &mut self,
+        item: impl Into<crate::DockItemId>,
+        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
+    where
+        V: Focusable + Render,
+    {
+        self.workspace.attach_focusable_panel_factory(item, factory)
     }
 
     /// Returns the workspace rendering options.
@@ -289,6 +341,19 @@ impl DockControllerBuilder {
         self.panel(item, DockPanel::new(title, view))
     }
 
+    /// Registers an eager focusable GPUI view as panel content.
+    pub fn focusable_panel_view<V>(
+        self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        view: Entity<V>,
+    ) -> Self
+    where
+        V: Focusable + Render,
+    {
+        self.panel(item, DockPanel::focusable(title, view))
+    }
+
     /// Registers a lazy GPUI view factory as panel content.
     pub fn panel_factory(
         self,
@@ -297,6 +362,19 @@ impl DockControllerBuilder {
         factory: impl Fn(&mut open_gpui::App) -> AnyView + 'static,
     ) -> Self {
         self.panel(item, DockPanel::lazy(title, factory))
+    }
+
+    /// Registers a lazy focusable GPUI view factory as panel content.
+    pub fn focusable_panel_factory<V>(
+        self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut open_gpui::App) -> Entity<V> + 'static,
+    ) -> Self
+    where
+        V: Focusable + Render,
+    {
+        self.panel(item, DockPanel::lazy_focusable(title, factory))
     }
 
     /// Replaces static host rendering options.

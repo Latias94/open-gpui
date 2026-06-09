@@ -1,5 +1,5 @@
 use crate::{DockPanelDescriptor, panel_view::DockPanelViewHandle};
-use open_gpui::{AnyView, App};
+use open_gpui::{AnyView, App, Entity, Focusable, Render};
 use std::fmt;
 
 /// Panel registration for one dock item.
@@ -32,11 +32,36 @@ impl DockPanel {
         )
     }
 
+    /// Creates a panel registration whose GPUI view can receive focus after docking actions.
+    pub fn focusable<V>(title: impl Into<String>, view: Entity<V>) -> Self
+    where
+        V: Focusable + Render,
+    {
+        Self::from_parts(
+            DockPanelDescriptor::new(title),
+            DockPanelViewHandle::focusable_view(view),
+        )
+    }
+
     /// Creates a lazily instantiated panel registration with the default close policy.
     pub fn lazy(title: impl Into<String>, factory: impl Fn(&mut App) -> AnyView + 'static) -> Self {
         Self::from_parts(
             DockPanelDescriptor::new(title),
             DockPanelViewHandle::lazy(factory),
+        )
+    }
+
+    /// Creates a lazily instantiated focusable panel registration with the default close policy.
+    pub fn lazy_focusable<V>(
+        title: impl Into<String>,
+        factory: impl Fn(&mut App) -> Entity<V> + 'static,
+    ) -> Self
+    where
+        V: Focusable + Render,
+    {
+        Self::from_parts(
+            DockPanelDescriptor::new(title),
+            DockPanelViewHandle::lazy_focusable(factory),
         )
     }
 

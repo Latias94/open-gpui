@@ -9,9 +9,10 @@ use open_gpui::{
 };
 
 impl Render for DockHost {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
         let session = self.render_session(cx);
+        self.focus_pending_panel_from_render(&session, window, cx);
         let drop_target_space = session.space().clone();
         let outside_drop_target_space = session.space().clone();
 
@@ -98,6 +99,18 @@ impl Render for DockHost {
 }
 
 impl DockHost {
+    fn focus_pending_panel_from_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = self.take_pending_panel_focus() else {
+            return;
+        };
+        session.request_panel_focus(&item, window, cx);
+    }
+
     pub(crate) fn render_node(
         &mut self,
         node_id: DockNodeId,

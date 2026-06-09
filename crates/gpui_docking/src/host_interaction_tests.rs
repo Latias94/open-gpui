@@ -4,7 +4,8 @@ use crate::{
     host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
+    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
+    px, size,
 };
 use slotmap::Key;
 
@@ -523,9 +524,11 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     });
     graph.set_root(source_space.clone(), source_tabs);
 
+    let panel_a = test_view(cx, "A");
+    let panel_a_focus = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
     workspace.policy_mut().set_allow_platform_viewports(true);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
@@ -600,6 +603,15 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         Some(detached_window.window_id()),
         "rendered tear-off should activate the new detached viewport"
     );
+    detached_window
+        .update(cx, |_, window, cx| {
+            assert_eq!(
+                window.focused(cx),
+                Some(panel_a_focus),
+                "rendered tear-off should focus the torn-off panel"
+            );
+        })
+        .expect("detached viewport should remain live");
 }
 
 #[open_gpui::test]

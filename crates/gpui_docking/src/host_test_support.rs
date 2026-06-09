@@ -3,15 +3,26 @@ use crate::{
     DockSpaceId, DockWorkspace, SplitAxis, debug::DockDebugRegion,
 };
 use open_gpui::{
-    AppContext as _, Bounds, Context, Entity, InteractiveElement, IntoElement, Modifiers,
-    MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext, VisualTestContext, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb, size,
+    App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, Modifiers, MouseButton, ParentElement, Pixels, Render, Styled, TestAppContext,
+    VisualTestContext, Window, WindowBounds, WindowHandle, WindowOptions, div, point, px, rgb,
+    size,
 };
 
 const SPACE: &str = "main";
 
 pub(crate) struct TestPanel {
     pub(crate) label: &'static str,
+    focus_handle: FocusHandle,
+}
+
+impl TestPanel {
+    pub(crate) fn new(label: &'static str, cx: &mut Context<Self>) -> Self {
+        Self {
+            label,
+            focus_handle: cx.focus_handle(),
+        }
+    }
 }
 
 impl Render for TestPanel {
@@ -22,6 +33,12 @@ impl Render for TestPanel {
             .size_full()
             .bg(rgb(0xffffff))
             .child(self.label)
+    }
+}
+
+impl Focusable for TestPanel {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -103,7 +120,7 @@ pub(crate) fn floating_overlay_graph() -> (DockGraph, DockNodeId, DockNodeId) {
 }
 
 pub(crate) fn test_view(cx: &mut TestAppContext, label: &'static str) -> Entity<TestPanel> {
-    cx.new(|_| TestPanel { label })
+    cx.new(|cx| TestPanel::new(label, cx))
 }
 
 pub(crate) fn workspace_with_panels(

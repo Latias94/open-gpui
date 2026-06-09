@@ -100,18 +100,18 @@ fn controller_builder_mounts_host_with_lazy_panel_factories(cx: &mut TestAppCont
                 ["terminal"],
             ))
             .panel_factory("explorer", "Explorer", |cx| {
-                cx.new(|_| TestPanel { label: "explorer" }).into()
+                cx.new(|cx| TestPanel::new("explorer", cx)).into()
             })
             .panel_factory("editor", "Editor", move |cx| {
                 editor_factory_calls.set(editor_factory_calls.get() + 1);
-                cx.new(|_| TestPanel { label: "editor" }).into()
+                cx.new(|cx| TestPanel::new("editor", cx)).into()
             })
             .panel_factory("preview", "Preview", move |cx| {
                 preview_factory_calls.set(preview_factory_calls.get() + 1);
-                cx.new(|_| TestPanel { label: "preview" }).into()
+                cx.new(|cx| TestPanel::new("preview", cx)).into()
             })
             .panel_factory("terminal", "Terminal", |cx| {
-                cx.new(|_| TestPanel { label: "terminal" }).into()
+                cx.new(|cx| TestPanel::new("terminal", cx)).into()
             })
             .build()
     });

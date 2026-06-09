@@ -70,6 +70,16 @@ impl DockGraph {
         })
     }
 
+    /// Returns the active item in a tabs node, clamping stale indexes defensively.
+    pub fn active_item_in_tabs(&self, tabs: DockNodeId) -> Option<DockItemId> {
+        let DockNode::Tabs { items, active } = self.nodes.get(tabs)? else {
+            return None;
+        };
+        items
+            .get((*active).min(items.len().checked_sub(1)?))
+            .cloned()
+    }
+
     pub(in crate::graph) fn root_subtree_contains(
         &self,
         space: &DockSpaceId,

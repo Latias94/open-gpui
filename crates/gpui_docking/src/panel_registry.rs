@@ -2,7 +2,7 @@ use crate::{
     DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
     panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
-use open_gpui::{AnyView, App};
+use open_gpui::{AnyView, App, Entity, Focusable, Render, Window};
 use thiserror::Error;
 
 /// Render-time registration snapshot for one dock panel.
@@ -22,6 +22,10 @@ impl DockPanelRenderRegistration {
 
     pub(crate) fn resolve_view(&self, cx: &mut App) -> AnyView {
         self.view.resolve_view(cx)
+    }
+
+    pub(crate) fn request_focus(&self, window: &mut Window, cx: &mut App) -> bool {
+        self.view.request_focus(window, cx)
     }
 }
 
@@ -116,6 +120,19 @@ impl DockPanelRegistry {
         self.register(item, DockPanel::new(title, view))
     }
 
+    /// Registers a focusable GPUI view with a title for a dock item.
+    pub fn register_focusable_view<V>(
+        &mut self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        view: Entity<V>,
+    ) -> Option<DockPanel>
+    where
+        V: Focusable + Render,
+    {
+        self.register(item, DockPanel::focusable(title, view))
+    }
+
     /// Registers a lazily created view factory for a dock item.
     pub fn register_factory(
         &mut self,
@@ -124,6 +141,19 @@ impl DockPanelRegistry {
         factory: impl Fn(&mut App) -> AnyView + 'static,
     ) -> Option<DockPanel> {
         self.register(item, DockPanel::lazy(title, factory))
+    }
+
+    /// Registers a lazily created focusable view factory for a dock item.
+    pub fn register_focusable_factory<V>(
+        &mut self,
+        item: impl Into<DockItemId>,
+        title: impl Into<String>,
+        factory: impl Fn(&mut App) -> Entity<V> + 'static,
+    ) -> Option<DockPanel>
+    where
+        V: Focusable + Render,
+    {
+        self.register(item, DockPanel::lazy_focusable(title, factory))
     }
 
     /// Attaches view content to existing panel metadata without rewriting the descriptor.
@@ -138,6 +168,18 @@ impl DockPanelRegistry {
         self.attach_view_handle(item.into(), DockPanelViewHandle::from_view(view))
     }
 
+    /// Attaches focusable view content to existing panel metadata without rewriting the descriptor.
+    pub fn attach_focusable_view<V>(
+        &mut self,
+        item: impl Into<DockItemId>,
+        view: Entity<V>,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
+    where
+        V: Focusable + Render,
+    {
+        self.attach_view_handle(item.into(), DockPanelViewHandle::focusable_view(view))
+    }
+
     /// Attaches a lazy view factory to existing panel metadata without rewriting the descriptor.
     pub fn attach_factory(
         &mut self,
@@ -145,6 +187,18 @@ impl DockPanelRegistry {
         factory: impl Fn(&mut App) -> AnyView + 'static,
     ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError> {
         self.attach_view_handle(item.into(), DockPanelViewHandle::lazy(factory))
+    }
+
+    /// Attaches a lazy focusable view factory to existing panel metadata without rewriting metadata.
+    pub fn attach_focusable_factory<V>(
+        &mut self,
+        item: impl Into<DockItemId>,
+        factory: impl Fn(&mut App) -> Entity<V> + 'static,
+    ) -> Result<Option<DockPanelRegistration>, DockPanelAttachError>
+    where
+        V: Focusable + Render,
+    {
+        self.attach_view_handle(item.into(), DockPanelViewHandle::lazy_focusable(factory))
     }
 
     /// Returns a registered panel by dock item id.

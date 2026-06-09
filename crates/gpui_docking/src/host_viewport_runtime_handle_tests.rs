@@ -7,7 +7,8 @@ use crate::{
     drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget, host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, px,
+    AppContext as _, Focusable, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
+    point, px,
 };
 
 fn tear_off_request(
@@ -756,6 +757,14 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         Some(opened.window),
         "known viewport drop should request activation of the destination window"
     );
+    assert_eq!(
+        action
+            .activation
+            .as_ref()
+            .and_then(|activation| activation.focus_item.clone()),
+        Some(item("a")),
+        "known viewport drop should request focus for the moved item"
+    );
     let after_drop_context = source_opened
         .window
         .update(cx, |_, window, app| {
@@ -796,8 +805,10 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
 
+    let panel_a = test_view(cx, "A");
+    let panel_a_focus = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
@@ -883,6 +894,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         })
         .expect("source host should commit the routed render drop");
     assert!(changed, "host render drop should report a graph change");
+    cx.run_until_parked();
 
     let after_drop_context = source_opened
         .window
@@ -895,6 +907,16 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         Some(target_opened.window.window_id()),
         "host interaction should consume the routed activation target"
     );
+    target_opened
+        .window
+        .update(cx, |_, window, cx| {
+            assert_eq!(
+                window.focused(cx),
+                Some(panel_a_focus),
+                "target viewport should focus the moved panel after rendered drop"
+            );
+        })
+        .expect("target window should still be live");
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller
             .graph()
