@@ -117,26 +117,11 @@ impl DockViewportRuntime {
         })
     }
 
-    /// Returns pending tear-off item ids in stable order.
-    pub fn pending_tear_off_items(&self) -> Vec<DockItemId> {
-        self.tear_off.pending_items()
-    }
-
-    /// Returns the number of pending tear-off transactions.
-    pub fn pending_tear_off_len(&self) -> usize {
+    pub(crate) fn pending_tear_off_len(&self) -> usize {
         self.tear_off.len()
     }
 
-    /// Returns the pending tear-off request for an item.
-    pub fn pending_tear_off(&self, item: &DockItemId) -> Option<&DockViewportTearOffPending> {
-        self.tear_off.pending(item)
-    }
-
-    /// Records a tear-off request without opening a window yet.
-    ///
-    /// This supports platform integrations where the release path requests a window and a later
-    /// window-created callback completes the transaction.
-    pub fn begin_tear_off_request(
+    pub(crate) fn begin_tear_off_request(
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
@@ -145,8 +130,7 @@ impl DockViewportRuntime {
         self.begin_tear_off_request_at(request, target_space, now)
     }
 
-    /// Records a tear-off request at an explicit logical clock value.
-    pub fn begin_tear_off_request_at(
+    pub(crate) fn begin_tear_off_request_at(
         &mut self,
         request: DockViewportTearOffRequest,
         target_space: impl Into<DockSpaceId>,
@@ -155,28 +139,14 @@ impl DockViewportRuntime {
         self.tear_off.begin(request, target_space.into(), now)
     }
 
-    /// Cancels a pending tear-off request for an item.
-    pub fn cancel_tear_off_request(
-        &mut self,
-        item: &DockItemId,
-        reason: DockViewportTearOffCancelReason,
-    ) -> Option<DockViewportTearOffCancelled> {
-        self.tear_off.cancel(item, reason)
-    }
-
-    /// Removes stale pending tear-off requests at an explicit logical clock value.
-    pub fn expire_tear_off_requests_at(
+    pub(crate) fn expire_tear_off_requests_at(
         &mut self,
         now: DockViewportTearOffTick,
     ) -> Vec<DockViewportTearOffCancelled> {
         self.tear_off.expire(now)
     }
 
-    /// Completes a pending tear-off request after a platform viewport window exists.
-    ///
-    /// The runtime validates that the source item still belongs to its recorded source tabs,
-    /// registers the destination viewport, commits the graph move, and clears pending state.
-    pub fn complete_tear_off_viewport(
+    pub(crate) fn complete_tear_off_viewport(
         &mut self,
         item: &DockItemId,
         window: impl Into<AnyWindowHandle>,
@@ -186,8 +156,7 @@ impl DockViewportRuntime {
         self.complete_tear_off_viewport_at(item, window, now, cx)
     }
 
-    /// Completes a pending tear-off request at an explicit logical clock value.
-    pub fn complete_tear_off_viewport_at(
+    pub(crate) fn complete_tear_off_viewport_at(
         &mut self,
         item: &DockItemId,
         window: impl Into<AnyWindowHandle>,

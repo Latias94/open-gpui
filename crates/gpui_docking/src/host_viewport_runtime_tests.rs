@@ -2,10 +2,13 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockController, DockGraph, DockHost,
     DockItemId, DockNode, DockOpApplyError, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportOpenStatus, DockViewportRuntime,
-    DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCompletionOutcome,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportTearOffTick,
-    DockWorkspace, host_test_support::*,
+    DockViewportShouldCloseStatus, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockWorkspace,
+    host_test_support::*,
+    viewport_tear_off::{
+        DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+        DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
+    },
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowHandle, WindowId,

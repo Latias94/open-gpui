@@ -53,6 +53,9 @@ Viewport productization:
   `crates/gpui_docking/src/viewport_runtime.rs`.
 - `DockViewportClosePolicy::Prevent` is applied before close cleanup through
   `DockViewportCloseGate` and `DockViewportShouldCloseOutcome`.
+- `DockViewportRuntimeHandle` exposes application-level viewport open, tear-off open, close
+  observation, and placement APIs; pending tear-off begin/complete/expire hooks are kept as
+  crate-internal runtime transaction seams.
 - Target resolution ranks hovered window, active window, front-to-back window stack, then
   deterministic fallback in `crates/gpui_docking/src/viewport_target_resolver.rs`.
 - Viewport hit testing and tear-off resolution require explicit `DockViewportTargetContext`

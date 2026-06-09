@@ -1,12 +1,10 @@
 use crate::{
-    DockController, DockItemId, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockController, DockSpaceId, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
-    DockViewportTearOffCompletionOutcome, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
 };
-use open_gpui::{AnyWindowHandle, App, Entity, Result, Subscription, WindowId, WindowOptions};
+use open_gpui::{App, Entity, Result, Subscription, WindowId, WindowOptions};
 use std::{
     cell::{Ref, RefCell},
     rc::Rc,
@@ -75,88 +73,6 @@ impl DockViewportRuntimeHandle {
             cx,
             move |window_id| runtime.handle_window_should_close(window_id).allows_close(),
         )
-    }
-
-    /// Returns pending tear-off item ids in stable order.
-    pub fn pending_tear_off_items(&self) -> Vec<DockItemId> {
-        self.runtime.borrow().pending_tear_off_items()
-    }
-
-    /// Returns the number of pending tear-off transactions.
-    pub fn pending_tear_off_len(&self) -> usize {
-        self.runtime.borrow().pending_tear_off_len()
-    }
-
-    /// Returns the pending tear-off request for an item.
-    pub fn pending_tear_off(&self, item: &DockItemId) -> Option<DockViewportTearOffPending> {
-        self.runtime.borrow().pending_tear_off(item).cloned()
-    }
-
-    /// Records a tear-off request without opening a window yet.
-    pub fn begin_tear_off_request(
-        &self,
-        request: DockViewportTearOffRequest,
-        target_space: impl Into<DockSpaceId>,
-    ) -> DockViewportTearOffBeginOutcome {
-        self.runtime
-            .borrow_mut()
-            .begin_tear_off_request(request, target_space)
-    }
-
-    /// Records a tear-off request at an explicit logical clock value.
-    pub fn begin_tear_off_request_at(
-        &self,
-        request: DockViewportTearOffRequest,
-        target_space: impl Into<DockSpaceId>,
-        now: DockViewportTearOffTick,
-    ) -> DockViewportTearOffBeginOutcome {
-        self.runtime
-            .borrow_mut()
-            .begin_tear_off_request_at(request, target_space, now)
-    }
-
-    /// Cancels a pending tear-off request for an item.
-    pub fn cancel_tear_off_request(
-        &self,
-        item: &DockItemId,
-        reason: DockViewportTearOffCancelReason,
-    ) -> Option<DockViewportTearOffCancelled> {
-        self.runtime
-            .borrow_mut()
-            .cancel_tear_off_request(item, reason)
-    }
-
-    /// Removes stale pending tear-off requests at an explicit logical clock value.
-    pub fn expire_tear_off_requests_at(
-        &self,
-        now: DockViewportTearOffTick,
-    ) -> Vec<DockViewportTearOffCancelled> {
-        self.runtime.borrow_mut().expire_tear_off_requests_at(now)
-    }
-
-    /// Completes a pending tear-off request after a platform viewport window exists.
-    pub fn complete_tear_off_viewport(
-        &self,
-        item: &DockItemId,
-        window: impl Into<AnyWindowHandle>,
-        cx: &mut App,
-    ) -> DockViewportTearOffCompletionOutcome {
-        self.runtime
-            .borrow_mut()
-            .complete_tear_off_viewport(item, window, cx)
-    }
-
-    /// Completes a pending tear-off request at an explicit logical clock value.
-    pub fn complete_tear_off_viewport_at(
-        &self,
-        item: &DockItemId,
-        window: impl Into<AnyWindowHandle>,
-        now: DockViewportTearOffTick,
-        cx: &mut App,
-    ) -> DockViewportTearOffCompletionOutcome {
-        self.runtime
-            .borrow_mut()
-            .complete_tear_off_viewport_at(item, window, now, cx)
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.

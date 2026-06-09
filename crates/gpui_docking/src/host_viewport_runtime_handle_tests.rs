@@ -95,7 +95,7 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
         panic!("tear-off should complete through the handle");
     };
     assert_eq!(completed.pending.target_space, detached_space);
-    assert_eq!(runtime.pending_tear_off_len(), 0);
+    assert_eq!(runtime.borrow().pending_tear_off_len(), 0);
     assert_eq!(
         runtime.borrow().adapter().window_for_space(&detached_space),
         Some(completed.registration.window)

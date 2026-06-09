@@ -31,22 +31,14 @@ pub enum DockViewportTearOffOutcome {
     Rejected(DockPolicyError),
 }
 
-/// Logical clock value used by the viewport runtime to expire stale tear-off requests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DockViewportTearOffTick(u64);
+pub(crate) struct DockViewportTearOffTick(u64);
 
 impl DockViewportTearOffTick {
-    /// Creates a logical tear-off clock value.
     pub const fn new(tick: u64) -> Self {
         Self(tick)
     }
 
-    /// Returns the underlying logical tick value.
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    /// Returns a tick advanced by `ticks`, saturating at `u64::MAX`.
     pub const fn saturating_add(self, ticks: u64) -> Self {
         Self(self.0.saturating_add(ticks))
     }
@@ -63,25 +55,19 @@ pub struct DockViewportTearOffPending {
     pub request: DockViewportTearOffRequest,
     /// Empty logical dock space that will receive the torn-off item.
     pub target_space: DockSpaceId,
-    /// Logical tick when the request was recorded.
-    pub requested_at: DockViewportTearOffTick,
-    /// Number of logical ticks after which the pending request is considered stale.
-    pub expires_after_ticks: u64,
+    requested_at: DockViewportTearOffTick,
+    expires_after_ticks: u64,
 }
 
 impl DockViewportTearOffPending {
-    /// Returns true when this pending request is stale at `now`.
-    pub fn is_expired_at(&self, now: DockViewportTearOffTick) -> bool {
+    pub(crate) fn is_expired_at(&self, now: DockViewportTearOffTick) -> bool {
         now.age_since(self.requested_at) > self.expires_after_ticks
     }
 }
 
-/// Outcome of recording a tear-off request.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportTearOffBeginOutcome {
-    /// A new pending request was recorded.
+pub(crate) enum DockViewportTearOffBeginOutcome {
     Pending(DockViewportTearOffPending),
-    /// The dragged item already has a pending request, so no duplicate request was created.
     Duplicate(DockViewportTearOffPending),
 }
 
@@ -129,19 +115,11 @@ pub struct DockViewportTearOffCommitFailure {
     pub error: crate::DockActionApplyError,
 }
 
-/// Outcome of completing a pending tear-off request with an opened viewport window.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DockViewportTearOffCompletionOutcome {
-    /// Viewport registration and graph move both completed.
+pub(crate) enum DockViewportTearOffCompletionOutcome {
     Completed(DockViewportTearOffCompleted),
-    /// The pending request was cancelled before graph mutation.
     Cancelled(DockViewportTearOffCancelled),
-    /// No pending request existed for the item.
-    MissingPending {
-        /// Item whose pending request was requested.
-        item: DockItemId,
-    },
-    /// The viewport registered, but the graph move failed and runtime mapping was cleaned up.
+    MissingPending { item: DockItemId },
     CommitFailed(DockViewportTearOffCommitFailure),
 }
 
@@ -180,10 +158,6 @@ impl DockViewportTearOffMachine {
 
     pub(crate) fn pending(&self, item: &DockItemId) -> Option<&DockViewportTearOffPending> {
         self.pending_by_item.get(item)
-    }
-
-    pub(crate) fn pending_items(&self) -> Vec<DockItemId> {
-        self.pending_by_item.keys().cloned().collect()
     }
 
     pub(crate) fn begin(
