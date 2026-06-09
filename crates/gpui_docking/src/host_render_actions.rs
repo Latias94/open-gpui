@@ -39,6 +39,36 @@ impl DockHost {
         )
     }
 
+    pub(crate) fn update_tabs_drop_intent_from_render(
+        &mut self,
+        target_tabs: DockNodeId,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed = self.update_tabs_drop_intent(target_tabs, bounds, position, cx);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    pub(crate) fn update_tab_reorder_drop_intent_from_render(
+        &mut self,
+        target_tabs: DockNodeId,
+        target_index: usize,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let changed =
+            self.update_tab_reorder_drop_intent(target_tabs, target_index, bounds, position, cx);
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
     pub(crate) fn begin_floating_drag_from_render(
         &mut self,
         space: DockSpaceId,
