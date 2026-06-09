@@ -1,31 +1,27 @@
 use crate::{DockViewportAdapter, DockViewportClosePolicy};
 use open_gpui::WindowId;
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashSet,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 #[derive(Clone, Debug)]
 pub(crate) struct DockViewportCloseGate {
-    close_policy: Rc<Cell<DockViewportClosePolicy>>,
+    close_policy: Rc<RefCell<DockViewportClosePolicy>>,
     known_windows: Rc<RefCell<HashSet<WindowId>>>,
 }
 
 impl DockViewportCloseGate {
     pub(crate) fn new(close_policy: DockViewportClosePolicy) -> Self {
         Self {
-            close_policy: Rc::new(Cell::new(close_policy)),
+            close_policy: Rc::new(RefCell::new(close_policy)),
             known_windows: Rc::new(RefCell::new(HashSet::new())),
         }
     }
 
     pub(crate) fn close_policy(&self) -> DockViewportClosePolicy {
-        self.close_policy.get()
+        self.close_policy.borrow().clone()
     }
 
     pub(crate) fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
-        self.close_policy.set(close_policy);
+        *self.close_policy.borrow_mut() = close_policy;
     }
 
     pub(crate) fn sync_adapter(&self, adapter: &DockViewportAdapter) {
@@ -45,7 +41,7 @@ impl DockViewportCloseGate {
             return true;
         }
 
-        self.close_policy() != DockViewportClosePolicy::Prevent
+        !matches!(self.close_policy(), DockViewportClosePolicy::Prevent)
     }
 }
 

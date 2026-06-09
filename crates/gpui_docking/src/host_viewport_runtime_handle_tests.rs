@@ -168,6 +168,81 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
 }
 
 #[open_gpui::test]
+fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller.clone(),
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+    cx.update(|app| runtime.observe_window_closed(app).detach());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("detached viewport should open");
+
+    assert!(
+        runtime
+            .handle_window_should_close(opened.window.window_id())
+            .allows_close(),
+        "merge-back policy should allow GPUI to close before graph merge"
+    );
+    opened
+        .window
+        .update(cx, |_, window, _| window.remove_window())
+        .expect("detached viewport should still be live");
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&detached_space),
+        None
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(main_tabs)
+            .expect("fallback tabs should remain")
+        else {
+            panic!("fallback root should be tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
+        assert_eq!(*active, 2);
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&detached_space)
+                .is_empty(),
+            "merge-back close should empty the detached logical space"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let detached_space = DockSpaceId::from("detached");

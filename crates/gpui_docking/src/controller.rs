@@ -237,6 +237,15 @@ impl DockController {
             .commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)
     }
 
+    pub(crate) fn commit_merge_space_into(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace
+            .commit_merge_space_into(source_space, target_space)
+    }
+
     pub(crate) fn commit_resize_split(
         &mut self,
         split: DockNodeId,

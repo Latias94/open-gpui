@@ -9,6 +9,7 @@ use crate::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
     },
+    viewport_test_support::handle,
     workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::{
@@ -525,6 +526,55 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
         visual.simulate_close(),
         "Prevent should not veto once docking no longer owns the window mapping"
     );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(44);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let outcome = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
+
+    assert_eq!(outcome.status, DockViewportCloseStatus::MergedBack);
+    assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(main_tabs)
+            .expect("fallback tabs should remain")
+        else {
+            panic!("fallback root should be tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
+        assert_eq!(*active, 2);
+    });
 }
 
 #[open_gpui::test]

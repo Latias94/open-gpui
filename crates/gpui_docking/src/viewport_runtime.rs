@@ -1,12 +1,13 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
     DockTransactionError, DockViewportActivationTarget, DockViewportAdapter,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropActionOutcome,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseOutcome,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffCancelled, DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
+    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteOutcome, DockViewportOpenOutcome, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
+    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
@@ -676,6 +677,25 @@ impl DockViewportRuntime {
         outcome
     }
 
+    /// Handles a GPUI window-closed notification with access to graph mutation context.
+    pub fn handle_window_closed_with_app(
+        &mut self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockViewportCloseOutcome {
+        let close_policy = self.close_policy();
+        let mut outcome = self.handle_window_closed(window_id);
+        let Some(source_space) = outcome.space.clone() else {
+            return outcome;
+        };
+        let DockViewportClosePolicy::MergeBack { target_space } = close_policy else {
+            return outcome;
+        };
+
+        outcome.status = self.merge_closed_space_back(&source_space, &target_space, cx);
+        outcome
+    }
+
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
     pub fn handle_window_should_close(
         &self,
@@ -683,6 +703,34 @@ impl DockViewportRuntime {
     ) -> DockViewportShouldCloseOutcome {
         self.adapter
             .should_close_viewport(window_id, self.close_policy())
+    }
+
+    fn merge_closed_space_back(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        cx: &mut App,
+    ) -> DockViewportCloseStatus {
+        self.controller
+            .update(cx, |controller, cx| {
+                let outcome = controller.commit_merge_space_into(source_space, target_space);
+                if outcome
+                    .as_ref()
+                    .map(|outcome| outcome.changed())
+                    .unwrap_or(false)
+                {
+                    cx.notify();
+                }
+                outcome
+            })
+            .map(|outcome| {
+                if outcome.changed() {
+                    DockViewportCloseStatus::MergedBack
+                } else {
+                    DockViewportCloseStatus::Closed
+                }
+            })
+            .unwrap_or(DockViewportCloseStatus::MergeBackFailed)
     }
 
     pub(crate) fn open_viewport_with_should_close(

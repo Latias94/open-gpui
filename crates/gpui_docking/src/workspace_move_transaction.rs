@@ -113,4 +113,52 @@ impl DockWorkspace {
             target_space: target_space.clone(),
         })
     }
+
+    pub(crate) fn commit_merge_space_into(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        if source_space == target_space {
+            return Ok(DockActionOutcome::Unchanged);
+        }
+
+        let source_tabs = self.graph().tabs_in_space(source_space);
+        if source_tabs.is_empty() {
+            return Ok(DockActionOutcome::Unchanged);
+        }
+
+        let mut target_tabs = self.graph().first_tabs_in_space(target_space);
+        let mut changed = false;
+        for source_tabs in source_tabs {
+            if self
+                .graph()
+                .root_for_node_in_space(source_space, source_tabs)
+                .is_none()
+            {
+                continue;
+            }
+
+            let outcome = if let Some(target_tabs) = target_tabs {
+                self.commit_tabs_move(DockWorkspaceMoveTabsRequest {
+                    source_space,
+                    source_tabs,
+                    target_space,
+                    target_tabs,
+                    zone: DropZone::Center,
+                    insert_index: None,
+                })?
+            } else {
+                self.commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)?
+            };
+            changed |= outcome.changed();
+            target_tabs = self.graph().first_tabs_in_space(target_space);
+        }
+
+        Ok(if changed {
+            DockActionOutcome::Changed
+        } else {
+            DockActionOutcome::Unchanged
+        })
+    }
 }

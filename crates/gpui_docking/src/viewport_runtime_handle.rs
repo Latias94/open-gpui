@@ -304,6 +304,17 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow_mut().handle_window_closed(window_id)
     }
 
+    /// Handles a GPUI window-closed notification and applies close policies that mutate graph.
+    pub fn handle_window_closed_with_app(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> DockViewportCloseOutcome {
+        self.runtime
+            .borrow_mut()
+            .handle_window_closed_with_app(window_id, cx)
+    }
+
     /// Handles a GPUI window should-close query through the shared runtime.
     pub fn handle_window_should_close(
         &self,
@@ -321,8 +332,8 @@ impl DockViewportRuntimeHandle {
     /// Keep or detach the returned subscription according to the application's lifetime policy.
     pub fn observe_window_closed(&self, cx: &mut App) -> Subscription {
         let runtime = self.clone();
-        cx.on_window_closed(move |_, window_id| {
-            runtime.handle_window_closed(window_id);
+        cx.on_window_closed(move |cx, window_id| {
+            runtime.handle_window_closed_with_app(window_id, cx);
         })
     }
 

@@ -2,7 +2,7 @@ use crate::{DockSpaceId, DockViewportAdapter};
 use open_gpui::{AnyWindowHandle, WindowId};
 
 /// Default behavior for a platform viewport close request.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DockViewportClosePolicy {
     /// Unregister the runtime window and keep the logical dock layout available for reopen.
     #[default]
@@ -14,6 +14,11 @@ pub enum DockViewportClosePolicy {
     /// should-close hooks. Adapter-level cleanup methods run after the platform close decision has
     /// already happened, so vetoes are reported only by should-close outcomes.
     Prevent,
+    /// Allow the platform close, then move the viewport's dock content into a fallback space.
+    MergeBack {
+        /// Logical dock space that should receive the closing viewport's tab stacks.
+        target_space: DockSpaceId,
+    },
 }
 
 /// Runtime result of closing a platform viewport.
@@ -32,6 +37,10 @@ pub struct DockViewportCloseOutcome {
 pub enum DockViewportCloseStatus {
     /// The window closed and its runtime mapping was removed.
     Closed,
+    /// The window closed, its runtime mapping was removed, and content moved to fallback space.
+    MergedBack,
+    /// The window closed and its runtime mapping was removed, but merge-back could not commit.
+    MergeBackFailed,
     /// The runtime did not know the closed window id.
     UnknownWindow,
 }
@@ -105,7 +114,9 @@ impl DockViewportAdapter {
         };
 
         let status = match policy {
-            DockViewportClosePolicy::RetainLayout => DockViewportShouldCloseStatus::Allowed,
+            DockViewportClosePolicy::RetainLayout | DockViewportClosePolicy::MergeBack { .. } => {
+                DockViewportShouldCloseStatus::Allowed
+            }
             DockViewportClosePolicy::Prevent => DockViewportShouldCloseStatus::Vetoed,
         };
         DockViewportShouldCloseOutcome {
