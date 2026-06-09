@@ -119,6 +119,10 @@ Native dogfood:
 - The runtime status panel exposes close-policy switching, placement reapply, viewport reopen, and
   descriptor-backed panel restore controls so close/reopen paths can be exercised without code
   changes.
+- Native example unit tests now assert the dogfood layout facts, viewport placement titles,
+  descriptor-backed close/reopen controls, and whole-stack float/merge behavior through the public
+  `DockController` API. This keeps the example from drifting while manual drag dogfood remains the
+  final proof for pixel/event delivery.
 
 Test locality:
 
@@ -137,6 +141,9 @@ Test locality:
 - The rendered release-outside path now has a platform button-state polling seam for macOS,
   Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
   until a reliable platform primitive is available.
+- macOS build and native-launch smoke have been verified for `examples/docking-native`. A local
+  `x86_64-pc-windows-msvc` cross-check is still blocked by the absence of the MSVC `lib.exe`
+  toolchain, so Windows backend verification needs a Windows/MSVC environment or CI job.
 - Add richer product behavior through the existing seams: route-preview polish, focus restoration,
   accessibility behavior, and broader backend coverage for outside-window release polling.
 - Continue splitting future viewport or graph code only when the extracted module passes the

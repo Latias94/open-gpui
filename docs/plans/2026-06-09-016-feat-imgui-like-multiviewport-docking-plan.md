@@ -14,6 +14,9 @@ multi-viewport docking experience. The core release path now uses the resolver, 
 geometry, and viewport runtime seams for cross-window drag, dock-back, tear-off, whole-stack drag,
 preview, close, and activation behavior; this plan remains active for dogfood, visual polish,
 documentation alignment, and deletion-audit proof.
+Native example tests now pin the demo layout, restore controls, placement titles, and public
+whole-stack float/merge path; manual cross-window drag dogfood and backend-specific verification
+remain the final product proof.
 
 ---
 
@@ -31,7 +34,8 @@ GPUI windows, validating previews in source and destination viewports, releasing
 releasing outside all viewports to tear off, restoring focus, and handling close decisions without
 graph/window corruption. On the current branch the rendered host release path already routes
 through host drop scenes and viewport runtime transactions; this plan remains active for visual
-polish, manual dogfood, documentation alignment, and deletion of any stale compatibility paths.
+polish, manual cross-window dogfood, backend verification, documentation alignment, and deletion
+of any stale compatibility paths.
 
 The plan keeps ADR 0002 intact. Platform windows, focus, retained views, and event routing stay
 owned by GPUI. Docking adds a runtime coordinator and host-local drop scene, not a second window or
