@@ -133,24 +133,11 @@ impl DockViewportAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{DockHost, DockViewportAdapter, DockViewportHit};
-    use open_gpui::{
-        AnyWindowHandle, Bounds, DisplayId, Pixels, WindowBounds, WindowHandle, WindowId, point,
-        px, size,
+    use crate::{
+        DockViewportAdapter, DockViewportHit,
+        viewport_test_support::{bounds, handle, space},
     };
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
-
-    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
-    }
+    use open_gpui::{DisplayId, WindowBounds, point, px};
 
     #[test]
     fn coordinate_conversion_requires_current_bounds_snapshots() {

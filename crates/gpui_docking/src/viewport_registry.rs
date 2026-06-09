@@ -152,16 +152,7 @@ impl DockViewportRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DockHost;
-    use open_gpui::WindowHandle;
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
+    use crate::viewport_test_support::{handle, space};
 
     #[test]
     fn register_keeps_space_and_window_indexes_one_to_one() {

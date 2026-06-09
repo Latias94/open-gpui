@@ -61,16 +61,8 @@ pub(crate) fn choose_viewport_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DockHost;
-    use open_gpui::{WindowHandle, WindowId, point, px};
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
+    use crate::viewport_test_support::{handle, space};
+    use open_gpui::{point, px};
 
     fn candidate(space: &str, window: AnyWindowHandle) -> DockViewportHitCandidate {
         DockViewportHitCandidate {

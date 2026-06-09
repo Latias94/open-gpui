@@ -58,22 +58,8 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockHost, DockSpaceId};
-    use open_gpui::{
-        AnyWindowHandle, Bounds, WindowBounds, WindowHandle, WindowId, point, px, size,
-    };
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
-
-    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
-    }
+    use crate::viewport_test_support::{bounds, handle, space};
+    use open_gpui::{WindowBounds, point, px};
 
     #[test]
     fn hit_testing_uses_context_before_deterministic_space_order() {

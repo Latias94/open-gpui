@@ -88,27 +88,12 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockHost, DockViewportAdapter};
-    use open_gpui::{
-        AnyWindowHandle, Bounds, DisplayId, Pixels, WindowHandle, WindowId, point, px, size,
+    use crate::{
+        DockViewportAdapter,
+        viewport_test_support::{bounds, handle, item, space},
     };
+    use open_gpui::{DisplayId, point, px};
     use slotmap::Key;
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn item(id: &str) -> DockItemId {
-        DockItemId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
-
-    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
-    }
 
     #[test]
     fn tear_off_release_inside_known_viewport_returns_hit() {

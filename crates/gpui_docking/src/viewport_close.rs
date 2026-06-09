@@ -155,18 +155,10 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockHost, DockItemId, DockNode, DockViewportAdapter, DockViewportOpenOutcome,
+        DockGraph, DockItemId, DockNode, DockViewportAdapter, DockViewportOpenOutcome,
         DockViewportOpenStatus,
+        viewport_test_support::{handle, space},
     };
-    use open_gpui::{AnyWindowHandle, WindowHandle};
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
 
     #[test]
     fn unregistering_by_window_id_clears_close_callback_mapping() {

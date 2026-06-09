@@ -101,22 +101,11 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockHost, DockItemId, DockNode, DockViewportUnregisterOutcome,
+        DockGraph, DockItemId, DockNode, DockViewportUnregisterOutcome,
         DockViewportUnregisterReason,
+        viewport_test_support::{bounds, handle, space},
     };
-    use open_gpui::{Bounds, DisplayId, Pixels, WindowBounds, WindowHandle, point, px, size};
-
-    fn space(id: &str) -> DockSpaceId {
-        DockSpaceId::from(id)
-    }
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
-
-    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
-        Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
-    }
+    use open_gpui::{DisplayId, WindowBounds};
 
     #[test]
     fn registering_viewports_records_and_replaces_window_mappings() {

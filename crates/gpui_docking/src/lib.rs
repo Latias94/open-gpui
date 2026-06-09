@@ -155,6 +155,8 @@ mod host_viewport_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]
+mod viewport_test_support;
+#[cfg(test)]
 mod workspace_move_tests;
 #[cfg(test)]
 mod workspace_panel_lifecycle_tests;

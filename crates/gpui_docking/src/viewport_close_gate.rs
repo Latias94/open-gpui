@@ -52,12 +52,7 @@ impl DockViewportCloseGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockHost, DockSpaceId};
-    use open_gpui::{AnyWindowHandle, WindowHandle};
-
-    fn handle(id: u64) -> AnyWindowHandle {
-        WindowHandle::<DockHost>::new(WindowId::from(id)).into()
-    }
+    use crate::{DockSpaceId, viewport_test_support::handle};
 
     #[test]
     fn close_gate_applies_policy_only_to_synced_adapter_windows() {
