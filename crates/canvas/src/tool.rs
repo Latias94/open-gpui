@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt, sync::Arc};
 
 mod builtin;
+mod select;
 
 use builtin::BuiltInCanvasTool;
 
