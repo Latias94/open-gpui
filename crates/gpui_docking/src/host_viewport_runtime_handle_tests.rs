@@ -1265,8 +1265,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 route,
                 app,
             )
-            .map(|outcome| outcome.into_action_result())
-            .and_then(|result| result)
+            .and_then(|outcome| outcome.action_result())
     });
 
     assert_eq!(result, Ok(crate::DockActionOutcome::Changed));

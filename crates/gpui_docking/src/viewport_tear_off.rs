@@ -220,7 +220,7 @@ impl DockViewportDropRouteOutcome {
         }
     }
 
-    pub(crate) fn into_action_result(self) -> Result<DockActionOutcome, DockActionApplyError> {
+    pub(crate) fn action_result(&self) -> Result<DockActionOutcome, DockActionApplyError> {
         match self {
             DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
@@ -232,7 +232,7 @@ impl DockViewportDropRouteOutcome {
             }
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::CommitFailed(failure),
-            ) => Err(failure.error),
+            ) => Err(failure.error.clone()),
         }
     }
 }

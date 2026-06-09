@@ -2,8 +2,7 @@
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId,
-    DockViewportActivationTarget, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportTargetContext,
+    DockViewportDropPayload, DockViewportDropRouteOutcome, DockViewportTargetContext,
     drag::{DockDragPayload, DockDragPayloadKind},
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
@@ -15,36 +14,42 @@ use crate::{
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockHostInteractionOutcome {
     Idle,
     Changed,
-    ChangedAndActivate(DockViewportActivationTarget),
     Notify,
-    NotifyAndActivate(DockViewportActivationTarget),
+    RoutedDrop {
+        outcome: DockViewportDropRouteOutcome,
+        changed: bool,
+    },
     Rejected(DockActionApplyError),
 }
 
 impl DockHostInteractionOutcome {
     pub(crate) fn changed(&self) -> bool {
-        matches!(self, Self::Changed | Self::ChangedAndActivate(_))
+        match self {
+            Self::Changed => true,
+            Self::RoutedDrop { outcome, changed } => {
+                *changed
+                    || outcome
+                        .action_result()
+                        .map(DockActionOutcome::changed)
+                        .unwrap_or(false)
+            }
+            Self::Idle | Self::Notify | Self::Rejected(_) => false,
+        }
     }
 
     pub(crate) fn finish(self, cx: &mut Context<DockHost>) -> bool {
         let changed = self.changed();
+        let should_notify = self.should_notify();
         if let Some(activation) = self.activation_target() {
             let _ = activation
                 .window
                 .update(cx, |_, window, _| window.activate_window());
         }
-        if matches!(
-            self,
-            Self::Changed
-                | Self::ChangedAndActivate(_)
-                | Self::Notify
-                | Self::NotifyAndActivate(_)
-                | Self::Rejected(_)
-        ) {
+        if should_notify {
             cx.notify();
         }
         changed
@@ -57,16 +62,12 @@ impl DockHostInteractionOutcome {
     pub(crate) fn merge(self, other: Self) -> Self {
         match (self, other) {
             (Self::Rejected(error), _) | (_, Self::Rejected(error)) => Self::Rejected(error),
-            (Self::ChangedAndActivate(activation), _)
-            | (_, Self::ChangedAndActivate(activation))
-            | (Self::Changed, Self::NotifyAndActivate(activation))
-            | (Self::NotifyAndActivate(activation), Self::Changed) => {
-                Self::ChangedAndActivate(activation)
-            }
+            (Self::RoutedDrop { outcome, changed }, other)
+            | (other, Self::RoutedDrop { outcome, changed }) => Self::RoutedDrop {
+                outcome,
+                changed: changed || other.changed(),
+            },
             (Self::Changed, _) | (_, Self::Changed) => Self::Changed,
-            (Self::NotifyAndActivate(activation), _) | (_, Self::NotifyAndActivate(activation)) => {
-                Self::NotifyAndActivate(activation)
-            }
             (Self::Notify, _) | (_, Self::Notify) => Self::Notify,
             (Self::Idle, Self::Idle) => Self::Idle,
         }
@@ -84,36 +85,66 @@ impl DockHostInteractionOutcome {
         }
     }
 
+    fn should_notify(&self) -> bool {
+        matches!(
+            self,
+            Self::Changed | Self::Notify | Self::RoutedDrop { .. } | Self::Rejected(_)
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn routed_drop_outcome(&self) -> Option<&DockViewportDropRouteOutcome> {
+        match self {
+            Self::RoutedDrop { outcome, .. } => Some(outcome),
+            Self::Idle | Self::Changed | Self::Notify | Self::Rejected(_) => None,
+        }
+    }
+
     fn from_routed_drop_result(
         result: Result<DockViewportDropRouteOutcome, DockActionApplyError>,
-        notify_on_unchanged: bool,
     ) -> Self {
-        let outcome = match result {
-            Ok(outcome) => outcome,
-            Err(error) => return Self::Rejected(error),
-        };
-        let activation = outcome.activation_target();
-        match outcome.into_action_result() {
-            Ok(DockActionOutcome::Changed) => match activation {
-                Some(activation) => Self::ChangedAndActivate(activation),
-                None => Self::Changed,
+        match result {
+            Ok(outcome) => Self::RoutedDrop {
+                outcome,
+                changed: false,
             },
-            Ok(DockActionOutcome::Unchanged) if notify_on_unchanged => match activation {
-                Some(activation) => Self::NotifyAndActivate(activation),
-                None => Self::Notify,
-            },
-            Ok(DockActionOutcome::Unchanged) => Self::Idle,
             Err(error) => Self::Rejected(error),
         }
     }
 
-    fn activation_target(&self) -> Option<DockViewportActivationTarget> {
+    fn activation_target(&self) -> Option<crate::DockViewportActivationTarget> {
         match self {
-            Self::ChangedAndActivate(activation) | Self::NotifyAndActivate(activation) => {
-                Some(activation.clone())
-            }
+            Self::RoutedDrop { outcome, .. } => outcome.activation_target(),
             Self::Idle | Self::Changed | Self::Notify | Self::Rejected(_) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockViewportDropActionOutcome, host_test_support::space, viewport_test_support::handle,
+    };
+
+    #[test]
+    fn routed_drop_outcome_preserves_viewport_side_effects() {
+        let window = handle(1);
+        let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome {
+            action: DockActionOutcome::Changed,
+            activation: Some(crate::DockViewportActivationTarget {
+                space: space(),
+                window,
+            }),
+        });
+        let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed.clone()));
+
+        assert!(outcome.changed());
+        assert_eq!(outcome.routed_drop_outcome(), Some(&routed));
+        assert_eq!(
+            outcome.activation_target().map(|target| target.window),
+            Some(window)
+        );
     }
 }
 
@@ -395,9 +426,7 @@ impl DockHost {
             route,
             cx,
         );
-        Some(DockHostInteractionOutcome::from_routed_drop_result(
-            result, true,
-        ))
+        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 
     #[cfg(test)]
