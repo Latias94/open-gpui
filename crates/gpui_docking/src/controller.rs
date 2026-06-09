@@ -141,6 +141,14 @@ impl DockController {
         self.workspace.commit_resolved_drop(request)
     }
 
+    pub(crate) fn commit_select_tab(
+        &mut self,
+        tabs: DockNodeId,
+        item: &DockItemId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.workspace.commit_select_tab(tabs, item)
+    }
+
     #[cfg(test)]
     pub(crate) fn commit_tab_move(
         &mut self,

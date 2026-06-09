@@ -6,7 +6,7 @@ use open_gpui::{AppContext as _, TestAppContext};
 use std::{cell::Cell, rc::Rc};
 
 #[open_gpui::test]
-fn workspace_close_item_action_respects_panel_policy(cx: &mut TestAppContext) {
+fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel(
@@ -46,7 +46,7 @@ fn workspace_close_item_action_respects_panel_policy(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn workspace_close_item_action_uses_metadata_without_instantiating_lazy_panel(
+fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_panel(
     _cx: &mut TestAppContext,
 ) {
     let (graph, root) = tabs_graph(&["lazy"], 0);
@@ -136,7 +136,7 @@ fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn workspace_open_item_action_reopens_registered_lazy_panel_without_instantiating_view(
+fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instantiating_view(
     _cx: &mut TestAppContext,
 ) {
     let (graph, root) = tabs_graph(&["a", "b"], 0);
@@ -214,7 +214,7 @@ fn workspace_attach_panel_factory_preserves_restored_metadata() {
 }
 
 #[open_gpui::test]
-fn workspace_open_item_action_requires_registered_panel(cx: &mut TestAppContext) {
+fn workspace_open_item_transaction_requires_registered_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A")]);
 
@@ -245,7 +245,7 @@ fn workspace_open_item_action_requires_registered_panel(cx: &mut TestAppContext)
 }
 
 #[open_gpui::test]
-fn workspace_close_item_action_requires_registered_panel(cx: &mut TestAppContext) {
+fn workspace_close_item_transaction_requires_registered_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a"], 0);
     let mut workspace = workspace_with_panels(cx, graph, &[]);
 

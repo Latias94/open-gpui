@@ -4,7 +4,7 @@ use crate::{
 };
 
 impl DockWorkspace {
-    pub(crate) fn close_item_action(
+    pub(crate) fn commit_close_item(
         &mut self,
         space: &DockSpaceId,
         item: &DockItemId,
@@ -17,7 +17,7 @@ impl DockWorkspace {
         })
     }
 
-    pub(crate) fn open_item_action(
+    pub(crate) fn commit_open_item(
         &mut self,
         space: &DockSpaceId,
         target_tabs: Option<DockNodeId>,

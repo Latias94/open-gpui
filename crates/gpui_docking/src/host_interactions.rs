@@ -1,8 +1,7 @@
 #[cfg(test)]
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId,
-    DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId,
     drop_runtime::DockDropTargetUpdate,
     drop_target::{DockLeafDropTarget, DockTabLabelDropTarget},
     interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
@@ -55,7 +54,7 @@ impl DockHost {
         item: DockItemId,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        self.commit_action_interaction(DockAction::SelectTab { tabs, item }, cx, false)
+        self.commit_select_tab_interaction(tabs, &item, cx, false)
     }
 
     pub(crate) fn begin_splitter_drag_interaction(
@@ -232,14 +231,15 @@ impl DockHost {
         self.interaction().floating_drag()
     }
 
-    fn commit_action_interaction(
+    fn commit_select_tab_interaction(
         &mut self,
-        action: DockAction,
+        tabs: DockNodeId,
+        item: &DockItemId,
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
-            self.apply_action_from_host(&action, cx),
+            self.commit_select_tab_from_host(tabs, item, cx),
             notify_on_unchanged,
         )
     }

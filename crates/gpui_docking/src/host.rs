@@ -1,7 +1,7 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockController, DockNodeId, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
     interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspaceDropRequest,
 };
@@ -76,20 +76,21 @@ impl DockHost {
         })
     }
 
-    pub(crate) fn apply_action_from_host(
-        &mut self,
-        action: &DockAction,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| controller.apply_action(action))
-    }
-
     pub(crate) fn commit_resolved_drop_from_host(
         &mut self,
         request: DockWorkspaceDropRequest<'_>,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.mutate_controller_from_host(cx, |controller| controller.commit_resolved_drop(request))
+    }
+
+    pub(crate) fn commit_select_tab_from_host(
+        &mut self,
+        tabs: DockNodeId,
+        item: &DockItemId,
+        cx: &mut Context<Self>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.mutate_controller_from_host(cx, |controller| controller.commit_select_tab(tabs, item))
     }
 
     pub(crate) fn commit_resize_split_from_host(

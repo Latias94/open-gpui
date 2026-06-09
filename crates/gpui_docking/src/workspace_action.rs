@@ -10,14 +10,14 @@ impl DockWorkspace {
         action: &DockAction,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         match action {
-            DockAction::SelectTab { tabs, item } => self.select_tab(*tabs, item),
-            DockAction::CloseItem { space, item } => self.close_item_action(space, item),
+            DockAction::SelectTab { tabs, item } => self.commit_select_tab(*tabs, item),
+            DockAction::CloseItem { space, item } => self.commit_close_item(space, item),
             DockAction::OpenItem {
                 space,
                 target_tabs,
                 item,
                 insert_index,
-            } => self.open_item_action(space, *target_tabs, item, *insert_index),
+            } => self.commit_open_item(space, *target_tabs, item, *insert_index),
             DockAction::FloatItemInWindow {
                 source_space,
                 item,
@@ -60,7 +60,7 @@ impl DockWorkspace {
             .map_err(Into::into)
     }
 
-    fn select_tab(
+    pub(crate) fn commit_select_tab(
         &mut self,
         tabs: DockNodeId,
         item: &DockItemId,

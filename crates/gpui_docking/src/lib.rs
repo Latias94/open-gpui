@@ -140,8 +140,8 @@ mod workspace_action;
 mod workspace_floating_transaction;
 mod workspace_move_transaction;
 mod workspace_move_validation;
-mod workspace_panel_action;
 mod workspace_panel_lifecycle;
+mod workspace_panel_transaction;
 mod workspace_resize_transaction;
 mod workspace_transaction;
 

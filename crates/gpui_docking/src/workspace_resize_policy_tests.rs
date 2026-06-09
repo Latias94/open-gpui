@@ -7,7 +7,7 @@ use open_gpui::TestAppContext;
 use slotmap::Key;
 
 #[open_gpui::test]
-fn workspace_resize_split_action_updates_fractions(cx: &mut TestAppContext) {
+fn workspace_resize_split_transaction_updates_fractions(cx: &mut TestAppContext) {
     let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
@@ -31,7 +31,9 @@ fn workspace_resize_split_action_updates_fractions(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn workspace_resize_split_action_reports_unchanged_for_same_fractions(cx: &mut TestAppContext) {
+fn workspace_resize_split_transaction_reports_unchanged_for_same_fractions(
+    cx: &mut TestAppContext,
+) {
     let (graph, split, _left, _right) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
@@ -46,7 +48,7 @@ fn workspace_resize_split_action_reports_unchanged_for_same_fractions(cx: &mut T
 }
 
 #[open_gpui::test]
-fn workspace_resize_split_action_rejects_invalid_targets(cx: &mut TestAppContext) {
+fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppContext) {
     let (graph, split, left_tabs, _right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
