@@ -102,6 +102,7 @@ mod graph_test_support;
 mod graph_validation_tests;
 mod host;
 mod host_debug;
+mod host_drop_scene;
 mod host_interactions;
 mod host_outside_release;
 mod host_render_actions;
