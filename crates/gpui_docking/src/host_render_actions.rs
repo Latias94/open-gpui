@@ -87,18 +87,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.schedule_outside_release_poll_from_host(window, cx);
-        if let Some(runtime) = self.viewport_runtime().cloned() {
-            let window_id = window.window_handle().window_id();
-            if runtime.window_id_for_space(self.space()) == Some(window_id) {
-                runtime.begin_viewport_host_scene(
-                    self.space().clone(),
-                    window_id,
-                    window.window_bounds(),
-                    host_bounds,
-                    host_local_point(host_bounds, position),
-                );
-            }
-        }
+        self.publish_viewport_host_scene_interaction(host_bounds, position, window);
         self.update_floating_drag_interaction(position, cx)
             .merge(
                 self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
@@ -212,11 +201,4 @@ impl DockHost {
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
     }
-}
-
-fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
-    Point::new(
-        position.x - host_bounds.origin.x,
-        position.y - host_bounds.origin.y,
-    )
 }

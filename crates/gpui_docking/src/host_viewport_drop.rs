@@ -3,9 +3,32 @@ use crate::{
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
 };
-use open_gpui::{Context, Pixels, Point, Window, point};
+use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
 impl DockHost {
+    pub(crate) fn publish_viewport_host_scene_interaction(
+        &self,
+        host_bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        window: &Window,
+    ) {
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return;
+        };
+        let window_id = window.window_handle().window_id();
+        if runtime.window_id_for_space(self.space()) != Some(window_id) {
+            return;
+        }
+
+        runtime.begin_viewport_host_scene(
+            self.space().clone(),
+            window_id,
+            window.window_bounds(),
+            host_bounds,
+            host_local_point(host_bounds, position),
+        );
+    }
+
     pub(crate) fn update_viewport_drop_route_preview_interaction(
         &mut self,
         payload: &DockDragPayload,
@@ -62,6 +85,13 @@ fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pix
     point(
         window_bounds.origin.x + position.x,
         window_bounds.origin.y + position.y,
+    )
+}
+
+fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
+    Point::new(
+        position.x - host_bounds.origin.x,
+        position.y - host_bounds.origin.y,
     )
 }
 
