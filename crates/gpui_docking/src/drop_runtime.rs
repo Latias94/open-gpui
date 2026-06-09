@@ -455,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_target_take_does_not_require_tab_receiver() {
+    fn resolved_target_take_does_not_require_receiver_bounds() {
         let root = DockNodeId::null();
         let mut graph = crate::DockGraph::new();
         let leaf = graph.insert_node(crate::DockNode::Tabs {
@@ -489,7 +489,7 @@ mod tests {
 
         let target = runtime
             .take_resolved_target()
-            .expect("root-edge target should not require a tab receiver");
+            .expect("root-edge target should resolve without receiver bounds");
         assert!(matches!(
             target.kind,
             DockResolvedDropTargetKind::RootEdge {
@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_space_target_can_be_taken_without_tab_receiver() {
+    fn empty_space_target_can_be_taken_without_receiver_bounds() {
         let space = crate::DockSpaceId::from("empty");
         let mut runtime = DockDropRuntime::default();
         let position = point(px(40.0), px(40.0));
@@ -519,7 +519,7 @@ mod tests {
 
         let target = runtime
             .take_resolved_target()
-            .expect("empty-space target should not require a tab receiver");
+            .expect("empty-space target should resolve without receiver bounds");
         assert!(matches!(
             target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace { space: target_space } if target_space == space

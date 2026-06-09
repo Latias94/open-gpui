@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn tear_off_route_preview_is_visible_without_tab_receiver() {
+    fn tear_off_route_preview_is_visible_without_receiver_bounds() {
         let source_space = space("source");
         let source_tabs = DockNodeId::null();
         let release_position = point(px(900.0), px(700.0));
