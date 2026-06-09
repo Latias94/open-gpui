@@ -1,5 +1,5 @@
 use crate::{
-    DockNodeId, DockPolicy, DropZone,
+    DockNodeId, DockPolicy,
     drop_target::{
         self, DockDropResolution, DockDropResolverInput, DockEmptySpaceDropTarget,
         DockFloatingTitleBarDropTarget, DockLeafDropTarget, DockResolvedDropTarget,
@@ -8,12 +8,10 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Point};
 
-#[derive(Debug, Clone, PartialEq)]
-struct DockDropPreviewSnapshot {
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockTabReorderHold {
     target_tabs: DockNodeId,
-    zone: DropZone,
-    insert_index: Option<usize>,
-    preview_bounds: Bounds<Pixels>,
+    bounds: Bounds<Pixels>,
 }
 
 #[derive(Debug, Default)]
@@ -138,17 +136,13 @@ impl DockDropRuntime {
             None => return false,
         };
         if let Some(existing) = self.resolution.as_ref().and_then(valid_target)
-            && let Some(existing_preview) = preview_snapshot(existing)
-            && existing_preview.insert_index.is_some()
-            && existing_preview.preview_bounds.contains(&scene.position)
+            && let Some(reorder_hold) = tab_reorder_hold(existing)
+            && reorder_hold.bounds.contains(&scene.position)
             && resolution
                 .as_ref()
                 .and_then(valid_target)
-                .and_then(preview_snapshot)
-                .is_some_and(|preview| {
-                    preview.target_tabs == existing_preview.target_tabs
-                        && preview.zone == DropZone::Center
-                })
+                .and_then(center_target_tabs)
+                .is_some_and(|target_tabs| target_tabs == reorder_hold.target_tabs)
         {
             resolution = Some(DockDropResolution::Valid(existing.clone()));
         }
@@ -203,11 +197,8 @@ impl DockDropRuntime {
     }
 
     #[cfg(test)]
-    fn preview_snapshot(&self) -> Option<DockDropPreviewSnapshot> {
-        self.resolution
-            .as_ref()
-            .and_then(resolution_target)
-            .and_then(preview_snapshot)
+    fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
+        self.resolution.as_ref().and_then(resolution_target)
     }
 }
 
@@ -227,45 +218,54 @@ fn valid_target(resolution: &DockDropResolution) -> Option<&DockResolvedDropTarg
     }
 }
 
-fn preview_snapshot(target: &DockResolvedDropTarget) -> Option<DockDropPreviewSnapshot> {
-    let preview_bounds = target.preview_bounds?;
-    let (target_tabs, zone, insert_index) = match target.kind {
-        drop_target::DockResolvedDropTargetKind::TabBar {
-            target_tabs,
-            insert_index,
-        } => (target_tabs, DropZone::Center, Some(insert_index)),
-        drop_target::DockResolvedDropTargetKind::LeafCenter { target_tabs, .. } => {
-            (target_tabs, DropZone::Center, None)
-        }
-        drop_target::DockResolvedDropTargetKind::InnerEdge {
-            target_tabs, zone, ..
-        } => (target_tabs, zone, None),
-        drop_target::DockResolvedDropTargetKind::RootEdge { root, zone, .. } => (root, zone, None),
-        drop_target::DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-            (target_tabs, DropZone::Center, None)
-        }
-        drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. }
-        | drop_target::DockResolvedDropTargetKind::KnownViewport { .. }
-        | drop_target::DockResolvedDropTargetKind::TearOffCandidate { .. } => return None,
+fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHold> {
+    let drop_target::DockResolvedDropTargetKind::TabBar {
+        target_tabs,
+        insert_index: _,
+    } = target.kind
+    else {
+        return None;
     };
 
-    Some(DockDropPreviewSnapshot {
+    Some(DockTabReorderHold {
         target_tabs,
-        zone,
-        insert_index,
-        preview_bounds,
+        bounds: target.preview_bounds?,
     })
+}
+
+fn center_target_tabs(target: &DockResolvedDropTarget) -> Option<DockNodeId> {
+    match target.kind {
+        drop_target::DockResolvedDropTargetKind::TabBar { target_tabs, .. }
+        | drop_target::DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+        | drop_target::DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
+            Some(target_tabs)
+        }
+        drop_target::DockResolvedDropTargetKind::InnerEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::RootEdge { .. }
+        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. }
+        | drop_target::DockResolvedDropTargetKind::KnownViewport { .. }
+        | drop_target::DockResolvedDropTargetKind::TearOffCandidate { .. } => None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drop_target::DockResolvedDropTargetKind;
+    use crate::{DropZone, drop_target::DockResolvedDropTargetKind};
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
     fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    fn resolved_tab_insert_index(runtime: &DockDropRuntime) -> Option<usize> {
+        let DockResolvedDropTargetKind::TabBar { insert_index, .. } =
+            runtime.resolved_target()?.kind
+        else {
+            return None;
+        };
+        Some(insert_index)
     }
 
     #[test]
@@ -285,23 +285,13 @@ mod tests {
             }),
             &DockPolicy::default()
         ));
-        assert_eq!(
-            runtime
-                .preview_snapshot()
-                .map(|preview| preview.insert_index),
-            Some(Some(3))
-        );
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(3));
 
         assert!(!runtime.begin_scene(
             DockHostDropScene::new(point(px(200.0), px(28.0))).preserve_on_miss(),
             &DockPolicy::default()
         ));
-        assert_eq!(
-            runtime
-                .preview_snapshot()
-                .map(|preview| preview.insert_index),
-            Some(Some(3))
-        );
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(3));
     }
 
     #[test]
@@ -335,14 +325,18 @@ mod tests {
         let target = runtime
             .take_resolved_target()
             .expect("reorder target should remain available");
-        let preview = preview_snapshot(&target).expect("tab drop target should project");
-        assert_eq!(preview.zone, DropZone::Center);
-        assert_eq!(preview.insert_index, Some(3));
-        assert!(runtime.preview_snapshot().is_none());
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs: tabs,
+                insert_index: 3,
+            }
+        );
+        assert!(runtime.resolved_target().is_none());
     }
 
     #[test]
-    fn reorder_target_keeps_insert_index_in_preview_snapshot() {
+    fn reorder_target_keeps_insert_index_in_resolved_target() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
         let position = point(px(20.0), px(28.0));
@@ -359,12 +353,7 @@ mod tests {
             &DockPolicy::default()
         ));
 
-        assert_eq!(
-            runtime
-                .preview_snapshot()
-                .map(|preview| preview.insert_index),
-            Some(Some(0))
-        );
+        assert_eq!(resolved_tab_insert_index(&runtime), Some(0));
     }
 
     #[test]
