@@ -88,7 +88,7 @@ fn restored_demo_layout() -> DockLayout {
     let mut controller = DockController::builder(SPACE)
         .default_editor_layout(
             EditorDockLayoutSpec::new(
-                ["explorer", "outline"],
+                ["explorer", "outline", "workspace"],
                 ["editor", "preview"],
                 ["terminal", "problems"],
             )
@@ -99,8 +99,13 @@ fn restored_demo_layout() -> DockLayout {
         .allow_platform_viewports(true)
         .panel_descriptor("explorer", DockPanelDescriptor::new("Explorer"))
         .panel_descriptor("outline", DockPanelDescriptor::new("Outline"))
+        .panel_descriptor(
+            "workspace",
+            DockPanelDescriptor::new("Workspace").closable(false),
+        )
         .panel_descriptor("editor", DockPanelDescriptor::new("Editor"))
         .panel_descriptor("preview", DockPanelDescriptor::new("Preview"))
+        .panel_descriptor("diff", DockPanelDescriptor::new("Diff"))
         .panel_descriptor("terminal", DockPanelDescriptor::new("Terminal"))
         .panel_descriptor("problems", DockPanelDescriptor::new("Problems"))
         .try_build()
@@ -118,10 +123,24 @@ fn restored_demo_layout() -> DockLayout {
         .apply_action(&DockAction::OpenItem {
             space: SECONDARY_SPACE.into(),
             target_tabs: None,
-            item: preview_item,
+            item: preview_item.clone(),
             insert_index: None,
         })
         .expect("preview panel should reopen into the secondary demo dock space");
+    let secondary_space = DockSpaceId::from(SECONDARY_SPACE);
+    let diff_item: open_gpui_docking::DockItemId = "diff".into();
+    let (secondary_tabs, _) = controller
+        .graph()
+        .find_item_in_space(&secondary_space, &preview_item)
+        .expect("preview panel should create secondary tabs");
+    controller
+        .apply_action(&DockAction::OpenItem {
+            space: secondary_space,
+            target_tabs: Some(secondary_tabs),
+            item: diff_item,
+            insert_index: Some(1),
+        })
+        .expect("diff panel should join the secondary demo tab stack");
     controller
         .apply_action(&DockAction::FloatItemInWindow {
             source_space: SPACE.into(),
@@ -192,6 +211,22 @@ fn build_controller() -> DockController {
             })
             .into()
         })
+        .panel_factory("workspace", "Workspace", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Workspace",
+                    "Pinned overview",
+                    0x0f766e,
+                    &[
+                        "open-gpui",
+                        "gpui_docking",
+                        "runtime viewports",
+                        "retained panels",
+                    ],
+                )
+            })
+            .into()
+        })
         .panel_factory("editor", "Editor", |cx| {
             cx.new(|_| {
                 DemoPanel::new(
@@ -221,6 +256,22 @@ fn build_controller() -> DockController {
                         "Splitter handles resize panes.",
                         "Tabs can drag/drop between stacks.",
                         "Secondary viewport placement lives in the adapter.",
+                    ],
+                )
+            })
+            .into()
+        })
+        .panel_factory("diff", "Diff", |cx| {
+            cx.new(|_| {
+                DemoPanel::new(
+                    "Diff",
+                    "Secondary stack",
+                    0x7c3aed,
+                    &[
+                        "drop_runtime.rs",
+                        "viewport_runtime.rs",
+                        "render_tabs.rs",
+                        "host_interactions.rs",
                     ],
                 )
             })
