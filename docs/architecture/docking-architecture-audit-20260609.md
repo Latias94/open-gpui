@@ -114,6 +114,8 @@ Native dogfood:
   into the primary viewport.
 - The primary viewport starts with an in-window floating stack and a non-closable pinned tab, so
   manual dogfood covers floating merge and rendered close-policy behavior.
+- An additional empty central-region viewport opens with passthrough metadata, giving manual
+  dogfood a retained central-space target without adding placeholder graph nodes.
 - The runtime status panel exposes close-policy switching, placement reapply, viewport reopen, and
   descriptor-backed panel restore controls so close/reopen paths can be exercised without code
   changes.

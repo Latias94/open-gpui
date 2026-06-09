@@ -4,14 +4,16 @@ use open_gpui::{
     size,
 };
 use open_gpui_docking::{
-    DockController, DockItemId, DockLayout, DockPanelDescriptor, DockSpaceId,
-    DockViewportClosePolicy, DockViewportPlacement, DockViewportPlacementLayout,
-    DockViewportRuntimeHandle, DockViewportWindowBounds, EditorDockLayoutSpec,
+    DockController, DockItemId, DockLayout, DockLayoutCentralRegion, DockLayoutSpace,
+    DockPanelDescriptor, DockSpaceId, DockViewportClosePolicy, DockViewportPlacement,
+    DockViewportPlacementLayout, DockViewportRuntimeHandle, DockViewportWindowBounds,
+    EditorDockLayoutSpec,
 };
 use open_gpui_platform::application;
 
 const SPACE: &str = "docking-demo";
 const SECONDARY_SPACE: &str = "docking-preview";
+const CENTRAL_SPACE: &str = "docking-empty-central";
 
 struct DemoPanel {
     title: &'static str,
@@ -26,6 +28,7 @@ struct RuntimeStatusPanel {
     placement: DockViewportPlacementLayout,
     primary_bounds: Bounds<Pixels>,
     secondary_bounds: Bounds<Pixels>,
+    central_bounds: Bounds<Pixels>,
     last_operation: Option<String>,
 }
 
@@ -36,6 +39,7 @@ impl RuntimeStatusPanel {
         placement: DockViewportPlacementLayout,
         primary_bounds: Bounds<Pixels>,
         secondary_bounds: Bounds<Pixels>,
+        central_bounds: Bounds<Pixels>,
     ) -> Self {
         Self {
             runtime,
@@ -43,6 +47,7 @@ impl RuntimeStatusPanel {
             placement,
             primary_bounds,
             secondary_bounds,
+            central_bounds,
             last_operation: None,
         }
     }
@@ -103,6 +108,8 @@ impl RuntimeStatusPanel {
     fn fallback_bounds(&self, space: &DockSpaceId) -> Bounds<Pixels> {
         if space.as_str() == SECONDARY_SPACE {
             self.secondary_bounds
+        } else if space.as_str() == CENTRAL_SPACE {
+            self.central_bounds
         } else {
             self.primary_bounds
         }
@@ -251,6 +258,12 @@ impl Render for RuntimeStatusPanel {
                                 "Open secondary",
                                 cx.listener(|this, _, _, cx| {
                                     this.open_demo_viewport(SECONDARY_SPACE, cx);
+                                }),
+                            ))
+                            .child(control_button(
+                                "Open central",
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_demo_viewport(CENTRAL_SPACE, cx);
                                 }),
                             ))
                             .child(control_button(
@@ -540,7 +553,18 @@ fn restored_demo_layout() -> DockLayout {
         .open_item(main_space, Some(outline_tabs), outline_item, Some(1))
         .expect("outline panel should reopen into its original tab stack");
 
-    controller.graph().export_layout()
+    let mut layout = controller.graph().export_layout();
+    layout.spaces.push(DockLayoutSpace {
+        id: CENTRAL_SPACE.into(),
+        root: None,
+        floatings: Vec::new(),
+        central: Some(DockLayoutCentralRegion {
+            node: None,
+            keep_alive_when_empty: true,
+            passthrough_when_empty: true,
+        }),
+    });
+    layout
 }
 
 fn build_controller() -> DockController {
@@ -693,6 +717,7 @@ fn viewport_window_options(bounds: Bounds<open_gpui::Pixels>) -> WindowOptions {
 fn saved_viewport_placement(
     primary_bounds: Bounds<open_gpui::Pixels>,
     secondary_bounds: Bounds<open_gpui::Pixels>,
+    central_bounds: Bounds<open_gpui::Pixels>,
 ) -> DockViewportPlacementLayout {
     DockViewportPlacementLayout::new(vec![
         DockViewportPlacement {
@@ -711,6 +736,14 @@ fn saved_viewport_placement(
             )),
             host_bounds: None,
         },
+        DockViewportPlacement {
+            space: CENTRAL_SPACE.into(),
+            display_id: None,
+            window_bounds: Some(DockViewportWindowBounds::from_window_bounds(
+                WindowBounds::Windowed(central_bounds),
+            )),
+            host_bounds: None,
+        },
     ])
 }
 
@@ -720,9 +753,22 @@ fn restored_viewport_options(
     fallback_bounds: Bounds<open_gpui::Pixels>,
 ) -> WindowOptions {
     let space = space.into();
-    placement
+    let mut options = placement
         .window_options_for_space(&space, viewport_window_options(fallback_bounds))
-        .expect("demo viewport placement should produce window options")
+        .expect("demo viewport placement should produce window options");
+    if let Some(titlebar) = options.titlebar.as_mut() {
+        titlebar.title = Some(viewport_title(&space).into());
+    }
+    options
+}
+
+fn viewport_title(space: &DockSpaceId) -> &'static str {
+    match space.as_str() {
+        SPACE => "Docking demo",
+        SECONDARY_SPACE => "Docking preview",
+        CENTRAL_SPACE => "Empty central dogfood",
+        _ => "Docking viewport",
+    }
 }
 
 fn main() {
@@ -737,7 +783,14 @@ fn main() {
             ),
             size(px(460.0), px(360.0)),
         );
-        let placement = saved_viewport_placement(primary_bounds, secondary_bounds);
+        let central_bounds = Bounds::new(
+            point(
+                primary_bounds.origin.x + primary_bounds.size.width + px(24.0),
+                primary_bounds.origin.y + secondary_bounds.size.height + px(24.0),
+            ),
+            size(px(460.0), px(220.0)),
+        );
+        let placement = saved_viewport_placement(primary_bounds, secondary_bounds, central_bounds);
         let runtime_panel = cx.new(|_| {
             RuntimeStatusPanel::new(
                 runtime.clone(),
@@ -745,6 +798,7 @@ fn main() {
                 placement.clone(),
                 primary_bounds,
                 secondary_bounds,
+                central_bounds,
             )
         });
         controller.update(cx, |controller, _| {
@@ -764,6 +818,11 @@ fn main() {
         runtime
             .open_viewport(SECONDARY_SPACE, secondary_options, cx)
             .expect("failed to open secondary docking viewport");
+
+        let central_options = restored_viewport_options(&placement, CENTRAL_SPACE, central_bounds);
+        runtime
+            .open_viewport(CENTRAL_SPACE, central_options, cx)
+            .expect("failed to open empty central docking viewport");
 
         cx.activate(true);
     });
