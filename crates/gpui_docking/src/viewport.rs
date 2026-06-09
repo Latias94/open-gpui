@@ -1,7 +1,4 @@
-use crate::{
-    DockSpaceId, DockViewportUnregisterOutcome, DockViewportUnregisterReason,
-    viewport_registry::{DockViewportRegistry, DockViewportSnapshot},
-};
+use crate::{DockSpaceId, viewport_registry::DockViewportRegistry};
 use open_gpui::{AnyWindowHandle, WindowId};
 
 /// Runtime adapter state that maps logical dock spaces to GPUI windows.
@@ -16,18 +13,7 @@ use open_gpui::{AnyWindowHandle, WindowId};
 /// snapshots for coordinate conversion.
 #[derive(Debug, Default)]
 pub struct DockViewportAdapter {
-    registry: DockViewportRegistry,
-}
-
-/// Runtime result of registering or replacing a platform viewport mapping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockViewportRegisterOutcome {
-    /// Logical dock space now rendered by the registered window.
-    pub space: DockSpaceId,
-    /// GPUI window now rendering the logical dock space.
-    pub window: AnyWindowHandle,
-    /// Runtime mappings removed to preserve one-to-one space/window ownership.
-    pub replaced: Vec<DockViewportUnregisterOutcome>,
+    pub(crate) registry: DockViewportRegistry,
 }
 
 impl DockViewportAdapter {
@@ -46,51 +32,8 @@ impl DockViewportAdapter {
         self.registry.len()
     }
 
-    /// Registers or replaces the window for a logical dock space.
-    ///
-    /// A window can belong to only one dock space at a time. Registering the same window for a
-    /// different space removes its previous space mapping.
-    pub fn register_viewport(
-        &mut self,
-        space: impl Into<DockSpaceId>,
-        window: impl Into<AnyWindowHandle>,
-    ) -> Option<DockViewportSnapshot> {
-        let space = space.into();
-        let window = window.into();
-        self.registry.register(space, window)
-    }
-
-    /// Registers or replaces the window for a logical dock space and reports every removed mapping.
-    ///
-    /// A single registration can replace two mappings: the previous window for `space`, and the
-    /// previous space that already owned `window`.
-    pub fn register_viewport_with_outcome(
-        &mut self,
-        space: impl Into<DockSpaceId>,
-        window: impl Into<AnyWindowHandle>,
-    ) -> DockViewportRegisterOutcome {
-        let space = space.into();
-        let window = window.into();
-        let replaced = self
-            .registry
-            .register_with_replacements(space.clone(), window)
-            .into_iter()
-            .map(|(space, snapshot)| DockViewportUnregisterOutcome {
-                space,
-                window: snapshot.window,
-                reason: DockViewportUnregisterReason::Replaced,
-            })
-            .collect();
-
-        DockViewportRegisterOutcome {
-            space,
-            window,
-            replaced,
-        }
-    }
-
     /// Removes a viewport by logical dock space.
-    pub fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
+    pub fn unregister_space(&mut self, space: &DockSpaceId) -> Option<crate::DockViewportSnapshot> {
         self.registry.unregister_space(space)
     }
 
@@ -98,27 +41,27 @@ impl DockViewportAdapter {
     pub fn unregister_window(
         &mut self,
         window: impl Into<AnyWindowHandle>,
-    ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
+    ) -> Option<(DockSpaceId, crate::DockViewportSnapshot)> {
         let window = window.into();
         self.registry.unregister_window(window)
     }
 
     /// Returns the snapshot for a logical dock space.
-    pub fn snapshot(&self, space: &DockSpaceId) -> Option<&DockViewportSnapshot> {
+    pub fn snapshot(&self, space: &DockSpaceId) -> Option<&crate::DockViewportSnapshot> {
         self.registry.snapshot(space)
     }
 
     pub(crate) fn snapshot_mut(
         &mut self,
         space: &DockSpaceId,
-    ) -> Option<&mut DockViewportSnapshot> {
+    ) -> Option<&mut crate::DockViewportSnapshot> {
         self.registry.snapshot_mut(space)
     }
 
     pub(crate) fn unregister_window_id_snapshot(
         &mut self,
         window_id: WindowId,
-    ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
+    ) -> Option<(DockSpaceId, crate::DockViewportSnapshot)> {
         self.registry.unregister_window_id(window_id)
     }
 
@@ -157,7 +100,10 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockGraph, DockHost, DockItemId, DockNode};
+    use crate::{
+        DockGraph, DockHost, DockItemId, DockNode, DockViewportUnregisterOutcome,
+        DockViewportUnregisterReason,
+    };
     use open_gpui::{Bounds, DisplayId, Pixels, WindowBounds, WindowHandle, point, px, size};
 
     fn space(id: &str) -> DockSpaceId {
