@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId,
-    drop_runtime::{DockDropRuntime, DockDropTargetUpdate},
+    drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
     geometry,
 };
@@ -127,19 +127,25 @@ impl DockInteractionRuntime {
         self.floating_drag.take().is_some()
     }
 
-    pub(crate) fn update_drop_target(
+    pub(crate) fn begin_drop_scene(
         &mut self,
-        update: DockDropTargetUpdate,
+        scene: DockHostDropScene,
         policy: &DockPolicy,
     ) -> bool {
-        self.drop.update_target(update, policy)
+        self.drop.begin_scene(scene, policy)
     }
 
-    pub(crate) fn take_tab_drop_target(
+    pub(crate) fn push_drop_scene_fact(
         &mut self,
-        target_tabs: DockNodeId,
-    ) -> Option<DockResolvedDropTarget> {
-        self.drop.take_resolved_target(target_tabs)
+        position: Point<Pixels>,
+        fact: DockHostDropSceneFact,
+        policy: &DockPolicy,
+    ) -> bool {
+        self.drop.push_scene_fact(position, fact, policy)
+    }
+
+    pub(crate) fn take_resolved_drop_target(&mut self) -> Option<DockResolvedDropTarget> {
+        self.drop.take_resolved_target()
     }
 
     pub(crate) fn tab_drop_preview_bounds(

@@ -1,10 +1,11 @@
 use crate::{
-    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion,
+    DockFloatingContainer, DockHost, DockNodeId, debug::DockDebugRegion, drag::DockTabDragPayload,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Styled, canvas, div, px, rgb, white,
+    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Styled, canvas, div, px, rgb,
+    white,
 };
 
 impl DockHost {
@@ -103,8 +104,9 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
+        let target_tabs = session.first_tabs_in_subtree(floating);
 
-        div()
+        let mut handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -118,7 +120,24 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x4b5563))
             .text_sm()
-            .cursor_pointer()
+            .cursor_pointer();
+
+        if let Some(target_tabs) = target_tabs {
+            handle = handle.on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    this.update_floating_title_bar_drop_scene_from_render(
+                        floating,
+                        target_tabs,
+                        event.bounds,
+                        bounds,
+                        event.event.position,
+                        cx,
+                    );
+                },
+            ));
+        }
+
+        handle
             .child(title)
             .child(
                 canvas(

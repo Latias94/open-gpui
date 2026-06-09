@@ -28,7 +28,6 @@ impl DockHost {
         );
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
-        let target_space = session.space().clone();
         let is_central = session.is_central_tabs(node);
 
         let mut tabs = div()
@@ -52,19 +51,7 @@ impl DockHost {
                         cx,
                     );
                 },
-            ))
-            .on_drop(
-                cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
-                    this.drop_tab_from_render(
-                        payload.source_space.clone(),
-                        payload.source_tabs,
-                        payload.item.clone(),
-                        target_space.clone(),
-                        node,
-                        cx,
-                    );
-                }),
-            );
+            ));
 
         let mut tab_bar = div()
             .id(format!(

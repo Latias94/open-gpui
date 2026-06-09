@@ -160,6 +160,16 @@ impl DockHostRenderSession {
         }
     }
 
+    pub(crate) fn first_tabs_in_subtree(&self, node_id: DockNodeId) -> Option<DockNodeId> {
+        match self.node(node_id)? {
+            DockNode::Tabs { .. } => Some(node_id),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .find_map(|child| self.first_tabs_in_subtree(*child)),
+            DockNode::Floating { child } => self.first_tabs_in_subtree(*child),
+        }
+    }
+
     pub(crate) fn floating_containers(&self) -> &[DockFloatingContainer] {
         &self.floating_containers
     }

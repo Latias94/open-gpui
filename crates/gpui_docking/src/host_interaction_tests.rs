@@ -1,5 +1,6 @@
 use crate::{
-    DockController, DockNode, DockNodeId, SplitAxis, debug::DockDebugRegion, host_test_support::*,
+    DockController, DockGraph, DockNode, DockNodeId, SplitAxis, debug::DockDebugRegion,
+    host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -409,6 +410,141 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
         preview_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
     );
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
+    let source_space = space();
+    let empty_space = crate::DockSpaceId::from("empty");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let (_source_window, source_host, mut source_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        source_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+    let (target_window, target_host, mut target_visual) = open_controller_space(
+        cx,
+        controller.clone(),
+        empty_space.clone(),
+        size(px(360.0), px(220.0)),
+    );
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_empty = selector_for(&target_visual, &target_host, DockDebugRegion::EmptySpace)
+        .expect("empty target selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_empty).center();
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let target_visual = VisualTestContext::from_window(target_window.into(), cx);
+
+    assert!(
+        selector_for(
+            &target_visual,
+            &target_host,
+            DockDebugRegion::Panel { item: item("a") }
+        )
+        .is_some(),
+        "panel A should render in the previously empty host after drop"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(controller.graph().root(&source_space), None);
+        let target_root = controller
+            .graph()
+            .root(&empty_space)
+            .expect("empty space should receive a root");
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_root)
+            .expect("target root should exist")
+        else {
+            panic!("target root should be tabs");
+        };
+        assert_eq!(items, &vec![item("a")]);
+        assert_eq!(*active, 0);
+    });
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_floating_title_bar_merges_into_floating_stack(cx: &mut TestAppContext) {
+    let (graph, root, floating) = floating_overlay_graph();
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(360.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("b"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let floating_handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("floating handle selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let end = debug_bounds(&mut visual, &floating_handle).center();
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
+        "panel B should be active in the floating stack after title-bar drop"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let floating_tabs = controller
+            .graph()
+            .floating_containers(&space())
+            .iter()
+            .find(|container| container.node == floating)
+            .and_then(|container| match controller.graph().node(container.node) {
+                Some(DockNode::Floating { child }) => Some(*child),
+                _ => None,
+            })
+            .expect("floating child should remain");
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(floating_tabs)
+            .expect("floating tabs should exist")
+        else {
+            panic!("floating child should be tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("b")]);
+        assert_eq!(*active, 1);
+        assert_eq!(controller.graph().root(&space()), None);
+    });
 }
 
 #[open_gpui::test]

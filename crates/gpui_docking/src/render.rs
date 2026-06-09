@@ -1,16 +1,17 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, debug::DockDebugRegion,
+    DockHost, DockNode, DockNodeId, debug::DockDebugRegion, drag::DockTabDragPayload,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled, Window,
-    black, div, rgb, rgba,
+    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, ParentElement, Render,
+    Styled, Window, black, div, rgb, rgba,
 };
 
 impl Render for DockHost {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
         let session = self.render_session(cx);
+        let target_space = session.space().clone();
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
@@ -25,7 +26,23 @@ impl Render for DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .text_color(black());
+            .text_color(black())
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    this.begin_host_drop_scene_from_render(event.event.position, cx);
+                },
+            ))
+            .on_drop(
+                cx.listener(move |this, payload: &DockTabDragPayload, _window, cx| {
+                    this.drop_tab_from_render(
+                        payload.source_space.clone(),
+                        payload.source_tabs,
+                        payload.item.clone(),
+                        target_space.clone(),
+                        cx,
+                    );
+                }),
+            );
 
         if session.empty_central_passthrough() {
             host = host.bg(rgba(0x00000000));
@@ -34,11 +51,11 @@ impl Render for DockHost {
         }
 
         if let Some(root) = session.root() {
-            host = host.child(self.render_node(root, &session, cx));
+            host = host.child(self.render_root_node(root, &session, cx));
         } else if session.empty_central_passthrough() {
-            host = host.child(self.render_passthrough_empty_central_space(&session));
+            host = host.child(self.render_passthrough_empty_central_space(&session, cx));
         } else {
-            host = host.child(self.render_empty_space(&session));
+            host = host.child(self.render_empty_space(&session, cx));
         }
 
         for floating in session.floating_containers() {
@@ -73,7 +90,37 @@ impl DockHost {
         }
     }
 
-    fn render_empty_space(&mut self, session: &DockHostRenderSession) -> AnyElement {
+    fn render_root_node(
+        &mut self,
+        root: DockNodeId,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let root_child = self.render_node(root, session, cx);
+        div()
+            .relative()
+            .flex()
+            .size_full()
+            .overflow_hidden()
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    this.update_root_drop_scene_from_render(
+                        root,
+                        event.bounds,
+                        event.event.position,
+                        cx,
+                    );
+                },
+            ))
+            .child(root_child)
+            .into_any_element()
+    }
+
+    fn render_empty_space(
+        &mut self,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
@@ -88,6 +135,15 @@ impl DockHost {
             .border_1()
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x657083))
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    this.update_empty_space_drop_scene_from_render(
+                        event.event.position,
+                        event.bounds,
+                        cx,
+                    );
+                },
+            ))
             .child(session.empty_message().to_string())
             .into_any_element()
     }
@@ -95,6 +151,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
             DockDebugRegion::EmptySpace,
@@ -106,6 +163,15 @@ impl DockHost {
             .flex()
             .size_full()
             .bg(rgba(0x00000000))
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
+                    this.update_empty_space_drop_scene_from_render(
+                        event.event.position,
+                        event.bounds,
+                        cx,
+                    );
+                },
+            ))
             .into_any_element()
     }
 

@@ -13,10 +13,11 @@ use open_gpui::{Bounds, Pixels, Point};
 #[derive(Debug, Default)]
 pub(crate) struct DockDropRuntime {
     target: Option<DockResolvedDropTarget>,
+    scene: Option<DockHostDropScene>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropTargetUpdate {
+pub(crate) struct DockHostDropScene {
     pub(crate) position: Point<Pixels>,
     pub(crate) tab_labels: Vec<DockTabLabelDropTarget>,
     pub(crate) leaves: Vec<DockLeafDropTarget>,
@@ -28,7 +29,16 @@ pub(crate) struct DockDropTargetUpdate {
     pub(crate) clear_on_miss: bool,
 }
 
-impl DockDropTargetUpdate {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockHostDropSceneFact {
+    TabLabel(DockTabLabelDropTarget),
+    Leaf(DockLeafDropTarget),
+    Root(DockRootDropTarget),
+    FloatingTitleBar(DockFloatingTitleBarDropTarget),
+    EmptySpace(DockEmptySpaceDropTarget),
+}
+
+impl DockHostDropScene {
     pub(crate) fn new(position: Point<Pixels>) -> Self {
         Self {
             position,
@@ -43,14 +53,16 @@ impl DockDropTargetUpdate {
         }
     }
 
-    pub(crate) fn with_tab_label(mut self, target: DockTabLabelDropTarget) -> Self {
-        self.tab_labels.push(target);
-        self
-    }
-
-    pub(crate) fn with_leaf(mut self, target: DockLeafDropTarget) -> Self {
-        self.leaves.push(target);
-        self
+    pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
+        match fact {
+            DockHostDropSceneFact::TabLabel(target) => self.tab_labels.push(target),
+            DockHostDropSceneFact::Leaf(target) => self.leaves.push(target),
+            DockHostDropSceneFact::Root(target) => self.root = Some(target),
+            DockHostDropSceneFact::FloatingTitleBar(target) => {
+                self.floating_title_bars.push(target);
+            }
+            DockHostDropSceneFact::EmptySpace(target) => self.empty_spaces.push(target),
+        }
     }
 
     pub(crate) fn preserve_on_miss(mut self) -> Self {
@@ -74,20 +86,34 @@ impl DockDropTargetUpdate {
 }
 
 impl DockDropRuntime {
-    pub(crate) fn update_target(
+    pub(crate) fn begin_scene(&mut self, scene: DockHostDropScene, policy: &DockPolicy) -> bool {
+        let changed = self.resolve_scene(&scene, policy);
+        self.scene = Some(scene);
+        changed
+    }
+
+    pub(crate) fn push_scene_fact(
         &mut self,
-        update: DockDropTargetUpdate,
+        position: Point<Pixels>,
+        fact: DockHostDropSceneFact,
         policy: &DockPolicy,
     ) -> bool {
-        let mut target = match update.resolve(policy).and_then(DockDropResolution::target) {
+        let scene = self.scene_for_position(position);
+        scene.push_fact(fact);
+        let scene = scene.clone();
+        self.resolve_scene(&scene, policy)
+    }
+
+    fn resolve_scene(&mut self, scene: &DockHostDropScene, policy: &DockPolicy) -> bool {
+        let mut target = match scene.resolve(policy).and_then(DockDropResolution::target) {
             Some(target) => Some(target),
-            None if update.clear_on_miss => None,
+            None if scene.clear_on_miss => None,
             None => return false,
         };
         if let Some(existing) = self.target.as_ref()
             && let Some(existing_intent) = existing.preview_intent()
             && existing_intent.insert_index.is_some()
-            && existing_intent.preview_bounds.contains(&update.position)
+            && existing_intent.preview_bounds.contains(&scene.position)
             && target
                 .as_ref()
                 .and_then(DockResolvedDropTarget::preview_intent)
@@ -101,16 +127,20 @@ impl DockDropRuntime {
         self.replace_target(target)
     }
 
-    pub(crate) fn take_resolved_target(
-        &mut self,
-        receiver_tabs: DockNodeId,
-    ) -> Option<DockResolvedDropTarget> {
-        let target = self.target.take()?;
-        if target.matches_drop_receiver(receiver_tabs) {
-            Some(target)
-        } else {
-            None
+    pub(crate) fn take_resolved_target(&mut self) -> Option<DockResolvedDropTarget> {
+        self.scene = None;
+        self.target.take()
+    }
+
+    fn scene_for_position(&mut self, position: Point<Pixels>) -> &mut DockHostDropScene {
+        let should_reset = self
+            .scene
+            .as_ref()
+            .is_none_or(|scene| scene.position != position);
+        if should_reset {
+            self.scene = Some(DockHostDropScene::new(position));
         }
+        self.scene.as_mut().expect("scene should be initialized")
     }
 
     pub(crate) fn preview_bounds(&self, receiver_tabs: DockNodeId) -> Option<Bounds<Pixels>> {
@@ -156,16 +186,17 @@ mod tests {
     fn tab_reorder_drop_updates_target_only_inside_tab_bounds() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
+        let position = point(px(95.0), px(28.0));
 
-        assert!(runtime.update_target(
-            DockDropTargetUpdate::new(point(px(95.0), px(28.0))).with_tab_label(
-                DockTabLabelDropTarget {
-                    target_tabs: tabs,
-                    target_index: 2,
-                    bounds: bounds(10.0, 20.0, 100.0, 24.0),
-                    is_central: false,
-                },
-            ),
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 2,
+                bounds: bounds(10.0, 20.0, 100.0, 24.0),
+                is_central: false,
+            }),
             &DockPolicy::default()
         ));
         assert_eq!(
@@ -173,19 +204,10 @@ mod tests {
             Some(Some(3))
         );
 
-        assert!(
-            !runtime.update_target(
-                DockDropTargetUpdate::new(point(px(200.0), px(28.0)))
-                    .with_tab_label(DockTabLabelDropTarget {
-                        target_tabs: tabs,
-                        target_index: 1,
-                        bounds: bounds(10.0, 20.0, 100.0, 24.0),
-                        is_central: false,
-                    })
-                    .preserve_on_miss(),
-                &DockPolicy::default()
-            )
-        );
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(point(px(200.0), px(28.0))).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
         assert_eq!(
             runtime.preview_intent().map(|intent| intent.insert_index),
             Some(Some(3))
@@ -196,20 +218,22 @@ mod tests {
     fn tabs_drop_preserves_reorder_target_while_pointer_stays_inside_tab() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
+        let position = point(px(95.0), px(108.0));
 
-        assert!(runtime.update_target(
-            DockDropTargetUpdate::new(point(px(95.0), px(108.0))).with_tab_label(
-                DockTabLabelDropTarget {
-                    target_tabs: tabs,
-                    target_index: 2,
-                    bounds: bounds(10.0, 100.0, 100.0, 24.0),
-                    is_central: false,
-                },
-            ),
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 2,
+                bounds: bounds(10.0, 100.0, 100.0, 24.0),
+                is_central: false,
+            }),
             &DockPolicy::default()
         ));
-        assert!(!runtime.update_target(
-            DockDropTargetUpdate::new(point(px(95.0), px(108.0))).with_leaf(DockLeafDropTarget {
+        assert!(!runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: tabs,
                 target_tabs: tabs,
                 bounds: bounds(0.0, 0.0, 400.0, 400.0),
@@ -219,7 +243,7 @@ mod tests {
         ));
 
         let target = runtime
-            .take_resolved_target(tabs)
+            .take_resolved_target()
             .expect("reorder target should remain available");
         let intent = target
             .preview_intent()
@@ -233,16 +257,17 @@ mod tests {
     fn reorder_target_does_not_render_drop_preview() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
+        let position = point(px(20.0), px(28.0));
 
-        assert!(runtime.update_target(
-            DockDropTargetUpdate::new(point(px(20.0), px(28.0))).with_tab_label(
-                DockTabLabelDropTarget {
-                    target_tabs: tabs,
-                    target_index: 0,
-                    bounds: bounds(10.0, 20.0, 100.0, 24.0),
-                    is_central: false,
-                },
-            ),
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 0,
+                bounds: bounds(10.0, 20.0, 100.0, 24.0),
+                is_central: false,
+            }),
             &DockPolicy::default()
         ));
 
@@ -253,28 +278,32 @@ mod tests {
     fn runtime_resolves_multi_fact_update_through_layout_resolver() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
+        let position = point(px(95.0), px(28.0));
 
-        assert!(
-            runtime.update_target(
-                DockDropTargetUpdate::new(point(px(95.0), px(28.0)))
-                    .with_leaf(DockLeafDropTarget {
-                        root: tabs,
-                        target_tabs: tabs,
-                        bounds: bounds(0.0, 0.0, 400.0, 400.0),
-                        is_central: false,
-                    })
-                    .with_tab_label(DockTabLabelDropTarget {
-                        target_tabs: tabs,
-                        target_index: 2,
-                        bounds: bounds(10.0, 20.0, 100.0, 24.0),
-                        is_central: false,
-                    }),
-                &DockPolicy::default()
-            )
-        );
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: tabs,
+                target_tabs: tabs,
+                bounds: bounds(0.0, 0.0, 400.0, 400.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                target_tabs: tabs,
+                target_index: 2,
+                bounds: bounds(10.0, 20.0, 100.0, 24.0),
+                is_central: false,
+            }),
+            &DockPolicy::default()
+        ));
 
         let target = runtime
-            .take_resolved_target(tabs)
+            .take_resolved_target()
             .expect("multi-fact update should resolve");
         assert_eq!(
             target.kind,
@@ -286,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn root_edge_target_can_be_taken_by_leaf_receiver() {
+    fn resolved_target_take_does_not_require_tab_receiver() {
         let root = DockNodeId::null();
         let mut graph = crate::DockGraph::new();
         let leaf = graph.insert_node(crate::DockNode::Tabs {
@@ -294,27 +323,31 @@ mod tests {
             active: 0,
         });
         let mut runtime = DockDropRuntime::default();
+        let position = point(px(2.0), px(100.0));
 
-        assert!(runtime.update_target(
-            DockDropTargetUpdate {
-                root: Some(crate::drop_target::DockRootDropTarget {
-                    root,
-                    bounds: bounds(0.0, 0.0, 400.0, 240.0),
-                }),
-                leaves: vec![DockLeafDropTarget {
-                    root,
-                    target_tabs: leaf,
-                    bounds: bounds(0.0, 20.0, 160.0, 180.0),
-                    is_central: false,
-                }],
-                ..DockDropTargetUpdate::new(point(px(2.0), px(100.0)))
-            },
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(!runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
+                root,
+                bounds: bounds(0.0, 0.0, 400.0, 240.0),
+            }),
+            &DockPolicy::default()
+        ));
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root,
+                target_tabs: leaf,
+                bounds: bounds(0.0, 20.0, 160.0, 180.0),
+                is_central: false,
+            }),
             &DockPolicy::default()
         ));
 
         let target = runtime
-            .take_resolved_target(leaf)
-            .expect("root-edge target should still belong to the leaf receiver");
+            .take_resolved_target()
+            .expect("root-edge target should not require a tab receiver");
         assert!(matches!(
             target.kind,
             DockResolvedDropTargetKind::RootEdge {
@@ -322,6 +355,31 @@ mod tests {
                 leaf_tabs,
                 zone: DropZone::Left,
             } if matched_root == root && leaf_tabs == leaf
+        ));
+    }
+
+    #[test]
+    fn empty_space_target_can_be_taken_without_tab_receiver() {
+        let space = crate::DockSpaceId::from("empty");
+        let mut runtime = DockDropRuntime::default();
+        let position = point(px(40.0), px(40.0));
+
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        assert!(runtime.push_scene_fact(
+            position,
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                space: space.clone(),
+                bounds: bounds(0.0, 0.0, 400.0, 240.0),
+            }),
+            &DockPolicy::default()
+        ));
+
+        let target = runtime
+            .take_resolved_target()
+            .expect("empty-space target should not require a tab receiver");
+        assert!(matches!(
+            target.kind,
+            DockResolvedDropTargetKind::EmptyDockSpace { space: target_space } if target_space == space
         ));
     }
 }
