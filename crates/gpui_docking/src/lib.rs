@@ -106,6 +106,7 @@ mod host_interactions;
 mod host_outside_release;
 mod host_render_actions;
 mod host_render_session;
+mod host_viewport_drop;
 mod ids;
 mod interaction;
 mod layout;

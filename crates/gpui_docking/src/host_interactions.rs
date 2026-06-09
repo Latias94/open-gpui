@@ -2,7 +2,7 @@
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId,
-    DockViewportDropPayload, DockViewportDropRouteOutcome, DockViewportTargetContext,
+    DockViewportDropRouteOutcome,
     drag::{DockDragPayload, DockDragPayloadKind},
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
@@ -12,7 +12,7 @@ use crate::{
     interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
     workspace_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
+use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockHostInteractionOutcome {
@@ -67,7 +67,7 @@ impl DockHostInteractionOutcome {
         changed
     }
 
-    fn from_session_changed(changed: bool) -> Self {
+    pub(crate) fn from_session_changed(changed: bool) -> Self {
         if changed { Self::Notify } else { Self::Idle }
     }
 
@@ -112,7 +112,7 @@ impl DockHostInteractionOutcome {
         }
     }
 
-    fn from_routed_drop_result(
+    pub(crate) fn from_routed_drop_result(
         result: Result<DockViewportDropRouteOutcome, DockActionApplyError>,
     ) -> Self {
         match result {
@@ -442,56 +442,6 @@ impl DockHost {
             .merge(self.finish_floating_drag_interaction())
     }
 
-    pub(crate) fn update_viewport_drop_route_preview_interaction(
-        &mut self,
-        payload: &DockDragPayload,
-        position: Point<Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> DockHostInteractionOutcome {
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return DockHostInteractionOutcome::from_session_changed(
-                self.interaction_mut().clear_drop_route_preview(),
-            );
-        };
-
-        let route = runtime.resolve_payload_drop_route_with_context(
-            payload.source_space.clone(),
-            payload.source_tabs,
-            viewport_payload(payload),
-            window_screen_position(window, position),
-            None,
-            &DockViewportTargetContext::from_window(window, cx),
-            cx,
-        );
-        DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut()
-                .update_drop_route_preview(&route, position),
-        )
-    }
-
-    fn commit_runtime_routed_payload_drop_interaction(
-        &mut self,
-        payload: &DockDragPayload,
-        release_position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<DockHostInteractionOutcome> {
-        let runtime = self.viewport_runtime()?.clone();
-        let release_position = window_screen_position(window, release_position);
-        let viewport_payload = viewport_payload(payload);
-        let result = runtime.commit_payload_drop_from_screen_with_context(
-            payload.source_space.clone(),
-            payload.source_tabs,
-            viewport_payload,
-            release_position,
-            None,
-            &DockViewportTargetContext::from_window(window, cx),
-            cx,
-        );
-        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
-    }
-
     #[cfg(test)]
     pub(crate) fn splitter_drag(&self) -> Option<&SplitterDrag> {
         self.interaction().splitter_drag()
@@ -650,14 +600,6 @@ impl DockHost {
     }
 }
 
-fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
-    let window_bounds = window.window_bounds().get_bounds();
-    point(
-        window_bounds.origin.x + position.x,
-        window_bounds.origin.y + position.y,
-    )
-}
-
 fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> {
     match &payload.kind {
         DockDragPayloadKind::Item { item } => DockWorkspaceDropPayload::Item {
@@ -667,12 +609,5 @@ fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> 
         DockDragPayloadKind::Tabs => DockWorkspaceDropPayload::Tabs {
             source_tabs: payload.source_tabs,
         },
-    }
-}
-
-fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
-    match &payload.kind {
-        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
-        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
     }
 }

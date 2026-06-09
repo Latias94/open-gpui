@@ -1,0 +1,73 @@
+use crate::{
+    DockHost, DockViewportDropPayload, DockViewportTargetContext,
+    drag::{DockDragPayload, DockDragPayloadKind},
+    host_interactions::DockHostInteractionOutcome,
+};
+use open_gpui::{Context, Pixels, Point, Window, point};
+
+impl DockHost {
+    pub(crate) fn update_viewport_drop_route_preview_interaction(
+        &mut self,
+        payload: &DockDragPayload,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> DockHostInteractionOutcome {
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return DockHostInteractionOutcome::from_session_changed(
+                self.interaction_mut().clear_drop_route_preview(),
+            );
+        };
+
+        let route = runtime.resolve_payload_drop_route_with_context(
+            payload.source_space.clone(),
+            payload.source_tabs,
+            viewport_payload(payload),
+            window_screen_position(window, position),
+            None,
+            &DockViewportTargetContext::from_window(window, cx),
+            cx,
+        );
+        DockHostInteractionOutcome::from_session_changed(
+            self.interaction_mut()
+                .update_drop_route_preview(&route, position),
+        )
+    }
+
+    pub(crate) fn commit_runtime_routed_payload_drop_interaction(
+        &mut self,
+        payload: &DockDragPayload,
+        release_position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<DockHostInteractionOutcome> {
+        let runtime = self.viewport_runtime()?.clone();
+        let release_position = window_screen_position(window, release_position);
+        let viewport_payload = viewport_payload(payload);
+        let result = runtime.commit_payload_drop_from_screen_with_context(
+            payload.source_space.clone(),
+            payload.source_tabs,
+            viewport_payload,
+            release_position,
+            None,
+            &DockViewportTargetContext::from_window(window, cx),
+            cx,
+        );
+        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
+    }
+}
+
+fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
+    let window_bounds = window.window_bounds().get_bounds();
+    point(
+        window_bounds.origin.x + position.x,
+        window_bounds.origin.y + position.y,
+    )
+}
+
+fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
+    match &payload.kind {
+        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
+        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
+    }
+}
