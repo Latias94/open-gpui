@@ -73,8 +73,9 @@ Viewport productization:
   hooks are kept as crate-internal runtime transaction seams.
 - Target resolution ranks hovered window, active window, front-to-back window stack, then
   deterministic fallback in `crates/gpui_docking/src/viewport_target_resolver.rs`.
-- Viewport hit testing and tear-off resolution require explicit `DockViewportTargetContext`
-  arbitration input, even when callers choose an empty fallback context.
+- Viewport hit testing and tear-off resolution require explicit crate-private
+  `DockViewportTargetContext` arbitration input, even when callers choose an empty fallback
+  context.
 - Runtime-opened viewports publish host scenes through the handle path; known-viewport routes are
   resolved again in the destination host scene before commit, and successful routed drops activate
   the destination viewport.

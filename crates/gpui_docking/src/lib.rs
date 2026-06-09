@@ -38,10 +38,8 @@
 //! Runtime-opened windows install a should-close hook so [`DockViewportClosePolicy::Prevent`] can
 //! veto platform closes before cleanup runs. Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
-//! restores platform-window hints for the runtime adapter. Use [`DockViewportTargetContext`] when
-//! cross-window drops need active, hovered, or front-to-back window arbitration; pointer-event
-//! paths should prefer [`DockViewportTargetContext::from_window`] so the event window participates
-//! as the hovered-window signal.
+//! restores platform-window hints for the runtime adapter. Cross-window drops derive active,
+//! hovered, and front-to-back window arbitration from GPUI runtime signals inside the crate.
 //! Panel close/reopen flows should use [`DockController::close_item`],
 //! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen
@@ -213,7 +211,7 @@ pub(crate) use viewport_registry::DockViewportSnapshot;
 pub(crate) use viewport_runtime::*;
 pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;
-pub use viewport_target_context::*;
+pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;
 pub(crate) use viewport_tear_off::{
     DockViewportActivationTarget, DockViewportDropActionOutcome, DockViewportDropRouteOutcome,

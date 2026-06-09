@@ -140,7 +140,7 @@ Out of scope:
 | Dock-back across viewports | `repo-ref/imgui/imgui.cpp:21390`, `repo-ref/imgui/imgui.cpp:21466` | `KnownViewport` can be resolved, but commit currently returns local-resolution-required. | P0 |
 | Tear-off to platform window | `repo-ref/imgui/imgui.cpp:18527`, `repo-ref/imgui/imgui.cpp:17483` | Runtime transaction exists, but rendered drag release does not call it. | P0 |
 | Whole window or stack drag | `repo-ref/imgui/imgui.cpp:5412`, `repo-ref/imgui/imgui.cpp:18527` | `FloatTabsInWindow` exists, but rendered payloads are item-only. | P0 |
-| Hover, active, and z-order arbitration | `repo-ref/imgui/imgui.cpp:16852`, `repo-ref/imgui/imgui.cpp:16866` | `DockViewportTargetContext` has the right fields; product paths must supply them consistently. | P0 |
+| Hover, active, and z-order arbitration | `repo-ref/imgui/imgui.cpp:16852`, `repo-ref/imgui/imgui.cpp:16866` | Crate-private `DockViewportTargetContext` has the right fields; product paths must supply them consistently. | P0 |
 | Dock preview boxes | `repo-ref/imgui/imgui.cpp:19957`, `repo-ref/imgui/imgui.cpp:20045` | Resolved target preview is present, but UI projects it back to tab-only bounds. | P1 |
 | Central node | `repo-ref/imgui/imgui_internal.h:1995`, `repo-ref/imgui/imgui_internal.h:2060` | `DockCentralRegion` exists; passthrough and preview/commit agreement need product tests. | P1 |
 | Window close semantics | `repo-ref/imgui/imgui.cpp:19666`, `repo-ref/imgui/backends/imgui_impl_win32.cpp:1458` | Viewport should-close exists; tab, stack, panel veto, and viewport merge/retain behavior need UI paths. | P1 |
@@ -185,7 +185,7 @@ Out of scope:
 flowchart TB
   DragSource[Rendered tab or stack drag] --> SourceHost[Source DockHost]
   SourceHost --> Payload[DockDragSource item or tabs stack]
-  SourceHost --> Context[DockViewportTargetContext]
+  SourceHost --> Context[crate-private DockViewportTargetContext]
 
   TargetHost[Destination DockHost render frame] --> Scene[DockHostDropScene]
   Scene --> Resolver[resolve_layout_drop]
