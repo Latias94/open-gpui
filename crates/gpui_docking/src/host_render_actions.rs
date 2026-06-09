@@ -1,6 +1,5 @@
 use crate::{DockHost, DockItemId, DockNodeId, DockSpaceId, drag::DockDragPayload};
-use open_gpui::{Bounds, Context, MouseButton, Pixels, Point, Window};
-use std::time::Duration;
+use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
     pub(crate) fn select_tab_from_render(
@@ -76,7 +75,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.schedule_outside_release_poll_from_render(window, cx);
+        self.schedule_outside_release_poll_from_host(window, cx);
         self.update_viewport_host_scene_from_window(host_bounds, position, window);
         self.update_floating_drag_interaction(position, cx)
             .merge(
@@ -186,73 +185,5 @@ impl DockHost {
 
     pub(crate) fn finish_splitter_drag_from_render(&mut self, cx: &mut Context<Self>) -> bool {
         self.finish_splitter_drag_interaction().finish(cx)
-    }
-
-    fn schedule_outside_release_poll_from_render(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.viewport_runtime().is_none()
-            || cx.mouse_button_is_pressed(MouseButton::Left).is_none()
-            || !self.interaction_mut().begin_outside_release_poll()
-        {
-            return false;
-        }
-
-        cx.spawn_in(window, async move |host, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
-                let should_continue = host
-                    .update_in(cx, |host, window, cx| {
-                        host.poll_outside_release_from_render(window, cx)
-                    })
-                    .unwrap_or(false);
-                if !should_continue {
-                    break;
-                }
-            }
-        })
-        .detach();
-        true
-    }
-
-    fn poll_outside_release_from_render(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if !self.interaction().outside_release_poll_running() {
-            return false;
-        }
-
-        let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
-            self.interaction_mut().finish_outside_release_poll();
-            return false;
-        };
-
-        match cx.mouse_button_is_pressed(MouseButton::Left) {
-            Some(true) => true,
-            Some(false) => {
-                self.interaction_mut().finish_outside_release_poll();
-                let target_space = self.space().clone();
-                let release_position = window.mouse_position();
-                let changed = self.drop_payload_from_render(
-                    &payload,
-                    target_space,
-                    release_position,
-                    window,
-                    cx,
-                );
-                cx.stop_active_drag(window);
-                changed
-            }
-            None => {
-                self.interaction_mut().finish_outside_release_poll();
-                false
-            }
-        }
     }
 }
