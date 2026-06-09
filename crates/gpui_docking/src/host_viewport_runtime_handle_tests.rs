@@ -1115,13 +1115,16 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
             &DockViewportTargetContext::from_app(app).with_hovered_window(opened.window),
             app,
         );
-        runtime.commit_payload_drop_route(
-            &source_space,
-            source_tabs,
-            DockViewportDropPayload::Tabs,
-            route,
-            app,
-        )
+        runtime
+            .commit_payload_drop_route_with_outcome(
+                &source_space,
+                source_tabs,
+                DockViewportDropPayload::Tabs,
+                route,
+                app,
+            )
+            .map(|outcome| outcome.into_action_result())
+            .and_then(|result| result)
     });
 
     assert_eq!(result, Ok(crate::DockActionOutcome::Changed));

@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockHost, DockItemId, DockNodeId,
-    DockSpaceId, DockTransactionError, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockActionApplyError, DockController, DockHost, DockItemId, DockNodeId, DockSpaceId,
+    DockTransactionError, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
@@ -233,18 +233,6 @@ impl DockViewportRuntimeHandle {
             route,
             cx,
         )
-    }
-
-    pub(crate) fn commit_payload_drop_route(
-        &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
-        cx: &mut App,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.commit_payload_drop_route_with_outcome(source_space, source_tabs, payload, route, cx)?
-            .into_action_result()
     }
 
     pub(crate) fn commit_payload_drop_route_with_outcome(

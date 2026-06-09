@@ -332,13 +332,15 @@ impl DockHost {
             &DockViewportTargetContext::from_window(window, cx),
             cx,
         );
-        let result = runtime.commit_payload_drop_route(
-            &payload.source_space,
-            payload.source_tabs,
-            viewport_payload,
-            route,
-            cx,
-        );
+        let result = runtime
+            .commit_payload_drop_route_with_outcome(
+                &payload.source_space,
+                payload.source_tabs,
+                viewport_payload,
+                route,
+                cx,
+            )
+            .and_then(|outcome| outcome.into_action_result());
         Some(DockHostInteractionOutcome::from_commit_result(result, true))
     }
 
