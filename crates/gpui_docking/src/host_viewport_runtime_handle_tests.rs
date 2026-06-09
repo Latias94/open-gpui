@@ -3,10 +3,12 @@ use crate::{
     DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
     DockViewportDropRouteOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
     DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockWorkspace, debug::DockDebugRegion, drop_runtime::DockHostDropSceneFact,
-    drop_target::DockLeafDropTarget, host_test_support::*,
+    DockWorkspace, debug::DockDebugRegion, drag::DockDragPayload,
+    drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget, host_test_support::*,
 };
-use open_gpui::{AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px};
+use open_gpui::{
+    AppContext as _, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, px,
+};
 
 fn tear_off_request(
     source_space: DockSpaceId,
@@ -748,6 +750,134 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         after_drop_context.active_window,
         Some(opened.window.window_id()),
         "successful routed drop should activate the destination viewport"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(*active, 1);
+    });
+}
+
+#[open_gpui::test]
+fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window.window_id(),
+        target_bounds,
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window.window_id(),
+        DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+            root: target_tabs,
+            target_tabs,
+            bounds: floating_bounds(0.0, 0.0, 360.0, 220.0),
+            is_central: false,
+        }),
+    ));
+
+    let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    source_opened
+        .window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("source viewport should be activatable before host drop");
+    let source_window = source_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let source_window_bounds = source_window
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("source window should be live");
+    let release_screen_position = runtime
+        .last_host_scene_screen_position(&target_space)
+        .expect("target scene should expose a screen position");
+    let release_in_source_window = point(
+        release_screen_position.x - source_window_bounds.origin.x,
+        release_screen_position.y - source_window_bounds.origin.y,
+    );
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+
+    let changed = source_window
+        .update(cx, |host, window, cx| {
+            host.drop_payload_from_render(
+                &payload,
+                source_space.clone(),
+                release_in_source_window,
+                window,
+                cx,
+            )
+        })
+        .expect("source host should commit the routed render drop");
+    assert!(changed, "host render drop should report a graph change");
+
+    let after_drop_context = source_opened
+        .window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("source window should be live");
+    assert_eq!(
+        after_drop_context.active_window,
+        Some(target_opened.window.window_id()),
+        "host interaction should consume the routed activation target"
     );
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller
