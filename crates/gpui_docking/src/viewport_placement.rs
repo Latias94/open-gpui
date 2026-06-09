@@ -1,20 +1,9 @@
-use crate::{DockLayoutRect, DockSpaceId, DockViewportAdapter};
-use open_gpui::{DisplayId, WindowBounds, WindowOptions};
+use crate::{DockLayoutRect, DockSpaceId};
+use open_gpui::WindowBounds;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use thiserror::Error;
 
 /// Current viewport placement serialization version.
 pub const DOCK_VIEWPORT_PLACEMENT_VERSION: u32 = 1;
-
-/// Summary of applying saved viewport placement to runtime windows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DockViewportRestoreOutcome {
-    /// Number of saved placement entries applied to registered windows.
-    pub applied: usize,
-    /// Number of saved placement entries skipped because no runtime window was registered.
-    pub skipped: usize,
-}
 
 /// Serializable adapter-level viewport placement data.
 ///
@@ -42,65 +31,6 @@ impl DockViewportPlacementLayout {
         self.viewports
             .iter()
             .find(|viewport| viewport.space == *space)
-    }
-
-    /// Applies saved platform-window placement to fallback GPUI window options.
-    ///
-    /// This validates the placement layout before returning options so restore flows can reject
-    /// corrupt placement data before opening runtime windows.
-    pub fn window_options_for_space(
-        &self,
-        space: &DockSpaceId,
-        mut fallback: WindowOptions,
-    ) -> Result<WindowOptions, DockViewportPlacementValidationError> {
-        self.validate()?;
-
-        if let Some(placement) = self.placement_for_space(space) {
-            if let Some(display_id) = placement.display_id {
-                fallback.display_id = Some(DisplayId::from(display_id));
-            }
-            fallback.window_bounds = placement
-                .window_bounds
-                .map(DockViewportWindowBounds::to_window_bounds)
-                .or(fallback.window_bounds);
-        }
-
-        Ok(fallback)
-    }
-
-    /// Validates adapter-level placement invariants before applying snapshots.
-    pub fn validate(&self) -> Result<(), DockViewportPlacementValidationError> {
-        if self.placement_version != DOCK_VIEWPORT_PLACEMENT_VERSION {
-            return Err(DockViewportPlacementValidationError::UnsupportedVersion {
-                expected: DOCK_VIEWPORT_PLACEMENT_VERSION,
-                found: self.placement_version,
-            });
-        }
-
-        let mut spaces = BTreeSet::new();
-        for viewport in &self.viewports {
-            if !spaces.insert(viewport.space.clone()) {
-                return Err(DockViewportPlacementValidationError::DuplicateSpace {
-                    space: viewport.space.clone(),
-                });
-            }
-            if let Some(window_bounds) = viewport.window_bounds
-                && !window_bounds.bounds.is_finite_with_non_negative_size()
-            {
-                return Err(DockViewportPlacementValidationError::InvalidWindowBounds {
-                    space: viewport.space.clone(),
-                });
-            }
-            if let Some(host_bounds) = viewport.host_bounds
-                && !host_bounds.is_finite_with_non_negative_size()
-            {
-                return Err(DockViewportPlacementValidationError::InvalidHostBounds {
-                    space: viewport.space.clone(),
-                });
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -172,91 +102,13 @@ pub enum DockViewportWindowState {
     Fullscreen,
 }
 
-/// Validation error for serialized viewport placement data.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DockViewportPlacementValidationError {
-    /// The placement version is unsupported.
-    #[error("unsupported dock viewport placement version: expected {expected}, found {found}")]
-    UnsupportedVersion {
-        /// Expected version.
-        expected: u32,
-        /// Found version.
-        found: u32,
-    },
-    /// A dock space appears more than once in placement data.
-    #[error("duplicate dock viewport placement space: {space}")]
-    DuplicateSpace {
-        /// Duplicate dock space id.
-        space: DockSpaceId,
-    },
-    /// A viewport placement has non-finite platform window coordinates or negative window size.
-    #[error("dock viewport placement space {space} has invalid window bounds")]
-    InvalidWindowBounds {
-        /// Dock space id.
-        space: DockSpaceId,
-    },
-    /// A viewport placement has non-finite host coordinates or negative host size.
-    #[error("dock viewport placement space {space} has invalid host bounds")]
-    InvalidHostBounds {
-        /// Dock space id.
-        space: DockSpaceId,
-    },
-}
-
-impl DockViewportAdapter {
-    /// Exports serializable placement snapshots for all registered viewports.
-    pub fn export_placement(&self) -> DockViewportPlacementLayout {
-        DockViewportPlacementLayout::new(
-            self.spaces()
-                .into_iter()
-                .filter_map(|space| {
-                    let snapshot = self.snapshot(&space)?;
-                    Some(DockViewportPlacement {
-                        space,
-                        display_id: snapshot.display_id.map(u64::from),
-                        window_bounds: snapshot
-                            .window_bounds
-                            .map(DockViewportWindowBounds::from_window_bounds),
-                        host_bounds: snapshot.host_bounds.map(DockLayoutRect::from_bounds),
-                    })
-                })
-                .collect(),
-        )
-    }
-
-    /// Applies placement snapshots to already registered viewport windows.
-    ///
-    /// This does not open windows or create viewport mappings. Applications should first register
-    /// the windows they restored, then apply placement data to rehydrate adapter snapshots.
-    pub fn apply_placement(
-        &mut self,
-        placement: &DockViewportPlacementLayout,
-    ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
-        placement.validate()?;
-
-        let mut applied = 0;
-        let mut skipped = 0;
-        for viewport in &placement.viewports {
-            let Some(snapshot) = self.snapshot_mut(&viewport.space) else {
-                skipped += 1;
-                continue;
-            };
-            snapshot.display_id = viewport.display_id.map(DisplayId::from);
-            snapshot.window_bounds = viewport
-                .window_bounds
-                .map(DockViewportWindowBounds::to_window_bounds);
-            snapshot.host_bounds = viewport.host_bounds.map(DockLayoutRect::to_bounds);
-            applied += 1;
-        }
-
-        Ok(DockViewportRestoreOutcome { applied, skipped })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockHost, DockViewportAdapter, DockViewportHit};
+    use crate::{
+        DockHost, DockViewportAdapter, DockViewportHit, DockViewportPlacementValidationError,
+        DockViewportRestoreOutcome,
+    };
     use open_gpui::{
         AnyWindowHandle, Bounds, DisplayId, Pixels, WindowBounds, WindowHandle, WindowId,
         WindowOptions, point, px, size,
