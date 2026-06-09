@@ -5,10 +5,11 @@ use open_gpui::{
 use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor,
     CanvasEditorInputHandler, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolIntent,
-    CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand,
-    DocumentError, HandleRole, NodeId, PointerButton, canvas_editor_view,
+    CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions,
+    CanvasPaintTheme, CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
+    CanvasZOrderCommand, DocumentCommand, DocumentError, HandleRole, NodeId, PointerButton,
+    canvas_editor_view,
 };
 use open_gpui_platform::application;
 
@@ -28,7 +29,7 @@ struct StampNodeTool {
 
 struct StampNodeKind;
 
-impl CanvasNodeKind for StampNodeKind {
+impl CanvasNodeGeometryPolicy for StampNodeKind {
     fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
         Some(node.bounds().dilate(px(6.0)))
     }
@@ -230,7 +231,10 @@ fn demo_tools() -> CanvasToolRegistry {
 
 fn demo_kind_registry() -> CanvasKindRegistry {
     let mut registry = CanvasKindRegistry::open();
-    registry.register_node_kind("stamp", StampNodeKind);
+    registry.register_node_kind(
+        "stamp",
+        CanvasNodeKind::new().with_geometry_policy(StampNodeKind),
+    );
     registry
 }
 

@@ -150,7 +150,7 @@ impl CanvasKindLabel {
     }
 }
 
-pub trait CanvasNodeKind: Send + Sync {
+pub trait CanvasNodeSchemaPolicy: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
     }
@@ -162,7 +162,9 @@ pub trait CanvasNodeKind: Send + Sync {
     fn validate_node(&self, _node: &CanvasNode) -> Result<(), CanvasSchemaError> {
         Ok(())
     }
+}
 
+pub trait CanvasNodeGeometryPolicy: Send + Sync {
     fn node_bounds(&self, _node: &CanvasNode) -> Option<Bounds<Pixels>> {
         None
     }
@@ -174,11 +176,15 @@ pub trait CanvasNodeKind: Send + Sync {
     ) -> Option<Point<Pixels>> {
         None
     }
+}
 
+pub trait CanvasNodeInteractionPolicy: Send + Sync {
     fn node_contains_point(&self, _hit: CanvasNodeHitTest<'_>) -> Option<bool> {
         None
     }
+}
 
+pub trait CanvasNodeRenderPolicy: Send + Sync {
     fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
         None
     }
@@ -186,7 +192,9 @@ pub trait CanvasNodeKind: Send + Sync {
     fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
         None
     }
+}
 
+pub trait CanvasNodeTransformPolicy: Send + Sync {
     fn resize_node_bounds(
         &self,
         proposal: CanvasNodeResizeProposal<'_>,
@@ -195,7 +203,7 @@ pub trait CanvasNodeKind: Send + Sync {
     }
 }
 
-pub trait CanvasEdgeKind: Send + Sync {
+pub trait CanvasEdgeSchemaPolicy: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
     }
@@ -207,13 +215,15 @@ pub trait CanvasEdgeKind: Send + Sync {
     fn validate_edge(&self, _edge: &CanvasEdge) -> Result<(), CanvasSchemaError> {
         Ok(())
     }
+}
 
+pub trait CanvasEdgeRenderPolicy: Send + Sync {
     fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
         None
     }
 }
 
-pub trait CanvasShapeKind: Send + Sync {
+pub trait CanvasShapeSchemaPolicy: Send + Sync {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::new()
     }
@@ -225,15 +235,21 @@ pub trait CanvasShapeKind: Send + Sync {
     fn validate_shape(&self, _shape: &CanvasShape) -> Result<(), CanvasSchemaError> {
         Ok(())
     }
+}
 
+pub trait CanvasShapeGeometryPolicy: Send + Sync {
     fn shape_bounds(&self, _shape: &CanvasShape) -> Option<Bounds<Pixels>> {
         None
     }
+}
 
+pub trait CanvasShapeInteractionPolicy: Send + Sync {
     fn shape_contains_point(&self, _hit: CanvasShapeHitTest<'_>) -> Option<bool> {
         None
     }
+}
 
+pub trait CanvasShapeRenderPolicy: Send + Sync {
     fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
         None
     }
@@ -241,7 +257,9 @@ pub trait CanvasShapeKind: Send + Sync {
     fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
         None
     }
+}
 
+pub trait CanvasShapeTransformPolicy: Send + Sync {
     fn resize_shape_bounds(
         &self,
         proposal: CanvasShapeResizeProposal<'_>,
@@ -251,10 +269,208 @@ pub trait CanvasShapeKind: Send + Sync {
 }
 
 #[derive(Clone, Default)]
+pub struct CanvasNodeKind {
+    schema: Option<Arc<dyn CanvasNodeSchemaPolicy>>,
+    geometry: Option<Arc<dyn CanvasNodeGeometryPolicy>>,
+    interaction: Option<Arc<dyn CanvasNodeInteractionPolicy>>,
+    render: Option<Arc<dyn CanvasNodeRenderPolicy>>,
+    transform: Option<Arc<dyn CanvasNodeTransformPolicy>>,
+}
+
+impl CanvasNodeKind {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema_policy(mut self, policy: impl CanvasNodeSchemaPolicy + 'static) -> Self {
+        self.schema = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_geometry_policy(mut self, policy: impl CanvasNodeGeometryPolicy + 'static) -> Self {
+        self.geometry = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_interaction_policy(
+        mut self,
+        policy: impl CanvasNodeInteractionPolicy + 'static,
+    ) -> Self {
+        self.interaction = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_render_policy(mut self, policy: impl CanvasNodeRenderPolicy + 'static) -> Self {
+        self.render = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_transform_policy(
+        mut self,
+        policy: impl CanvasNodeTransformPolicy + 'static,
+    ) -> Self {
+        self.transform = Some(Arc::new(policy));
+        self
+    }
+
+    fn schema_policy(&self) -> Option<&dyn CanvasNodeSchemaPolicy> {
+        self.schema.as_deref()
+    }
+
+    fn geometry_policy(&self) -> Option<&dyn CanvasNodeGeometryPolicy> {
+        self.geometry.as_deref()
+    }
+
+    fn interaction_policy(&self) -> Option<&dyn CanvasNodeInteractionPolicy> {
+        self.interaction.as_deref()
+    }
+
+    fn render_policy(&self) -> Option<&dyn CanvasNodeRenderPolicy> {
+        self.render.as_deref()
+    }
+
+    fn transform_policy(&self) -> Option<&dyn CanvasNodeTransformPolicy> {
+        self.transform.as_deref()
+    }
+}
+
+impl fmt::Debug for CanvasNodeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CanvasNodeKind")
+            .field("has_schema", &self.schema.is_some())
+            .field("has_geometry", &self.geometry.is_some())
+            .field("has_interaction", &self.interaction.is_some())
+            .field("has_render", &self.render.is_some())
+            .field("has_transform", &self.transform.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CanvasEdgeKind {
+    schema: Option<Arc<dyn CanvasEdgeSchemaPolicy>>,
+    render: Option<Arc<dyn CanvasEdgeRenderPolicy>>,
+}
+
+impl CanvasEdgeKind {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema_policy(mut self, policy: impl CanvasEdgeSchemaPolicy + 'static) -> Self {
+        self.schema = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_render_policy(mut self, policy: impl CanvasEdgeRenderPolicy + 'static) -> Self {
+        self.render = Some(Arc::new(policy));
+        self
+    }
+
+    fn schema_policy(&self) -> Option<&dyn CanvasEdgeSchemaPolicy> {
+        self.schema.as_deref()
+    }
+
+    fn render_policy(&self) -> Option<&dyn CanvasEdgeRenderPolicy> {
+        self.render.as_deref()
+    }
+}
+
+impl fmt::Debug for CanvasEdgeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CanvasEdgeKind")
+            .field("has_schema", &self.schema.is_some())
+            .field("has_render", &self.render.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CanvasShapeKind {
+    schema: Option<Arc<dyn CanvasShapeSchemaPolicy>>,
+    geometry: Option<Arc<dyn CanvasShapeGeometryPolicy>>,
+    interaction: Option<Arc<dyn CanvasShapeInteractionPolicy>>,
+    render: Option<Arc<dyn CanvasShapeRenderPolicy>>,
+    transform: Option<Arc<dyn CanvasShapeTransformPolicy>>,
+}
+
+impl CanvasShapeKind {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema_policy(mut self, policy: impl CanvasShapeSchemaPolicy + 'static) -> Self {
+        self.schema = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_geometry_policy(
+        mut self,
+        policy: impl CanvasShapeGeometryPolicy + 'static,
+    ) -> Self {
+        self.geometry = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_interaction_policy(
+        mut self,
+        policy: impl CanvasShapeInteractionPolicy + 'static,
+    ) -> Self {
+        self.interaction = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_render_policy(mut self, policy: impl CanvasShapeRenderPolicy + 'static) -> Self {
+        self.render = Some(Arc::new(policy));
+        self
+    }
+
+    pub fn with_transform_policy(
+        mut self,
+        policy: impl CanvasShapeTransformPolicy + 'static,
+    ) -> Self {
+        self.transform = Some(Arc::new(policy));
+        self
+    }
+
+    fn schema_policy(&self) -> Option<&dyn CanvasShapeSchemaPolicy> {
+        self.schema.as_deref()
+    }
+
+    fn geometry_policy(&self) -> Option<&dyn CanvasShapeGeometryPolicy> {
+        self.geometry.as_deref()
+    }
+
+    fn interaction_policy(&self) -> Option<&dyn CanvasShapeInteractionPolicy> {
+        self.interaction.as_deref()
+    }
+
+    fn render_policy(&self) -> Option<&dyn CanvasShapeRenderPolicy> {
+        self.render.as_deref()
+    }
+
+    fn transform_policy(&self) -> Option<&dyn CanvasShapeTransformPolicy> {
+        self.transform.as_deref()
+    }
+}
+
+impl fmt::Debug for CanvasShapeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CanvasShapeKind")
+            .field("has_schema", &self.schema.is_some())
+            .field("has_geometry", &self.geometry.is_some())
+            .field("has_interaction", &self.interaction.is_some())
+            .field("has_render", &self.render.is_some())
+            .field("has_transform", &self.transform.is_some())
+            .finish()
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct CanvasKindRegistry {
-    node_kinds: IndexMap<String, Arc<dyn CanvasNodeKind>>,
-    edge_kinds: IndexMap<String, Arc<dyn CanvasEdgeKind>>,
-    shape_kinds: IndexMap<String, Arc<dyn CanvasShapeKind>>,
+    node_kinds: IndexMap<String, Arc<CanvasNodeKind>>,
+    edge_kinds: IndexMap<String, Arc<CanvasEdgeKind>>,
+    shape_kinds: IndexMap<String, Arc<CanvasShapeKind>>,
 }
 
 impl fmt::Debug for CanvasKindRegistry {
@@ -281,39 +497,27 @@ impl CanvasKindRegistry {
         Self::default()
     }
 
-    pub fn register_node_kind(
-        &mut self,
-        kind: impl Into<String>,
-        schema: impl CanvasNodeKind + 'static,
-    ) {
-        self.node_kinds.insert(kind.into(), Arc::new(schema));
+    pub fn register_node_kind(&mut self, kind: impl Into<String>, node_kind: CanvasNodeKind) {
+        self.node_kinds.insert(kind.into(), Arc::new(node_kind));
     }
 
-    pub fn register_edge_kind(
-        &mut self,
-        kind: impl Into<String>,
-        schema: impl CanvasEdgeKind + 'static,
-    ) {
-        self.edge_kinds.insert(kind.into(), Arc::new(schema));
+    pub fn register_edge_kind(&mut self, kind: impl Into<String>, edge_kind: CanvasEdgeKind) {
+        self.edge_kinds.insert(kind.into(), Arc::new(edge_kind));
     }
 
-    pub fn register_shape_kind(
-        &mut self,
-        kind: impl Into<String>,
-        schema: impl CanvasShapeKind + 'static,
-    ) {
-        self.shape_kinds.insert(kind.into(), Arc::new(schema));
+    pub fn register_shape_kind(&mut self, kind: impl Into<String>, shape_kind: CanvasShapeKind) {
+        self.shape_kinds.insert(kind.into(), Arc::new(shape_kind));
     }
 
-    pub fn node_kind(&self, kind: &str) -> Option<&dyn CanvasNodeKind> {
+    pub fn node_kind(&self, kind: &str) -> Option<&CanvasNodeKind> {
         self.node_kinds.get(kind).map(Arc::as_ref)
     }
 
-    pub fn edge_kind(&self, kind: &str) -> Option<&dyn CanvasEdgeKind> {
+    pub fn edge_kind(&self, kind: &str) -> Option<&CanvasEdgeKind> {
         self.edge_kinds.get(kind).map(Arc::as_ref)
     }
 
-    pub fn shape_kind(&self, kind: &str) -> Option<&dyn CanvasShapeKind> {
+    pub fn shape_kind(&self, kind: &str) -> Option<&CanvasShapeKind> {
         self.shape_kinds.get(kind).map(Arc::as_ref)
     }
 
@@ -363,9 +567,11 @@ impl CanvasKindRegistry {
             return Ok(node);
         };
 
-        schema.migrate_node(&mut node)?;
-        merge_default_data(&mut node.data, schema.default_data());
-        schema.validate_node(&node)?;
+        if let Some(schema) = schema.schema_policy() {
+            schema.migrate_node(&mut node)?;
+            merge_default_data(&mut node.data, schema.default_data());
+            schema.validate_node(&node)?;
+        }
         Ok(node)
     }
 
@@ -374,9 +580,11 @@ impl CanvasKindRegistry {
             return Ok(edge);
         };
 
-        schema.migrate_edge(&mut edge)?;
-        merge_default_data(&mut edge.data, schema.default_data());
-        schema.validate_edge(&edge)?;
+        if let Some(schema) = schema.schema_policy() {
+            schema.migrate_edge(&mut edge)?;
+            merge_default_data(&mut edge.data, schema.default_data());
+            schema.validate_edge(&edge)?;
+        }
         Ok(edge)
     }
 
@@ -388,9 +596,11 @@ impl CanvasKindRegistry {
             return Ok(shape);
         };
 
-        schema.migrate_shape(&mut shape)?;
-        merge_default_data(&mut shape.data, schema.default_data());
-        schema.validate_shape(&shape)?;
+        if let Some(schema) = schema.schema_policy() {
+            schema.migrate_shape(&mut shape)?;
+            merge_default_data(&mut shape.data, schema.default_data());
+            schema.validate_shape(&shape)?;
+        }
         Ok(shape)
     }
 
@@ -399,19 +609,28 @@ impl CanvasKindRegistry {
         document: &crate::CanvasDocument,
     ) -> Result<(), CanvasSchemaError> {
         for node in document.nodes() {
-            if let Some(schema) = self.node_kind(&node.kind) {
+            if let Some(schema) = self
+                .node_kind(&node.kind)
+                .and_then(CanvasNodeKind::schema_policy)
+            {
                 schema.validate_node(node)?;
             }
         }
 
         for edge in document.edges() {
-            if let Some(schema) = self.edge_kind(&edge.kind) {
+            if let Some(schema) = self
+                .edge_kind(&edge.kind)
+                .and_then(CanvasEdgeKind::schema_policy)
+            {
                 schema.validate_edge(edge)?;
             }
         }
 
         for shape in document.shapes() {
-            if let Some(schema) = self.shape_kind(&shape.kind) {
+            if let Some(schema) = self
+                .shape_kind(&shape.kind)
+                .and_then(CanvasShapeKind::schema_policy)
+            {
                 schema.validate_shape(shape)?;
             }
         }
@@ -421,7 +640,8 @@ impl CanvasKindRegistry {
 
     pub fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
         self.node_kind(&node.kind)
-            .and_then(|schema| schema.node_bounds(node))
+            .and_then(CanvasNodeKind::geometry_policy)
+            .and_then(|geometry| geometry.node_bounds(node))
     }
 
     pub fn handle_position(
@@ -430,12 +650,14 @@ impl CanvasKindRegistry {
         handle_id: &crate::HandleId,
     ) -> Option<Point<Pixels>> {
         self.node_kind(&node.kind)
-            .and_then(|schema| schema.handle_position(node, handle_id))
+            .and_then(CanvasNodeKind::geometry_policy)
+            .and_then(|geometry| geometry.handle_position(node, handle_id))
     }
 
     pub fn shape_bounds(&self, shape: &CanvasShape) -> Option<Bounds<Pixels>> {
         self.shape_kind(&shape.kind)
-            .and_then(|schema| schema.shape_bounds(shape))
+            .and_then(CanvasShapeKind::geometry_policy)
+            .and_then(|geometry| geometry.shape_bounds(shape))
     }
 
     pub fn node_contains_point(
@@ -445,14 +667,16 @@ impl CanvasKindRegistry {
         bounds: Bounds<Pixels>,
         margin: Pixels,
     ) -> Option<bool> {
-        self.node_kind(&node.kind).and_then(|schema| {
-            schema.node_contains_point(CanvasNodeHitTest {
-                node,
-                point,
-                bounds,
-                margin,
+        self.node_kind(&node.kind)
+            .and_then(CanvasNodeKind::interaction_policy)
+            .and_then(|interaction| {
+                interaction.node_contains_point(CanvasNodeHitTest {
+                    node,
+                    point,
+                    bounds,
+                    margin,
+                })
             })
-        })
     }
 
     pub fn shape_contains_point(
@@ -462,40 +686,47 @@ impl CanvasKindRegistry {
         bounds: Bounds<Pixels>,
         margin: Pixels,
     ) -> Option<bool> {
-        self.shape_kind(&shape.kind).and_then(|schema| {
-            schema.shape_contains_point(CanvasShapeHitTest {
-                shape,
-                point,
-                bounds,
-                margin,
+        self.shape_kind(&shape.kind)
+            .and_then(CanvasShapeKind::interaction_policy)
+            .and_then(|interaction| {
+                interaction.shape_contains_point(CanvasShapeHitTest {
+                    shape,
+                    point,
+                    bounds,
+                    margin,
+                })
             })
-        })
     }
 
     pub fn node_paint(&self, node: &CanvasNode) -> Option<CanvasKindPaint> {
         self.node_kind(&node.kind)
-            .and_then(|schema| schema.node_paint(node))
+            .and_then(CanvasNodeKind::render_policy)
+            .and_then(|render| render.node_paint(node))
     }
 
     pub fn shape_paint(&self, shape: &CanvasShape) -> Option<CanvasKindPaint> {
         self.shape_kind(&shape.kind)
-            .and_then(|schema| schema.shape_paint(shape))
+            .and_then(CanvasShapeKind::render_policy)
+            .and_then(|render| render.shape_paint(shape))
     }
 
     pub fn edge_paint(&self, edge: &CanvasEdge) -> Option<CanvasKindPaint> {
         self.edge_kind(&edge.kind)
-            .and_then(|schema| schema.edge_paint(edge))
+            .and_then(CanvasEdgeKind::render_policy)
+            .and_then(|render| render.edge_paint(edge))
     }
 
     pub fn node_label(&self, node: &CanvasNode) -> Option<CanvasKindLabel> {
         self.node_kind(&node.kind)
-            .and_then(|schema| schema.node_label(node))
+            .and_then(CanvasNodeKind::render_policy)
+            .and_then(|render| render.node_label(node))
             .filter(|label| label.visible && !label.text.trim().is_empty())
     }
 
     pub fn shape_label(&self, shape: &CanvasShape) -> Option<CanvasKindLabel> {
         self.shape_kind(&shape.kind)
-            .and_then(|schema| schema.shape_label(shape))
+            .and_then(CanvasShapeKind::render_policy)
+            .and_then(|render| render.shape_label(shape))
             .filter(|label| label.visible && !label.text.trim().is_empty())
     }
 
@@ -504,11 +735,14 @@ impl CanvasKindRegistry {
         node: &CanvasNode,
         proposed: Bounds<Pixels>,
     ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
-        let Some(schema) = self.node_kind(&node.kind) else {
+        let Some(transform) = self
+            .node_kind(&node.kind)
+            .and_then(CanvasNodeKind::transform_policy)
+        else {
             return Ok(proposed);
         };
 
-        let bounds = schema.resize_node_bounds(CanvasNodeResizeProposal {
+        let bounds = transform.resize_node_bounds(CanvasNodeResizeProposal {
             node,
             bounds: proposed,
         })?;
@@ -521,11 +755,14 @@ impl CanvasKindRegistry {
         shape: &CanvasShape,
         proposed: Bounds<Pixels>,
     ) -> Result<Bounds<Pixels>, CanvasSchemaError> {
-        let Some(schema) = self.shape_kind(&shape.kind) else {
+        let Some(transform) = self
+            .shape_kind(&shape.kind)
+            .and_then(CanvasShapeKind::transform_policy)
+        else {
             return Ok(proposed);
         };
 
-        let bounds = schema.resize_shape_bounds(CanvasShapeResizeProposal {
+        let bounds = transform.resize_shape_bounds(CanvasShapeResizeProposal {
             shape,
             bounds: proposed,
         })?;
@@ -580,7 +817,7 @@ mod tests {
 
     struct RequiredTitleNodeKind;
 
-    impl CanvasNodeKind for RequiredTitleNodeKind {
+    impl CanvasNodeSchemaPolicy for RequiredTitleNodeKind {
         fn default_data(&self) -> CanvasValue {
             CanvasValue::from_iter([("title".to_string(), json!("Untitled"))])
         }
@@ -609,7 +846,9 @@ mod tests {
                 )),
             }
         }
+    }
 
+    impl CanvasNodeGeometryPolicy for RequiredTitleNodeKind {
         fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
             Some(node.bounds().dilate(px(10.0)))
         }
@@ -630,7 +869,7 @@ mod tests {
 
     struct RequiredRelationEdgeKind;
 
-    impl CanvasEdgeKind for RequiredRelationEdgeKind {
+    impl CanvasEdgeSchemaPolicy for RequiredRelationEdgeKind {
         fn validate_edge(&self, edge: &CanvasEdge) -> Result<(), CanvasSchemaError> {
             if edge.data.contains_key("relation") {
                 Ok(())
@@ -647,7 +886,7 @@ mod tests {
 
     struct SizedShapeKind;
 
-    impl CanvasShapeKind for SizedShapeKind {
+    impl CanvasShapeSchemaPolicy for SizedShapeKind {
         fn default_data(&self) -> CanvasValue {
             CanvasValue::from_iter([("shapeType".to_string(), json!("box"))])
         }
@@ -664,7 +903,9 @@ mod tests {
                 ))
             }
         }
+    }
 
+    impl CanvasShapeGeometryPolicy for SizedShapeKind {
         fn shape_bounds(&self, shape: &CanvasShape) -> Option<Bounds<Pixels>> {
             Some(shape.bounds.dilate(px(5.0)))
         }
@@ -672,7 +913,7 @@ mod tests {
 
     struct MinimumSizeNodeKind;
 
-    impl CanvasNodeKind for MinimumSizeNodeKind {
+    impl CanvasNodeTransformPolicy for MinimumSizeNodeKind {
         fn resize_node_bounds(
             &self,
             proposal: CanvasNodeResizeProposal<'_>,
@@ -689,7 +930,7 @@ mod tests {
 
     struct RejectingShapeResizeKind;
 
-    impl CanvasShapeKind for RejectingShapeResizeKind {
+    impl CanvasShapeTransformPolicy for RejectingShapeResizeKind {
         fn resize_shape_bounds(
             &self,
             proposal: CanvasShapeResizeProposal<'_>,
@@ -707,15 +948,23 @@ mod tests {
 
     struct RightHalfNodeKind;
 
-    impl CanvasNodeKind for RightHalfNodeKind {
+    impl CanvasNodeInteractionPolicy for RightHalfNodeKind {
         fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
             Some(hit.point.x >= hit.bounds.center().x)
         }
     }
 
+    struct TopHalfShapeKind;
+
+    impl CanvasShapeInteractionPolicy for TopHalfShapeKind {
+        fn shape_contains_point(&self, hit: CanvasShapeHitTest<'_>) -> Option<bool> {
+            Some(hit.point.y <= hit.bounds.center().y)
+        }
+    }
+
     struct PaintedNodeKind;
 
-    impl CanvasNodeKind for PaintedNodeKind {
+    impl CanvasNodeRenderPolicy for PaintedNodeKind {
         fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: Some("#fff8c5".to_string()),
@@ -736,7 +985,7 @@ mod tests {
 
     struct PaintedEdgeKind;
 
-    impl CanvasEdgeKind for PaintedEdgeKind {
+    impl CanvasEdgeRenderPolicy for PaintedEdgeKind {
         fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: None,
@@ -749,7 +998,7 @@ mod tests {
 
     struct PaintedShapeKind;
 
-    impl CanvasShapeKind for PaintedShapeKind {
+    impl CanvasShapeRenderPolicy for PaintedShapeKind {
         fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: Some("#ddf4ff".to_string()),
@@ -770,7 +1019,7 @@ mod tests {
 
     struct HiddenLabelNodeKind;
 
-    impl CanvasNodeKind for HiddenLabelNodeKind {
+    impl CanvasNodeRenderPolicy for HiddenLabelNodeKind {
         fn node_label(&self, _node: &CanvasNode) -> Option<CanvasKindLabel> {
             Some(CanvasKindLabel::new("Hidden").hidden())
         }
@@ -778,13 +1027,13 @@ mod tests {
 
     struct EmptyLabelShapeKind;
 
-    impl CanvasShapeKind for EmptyLabelShapeKind {
+    impl CanvasShapeRenderPolicy for EmptyLabelShapeKind {
         fn shape_label(&self, _shape: &CanvasShape) -> Option<CanvasKindLabel> {
             Some(CanvasKindLabel::new("   "))
         }
     }
 
-    impl CanvasShapeKind for InvalidShapeResizeKind {
+    impl CanvasShapeTransformPolicy for InvalidShapeResizeKind {
         fn resize_shape_bounds(
             &self,
             proposal: CanvasShapeResizeProposal<'_>,
@@ -794,6 +1043,62 @@ mod tests {
                 size(px(0.0), proposal.bounds.size.height),
             ))
         }
+    }
+
+    fn required_title_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new()
+            .with_schema_policy(RequiredTitleNodeKind)
+            .with_geometry_policy(RequiredTitleNodeKind)
+    }
+
+    fn relation_edge_kind() -> CanvasEdgeKind {
+        CanvasEdgeKind::new().with_schema_policy(RequiredRelationEdgeKind)
+    }
+
+    fn sized_shape_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new()
+            .with_schema_policy(SizedShapeKind)
+            .with_geometry_policy(SizedShapeKind)
+    }
+
+    fn minimum_size_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_transform_policy(MinimumSizeNodeKind)
+    }
+
+    fn rejecting_shape_resize_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new().with_transform_policy(RejectingShapeResizeKind)
+    }
+
+    fn invalid_shape_resize_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new().with_transform_policy(InvalidShapeResizeKind)
+    }
+
+    fn right_half_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_interaction_policy(RightHalfNodeKind)
+    }
+
+    fn top_half_shape_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new().with_interaction_policy(TopHalfShapeKind)
+    }
+
+    fn painted_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_render_policy(PaintedNodeKind)
+    }
+
+    fn painted_edge_kind() -> CanvasEdgeKind {
+        CanvasEdgeKind::new().with_render_policy(PaintedEdgeKind)
+    }
+
+    fn painted_shape_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new().with_render_policy(PaintedShapeKind)
+    }
+
+    fn hidden_label_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_render_policy(HiddenLabelNodeKind)
+    }
+
+    fn empty_label_shape_kind() -> CanvasShapeKind {
+        CanvasShapeKind::new().with_render_policy(EmptyLabelShapeKind)
     }
 
     #[test]
@@ -812,7 +1117,7 @@ mod tests {
     #[test]
     fn registered_node_kind_applies_migration_defaults_and_validation() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
 
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.kind = "note".to_string();
@@ -848,10 +1153,91 @@ mod tests {
     }
 
     #[test]
+    fn node_policy_categories_are_independent() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind(
+            "schema-only",
+            CanvasNodeKind::new().with_schema_policy(RequiredTitleNodeKind),
+        );
+        registry.register_node_kind(
+            "geometry-only",
+            CanvasNodeKind::new().with_geometry_policy(RequiredTitleNodeKind),
+        );
+        registry.register_node_kind("render-only", painted_node_kind());
+        registry.register_node_kind("transform-only", minimum_size_node_kind());
+        registry.register_node_kind("interaction-only", right_half_node_kind());
+
+        let mut schema_node =
+            CanvasNode::new("schema", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        schema_node.kind = "schema-only".to_string();
+        let normalized = registry.normalize_node(schema_node.clone()).unwrap();
+        assert_eq!(normalized.data.get("title"), Some(&json!("Untitled")));
+        assert_eq!(registry.node_bounds(&normalized), None);
+        assert_eq!(registry.node_paint(&normalized), None);
+
+        let mut geometry_node = CanvasNode::new(
+            "geometry",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        geometry_node.kind = "geometry-only".to_string();
+        assert_eq!(
+            registry.normalize_node(geometry_node.clone()).unwrap(),
+            geometry_node
+        );
+        assert_eq!(
+            registry.node_bounds(&geometry_node),
+            Some(geometry_node.bounds().dilate(px(10.0)))
+        );
+        assert_eq!(registry.node_paint(&geometry_node), None);
+
+        let mut render_node =
+            CanvasNode::new("render", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
+        render_node.kind = "render-only".to_string();
+        assert!(registry.node_paint(&render_node).is_some());
+        assert_eq!(registry.node_bounds(&render_node), None);
+
+        let mut transform_node = CanvasNode::new(
+            "transform",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        transform_node.kind = "transform-only".to_string();
+        assert_eq!(
+            registry
+                .resize_node_bounds(
+                    &transform_node,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(1.0), px(1.0))),
+                )
+                .unwrap()
+                .size,
+            size(px(48.0), px(32.0))
+        );
+        assert_eq!(registry.node_paint(&transform_node), None);
+
+        let mut interaction_node = CanvasNode::new(
+            "interaction",
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(80.0)),
+        );
+        interaction_node.kind = "interaction-only".to_string();
+        assert_eq!(
+            registry.node_contains_point(
+                &interaction_node,
+                point(px(25.0), px(20.0)),
+                interaction_node.bounds(),
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
+        assert_eq!(registry.node_bounds(&interaction_node), None);
+    }
+
+    #[test]
     fn registered_edge_and_shape_kinds_validate_data() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_edge_kind("relation", RequiredRelationEdgeKind);
-        registry.register_shape_kind("box", SizedShapeKind);
+        registry.register_edge_kind("relation", relation_edge_kind());
+        registry.register_shape_kind("box", sized_shape_kind());
 
         let edge = edge_with_kind("relation");
         assert!(matches!(
@@ -879,10 +1265,117 @@ mod tests {
     }
 
     #[test]
+    fn edge_and_shape_policy_categories_are_independent() {
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_edge_kind(
+            "edge-schema",
+            CanvasEdgeKind::new().with_schema_policy(RequiredRelationEdgeKind),
+        );
+        registry.register_edge_kind("edge-render", painted_edge_kind());
+        registry.register_shape_kind(
+            "shape-schema",
+            CanvasShapeKind::new().with_schema_policy(SizedShapeKind),
+        );
+        registry.register_shape_kind(
+            "shape-geometry",
+            CanvasShapeKind::new().with_geometry_policy(SizedShapeKind),
+        );
+        registry.register_shape_kind("shape-render", painted_shape_kind());
+        registry.register_shape_kind("shape-transform", rejecting_shape_resize_kind());
+        registry.register_shape_kind("shape-interaction", top_half_shape_kind());
+
+        let mut edge = edge_with_kind("edge-schema");
+        assert!(matches!(
+            registry.normalize_edge(edge.clone()),
+            Err(CanvasSchemaError::MissingRequiredData { .. })
+        ));
+        edge.data.insert("relation".to_string(), json!("uses"));
+        assert_eq!(registry.normalize_edge(edge.clone()).unwrap(), edge);
+        assert_eq!(registry.edge_paint(&edge), None);
+
+        let render_edge = edge_with_kind("edge-render");
+        assert!(registry.edge_paint(&render_edge).is_some());
+        assert_eq!(
+            registry.normalize_edge(render_edge.clone()).unwrap(),
+            render_edge
+        );
+
+        let mut schema_shape = CanvasShape::new(
+            "schema-shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        );
+        schema_shape.kind = "shape-schema".to_string();
+        let normalized = registry.normalize_shape(schema_shape).unwrap();
+        assert_eq!(normalized.data.get("shapeType"), Some(&json!("box")));
+        assert_eq!(registry.shape_bounds(&normalized), None);
+
+        let mut geometry_shape = CanvasShape::new(
+            "geometry-shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        );
+        geometry_shape.kind = "shape-geometry".to_string();
+        assert_eq!(
+            registry.normalize_shape(geometry_shape.clone()).unwrap(),
+            geometry_shape
+        );
+        assert_eq!(
+            registry.shape_bounds(&geometry_shape),
+            Some(Bounds::new(
+                point(px(-5.0), px(-5.0)),
+                size(px(20.0), px(20.0))
+            ))
+        );
+
+        let mut render_shape = CanvasShape::new(
+            "render-shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        );
+        render_shape.kind = "shape-render".to_string();
+        assert!(registry.shape_paint(&render_shape).is_some());
+        assert_eq!(registry.shape_bounds(&render_shape), None);
+
+        let mut transform_shape = CanvasShape::new(
+            "transform-shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        );
+        transform_shape.kind = "shape-transform".to_string();
+        assert!(matches!(
+            registry.resize_shape_bounds(&transform_shape, transform_shape.bounds),
+            Err(CanvasSchemaError::InvalidData { message, .. }) if message == "resize is disabled"
+        ));
+        assert_eq!(registry.shape_paint(&transform_shape), None);
+
+        let mut interaction_shape = CanvasShape::new(
+            "interaction-shape",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+        );
+        interaction_shape.kind = "shape-interaction".to_string();
+        assert_eq!(
+            registry.shape_contains_point(
+                &interaction_shape,
+                point(px(5.0), px(2.0)),
+                interaction_shape.bounds,
+                Pixels::ZERO,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            registry.shape_contains_point(
+                &interaction_shape,
+                point(px(5.0), px(8.0)),
+                interaction_shape.bounds,
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
+        assert_eq!(registry.shape_paint(&interaction_shape), None);
+    }
+
+    #[test]
     fn registered_resize_policy_can_clamp_or_reject_bounds() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("min", MinimumSizeNodeKind);
-        registry.register_shape_kind("locked-size", RejectingShapeResizeKind);
+        registry.register_node_kind("min", minimum_size_node_kind());
+        registry.register_shape_kind("locked-size", rejecting_shape_resize_kind());
 
         let mut node =
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
@@ -919,7 +1412,7 @@ mod tests {
     #[test]
     fn registered_resize_policy_output_is_validated() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_shape_kind("invalid-size", InvalidShapeResizeKind);
+        registry.register_shape_kind("invalid-size", invalid_shape_resize_kind());
 
         let mut shape = CanvasShape::new(
             "shape",
@@ -943,7 +1436,7 @@ mod tests {
     #[test]
     fn registered_hit_policy_can_reject_points_inside_bounds() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("right-half", RightHalfNodeKind);
+        registry.register_node_kind("right-half", right_half_node_kind());
 
         let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
         node.kind = "right-half".to_string();
@@ -962,11 +1455,11 @@ mod tests {
     #[test]
     fn registered_paint_policy_supplies_renderer_neutral_defaults() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("painted-node", PaintedNodeKind);
-        registry.register_edge_kind("painted-edge", PaintedEdgeKind);
-        registry.register_shape_kind("painted-shape", PaintedShapeKind);
-        registry.register_node_kind("hidden-label", HiddenLabelNodeKind);
-        registry.register_shape_kind("empty-label", EmptyLabelShapeKind);
+        registry.register_node_kind("painted-node", painted_node_kind());
+        registry.register_edge_kind("painted-edge", painted_edge_kind());
+        registry.register_shape_kind("painted-shape", painted_shape_kind());
+        registry.register_node_kind("hidden-label", hidden_label_node_kind());
+        registry.register_shape_kind("empty-label", empty_label_shape_kind());
 
         let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(80.0)));
         node.kind = "painted-node".to_string();
@@ -1051,7 +1544,7 @@ mod tests {
     #[test]
     fn document_from_snapshot_runs_registered_kind_normalization() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
 
         let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
@@ -1072,7 +1565,7 @@ mod tests {
     #[test]
     fn document_mutation_path_rejects_registered_kind_errors_atomically() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
         let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.kind = "note".to_string();

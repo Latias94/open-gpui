@@ -1588,9 +1588,10 @@ fn canvas_key_modifiers(modifiers: Modifiers) -> CanvasKeyModifiers {
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdgeKind, CanvasHandle, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-        CanvasRoutePath, CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind, DocumentCommand,
-        EdgeId, HandleRole, tool::CanvasToolEffect,
+        CanvasEdgeKind, CanvasEdgeRenderPolicy, CanvasHandle, CanvasKindRegistry, CanvasNode,
+        CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasRoutePath,
+        CanvasRouteRequest, CanvasSelectionMode, CanvasShapeKind, CanvasShapeRenderPolicy,
+        DocumentCommand, EdgeId, HandleRole, tool::CanvasToolEffect,
     };
     use open_gpui::{Bounds, ScrollDelta, point, px, size};
 
@@ -2854,21 +2855,33 @@ mod tests {
 
     fn geometry_registry() -> CanvasKindRegistry {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("wide", WideNodeKind);
+        registry.register_node_kind(
+            "wide",
+            CanvasNodeKind::new().with_geometry_policy(WideNodeKind),
+        );
         registry
     }
 
     fn paint_registry() -> CanvasKindRegistry {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("painted-node", PaintedNodeKind);
-        registry.register_edge_kind("painted-edge", PaintedEdgeKind);
-        registry.register_shape_kind("painted-shape", PaintedShapeKind);
+        registry.register_node_kind(
+            "painted-node",
+            CanvasNodeKind::new().with_render_policy(PaintedNodeKind),
+        );
+        registry.register_edge_kind(
+            "painted-edge",
+            CanvasEdgeKind::new().with_render_policy(PaintedEdgeKind),
+        );
+        registry.register_shape_kind(
+            "painted-shape",
+            CanvasShapeKind::new().with_render_policy(PaintedShapeKind),
+        );
         registry
     }
 
     struct WideNodeKind;
 
-    impl CanvasNodeKind for WideNodeKind {
+    impl CanvasNodeGeometryPolicy for WideNodeKind {
         fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
             Some(node.bounds().dilate(px(5.0)))
         }
@@ -2891,7 +2904,7 @@ mod tests {
 
     struct PaintedNodeKind;
 
-    impl CanvasNodeKind for PaintedNodeKind {
+    impl CanvasNodeRenderPolicy for PaintedNodeKind {
         fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: Some("#fff8c5".to_string()),
@@ -2912,7 +2925,7 @@ mod tests {
 
     struct PaintedEdgeKind;
 
-    impl CanvasEdgeKind for PaintedEdgeKind {
+    impl CanvasEdgeRenderPolicy for PaintedEdgeKind {
         fn edge_paint(&self, _edge: &CanvasEdge) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: None,
@@ -2925,7 +2938,7 @@ mod tests {
 
     struct PaintedShapeKind;
 
-    impl CanvasShapeKind for PaintedShapeKind {
+    impl CanvasShapeRenderPolicy for PaintedShapeKind {
         fn shape_paint(&self, _shape: &CanvasShape) -> Option<CanvasKindPaint> {
             Some(CanvasKindPaint {
                 fill: Some("#ddf4ff".to_string()),

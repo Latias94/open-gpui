@@ -170,7 +170,7 @@ flowchart TD
     App --> Store[Persistence Store]
     App --> Registry[Kind Registry]
     Registry --> Editor
-    Registry --> Geometry[Geometry Resolver]
+    Registry --> Geometry[Geometry Facts]
     Tools[Tool Reducers] --> Effects[Tool Effects / Gestures]
     Effects --> Editor
     Editor --> Journal[Document Mutation Journal]
@@ -211,13 +211,15 @@ links as edges in the same document.
 
 Kind-specific behavior is registry-driven rather than stored as hidden document state.
 `CanvasKindRegistry::open` leaves unknown kinds untouched, preserving imported and
-application-defined records. Applications that need stronger contracts can register
-`CanvasNodeKind`, `CanvasEdgeKind`, or `CanvasShapeKind` handlers. Registered handlers can add
-default data, migrate older payloads, validate records, override node bounds, shape bounds, or
-handle positions, and clamp or reject resize proposals. Snapshot loading, transactions, gestures,
-undo/redo validation, runtime cache rebuilds, endpoint picking, and paint snapshots can all receive
-the same registry, so a kind policy is not scattered across serializers, tools, indexes, and
-renderers.
+application-defined records. Applications that need stronger contracts can register node, edge, or
+shape kind bundles. Each bundle can attach focused schema, geometry, interaction, render, and
+transform policies instead of one all-purpose handler. Schema policies add defaults, migrate older
+payloads, and validate records. Geometry policies override node bounds, shape bounds, or handle
+positions. Interaction policies own precise hit decisions. Render policies provide
+renderer-neutral paint and labels. Transform policies clamp or reject resize proposals. Snapshot
+loading, transactions, gestures, undo/redo validation, runtime cache rebuilds, endpoint picking,
+and paint snapshots can all receive the same registry, so a kind policy is not scattered across
+serializers, tools, indexes, and renderers.
 
 Route metadata is stored as intent, not as a renderer contract. The core model records route kind,
 manual waypoints, optional control points, route-specific options, and interaction width so that

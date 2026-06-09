@@ -23,10 +23,11 @@ command, query, tool, and persistence boundaries over early feature breadth.
   queries. Its runtime query module keeps final filtering, ordering, stale-record suppression, and
   precise hit testing inside canvas-owned code; future R-tree, tile, or GPU-assisted indexes should
   act as coarse candidate providers.
-- `CanvasGeometryResolver` centralizes record bounds, handle positions, route paths, edge bounds,
+- `CanvasGeometryFacts` centralizes record bounds, handle positions, route paths, edge bounds,
   hit areas, endpoint picking, previews, and paint fallback geometry.
-- `CanvasKindRegistry` lets applications register node, edge, and shape kind handlers for
-  defaults, migrations, validation, and geometry hooks while unknown kinds remain open records.
+- `CanvasKindRegistry` lets applications register node, edge, and shape kind policy bundles for
+  schema, geometry, interaction, render, and transform hooks while unknown kinds remain open
+  records.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
 - `CanvasEditor` owns document mutation, undo/redo, selection, gestures, runtime cache sync, edge
@@ -219,8 +220,9 @@ assert_eq!(actual_batch.operations.len(), 1);
 
 The persisted model stays open: `kind` is still a string and payload data is still JSON-shaped
 `CanvasValue`. Applications that need stronger contracts can install a `CanvasKindRegistry`.
-Registered handlers can migrate older data, add defaults, validate records, and override geometry
-used by mutation, runtime indexes, hit testing, previews, and GPUI paint.
+Registered kind bundles can attach focused schema, geometry, interaction, render, and transform
+policies. The registry facade is what mutation, runtime indexes, hit testing, previews, resize
+gestures, and GPUI paint consume.
 
 Unknown kinds are intentionally left unchanged so imported JSON Canvas files, application-specific
 records, and future ecosystem extensions can still be loaded before a handler exists.
@@ -228,15 +230,16 @@ records, and future ecosystem extensions can still be loaded before a handler ex
 ```rust
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-    CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError, CanvasTransaction, CanvasValue,
-    DocumentCommand, NodeId,
+    CanvasDocument, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode,
+    CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasNodeResizeProposal,
+    CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordKind, CanvasSchemaError,
+    CanvasTransaction, CanvasValue, DocumentCommand, NodeId,
 };
 use serde_json::{Value, json};
 
 struct NoteKind;
 
-impl CanvasNodeKind for NoteKind {
+impl CanvasNodeSchemaPolicy for NoteKind {
     fn default_data(&self) -> CanvasValue {
         CanvasValue::from_iter([("title".to_string(), json!("Untitled"))])
     }
@@ -265,7 +268,9 @@ impl CanvasNodeKind for NoteKind {
             )),
         }
     }
+}
 
+impl CanvasNodeGeometryPolicy for NoteKind {
     fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
         Some(node.bounds().dilate(px(8.0)))
     }
@@ -278,7 +283,9 @@ impl CanvasNodeKind for NoteKind {
         (handle_id.as_str() == "out")
             .then(|| point(node.position.x + node.size.width + px(16.0), node.position.y))
     }
+}
 
+impl CanvasNodeTransformPolicy for NoteKind {
     fn resize_node_bounds(
         &self,
         proposal: CanvasNodeResizeProposal<'_>,
@@ -291,7 +298,9 @@ impl CanvasNodeKind for NoteKind {
             ),
         ))
     }
+}
 
+impl CanvasNodeRenderPolicy for NoteKind {
     fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
         Some(CanvasKindPaint {
             fill: Some("#fff8c5".to_string()),
@@ -312,7 +321,14 @@ impl CanvasNodeKind for NoteKind {
 }
 
 let mut registry = CanvasKindRegistry::open();
-registry.register_node_kind("note", NoteKind);
+registry.register_node_kind(
+    "note",
+    CanvasNodeKind::new()
+        .with_schema_policy(NoteKind)
+        .with_geometry_policy(NoteKind)
+        .with_transform_policy(NoteKind)
+        .with_render_policy(NoteKind),
+);
 
 let mut node = CanvasNode::new("note-1", point(px(0.0), px(0.0)), size(px(160.0), px(72.0)));
 node.kind = "note".to_string();
@@ -341,8 +357,8 @@ time. Use `CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_
 interactive editor should apply the same registry to transactions, gestures, undo/redo validation,
 runtime caches, and paint snapshots.
 
-Node, edge, and shape kind handlers can all return renderer-neutral `CanvasKindPaint` defaults.
-Node and shape kind handlers can also return `CanvasKindLabel` metadata for paint-frame snapshots.
+Node, edge, and shape render policies can all return renderer-neutral `CanvasKindPaint` defaults.
+Node and shape render policies can also return `CanvasKindLabel` metadata for paint-frame snapshots.
 Record style fields still win first, then kind defaults, then the active paint theme.
 
 ## Route Edges

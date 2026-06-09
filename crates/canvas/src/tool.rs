@@ -1653,9 +1653,10 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
 mod tests {
     use super::*;
     use crate::{
-        CanvasNode, CanvasNodeHitTest, CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind,
-        CanvasRoutePath, CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget,
-        CanvasValue, HandleId,
+        CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy,
+        CanvasNodeKind, CanvasNodeResizeProposal, CanvasNodeSchemaPolicy,
+        CanvasNodeTransformPolicy, CanvasRecordKind, CanvasRoutePath, CanvasRouteRequest,
+        CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId,
     };
     use open_gpui::{point, px, size};
     use serde_json::{Value, json};
@@ -1709,7 +1710,7 @@ mod tests {
 
     struct RequiredTitleNodeKind;
 
-    impl CanvasNodeKind for RequiredTitleNodeKind {
+    impl CanvasNodeSchemaPolicy for RequiredTitleNodeKind {
         fn default_data(&self) -> CanvasValue {
             CanvasValue::from_iter([("title".to_string(), json!("Untitled"))])
         }
@@ -1742,7 +1743,7 @@ mod tests {
 
     struct WideBoundsNodeKind;
 
-    impl CanvasNodeKind for WideBoundsNodeKind {
+    impl CanvasNodeGeometryPolicy for WideBoundsNodeKind {
         fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
             Some(Bounds::new(
                 node.position,
@@ -1753,7 +1754,7 @@ mod tests {
 
     struct MinimumResizeNodeKind;
 
-    impl CanvasNodeKind for MinimumResizeNodeKind {
+    impl CanvasNodeTransformPolicy for MinimumResizeNodeKind {
         fn resize_node_bounds(
             &self,
             proposal: CanvasNodeResizeProposal<'_>,
@@ -1770,7 +1771,7 @@ mod tests {
 
     struct RejectResizeNodeKind;
 
-    impl CanvasNodeKind for RejectResizeNodeKind {
+    impl CanvasNodeTransformPolicy for RejectResizeNodeKind {
         fn resize_node_bounds(
             &self,
             proposal: CanvasNodeResizeProposal<'_>,
@@ -1786,10 +1787,30 @@ mod tests {
 
     struct RightHalfNodeKind;
 
-    impl CanvasNodeKind for RightHalfNodeKind {
+    impl CanvasNodeInteractionPolicy for RightHalfNodeKind {
         fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
             Some(hit.point.x >= hit.bounds.center().x)
         }
+    }
+
+    fn required_title_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_schema_policy(RequiredTitleNodeKind)
+    }
+
+    fn wide_bounds_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_geometry_policy(WideBoundsNodeKind)
+    }
+
+    fn minimum_resize_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_transform_policy(MinimumResizeNodeKind)
+    }
+
+    fn reject_resize_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_transform_policy(RejectResizeNodeKind)
+    }
+
+    fn right_half_node_kind() -> CanvasNodeKind {
+        CanvasNodeKind::new().with_interaction_policy(RightHalfNodeKind)
     }
 
     #[test]
@@ -2115,7 +2136,7 @@ mod tests {
         node.kind = "right-half".to_string();
         document.insert_node(node).unwrap();
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("right-half", RightHalfNodeKind);
+        registry.register_node_kind("right-half", right_half_node_kind());
         let mut editor =
             CanvasEditor::try_new_with_kind_registry(document.clone(), registry.clone()).unwrap();
 
@@ -2637,7 +2658,7 @@ mod tests {
         let mut selection = CanvasSelection::default();
         selection.nodes.insert(NodeId::from("node"));
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("wide", WideBoundsNodeKind);
+        registry.register_node_kind("wide", wide_bounds_node_kind());
 
         let handles = canvas_transform_handles(
             &document,
@@ -2715,7 +2736,7 @@ mod tests {
         let mut document = CanvasDocument::default();
         document.insert_node(node).unwrap();
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("min-resize", MinimumResizeNodeKind);
+        registry.register_node_kind("min-resize", minimum_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
         editor.selection.nodes.insert(NodeId::from("node"));
 
@@ -2755,7 +2776,7 @@ mod tests {
         let mut document = CanvasDocument::default();
         document.insert_node(node).unwrap();
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("reject-resize", RejectResizeNodeKind);
+        registry.register_node_kind("reject-resize", reject_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
         editor.selection.nodes.insert(NodeId::from("node"));
 
@@ -3719,7 +3740,7 @@ mod tests {
     #[test]
     fn editor_kind_registry_normalizes_and_validates_transactions() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
         let mut editor =
             CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
 
@@ -3774,7 +3795,7 @@ mod tests {
         assert_eq!(editor.history.undo_depth(), 1);
 
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
         editor.set_kind_registry(registry).unwrap();
 
         assert_eq!(
@@ -3806,7 +3827,7 @@ mod tests {
         let mut editor = CanvasEditor::new(document);
 
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
         let err = editor.set_kind_registry(registry).unwrap_err();
 
         assert!(matches!(
@@ -3881,7 +3902,7 @@ mod tests {
     #[test]
     fn gesture_update_uses_kind_registry_validation() {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("note", RequiredTitleNodeKind);
+        registry.register_node_kind("note", required_title_node_kind());
         let mut editor =
             CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
         let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));

@@ -1,10 +1,10 @@
 use super::*;
 use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRecordKind,
-    CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext, CanvasToolId,
-    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
-    DocumentError, EdgeId, NodeId, PointerButton,
+    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId,
+    CanvasRecordKind, CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext,
+    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
+    DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
     tool::CanvasToolEffect,
 };
@@ -26,7 +26,7 @@ struct CountedNodeKind {
     max_successful_validations: usize,
 }
 
-impl CanvasNodeKind for CountedNodeKind {
+impl CanvasNodeSchemaPolicy for CountedNodeKind {
     fn validate_node(&self, node: &CanvasNode) -> Result<(), CanvasSchemaError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
         if call <= self.max_successful_validations {
@@ -773,10 +773,10 @@ fn persistent_undo_reuses_prepared_mutation_after_logging() {
     let mut registry = CanvasKindRegistry::open();
     registry.register_node_kind(
         "counted",
-        CountedNodeKind {
+        CanvasNodeKind::new().with_schema_policy(CountedNodeKind {
             calls: calls.clone(),
             max_successful_validations: 6,
-        },
+        }),
     );
 
     let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
@@ -830,10 +830,10 @@ fn persistent_redo_reuses_prepared_mutation_after_logging() {
     let mut registry = CanvasKindRegistry::open();
     registry.register_node_kind(
         "counted",
-        CountedNodeKind {
+        CanvasNodeKind::new().with_schema_policy(CountedNodeKind {
             calls: calls.clone(),
             max_successful_validations: 2,
-        },
+        }),
     );
     editor.set_kind_registry(registry).unwrap();
 

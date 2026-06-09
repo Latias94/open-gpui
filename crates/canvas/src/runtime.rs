@@ -327,8 +327,8 @@ mod tests {
     use super::*;
     use crate::{
         CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
-        CanvasNodeHitTest, CanvasNodeKind, CanvasRoutePath, CanvasRouteRequest, CanvasTransaction,
-        DocumentCommand, EdgeId, NodeId,
+        CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy, CanvasNodeKind,
+        CanvasRoutePath, CanvasRouteRequest, CanvasTransaction, DocumentCommand, EdgeId, NodeId,
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -512,7 +512,10 @@ mod tests {
         node.kind = "right-half".to_string();
         document.insert_node(node).unwrap();
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("right-half", RightHalfNodeKind);
+        registry.register_node_kind(
+            "right-half",
+            CanvasNodeKind::new().with_interaction_policy(RightHalfNodeKind),
+        );
         let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
 
         assert!(
@@ -668,13 +671,16 @@ mod tests {
 
     fn geometry_registry() -> CanvasKindRegistry {
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("wide", WideNodeKind);
+        registry.register_node_kind(
+            "wide",
+            CanvasNodeKind::new().with_geometry_policy(WideNodeKind),
+        );
         registry
     }
 
     struct WideNodeKind;
 
-    impl CanvasNodeKind for WideNodeKind {
+    impl CanvasNodeGeometryPolicy for WideNodeKind {
         fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<open_gpui::Pixels>> {
             Some(node.bounds().dilate(px(5.0)))
         }
@@ -695,7 +701,7 @@ mod tests {
 
     struct RightHalfNodeKind;
 
-    impl CanvasNodeKind for RightHalfNodeKind {
+    impl CanvasNodeInteractionPolicy for RightHalfNodeKind {
         fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
             Some(hit.point.x >= hit.bounds.center().x)
         }

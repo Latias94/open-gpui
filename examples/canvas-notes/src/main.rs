@@ -4,11 +4,12 @@ use open_gpui::{
 };
 use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasKindLabel,
-    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal,
-    CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasRecordKind, CanvasSchemaError,
-    CanvasToolIntent, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
-    CanvasWidgetOverlayOptions, CanvasZOrderCommand, DocumentError, HitTarget, NodeId,
-    canvas_editor_view_with_frame, document_from_json_canvas_str,
+    CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy,
+    CanvasNodeResizeProposal, CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasPaintModel,
+    CanvasPaintOptions, CanvasPaintTheme, CanvasRecordKind, CanvasSchemaError, CanvasToolIntent,
+    CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority, CanvasWidgetOverlayOptions,
+    CanvasZOrderCommand, DocumentError, HitTarget, NodeId, canvas_editor_view_with_frame,
+    document_from_json_canvas_str,
 };
 use open_gpui_platform::application;
 
@@ -40,7 +41,7 @@ struct NodeSummary {
     detail: String,
 }
 
-impl CanvasNodeKind for JsonCanvasNodeKind {
+impl CanvasNodeSchemaPolicy for JsonCanvasNodeKind {
     fn validate_node(&self, node: &CanvasNode) -> Result<(), CanvasSchemaError> {
         match self.kind {
             NoteKind::Text => require_string(node, "text"),
@@ -49,7 +50,9 @@ impl CanvasNodeKind for JsonCanvasNodeKind {
             NoteKind::Group => Ok(()),
         }
     }
+}
 
+impl CanvasNodeRenderPolicy for JsonCanvasNodeKind {
     fn node_paint(&self, _node: &CanvasNode) -> Option<CanvasKindPaint> {
         let (fill, stroke, stroke_width, corner_radius) = match self.kind {
             NoteKind::Text => ("#fff7ed", "#f59e0b", px(1.5), px(7.0)),
@@ -85,7 +88,9 @@ impl CanvasNodeKind for JsonCanvasNodeKind {
                 .with_color(color),
         )
     }
+}
 
+impl CanvasNodeTransformPolicy for JsonCanvasNodeKind {
     fn resize_node_bounds(
         &self,
         proposal: CanvasNodeResizeProposal<'_>,
@@ -407,31 +412,18 @@ impl NotesView {
 
 fn note_kind_registry() -> CanvasKindRegistry {
     let mut registry = CanvasKindRegistry::open();
-    registry.register_node_kind(
-        "text",
-        JsonCanvasNodeKind {
-            kind: NoteKind::Text,
-        },
-    );
-    registry.register_node_kind(
-        "file",
-        JsonCanvasNodeKind {
-            kind: NoteKind::File,
-        },
-    );
-    registry.register_node_kind(
-        "link",
-        JsonCanvasNodeKind {
-            kind: NoteKind::Link,
-        },
-    );
-    registry.register_node_kind(
-        "group",
-        JsonCanvasNodeKind {
-            kind: NoteKind::Group,
-        },
-    );
+    registry.register_node_kind("text", json_canvas_node_kind(NoteKind::Text));
+    registry.register_node_kind("file", json_canvas_node_kind(NoteKind::File));
+    registry.register_node_kind("link", json_canvas_node_kind(NoteKind::Link));
+    registry.register_node_kind("group", json_canvas_node_kind(NoteKind::Group));
     registry
+}
+
+fn json_canvas_node_kind(kind: NoteKind) -> CanvasNodeKind {
+    CanvasNodeKind::new()
+        .with_schema_policy(JsonCanvasNodeKind { kind })
+        .with_render_policy(JsonCanvasNodeKind { kind })
+        .with_transform_policy(JsonCanvasNodeKind { kind })
 }
 
 fn demo_editor() -> CanvasEditor {

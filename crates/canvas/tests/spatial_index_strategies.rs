@@ -2,8 +2,9 @@ use open_gpui::{Bounds, Pixels, Point, point, px, size};
 use open_gpui_canvas::index::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasHandle, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasRecordId, CanvasRoutePath, CanvasRouteRequest, CanvasRuntime,
-    CanvasShape, CanvasTransaction, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
+    CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasRecordId, CanvasRoutePath,
+    CanvasRouteRequest, CanvasRuntime, CanvasShape, CanvasShapeGeometryPolicy, CanvasShapeKind,
+    CanvasTransaction, DocumentCommand, HitOptions, HitRecord, HitTarget, NodeId,
 };
 use rstar::{AABB as RStarAabb, RTree, RTreeObject};
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
@@ -1103,14 +1104,20 @@ fn visibility_document() -> CanvasDocument {
 
 fn geometry_registry() -> CanvasKindRegistry {
     let mut registry = CanvasKindRegistry::open();
-    registry.register_node_kind("wide", WideNodeKind);
-    registry.register_shape_kind("padded", PaddedShapeKind);
+    registry.register_node_kind(
+        "wide",
+        CanvasNodeKind::new().with_geometry_policy(WideNodeKind),
+    );
+    registry.register_shape_kind(
+        "padded",
+        CanvasShapeKind::new().with_geometry_policy(PaddedShapeKind),
+    );
     registry
 }
 
 struct WideNodeKind;
 
-impl CanvasNodeKind for WideNodeKind {
+impl CanvasNodeGeometryPolicy for WideNodeKind {
     fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
         Some(node.bounds().dilate(px(30.0)))
     }
@@ -1118,7 +1125,7 @@ impl CanvasNodeKind for WideNodeKind {
 
 struct PaddedShapeKind;
 
-impl open_gpui_canvas::CanvasShapeKind for PaddedShapeKind {
+impl CanvasShapeGeometryPolicy for PaddedShapeKind {
     fn shape_bounds(&self, shape: &CanvasShape) -> Option<Bounds<Pixels>> {
         Some(shape.bounds.dilate(px(18.0)))
     }

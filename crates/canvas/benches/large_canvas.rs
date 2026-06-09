@@ -3,8 +3,8 @@ use open_gpui::{BenchAppContext, Bounds, point, px, size};
 use open_gpui_canvas::index::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasTransaction, CanvasViewport, DocumentCommand, collect_visible_records,
+    CanvasNode, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasPaintModel, CanvasPaintOptions,
+    CanvasPaintTheme, CanvasTransaction, CanvasViewport, DocumentCommand, collect_visible_records,
     prepaint_canvas_frame,
 };
 
@@ -95,7 +95,7 @@ fn large_canvas_benches(c: &mut Criterion) {
 
 struct BenchmarkLabelNodeKind;
 
-impl CanvasNodeKind for BenchmarkLabelNodeKind {
+impl CanvasNodeRenderPolicy for BenchmarkLabelNodeKind {
     fn node_label(&self, node: &CanvasNode) -> Option<CanvasKindLabel> {
         Some(CanvasKindLabel::new(format!("Node {}", node.id)).with_inset(px(6.0)))
     }
@@ -103,7 +103,10 @@ impl CanvasNodeKind for BenchmarkLabelNodeKind {
 
 fn labeled_kind_registry() -> CanvasKindRegistry {
     let mut registry = CanvasKindRegistry::open();
-    registry.register_node_kind(LABELED_NODE_KIND, BenchmarkLabelNodeKind);
+    registry.register_node_kind(
+        LABELED_NODE_KIND,
+        CanvasNodeKind::new().with_render_policy(BenchmarkLabelNodeKind),
+    );
     registry
 }
 

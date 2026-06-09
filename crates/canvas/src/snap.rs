@@ -380,7 +380,9 @@ fn snap_guide(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasNode, CanvasNodeKind, CanvasShape, NodeId, ShapeId};
+    use crate::{
+        CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasShape, NodeId, ShapeId,
+    };
     use open_gpui::{point, size};
 
     #[test]
@@ -465,7 +467,10 @@ mod tests {
         let mut selection = CanvasSelection::default();
         selection.insert_node(NodeId::from("active"));
         let mut registry = CanvasKindRegistry::open();
-        registry.register_node_kind("wide", WideNodeKind);
+        registry.register_node_kind(
+            "wide",
+            CanvasNodeKind::new().with_geometry_policy(WideNodeKind),
+        );
 
         let without_registry = snap_delta_for_selection(
             &document,
@@ -547,7 +552,7 @@ mod tests {
 
     struct WideNodeKind;
 
-    impl CanvasNodeKind for WideNodeKind {
+    impl CanvasNodeGeometryPolicy for WideNodeKind {
         fn node_bounds(&self, node: &CanvasNode) -> Option<Bounds<Pixels>> {
             Some(Bounds::new(
                 node.position,

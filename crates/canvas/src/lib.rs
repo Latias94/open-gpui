@@ -89,9 +89,13 @@ pub use routing::{
 };
 pub use runtime::CanvasRuntime;
 pub use schema::{
-    CanvasEdgeKind, CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNodeHitTest,
-    CanvasNodeKind, CanvasNodeResizeProposal, CanvasRecordKind, CanvasSchemaError,
-    CanvasShapeHitTest, CanvasShapeKind, CanvasShapeResizeProposal,
+    CanvasEdgeKind, CanvasEdgeRenderPolicy, CanvasEdgeSchemaPolicy, CanvasKindLabel,
+    CanvasKindPaint, CanvasKindRegistry, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
+    CanvasNodeInteractionPolicy, CanvasNodeKind, CanvasNodeRenderPolicy, CanvasNodeResizeProposal,
+    CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordKind, CanvasSchemaError,
+    CanvasShapeGeometryPolicy, CanvasShapeHitTest, CanvasShapeInteractionPolicy, CanvasShapeKind,
+    CanvasShapeRenderPolicy, CanvasShapeResizeProposal, CanvasShapeSchemaPolicy,
+    CanvasShapeTransformPolicy,
 };
 pub use snap::{
     CanvasSnapAxis, CanvasSnapGuide, CanvasSnapResult, DEFAULT_SNAP_THRESHOLD,
