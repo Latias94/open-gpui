@@ -118,7 +118,7 @@ impl Render for RuntimeStatusPanel {
                 .registered_viewport_spaces()
                 .into_iter()
                 .map(|space| {
-                    let status = if self.runtime.window_for_space(&space).is_some() {
+                    let status = if self.runtime.is_viewport_open(&space) {
                         "open"
                     } else {
                         "missing"

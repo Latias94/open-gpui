@@ -9,8 +9,8 @@ use crate::{
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result,
-    Subscription, WindowBounds, WindowId, WindowOptions,
+    App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription,
+    WindowBounds, WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::Ref;
@@ -67,9 +67,13 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().adapter().spaces()
     }
 
-    /// Returns the window rendering a logical dock space, when it is still live in the runtime map.
-    pub fn window_for_space(&self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
-        self.runtime.borrow().adapter().window_for_space(space)
+    /// Returns true when a logical dock space currently has a runtime window mapping.
+    pub fn is_viewport_open(&self, space: &DockSpaceId) -> bool {
+        self.runtime
+            .borrow()
+            .adapter()
+            .window_for_space(space)
+            .is_some()
     }
 
     /// Replaces the shared close policy used by runtime-opened viewport windows.
