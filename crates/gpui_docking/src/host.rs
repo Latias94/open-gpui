@@ -48,14 +48,22 @@ impl DockHost {
     ///
     /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
     /// constructor remains as a compatibility path and delegates to workspace-backed state.
+    #[deprecated(
+        since = "0.1.0",
+        note = "configure a DockWorkspace and mount it with DockHost::from_workspace"
+    )]
     pub fn new(space: impl Into<DockSpaceId>, graph: DockGraph) -> Self {
-        Self::with_options(space, graph, DockHostOptions::default())
+        Self::from_workspace(DockWorkspace::new(space, graph))
     }
 
     /// Creates a host with explicit static rendering options.
     ///
     /// Prefer configuring a [`DockWorkspace`] and mounting it with [`Self::from_workspace`]. This
     /// constructor remains as a compatibility path and delegates to workspace-backed state.
+    #[deprecated(
+        since = "0.1.0",
+        note = "configure a DockWorkspace with options and mount it with DockHost::from_workspace"
+    )]
     pub fn with_options(
         space: impl Into<DockSpaceId>,
         graph: DockGraph,

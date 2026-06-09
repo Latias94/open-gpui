@@ -33,9 +33,10 @@ fn host_applies_actions_through_workspace(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn compatibility_constructor_delegates_to_workspace(_cx: &mut TestAppContext) {
+fn workspace_constructor_mounts_owned_state(_cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph(&["a"], 0);
-    let host = DockHost::new(space(), graph);
+    let workspace = DockWorkspace::new(space(), graph);
+    let host = DockHost::from_workspace(workspace);
 
     assert_eq!(
         host.workspace()
