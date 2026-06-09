@@ -112,14 +112,13 @@ impl RuntimeStatusPanel {
 impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = {
-            let runtime = self.runtime.borrow();
-            let adapter = runtime.adapter();
-            let status = runtime.runtime_status();
-            let spaces = adapter
-                .spaces()
+            let status = self.runtime.runtime_status();
+            let spaces = self
+                .runtime
+                .registered_viewport_spaces()
                 .into_iter()
                 .map(|space| {
-                    let status = if adapter.window_for_space(&space).is_some() {
+                    let status = if self.runtime.window_for_space(&space).is_some() {
                         "open"
                     } else {
                         "missing"
@@ -127,9 +126,9 @@ impl Render for RuntimeStatusPanel {
                     format!("{}: {}", space.as_str(), status)
                 })
                 .collect::<Vec<_>>();
-            let placement = runtime.export_placement();
+            let placement = self.runtime.export_placement();
             vec![
-                format!("close policy: {:?}", runtime.close_policy()),
+                format!("close policy: {:?}", self.runtime.close_policy()),
                 format!("registered viewports: {}", spaces.len()),
                 format!("placement snapshots: {}", placement.viewports.len()),
                 format!("spaces: {}", spaces.join(", ")),

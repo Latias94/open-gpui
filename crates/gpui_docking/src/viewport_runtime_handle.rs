@@ -9,13 +9,12 @@ use crate::{
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription,
-    WindowBounds, WindowId, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result,
+    Subscription, WindowBounds, WindowId, WindowOptions,
 };
-use std::{
-    cell::{Ref, RefCell},
-    rc::Rc,
-};
+#[cfg(test)]
+use std::cell::Ref;
+use std::{cell::RefCell, rc::Rc};
 
 /// Cloneable application handle for a shared [`DockViewportRuntime`].
 ///
@@ -48,8 +47,8 @@ impl DockViewportRuntimeHandle {
         }
     }
 
-    /// Borrows the shared runtime.
-    pub fn borrow(&self) -> Ref<'_, DockViewportRuntime> {
+    #[cfg(test)]
+    pub(crate) fn borrow(&self) -> Ref<'_, DockViewportRuntime> {
         self.runtime.borrow()
     }
 
@@ -61,6 +60,16 @@ impl DockViewportRuntimeHandle {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.runtime.borrow().runtime_status()
+    }
+
+    /// Returns registered dock spaces in stable lexical order.
+    pub fn registered_viewport_spaces(&self) -> Vec<DockSpaceId> {
+        self.runtime.borrow().adapter().spaces()
+    }
+
+    /// Returns the window rendering a logical dock space, when it is still live in the runtime map.
+    pub fn window_for_space(&self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
+        self.runtime.borrow().adapter().window_for_space(space)
     }
 
     /// Replaces the shared close policy used by runtime-opened viewport windows.
