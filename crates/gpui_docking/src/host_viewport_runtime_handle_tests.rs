@@ -547,6 +547,30 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    source_opened
+        .window
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("source viewport should be activatable before drop");
+    let before_drop_context = opened
+        .window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("target window should be live");
+    assert_eq!(
+        before_drop_context.active_window,
+        Some(source_opened.window.window_id()),
+        "source viewport should be active before the routed drop commits"
+    );
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         opened.window.window_id(),
@@ -581,6 +605,17 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     });
 
     assert_eq!(result, Ok(crate::DockActionOutcome::Changed));
+    let after_drop_context = source_opened
+        .window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("source window should be live");
+    assert_eq!(
+        after_drop_context.active_window,
+        Some(opened.window.window_id()),
+        "successful routed drop should activate the destination viewport"
+    );
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller
             .graph()

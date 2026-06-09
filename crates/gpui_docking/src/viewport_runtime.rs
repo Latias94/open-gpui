@@ -255,25 +255,25 @@ impl DockViewportRuntime {
         };
 
         let (target_space, target) = target_space;
-        self.controller
-            .update(cx, |controller, cx| {
-                let outcome =
-                    controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
-                        source_space,
-                        payload: payload.as_workspace_payload(source_tabs),
-                        target_space: &target_space,
-                        target,
-                    });
-                if outcome
-                    .as_ref()
-                    .map(|outcome| outcome.changed())
-                    .unwrap_or(false)
-                {
-                    cx.notify();
-                }
-                outcome
-            })
-            .map(DockViewportDropRouteOutcome::Action)
+        let action = self.controller.update(cx, |controller, cx| {
+            let outcome =
+                controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                    source_space,
+                    payload: payload.as_workspace_payload(source_tabs),
+                    target_space: &target_space,
+                    target,
+                });
+            if outcome
+                .as_ref()
+                .map(|outcome| outcome.changed())
+                .unwrap_or(false)
+            {
+                cx.notify();
+            }
+            outcome
+        })?;
+        let _ = self.reusable_window_for_space(&target_space, cx);
+        Ok(DockViewportDropRouteOutcome::Action(action))
     }
 
     fn resolve_route_target(
