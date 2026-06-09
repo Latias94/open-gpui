@@ -1,6 +1,6 @@
 use crate::{
-    DockController, DockGraph, DockNode, DockNodeId, DockPanel, DockWorkspace, SplitAxis,
-    debug::DockDebugRegion, host_test_support::*,
+    DockController, DockGraph, DockNode, DockNodeId, DockPanel, DockViewportRuntimeHandle,
+    DockWorkspace, SplitAxis, debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px, size,
@@ -508,6 +508,123 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
             panic!("target root should be tabs");
         };
         assert_eq!(items, &vec![item("a")]);
+        assert_eq!(*active, 0);
+    });
+}
+
+#[open_gpui::test]
+fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    let source_tab = selector_for(
+        &visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b")]
+        );
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| space.as_str().starts_with("source:tear-off:a:"))
+            .expect("outside release should create a detached viewport space");
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("a")]
+        );
+    });
+}
+
+#[open_gpui::test]
+fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestAppContext) {
+    let (graph, tabs) = tabs_graph(&["a", "b"], 0);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(360.0), px(220.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "non-runtime outside release should leave the source panel active"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(tabs)
+            .expect("source tabs should remain")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("b")]);
         assert_eq!(*active, 0);
     });
 }

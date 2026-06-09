@@ -12,7 +12,7 @@ use crate::{
     interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
     workspace_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
 };
-use open_gpui::{Bounds, Context, Pixels, Point, Window};
+use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DockHostInteractionOutcome {
@@ -272,12 +272,16 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
         target_space: DockSpaceId,
+        release_position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let outcome = if let Some(outcome) =
-            self.commit_runtime_routed_payload_drop_interaction(payload, &target_space, window, cx)
-        {
+        let outcome = if let Some(outcome) = self.commit_runtime_routed_payload_drop_interaction(
+            payload,
+            release_position,
+            window,
+            cx,
+        ) {
             outcome
         } else {
             let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -312,14 +316,12 @@ impl DockHost {
     fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
         payload: &DockDragPayload,
-        target_space: &DockSpaceId,
+        release_position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        let release_position = runtime
-            .last_host_scene_screen_position(target_space)
-            .or_else(|| runtime.last_host_scene_screen_position(self.space()))?;
+        let release_position = window_screen_position(window, release_position);
         let viewport_payload = viewport_payload(payload);
         let route = runtime.resolve_payload_drop_route_with_context(
             payload.source_space.clone(),
@@ -443,6 +445,14 @@ impl DockHost {
             notify_on_unchanged,
         )
     }
+}
+
+fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
+    let window_bounds = window.window_bounds().get_bounds();
+    point(
+        window_bounds.origin.x + position.x,
+        window_bounds.origin.y + position.y,
+    )
 }
 
 fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> {

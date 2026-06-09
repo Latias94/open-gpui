@@ -4,15 +4,16 @@ use crate::{
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
-    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, black, div, rgb, rgba,
+    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
+    ParentElement, Render, Styled, Window, black, div, rgb, rgba,
 };
 
 impl Render for DockHost {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
         let session = self.render_session(cx);
-        let target_space = session.space().clone();
+        let drop_target_space = session.space().clone();
+        let outside_drop_target_space = session.space().clone();
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
@@ -40,7 +41,33 @@ impl Render for DockHost {
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
-                    this.drop_payload_from_render(payload, target_space.clone(), window, cx);
+                    this.drop_payload_from_render(
+                        payload,
+                        drop_target_space.clone(),
+                        window.mouse_position(),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    if this.viewport_runtime().is_none() {
+                        return;
+                    }
+                    let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
+                        return;
+                    };
+                    this.drop_payload_from_render(
+                        &payload,
+                        outside_drop_target_space.clone(),
+                        event.position,
+                        window,
+                        cx,
+                    );
+                    cx.stop_active_drag(window);
+                    cx.stop_propagation();
                 }),
             );
 

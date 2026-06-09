@@ -23,10 +23,11 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
         target_space: DockSpaceId,
+        release_position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.commit_payload_drop_interaction(payload, target_space, window, cx)
+        self.commit_payload_drop_interaction(payload, target_space, release_position, window, cx)
             .finish(cx)
     }
 
