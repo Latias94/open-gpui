@@ -55,8 +55,7 @@ impl DockWorkspace {
         self.graph = graph;
     }
 
-    /// Applies a docking operation with checked failure reporting.
-    pub fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
+    pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockOpApplyError> {
         self.graph.apply_op_checked(op)
     }
 

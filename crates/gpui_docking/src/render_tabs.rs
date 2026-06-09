@@ -44,7 +44,7 @@ impl DockHost {
             .bg(white())
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                    this.update_tabs_drop_intent_from_render(
+                    this.update_tabs_drop_target_from_render(
                         node,
                         event.bounds,
                         event.event.position,
@@ -125,7 +125,7 @@ impl DockHost {
                 }))
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockTabDragPayload>, _, cx| {
-                        this.update_tab_reorder_drop_intent_from_render(
+                        this.update_tab_reorder_drop_target_from_render(
                             node,
                             target_index,
                             event.bounds,

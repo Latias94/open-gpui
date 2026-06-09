@@ -2,7 +2,10 @@
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId,
-    DockSpaceId, workspace_transaction::DockWorkspaceDropRequest,
+    DockSpaceId,
+    drop_runtime::DockDropTargetUpdate,
+    drop_target::{DockLeafDropTarget, DockTabLabelDropTarget},
+    workspace_transaction::DockWorkspaceDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point};
 
@@ -157,14 +160,14 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
+        let update = DockDropTargetUpdate::new(position).with_leaf(DockLeafDropTarget {
+            root: target_tabs,
+            target_tabs,
+            bounds,
+            is_central,
+        });
         DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut().update_tabs_drop_intent(
-                target_tabs,
-                bounds,
-                position,
-                is_central,
-                &policy,
-            ),
+            self.interaction_mut().update_drop_target(update, &policy),
         )
     }
 
@@ -178,15 +181,16 @@ impl DockHost {
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        DockHostInteractionOutcome::from_session_changed(
-            self.interaction_mut().update_tab_reorder_drop_intent(
+        let update = DockDropTargetUpdate::new(position)
+            .with_tab_label(DockTabLabelDropTarget {
                 target_tabs,
                 target_index,
                 bounds,
-                position,
                 is_central,
-                &policy,
-            ),
+            })
+            .preserve_on_miss();
+        DockHostInteractionOutcome::from_session_changed(
+            self.interaction_mut().update_drop_target(update, &policy),
         )
     }
 

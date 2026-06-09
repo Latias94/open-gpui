@@ -31,7 +31,7 @@ impl DockHost {
         .finish(cx)
     }
 
-    pub(crate) fn update_tabs_drop_intent_from_render(
+    pub(crate) fn update_tabs_drop_target_from_render(
         &mut self,
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
@@ -43,7 +43,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_tab_reorder_drop_intent_from_render(
+    pub(crate) fn update_tab_reorder_drop_target_from_render(
         &mut self,
         target_tabs: DockNodeId,
         target_index: usize,

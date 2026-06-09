@@ -58,8 +58,10 @@ Follow-up implementation note, 2026-06-09: rendered docking interactions now pas
 crate-internal interaction and transaction modules before mutating the graph. Render callbacks
 collect pointer facts, the drop resolver produces a resolved target, the workspace transaction
 validates and commits that target, and viewport tear-off uses `DockViewportRuntime` to coordinate
-window creation before graph mutation. `DockAction` and `DockOp` remain useful low-level data
-interfaces, but they are not the common render drag/drop interface.
+window creation before graph mutation. The active drop session stores a resolved target from layout
+facts rather than a tab-only intent, so preview and commit stay tied to the same resolver output.
+`DockAction` and `DockOp` remain useful low-level data interfaces, but they are not the common
+render drag/drop interface.
 
 ## Architecture
 

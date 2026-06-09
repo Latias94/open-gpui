@@ -9,9 +9,9 @@ The docking crate now matches ADR 0002's layering for the current product surfac
   programmatic commands, while rendered tab drag/drop commits through resolved drop transactions.
 - `DockHost` renders one logical `DockSpaceId` from a shared controller; render snapshots and
   transient interaction sessions live in focused helper modules.
-- `drop_target`, `workspace_transaction`, `interaction`, and `geometry` now form the interaction
-  foundation: resolver, commit transaction, pointer session, and split/drop math each have one
-  authority.
+- `drop_target`, `drop_runtime`, `workspace_transaction`, `interaction`, and `geometry` now form
+  the interaction foundation: resolver, resolved-target session, commit transaction, pointer
+  session, and split/drop math each have one authority.
 - `DockViewportRuntime` and `DockViewportRuntimeHandle` are the product path for GPUI platform
   windows; `DockViewportAdapter` remains the lower-level mapping, coordinate, and placement
   primitive.
@@ -36,6 +36,9 @@ Interaction foundation:
 
 - `crates/gpui_docking/src/drop_target.rs` resolves tab bars, leaves, root edges, floating title
   bars, empty dock spaces, known viewports, and tear-off candidates into one resolved target shape.
+- `crates/gpui_docking/src/drop_runtime.rs` stores the active resolved target from layout facts,
+  preserves tab-reorder stability during pointer movement, and matches drop receivers through the
+  resolved target instead of a tab-only preview projection.
 - `crates/gpui_docking/src/workspace_transaction.rs` commits resolved drop targets, so render code
   no longer constructs graph-shaped `MoveTab` commands for ordinary drag/drop.
 - `crates/gpui_docking/src/geometry.rs` is the split and drop geometry authority for render

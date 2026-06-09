@@ -85,6 +85,7 @@ mod debug;
 #[cfg(test)]
 mod dock_op_fixture_tests;
 mod drag;
+mod drop_runtime;
 mod drop_target;
 mod geometry;
 mod graph;
@@ -117,7 +118,6 @@ mod render_floating;
 mod render_split;
 mod render_tabs;
 mod split_fraction;
-mod tab_drop_runtime;
 mod viewport;
 mod viewport_close;
 mod viewport_close_gate;

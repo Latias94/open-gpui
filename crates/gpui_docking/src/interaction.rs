@@ -1,6 +1,8 @@
 use crate::{
-    DockAction, DockNodeId, DockPolicy, DockSpaceId, drop_target::DockResolvedDropTarget, geometry,
-    tab_drop_runtime::DockTabDropRuntime,
+    DockAction, DockNodeId, DockPolicy, DockSpaceId,
+    drop_runtime::{DockDropRuntime, DockDropTargetUpdate},
+    drop_target::DockResolvedDropTarget,
+    geometry,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -8,7 +10,7 @@ use open_gpui::{Bounds, Pixels, Point, point};
 pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
-    tab_drop: DockTabDropRuntime,
+    drop: DockDropRuntime,
 }
 
 #[derive(Debug, Clone)]
@@ -109,49 +111,26 @@ impl DockInteractionRuntime {
         self.floating_drag.take().is_some()
     }
 
-    pub(crate) fn update_tabs_drop_intent(
+    pub(crate) fn update_drop_target(
         &mut self,
-        target_tabs: DockNodeId,
-        bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        is_central: bool,
+        update: DockDropTargetUpdate,
         policy: &DockPolicy,
     ) -> bool {
-        self.tab_drop
-            .update_tabs_drop_intent(target_tabs, bounds, position, is_central, policy)
-    }
-
-    pub(crate) fn update_tab_reorder_drop_intent(
-        &mut self,
-        target_tabs: DockNodeId,
-        target_index: usize,
-        bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        is_central: bool,
-        policy: &DockPolicy,
-    ) -> bool {
-        self.tab_drop.update_tab_reorder_drop_intent(
-            target_tabs,
-            target_index,
-            bounds,
-            position,
-            is_central,
-            policy,
-        )
+        self.drop.update_target(update, policy)
     }
 
     pub(crate) fn take_tab_drop_target(
         &mut self,
         target_tabs: DockNodeId,
     ) -> Option<DockResolvedDropTarget> {
-        self.tab_drop.take_resolved_target(target_tabs)
+        self.drop.take_resolved_target(target_tabs)
     }
 
     pub(crate) fn tab_drop_preview_bounds(
         &self,
         target_tabs: DockNodeId,
     ) -> Option<Bounds<Pixels>> {
-        self.tab_drop.preview_bounds(target_tabs)
+        self.drop.preview_bounds(target_tabs)
     }
 
     #[cfg(test)]
