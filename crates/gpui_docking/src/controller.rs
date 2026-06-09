@@ -4,9 +4,8 @@ use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
     DockItemId, DockLayout, DockLayoutValidationError, DockNodeId, DockPanel, DockPanelAttachError,
     DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
-    DockWorkspace, EditorDockLayoutSpec,
-    host::DockHostOptions,
-    workspace_transaction::{DockWorkspaceDropRequest, DockWorkspacePayloadDropRequest},
+    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{AnyView, Bounds, Pixels};
 
@@ -133,13 +132,6 @@ impl DockController {
         action: &DockAction,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.apply_action(action)
-    }
-
-    pub(crate) fn commit_resolved_drop(
-        &mut self,
-        request: DockWorkspaceDropRequest<'_>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_resolved_drop(request)
     }
 
     pub(crate) fn commit_resolved_payload_drop(

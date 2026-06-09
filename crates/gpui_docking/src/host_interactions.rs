@@ -2,14 +2,15 @@
 use crate::interaction::{FloatingDrag, SplitterDrag};
 use crate::{
     DockActionApplyError, DockActionOutcome, DockHost, DockItemId, DockNodeId, DockSpaceId,
-    DockViewportTargetContext,
+    DockViewportDropPayload, DockViewportTargetContext,
+    drag::{DockDragPayload, DockDragPayloadKind},
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
         DockRootDropTarget, DockTabLabelDropTarget,
     },
     interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
-    workspace_transaction::DockWorkspaceDropRequest,
+    workspace_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
@@ -250,24 +251,16 @@ impl DockHost {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn commit_tab_drop_interaction(
+    pub(crate) fn commit_payload_drop_interaction(
         &mut self,
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        item: DockItemId,
+        payload: &DockDragPayload,
         target_space: DockSpaceId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        if let Some(outcome) = self.commit_runtime_routed_tab_drop_interaction(
-            source_space.clone(),
-            source_tabs,
-            item.clone(),
-            &target_space,
-            window,
-            cx,
-        ) {
+        if let Some(outcome) =
+            self.commit_runtime_routed_payload_drop_interaction(payload, &target_space, window, cx)
+        {
             return outcome;
         }
 
@@ -275,11 +268,10 @@ impl DockHost {
             return DockHostInteractionOutcome::Notify;
         };
 
-        self.commit_resolved_drop_interaction(
-            DockWorkspaceDropRequest {
-                source_space: &source_space,
-                source_tabs,
-                item: &item,
+        self.commit_resolved_payload_drop_interaction(
+            DockWorkspacePayloadDropRequest {
+                source_space: &payload.source_space,
+                payload: workspace_payload(payload),
                 target_space: &target_space,
                 target,
             },
@@ -288,11 +280,9 @@ impl DockHost {
         )
     }
 
-    fn commit_runtime_routed_tab_drop_interaction(
+    fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        item: DockItemId,
+        payload: &DockDragPayload,
         target_space: &DockSpaceId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -301,16 +291,23 @@ impl DockHost {
         let release_position = runtime
             .last_host_scene_screen_position(target_space)
             .or_else(|| runtime.last_host_scene_screen_position(self.space()))?;
-        let route = runtime.resolve_drop_route_with_context(
-            source_space.clone(),
-            source_tabs,
-            item.clone(),
+        let viewport_payload = viewport_payload(payload);
+        let route = runtime.resolve_payload_drop_route_with_context(
+            payload.source_space.clone(),
+            payload.source_tabs,
+            viewport_payload.clone(),
             release_position,
             None,
             &DockViewportTargetContext::from_window(window, cx),
             cx,
         );
-        let result = runtime.commit_drop_route(&source_space, source_tabs, &item, route, cx);
+        let result = runtime.commit_payload_drop_route(
+            &payload.source_space,
+            payload.source_tabs,
+            viewport_payload,
+            route,
+            cx,
+        );
         Some(DockHostInteractionOutcome::from_commit_result(result, true))
     }
 
@@ -344,14 +341,14 @@ impl DockHost {
         )
     }
 
-    fn commit_resolved_drop_interaction(
+    fn commit_resolved_payload_drop_interaction(
         &mut self,
-        request: DockWorkspaceDropRequest<'_>,
+        request: DockWorkspacePayloadDropRequest<'_>,
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_resolved_drop_from_host(request, cx),
+            self.commit_resolved_payload_drop_from_host(request, cx),
             notify_on_unchanged,
         )
     }
@@ -411,5 +408,24 @@ impl DockHost {
             self.commit_raise_floating_from_host(space, floating, cx),
             notify_on_unchanged,
         )
+    }
+}
+
+fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> {
+    match &payload.kind {
+        DockDragPayloadKind::Item { item } => DockWorkspaceDropPayload::Item {
+            source_tabs: payload.source_tabs,
+            item,
+        },
+        DockDragPayloadKind::Tabs => DockWorkspaceDropPayload::Tabs {
+            source_tabs: payload.source_tabs,
+        },
+    }
+}
+
+fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
+    match &payload.kind {
+        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
+        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
     }
 }

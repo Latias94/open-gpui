@@ -217,6 +217,7 @@ impl DockViewportRuntimeHandle {
             .map(|window| window.window_id())
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_drop_route(
         &self,
         source_space: &DockSpaceId,
@@ -235,6 +236,7 @@ impl DockViewportRuntimeHandle {
         .into_action_result()
     }
 
+    #[cfg(test)]
     pub(crate) fn commit_drop_route_with_outcome(
         &self,
         source_space: &DockSpaceId,

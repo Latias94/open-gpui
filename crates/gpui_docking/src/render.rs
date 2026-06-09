@@ -39,16 +39,7 @@ impl Render for DockHost {
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
-                    if let Some(item) = payload.item() {
-                        this.drop_tab_from_render(
-                            payload.source_space.clone(),
-                            payload.source_tabs,
-                            item.clone(),
-                            target_space.clone(),
-                            window,
-                            cx,
-                        );
-                    }
+                    this.drop_payload_from_render(payload, target_space.clone(), window, cx);
                 }),
             );
 

@@ -65,6 +65,7 @@ impl DockHostDropScene {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn preserve_on_miss(mut self) -> Self {
         self.clear_on_miss = false;
         self

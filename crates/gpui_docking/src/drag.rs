@@ -43,6 +43,7 @@ impl DockDragPayload {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn item(&self) -> Option<&DockItemId> {
         match &self.kind {
             DockDragPayloadKind::Item { item } => Some(item),
@@ -50,6 +51,7 @@ impl DockDragPayload {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_tabs_stack(&self) -> bool {
         matches!(self.kind, DockDragPayloadKind::Tabs)
     }

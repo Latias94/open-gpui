@@ -29,6 +29,12 @@ impl DockHost {
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
         let is_central = session.is_central_tabs(node);
+        let stack_title = if items.len() == 1 {
+            session.panel_title(&active_item)
+        } else {
+            format!("{} tabs", items.len())
+        };
+        let stack_payload = DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
 
         let mut tabs = div()
             .id(selector.clone())
@@ -63,7 +69,10 @@ impl DockHost {
             .flex_row()
             .flex_none()
             .overflow_hidden()
-            .bg(rgb(0xe7ebf0));
+            .bg(rgb(0xe7ebf0))
+            .on_drag(stack_payload, |payload, _, _, cx| {
+                cx.new(|_| DockDragPreview::new(payload.title()))
+            });
 
         for (index, item) in items.into_iter().enumerate() {
             let title = session.panel_title(&item);

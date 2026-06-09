@@ -1,4 +1,4 @@
-use crate::{DockHost, DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockHost, DockItemId, DockNodeId, DockSpaceId, drag::DockDragPayload};
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
@@ -11,16 +11,14 @@ impl DockHost {
         self.select_tab_interaction(tabs, item, cx).finish(cx)
     }
 
-    pub(crate) fn drop_tab_from_render(
+    pub(crate) fn drop_payload_from_render(
         &mut self,
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        item: DockItemId,
+        payload: &DockDragPayload,
         target_space: DockSpaceId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.commit_tab_drop_interaction(source_space, source_tabs, item, target_space, window, cx)
+        self.commit_payload_drop_interaction(payload, target_space, window, cx)
             .finish(cx)
     }
 

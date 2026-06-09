@@ -5,6 +5,7 @@ use crate::{
     workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 
+#[cfg(test)]
 pub(crate) struct DockWorkspaceDropRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) source_tabs: DockNodeId,
@@ -32,6 +33,7 @@ pub(crate) enum DockWorkspaceDropPayload<'a> {
 }
 
 impl DockWorkspace {
+    #[cfg(test)]
     pub(crate) fn commit_resolved_drop(
         &mut self,
         request: DockWorkspaceDropRequest<'_>,

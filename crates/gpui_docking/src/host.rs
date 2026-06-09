@@ -3,7 +3,7 @@ use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
     DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
-    workspace_transaction::DockWorkspaceDropRequest,
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
     AppContext as _, Bounds, Context, Entity, Pixels, Point, Window, WindowId, point, px,
@@ -93,12 +93,14 @@ impl DockHost {
         })
     }
 
-    pub(crate) fn commit_resolved_drop_from_host(
+    pub(crate) fn commit_resolved_payload_drop_from_host(
         &mut self,
-        request: DockWorkspaceDropRequest<'_>,
+        request: DockWorkspacePayloadDropRequest<'_>,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| controller.commit_resolved_drop(request))
+        self.mutate_controller_from_host(cx, |controller| {
+            controller.commit_resolved_payload_drop(request)
+        })
     }
 
     pub(crate) fn commit_select_tab_from_host(
