@@ -32,7 +32,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_tabs_drop_target_from_render(
+    pub(crate) fn update_tabs_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,
@@ -45,7 +45,7 @@ impl DockHost {
             .finish(cx)
     }
 
-    pub(crate) fn update_tab_reorder_drop_target_from_render(
+    pub(crate) fn update_tab_reorder_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
         target_tabs: DockNodeId,
