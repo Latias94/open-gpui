@@ -1,10 +1,11 @@
 use crate::{
     DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId, DockTransactionError,
-    DockViewportClosePolicy, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteOutcome, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockWorkspace, debug::DockDebugRegion, drag::DockDragPayload,
-    drop_runtime::DockHostDropSceneFact, drop_target::DockLeafDropTarget, host_test_support::*,
+    DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportRouteTarget,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace,
+    debug::DockDebugRegion, drag::DockDragPayload, drop_runtime::DockHostDropSceneFact,
+    drop_target::DockLeafDropTarget, host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
@@ -357,11 +358,24 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         route,
         DockViewportDropRoute::KnownViewport {
             hit: crate::DockViewportHit {
-                space: target_space,
+                space: target_space.clone(),
                 host_position: point(px(20.0), px(40.0)),
             },
             window: opened.window,
         }
+    );
+    assert_eq!(
+        runtime
+            .runtime_status()
+            .last_route
+            .as_ref()
+            .map(|record| &record.target),
+        Some(&DockViewportRouteTarget::KnownViewport {
+            space: target_space,
+            window_id: opened.window.window_id(),
+            host_position: point(px(20.0), px(40.0)),
+        }),
+        "runtime status should expose the last resolved known-viewport route"
     );
 }
 
@@ -399,6 +413,19 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
         ),
         "default workspace policy should reject outside-all-viewports route"
     );
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_route
+                .as_ref()
+                .map(|record| &record.target),
+            Some(DockViewportRouteTarget::Rejected {
+                reason: crate::DockPolicyError::PlatformViewportsDisabled,
+            })
+        ),
+        "runtime status should record the rejected route"
+    );
 
     cx.update_entity(&controller, |controller, _| {
         controller.policy_mut().set_allow_platform_viewports(true);
@@ -427,6 +454,19 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             && routed_item == item("a")
             && routed_position == release_position
     ));
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_route
+                .as_ref()
+                .map(|record| &record.target),
+            Some(DockViewportRouteTarget::TearOff {
+                release_position: recorded_position,
+            }) if *recorded_position == release_position
+        ),
+        "runtime status should record the tear-off route"
+    );
 }
 
 #[open_gpui::test]
@@ -839,6 +879,28 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             .and_then(|activation| activation.focus_item.clone()),
         Some(item("a")),
         "known viewport drop should request focus for the moved item"
+    );
+    let status = runtime.runtime_status();
+    assert_eq!(
+        status.last_drop_outcome.as_ref().map(|record| record.kind),
+        Some(DockViewportDropOutcomeKind::Action),
+        "runtime status should record the routed action outcome"
+    );
+    assert_eq!(
+        status
+            .last_activation
+            .as_ref()
+            .map(|activation| activation.window_id),
+        Some(opened.window.window_id()),
+        "runtime status should record the destination activation"
+    );
+    assert_eq!(
+        status
+            .last_activation
+            .as_ref()
+            .and_then(|activation| activation.focus_item.clone()),
+        Some(item("a")),
+        "runtime status should record the focused item"
     );
     let after_drop_context = source_opened
         .window

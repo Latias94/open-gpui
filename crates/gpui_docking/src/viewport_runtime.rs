@@ -5,8 +5,8 @@ use crate::{
     DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
     DockViewportDropRouteOutcome, DockViewportOpenOutcome, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
-    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTargetContext,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
@@ -37,6 +37,7 @@ pub struct DockViewportRuntime {
     host_scenes: DockViewportHostSceneRegistry,
     tear_off: DockViewportTearOffMachine,
     tear_off_tick: DockViewportTearOffTick,
+    status: DockViewportRuntimeStatus,
 }
 
 pub(crate) struct DockViewportPreparedTearOffDrop {
@@ -74,6 +75,7 @@ impl DockViewportRuntime {
             host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
+            status: DockViewportRuntimeStatus::default(),
         }
     }
 
@@ -92,6 +94,7 @@ impl DockViewportRuntime {
             host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
+            status: DockViewportRuntimeStatus::default(),
         }
     }
 
@@ -112,6 +115,11 @@ impl DockViewportRuntime {
     /// Returns the low-level viewport adapter.
     pub fn adapter(&self) -> &DockViewportAdapter {
         &self.adapter
+    }
+
+    /// Returns the latest read-only runtime diagnostic snapshot.
+    pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
+        self.status.clone()
     }
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
@@ -236,6 +244,31 @@ impl DockViewportRuntime {
     }
 
     pub(crate) fn commit_payload_drop_route_with_outcome(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        payload: DockViewportDropPayload,
+        route: DockViewportDropRoute,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        let result =
+            self.commit_payload_drop_route_inner(source_space, source_tabs, payload, route, cx);
+        self.status.record_drop_result(&result);
+        result
+    }
+
+    pub(crate) fn record_drop_route_result(
+        &mut self,
+        result: &Result<DockViewportDropRouteOutcome, DockActionApplyError>,
+    ) {
+        self.status.record_drop_result(result);
+    }
+
+    pub(crate) fn record_tear_off_outcome(&mut self, outcome: &DockViewportTearOffOpenOutcome) {
+        self.status.record_tear_off(outcome);
+    }
+
+    fn commit_payload_drop_route_inner(
         &mut self,
         source_space: &DockSpaceId,
         source_tabs: crate::DockNodeId,
@@ -428,7 +461,7 @@ impl DockViewportRuntime {
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     #[allow(clippy::too_many_arguments)]
     pub fn resolve_payload_drop_route_with_context(
-        &self,
+        &mut self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: crate::DockNodeId,
         payload: DockViewportDropPayload,
@@ -437,16 +470,21 @@ impl DockViewportRuntime {
         target_context: &DockViewportTargetContext,
         cx: &App,
     ) -> DockViewportDropRoute {
+        let source_space = source_space.into();
+        let payload_record = payload.clone();
         let policy = self.controller.read(cx).workspace().policy().to_owned();
-        self.adapter.resolve_payload_drop_route_with_context(
-            source_space,
+        let route = self.adapter.resolve_payload_drop_route_with_context(
+            source_space.clone(),
             source_tabs,
             payload,
             release_position,
             suggested_window_bounds,
             &policy,
             target_context,
-        )
+        );
+        self.status
+            .record_route(source_space, source_tabs, payload_record, &route);
+        route
     }
 
     pub(crate) fn begin_tear_off_request(
@@ -579,7 +617,9 @@ impl DockViewportRuntime {
         };
 
         let completion = self.complete_tear_off_viewport(&key, opened.window, cx);
-        Ok(self.finish_tear_off_open(pending, completion, cx))
+        let outcome = self.finish_tear_off_open(pending, completion, cx);
+        self.status.record_tear_off(&outcome);
+        Ok(outcome)
     }
 
     pub(crate) fn finish_tear_off_open(
@@ -675,6 +715,7 @@ impl DockViewportRuntime {
         let outcome = self.adapter.handle_window_closed(window_id);
         self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
+        self.status.record_close(&outcome);
         outcome
     }
 
@@ -694,16 +735,20 @@ impl DockViewportRuntime {
         };
 
         outcome.status = self.merge_closed_space_back(&source_space, &target_space, cx);
+        self.status.record_close(&outcome);
         outcome
     }
 
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
     pub fn handle_window_should_close(
-        &self,
+        &mut self,
         window_id: WindowId,
     ) -> DockViewportShouldCloseOutcome {
-        self.adapter
-            .should_close_viewport(window_id, self.close_policy())
+        let outcome = self
+            .adapter
+            .should_close_viewport(window_id, self.close_policy());
+        self.status.record_should_close(&outcome);
+        outcome
     }
 
     fn merge_closed_space_back(

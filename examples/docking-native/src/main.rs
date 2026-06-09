@@ -33,6 +33,7 @@ impl Render for RuntimeStatusPanel {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let runtime = self.runtime.borrow();
         let adapter = runtime.adapter();
+        let status = runtime.runtime_status();
         let spaces = adapter
             .spaces()
             .into_iter()
@@ -46,11 +47,32 @@ impl Render for RuntimeStatusPanel {
             })
             .collect::<Vec<_>>();
         let placement = runtime.export_placement();
-        let lines = [
+        let lines = vec![
             format!("close policy: {:?}", runtime.close_policy()),
             format!("registered viewports: {}", spaces.len()),
             format!("placement snapshots: {}", placement.viewports.len()),
             format!("spaces: {}", spaces.join(", ")),
+            format!(
+                "last route: {}",
+                debug_option(status.last_route.as_ref().map(|record| &record.target))
+            ),
+            format!(
+                "last drop: {}",
+                debug_option(status.last_drop_outcome.as_ref().map(|record| &record.kind))
+            ),
+            format!(
+                "last activation: {}",
+                debug_option(status.last_activation.as_ref())
+            ),
+            format!("last close: {}", debug_option(status.last_close.as_ref())),
+            format!(
+                "last should-close: {}",
+                debug_option(status.last_should_close.as_ref())
+            ),
+            format!(
+                "last tear-off: {}",
+                debug_option(status.last_tear_off.as_ref().map(|record| &record.kind))
+            ),
         ];
 
         div()
@@ -96,6 +118,12 @@ impl Render for RuntimeStatusPanel {
                     })),
             )
     }
+}
+
+fn debug_option<T: std::fmt::Debug>(value: Option<T>) -> String {
+    value
+        .map(|value| format!("{value:?}"))
+        .unwrap_or_else(|| "none".to_string())
 }
 
 impl DemoPanel {

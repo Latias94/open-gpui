@@ -3,9 +3,9 @@ use crate::{
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportShouldCloseOutcome,
-    DockViewportTargetContext, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
@@ -56,6 +56,11 @@ impl DockViewportRuntimeHandle {
     /// Returns the shared close policy used by runtime-opened viewport windows.
     pub fn close_policy(&self) -> DockViewportClosePolicy {
         self.runtime.borrow().close_policy()
+    }
+
+    /// Returns the latest read-only runtime diagnostic snapshot.
+    pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
+        self.runtime.borrow().runtime_status()
     }
 
     /// Replaces the shared close policy used by runtime-opened viewport windows.
@@ -160,7 +165,9 @@ impl DockViewportRuntimeHandle {
 
         let mut runtime = self.runtime.borrow_mut();
         let completion = runtime.complete_tear_off_viewport(&key, opened.window, cx);
-        Ok(runtime.finish_tear_off_open(pending, completion, cx))
+        let outcome = runtime.finish_tear_off_open(pending, completion, cx);
+        runtime.record_tear_off_outcome(&outcome);
+        Ok(outcome)
     }
 
     /// Updates display, window, and host bounds for a registered viewport.
@@ -253,18 +260,21 @@ impl DockViewportRuntimeHandle {
             runtime.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?
         };
 
-        self.open_tear_off_viewport(
-            prepared.request,
-            prepared.target_space,
-            prepared.options,
-            cx,
-        )
-        .map(DockViewportDropRouteOutcome::TearOff)
-        .map_err(|error| {
-            DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
-                message: error.to_string(),
-            })
-        })
+        let result = self
+            .open_tear_off_viewport(
+                prepared.request,
+                prepared.target_space,
+                prepared.options,
+                cx,
+            )
+            .map(DockViewportDropRouteOutcome::TearOff)
+            .map_err(|error| {
+                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
+                    message: error.to_string(),
+                })
+            });
+        self.runtime.borrow_mut().record_drop_route_result(&result);
+        result
     }
 
     #[cfg(test)]
@@ -288,7 +298,7 @@ impl DockViewportRuntimeHandle {
         cx: &App,
     ) -> DockViewportDropRoute {
         self.runtime
-            .borrow()
+            .borrow_mut()
             .resolve_payload_drop_route_with_context(
                 source_space,
                 source_tabs,
@@ -321,7 +331,9 @@ impl DockViewportRuntimeHandle {
         &self,
         window_id: WindowId,
     ) -> DockViewportShouldCloseOutcome {
-        self.runtime.borrow().handle_window_should_close(window_id)
+        self.runtime
+            .borrow_mut()
+            .handle_window_should_close(window_id)
     }
 
     /// Registers an application-level close observer that cleans up viewport mappings by
