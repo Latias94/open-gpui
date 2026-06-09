@@ -1,11 +1,20 @@
 ---
 title: "refactor: Deepen docking interaction foundation"
 type: refactor
-status: active
+status: completed
 date: 2026-06-09
+completed: 2026-06-09
+follow_up: "docs/plans/2026-06-09-016-feat-imgui-like-multiviewport-docking-plan.md"
 ---
 
 # refactor: Deepen docking interaction foundation
+
+> Completion note, 2026-06-09: this foundation plan has landed. The codebase now has the
+> full-layout resolver, workspace transaction layer, host interaction runtime, split geometry
+> authority, central-region semantics, viewport runtime tear-off transaction, descriptor-only panel
+> lifecycle, and deleted tab-only preview/receiver compatibility APIs. Product polish and
+> multi-viewport dogfood continue in
+> `docs/plans/2026-06-09-016-feat-imgui-like-multiviewport-docking-plan.md`.
 
 ## Summary
 

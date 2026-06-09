@@ -19,6 +19,9 @@ The docking crate now matches ADR 0002's layering for the current product surfac
   primitive.
 - `DockPanelRegistry` separates descriptor metadata from live GPUI view lifecycle state through
   `DockPanelCatalog`, `DockPanelViewStore`, and explicit attach APIs.
+- Rendered product paths now cover item drag, whole-stack drag, host-level drop previews,
+  cross-viewport dock-back through destination host scenes, runtime tear-off transactions, viewport
+  activation after routed drops, and tab close policy from rendered chrome.
 
 ## Evidence
 
@@ -41,8 +44,8 @@ Interaction foundation:
 - `crates/gpui_docking/src/drop_target.rs` resolves tab bars, leaves, root edges, floating title
   bars, empty dock spaces, known viewports, and tear-off candidates into one resolved target shape.
 - `crates/gpui_docking/src/drop_runtime.rs` stores the active resolved target from layout facts,
-  preserves tab-reorder stability during pointer movement, and matches drop receivers through the
-  resolved target instead of a tab-only preview projection.
+  preserves tab-reorder stability during pointer movement, and feeds host-level preview rendering
+  from the resolved target instead of a tab-only preview projection.
 - `crates/gpui_docking/src/workspace_transaction.rs` commits resolved drop targets, so render code
   no longer constructs graph-shaped `MoveTab` commands for ordinary drag/drop.
 - `crates/gpui_docking/src/workspace_move_transaction.rs`,
@@ -70,6 +73,12 @@ Viewport productization:
   deterministic fallback in `crates/gpui_docking/src/viewport_target_resolver.rs`.
 - Viewport hit testing and tear-off resolution require explicit `DockViewportTargetContext`
   arbitration input, even when callers choose an empty fallback context.
+- Runtime-opened viewports publish host scenes through the handle path; known-viewport routes are
+  resolved again in the destination host scene before commit, and successful routed drops activate
+  the destination viewport.
+- Tear-off pending state tracks item and tabs-stack payloads, duplicate requests, expiration,
+  source-moved/source-missing cancellation, commit failure cleanup, and controller-backed viewport
+  registration.
 
 Panel lifecycle:
 
@@ -81,6 +90,17 @@ Panel lifecycle:
   titles or close policy.
 - Live GPUI view resolution stays crate-private through the render snapshot path; public
   `DockPanelRegistration` exposes descriptor metadata only.
+- Rendered tab close controls read closable metadata from the render snapshot, omit the affordance
+  for non-closable panels, and still commit through panel lifecycle policy.
+
+Native dogfood:
+
+- `examples/docking-native` opens primary and secondary spaces through `DockViewportRuntimeHandle`
+  and restores their window placement separately from `DockLayout`.
+- The secondary viewport starts with a two-tab stack so manual dogfood can drag a whole stack back
+  into the primary viewport.
+- The primary viewport starts with an in-window floating stack and a non-closable pinned tab, so
+  manual dogfood covers floating merge and rendered close-policy behavior.
 
 Test locality:
 
@@ -96,8 +116,10 @@ Test locality:
 - Legacy compatibility pressure around graph-based `DockHost` and `DockController` constructors,
   host-owned state accessors, the `DockHostSource` owned/controller split, and context-free
   viewport target helpers has been removed from the public docking API.
-- Add richer product behavior through the existing seams: whole-stack drag, viewport release polish,
-  focus restoration, and accessibility behavior.
+- The runtime tear-off transaction is covered, but a fully rendered release outside every GPUI
+  window still needs a GPUI/platform global mouse-up or equivalent completion primitive.
+- Add richer product behavior through the existing seams: route-preview polish, focus restoration,
+  accessibility behavior, and any explicit merge-back viewport close policy.
 - Continue splitting future viewport or graph code only when the extracted module passes the
   deletion test and gives callers a smaller, deeper interface.
 - Revisit whether `host_test_support` should share a smaller ID fixture with graph and viewport

@@ -5,10 +5,11 @@
 
 ## Context
 
-Open GPUI now has an optional `open-gpui-docking` crate with a pure dock graph, static host
-rendering, panel registration, layout import/export, and a native smoke example. The next docking
-work will add tab activation, drag/drop, splitter resizing, in-window floating chrome, and later
-OS-level detach.
+Open GPUI now has an optional `open-gpui-docking` crate with a pure dock graph, retained host
+rendering, panel registration, layout import/export, controller-backed viewports, and a native
+multi-viewport dogfood example. Docking interactions include tab activation, rendered drag/drop,
+splitter resizing, in-window floating chrome, panel close/reopen policy, and runtime-opened
+platform viewports.
 
 GPUI already has authoritative modules for platform windows, input, focus, and retained view
 lifecycle:
@@ -38,9 +39,9 @@ content. A graph can be serialized and tested without this registry.
 state coordination belongs behind a deeper owner module in `open-gpui-docking`, not in the render
 adapter.
 
-GPUI `App` and `Window` remain the only modules that create and manage platform windows. Future
-OS-level detach work must use a separate adapter that maps `DockSpaceId` values to GPUI
-`WindowHandle` values through `App::open_window`; that mapping must stay outside `DockGraph`.
+GPUI `App` and `Window` remain the only modules that create and manage platform windows. Platform
+viewport docking uses a runtime adapter that maps `DockSpaceId` values to GPUI `WindowHandle`
+values through `App::open_window`; that mapping stays outside `DockGraph`.
 
 GPUI focus remains authoritative. Dock active-tab state is layout selection, not a second focus
 system. Docking interactions may ask GPUI to focus a rendered view, but they must not maintain a
@@ -54,7 +55,7 @@ In-window floating containers and platform floating windows remain separate conc
 `DockNode::Floating` is layout data inside a dock host. A platform floating window is created by
 GPUI platform-window machinery.
 
-Follow-up implementation note, 2026-06-09: rendered docking interactions now pass through
+Implementation note, 2026-06-09: rendered docking interactions now pass through
 crate-internal interaction and transaction modules before mutating the graph. Render callbacks
 collect pointer facts, the drop resolver produces a resolved target, the workspace transaction
 validates and commits that target, and viewport tear-off uses `DockViewportRuntime` to coordinate
@@ -63,10 +64,20 @@ facts rather than a tab-only intent, so preview and commit stay tied to the same
 Splitter and floating pointer sessions emit crate-private resize/bounds requests that the host
 commits through controller/workspace transactions, rather than constructing public `DockAction`
 values from render callbacks.
+Runtime-opened viewports publish host-local drop scenes so cross-viewport drops route through the
+destination host before graph mutation. Item and whole-stack drag payloads share that route, and
+successful routed drops activate the destination viewport. Tab close chrome reads descriptor
+metadata from `DockPanelCatalog` and commits through the same panel lifecycle transaction used by
+programmatic close actions.
 `DockAction` remains the public programmatic interface for explicit non-move commands such as
 selection, panel close/reopen, floating, and split resize. `DockOp` is crate-internal graph
 mutation machinery, so render code and applications do not need to understand source/target node
 ids, zones, and insertion indexes to commit ordinary drag/drop.
+
+Open limitation: a fully productized "release outside every GPUI window" path still depends on a
+platform/global mouse-up primitive. The runtime tear-off transaction, pending cleanup, and
+controller-backed viewport open path are in place, but ADR 0002 still treats GPUI as the authority
+for cross-window input delivery.
 
 ## Architecture
 
@@ -83,12 +94,12 @@ flowchart TB
     Owner -.does not own focus.-> Focus
 ```
 
-Future platform detach is an adapter, not graph state:
+Platform viewport detach is an adapter, not graph state:
 
 ```mermaid
 flowchart LR
     Owner[Dock owner module] --> Space[DockSpaceId]
-    DetachAdapter[Future detach adapter] --> AppOpen[App::open_window]
+    DetachAdapter[Viewport runtime adapter] --> AppOpen[App::open_window]
     DetachAdapter --> WindowMap[DockSpaceId to WindowHandle map]
     Space -.serializable.-> Graph[DockGraph]
 ```
@@ -155,10 +166,11 @@ Decision: rejected.
 
 ## Consequences
 
-- The next docking refactor should introduce a deep owner module and narrow `DockHost` into a render
-  adapter.
-- Tab activation, drag/drop, splitter resize, and in-window floating should enter through docking
-  actions or intents applied by that owner module.
-- OS-level detach remains deferred until a separate platform-window adapter is planned.
-- Tests should separate graph layout state, owner coordination, GPUI rendering, and future platform
-  window routing.
+- `DockGraph` and `DockLayout` remain serializable logical state; platform-window mappings,
+  placement snapshots, active/hovered window signals, and retained views stay in runtime modules.
+- Rendered tab drag/drop, splitter resize, floating drag, panel close, viewport route, and tear-off
+  transactions enter through interaction/runtime seams rather than direct graph-shaped render code.
+- Tests should continue separating graph layout state, workspace/controller transactions, GPUI
+  rendering, and platform-window routing.
+- Future work should add missing GPUI/global release delivery, richer focus/accessibility polish,
+  and any explicit merge-back viewport close policy without weakening the graph/runtime boundary.
