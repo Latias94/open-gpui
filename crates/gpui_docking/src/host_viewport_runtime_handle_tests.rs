@@ -331,11 +331,12 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    assert!(runtime.update_viewport_snapshot(
-        &target_space,
-        None,
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        opened.window.window_id(),
         target_window_bounds,
-        host_bounds
+        host_bounds,
+        point(px(0.0), px(0.0))
     ));
     let target_point = point(
         target_window_bounds.get_bounds().origin.x + px(20.0),
@@ -696,11 +697,12 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
-    assert!(runtime.update_viewport_snapshot(
-        &target_space,
-        None,
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        opened.window.window_id(),
         target_window_bounds,
-        floating_bounds(0.0, 0.0, 360.0, 220.0)
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(0.0), px(0.0))
     ));
 
     let target_point = point(

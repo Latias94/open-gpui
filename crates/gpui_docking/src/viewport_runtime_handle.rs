@@ -9,8 +9,8 @@ use crate::{
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, DisplayId, Entity, Pixels, Point, Result, Subscription,
-    WindowBounds, WindowId, WindowOptions,
+    App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription, WindowBounds,
+    WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::Ref;
@@ -183,24 +183,6 @@ impl DockViewportRuntimeHandle {
         let outcome = runtime.finish_tear_off_open(pending, completion, cx);
         runtime.record_tear_off_outcome(&outcome);
         Ok(outcome)
-    }
-
-    /// Updates display, window, and host bounds for a registered viewport.
-    ///
-    /// Returns true when the stored runtime snapshot changed.
-    pub fn update_viewport_snapshot(
-        &self,
-        space: &DockSpaceId,
-        display_id: Option<DisplayId>,
-        window_bounds: WindowBounds,
-        host_bounds: Bounds<Pixels>,
-    ) -> bool {
-        self.runtime.borrow_mut().update_viewport_snapshot(
-            space,
-            display_id,
-            window_bounds,
-            host_bounds,
-        )
     }
 
     pub(crate) fn begin_viewport_host_scene(
