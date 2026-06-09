@@ -26,6 +26,13 @@ pub enum DockViewportOpenStatus {
 impl DockViewportAdapter {
     /// Opens or reuses a GPUI window that renders a logical dock space.
     ///
+    /// This is the low-level window mapping primitive. It registers the viewport window and mounts
+    /// a controller-backed [`DockHost`], but it does not install the should-close hook required for
+    /// [`DockViewportClosePolicy::Prevent`](crate::DockViewportClosePolicy::Prevent). Applications
+    /// that need product close semantics should open windows through
+    /// [`DockViewportRuntime`](crate::DockViewportRuntime) or
+    /// [`DockViewportRuntimeHandle`](crate::DockViewportRuntimeHandle).
+    ///
     /// The returned window root is a controller-backed [`DockHost`]. If the dock space already has
     /// a live registered window, that window is activated and reused. If the existing mapping is
     /// stale, it is removed before opening a replacement window.
