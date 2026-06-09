@@ -69,15 +69,16 @@ destination host before graph mutation. Item and whole-stack drag payloads share
 successful routed drops activate the destination viewport. Tab close chrome reads descriptor
 metadata from `DockPanelCatalog` and commits through the same panel lifecycle transaction used by
 programmatic close actions.
+GPUI exposes an optional platform mouse-button state seam, and rendered docking drags use a
+host-local polling fallback while a drag is active. This lets release outside every GPUI window
+complete through the same viewport tear-off transaction on platforms that can report global button
+state. macOS reports `NSEvent::pressedMouseButtons`, Windows reports `GetAsyncKeyState`, and
+unsupported platforms keep returning `None` so docking falls back to normal GPUI window-event
+delivery instead of pretending global input is available.
 `DockAction` remains the public programmatic interface for explicit non-move commands such as
 selection, panel close/reopen, floating, and split resize. `DockOp` is crate-internal graph
 mutation machinery, so render code and applications do not need to understand source/target node
 ids, zones, and insertion indexes to commit ordinary drag/drop.
-
-Open limitation: a fully productized "release outside every GPUI window" path still depends on a
-platform/global mouse-up primitive. The runtime tear-off transaction, pending cleanup, and
-controller-backed viewport open path are in place, but ADR 0002 still treats GPUI as the authority
-for cross-window input delivery.
 
 ## Architecture
 
@@ -172,5 +173,6 @@ Decision: rejected.
   transactions enter through interaction/runtime seams rather than direct graph-shaped render code.
 - Tests should continue separating graph layout state, workspace/controller transactions, GPUI
   rendering, and platform-window routing.
-- Future work should add missing GPUI/global release delivery, richer focus/accessibility polish,
-  and any explicit merge-back viewport close policy without weakening the graph/runtime boundary.
+- Future work should expand unsupported platform backends where the OS provides reliable button
+  state, add richer focus/accessibility polish, and introduce any explicit merge-back viewport
+  close policy without weakening the graph/runtime boundary.

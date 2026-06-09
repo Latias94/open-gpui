@@ -79,6 +79,13 @@ Viewport productization:
 - Tear-off pending state tracks item and tabs-stack payloads, duplicate requests, expiration,
   source-moved/source-missing cancellation, commit failure cleanup, and controller-backed viewport
   registration.
+- `crates/gpui_docking/src/host_outside_release.rs` gives rendered drags a host-local polling
+  fallback for release outside every GPUI window while preserving GPUI as the input authority.
+- `Platform::mouse_button_is_pressed` is optional: macOS implements it with
+  `NSEvent::pressedMouseButtons`, Windows implements it with `GetAsyncKeyState`, and unsupported
+  platforms return `None`.
+- `runtime_poll_released_left_button_tears_off_without_mouse_up_event` covers the product path
+  where no GPUI mouse-up event is delivered but the platform reports the left button was released.
 
 Panel lifecycle:
 
@@ -116,8 +123,9 @@ Test locality:
 - Legacy compatibility pressure around graph-based `DockHost` and `DockController` constructors,
   host-owned state accessors, the `DockHostSource` owned/controller split, and context-free
   viewport target helpers has been removed from the public docking API.
-- The runtime tear-off transaction is covered, but a fully rendered release outside every GPUI
-  window still needs a GPUI/platform global mouse-up or equivalent completion primitive.
+- The rendered release-outside path now has a platform button-state polling seam for macOS,
+  Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
+  until a reliable platform primitive is available.
 - Add richer product behavior through the existing seams: route-preview polish, focus restoration,
   accessibility behavior, and any explicit merge-back viewport close policy.
 - Continue splitting future viewport or graph code only when the extracted module passes the
