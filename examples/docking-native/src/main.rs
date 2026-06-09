@@ -835,7 +835,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui_docking::{DockActionOutcome, DockGraph, DockNode, DockNodeId};
+    use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
+    use open_gpui_docking::{DockActionOutcome, DockGraph, DockHost, DockNode, DockNodeId};
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
@@ -847,6 +848,58 @@ mod tests {
             panic!("node should be tabs");
         };
         (items.clone(), *active)
+    }
+
+    fn tab_selector(space: &str, tabs: DockNodeId, item: &str) -> String {
+        format!("dock:{space}:tabs:{}:tab:{item}", tabs.as_u64())
+    }
+
+    fn tabs_selector(space: &str, tabs: DockNodeId) -> String {
+        format!("dock:{space}:tabs:{}", tabs.as_u64())
+    }
+
+    fn drop_preview_selector(space: &str) -> String {
+        format!("dock:{space}:drop-preview")
+    }
+
+    fn debug_bounds(cx: &mut VisualTestContext, selector: impl Into<String>) -> Bounds<Pixels> {
+        let selector: &'static str = Box::leak(selector.into().into_boxed_str());
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("debug selector {selector} should have bounds"))
+    }
+
+    fn simulate_cross_window_left_drag(
+        source: &mut VisualTestContext,
+        target: &mut VisualTestContext,
+        start: open_gpui::Point<Pixels>,
+        end: open_gpui::Point<Pixels>,
+    ) {
+        let threshold = point(start.x + px(24.0), start.y);
+        source.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        source.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        target.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        target.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    }
+
+    fn open_dogfood_viewport(
+        cx: &mut TestAppContext,
+        runtime: &DockViewportRuntimeHandle,
+        space: &str,
+        bounds: Bounds<Pixels>,
+    ) -> (Entity<DockHost>, VisualTestContext) {
+        let opened = cx
+            .update(|app| runtime.open_viewport(space, viewport_window_options(bounds), app))
+            .expect("dogfood viewport should open");
+        let window = opened
+            .window
+            .downcast::<DockHost>()
+            .expect("dogfood viewport should render DockHost");
+        let host = window
+            .root(cx)
+            .expect("dogfood viewport should expose DockHost root");
+        cx.run_until_parked();
+        let visual = VisualTestContext::from_window(opened.window, cx);
+        (host, visual)
     }
 
     #[test]
@@ -1064,6 +1117,153 @@ mod tests {
             .expect("merged stack should keep its active item");
         assert_eq!(items, expected_items);
         assert_eq!(active, expected_active);
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_tab_drag(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let editor = item("editor");
+        let (secondary_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&secondary, &preview)
+                .expect("preview should start in secondary dogfood space")
+        });
+        let (editor_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&primary, &editor)
+                .expect("editor should start in primary dogfood space")
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let start = debug_bounds(
+            &mut secondary_visual,
+            tab_selector(SECONDARY_SPACE, secondary_tabs, "preview"),
+        )
+        .center();
+        let end = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs)).center();
+        let threshold = point(start.x + px(24.0), start.y);
+
+        secondary_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+        secondary_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+        primary_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            debug_bounds(&mut primary_visual, drop_preview_selector(SPACE))
+                .size
+                .width
+                > px(0.0),
+            "primary viewport should render a host-local drop preview during cross-window drag"
+        );
+
+        primary_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert!(
+                controller
+                    .graph()
+                    .find_item_in_space(&secondary, &preview)
+                    .is_none(),
+                "preview should leave the secondary viewport after rendered drop"
+            );
+            let (preview_tabs, preview_index) = controller
+                .graph()
+                .find_item_in_space(&primary, &preview)
+                .expect("preview should dock into the primary editor stack");
+            assert_eq!(preview_tabs, editor_tabs);
+            assert_eq!(preview_index, 1);
+            let (items, active) = tabs_items(controller.graph(), editor_tabs);
+            assert_eq!(items, vec![editor, preview]);
+            assert_eq!(active, 1);
+        });
+    }
+
+    #[open_gpui::test]
+    fn runtime_viewports_accept_rendered_cross_window_stack_drag(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller.clone());
+        let primary = DockSpaceId::from(SPACE);
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let preview = item("preview");
+        let diff = item("diff");
+        let editor = item("editor");
+        let (secondary_tabs, secondary_items, secondary_active_item) =
+            controller.read_with(cx, |controller, _| {
+                let (tabs, _) = controller
+                    .graph()
+                    .find_item_in_space(&secondary, &preview)
+                    .expect("preview should start in secondary dogfood space");
+                let (items, active) = tabs_items(controller.graph(), tabs);
+                let active_item = items[active].clone();
+                (tabs, items, active_item)
+            });
+        assert_eq!(secondary_items, vec![preview.clone(), diff.clone()]);
+        let (editor_tabs, _) = controller.read_with(cx, |controller, _| {
+            controller
+                .graph()
+                .find_item_in_space(&primary, &editor)
+                .expect("editor should start in primary dogfood space")
+        });
+
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+        let (_secondary_host, mut secondary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SECONDARY_SPACE,
+            Bounds::new(point(px(944.0), px(0.0)), size(px(460.0), px(360.0))),
+        );
+
+        let source_bounds = debug_bounds(
+            &mut secondary_visual,
+            tabs_selector(SECONDARY_SPACE, secondary_tabs),
+        );
+        let start = point(
+            source_bounds.origin.x + source_bounds.size.width - px(8.0),
+            source_bounds.origin.y + px(12.0),
+        );
+        let end = debug_bounds(&mut primary_visual, tabs_selector(SPACE, editor_tabs)).center();
+
+        simulate_cross_window_left_drag(&mut secondary_visual, &mut primary_visual, start, end);
+        cx.run_until_parked();
+
+        controller.read_with(cx, |controller, _| {
+            assert_eq!(
+                controller.graph().root(&secondary),
+                None,
+                "whole-stack drag should empty the secondary viewport root"
+            );
+            let (items, active) = tabs_items(controller.graph(), editor_tabs);
+            let expected_items = vec![editor, preview, diff];
+            let expected_active = expected_items
+                .iter()
+                .position(|item| item == &secondary_active_item)
+                .expect("merged stack should keep its active item");
+            assert_eq!(items, expected_items);
+            assert_eq!(active, expected_active);
+        });
     }
 
     #[test]
