@@ -10,8 +10,7 @@ model. The first release already has the important boundaries:
 
 - `CanvasRuntime` owns runtime caches;
 - `CanvasGeometryResolver` owns geometry semantics;
-- `SpatialIndex` remains the public correctness oracle and object-safe `CanvasSpatialIndex`
-  visitor implementation;
+- `SpatialIndex` remains the public correctness oracle and simple fallback model;
 - production editor and paint paths query `CanvasRuntime` rather than borrowing a raw
   `SpatialIndex`;
 - tests prove hidden, locked, handle, margin, z-order, custom-router, and kind-registry behavior.
@@ -47,12 +46,16 @@ The runtime-owned prototype uses this hybrid shape:
 - stable base records for committed document state;
 - overlay records for active gesture records and recent diffs;
 - stale suppression by semantic `CanvasRecordId`;
-- final `HitOptions`, half-open GPUI bounds semantics, and z-order ordering in canvas code;
+- final `HitOptions`, GPUI bounds semantics, precise hit filtering, and z-order ordering in the
+  runtime query module;
 - no public API that names `rstar`, `static_aabb2d_index`, or another concrete dependency.
 
 The first landed prototype keeps the base and overlay as internal sorted record sets. Concrete index
 crates remain dev-only until benchmark data justifies replacing the internal base with a packed
 static AABB index or replacing the overlay with a dynamic tree.
+The public object-safe index trait was removed before 0.1 because it asked external adapters to
+own final query semantics. Future third-party indexes should be coarse candidate providers behind
+the runtime query module instead.
 
 ## Alternatives Considered
 
@@ -141,7 +144,7 @@ Decision: chosen as the next internal prototype direction.
 ## Consequences
 
 - `rstar` and `static_aabb2d_index` stay as dev-only spike dependencies for now.
-- The production runtime now owns spatial cache internals directly.
+- The production runtime now owns a runtime query module over spatial cache internals.
 - Public editor and paint paths no longer expose a raw runtime `SpatialIndex` accessor.
 - The next architecture work should benchmark the internal runtime path before adding public index
   selection APIs.

@@ -43,8 +43,9 @@ The first version will provide a renderer-aware but renderer-decoupled canvas co
   inverse transaction, actual document diff, and actual semantic record operation batch.
 - A `CanvasRuntime` owner for spatial hit testing and indexed graph caches that can be rebuilt or
   incrementally updated without changing document serialization.
-- A `CanvasSpatialIndex` query trait so future R-tree, tile, or GPU-assisted culling indexes can
-  plug into query and hit-test call sites without changing document records.
+- A runtime query module so future R-tree, tile, or GPU-assisted culling indexes can act as coarse
+  candidate providers while canvas-owned code keeps final hit-test, culling, and ordering
+  semantics.
 - A `CanvasGeometryResolver` that centralizes record bounds, handle positions, edge routes, hit
   geometry, endpoint picking, previews, and paint fallback semantics.
 - A `CanvasKindRegistry` that layers per-kind defaults, migrations, validation, and geometry hooks
@@ -70,12 +71,12 @@ callback. It intentionally does not own application state or turn every record i
 future overlays can layer selected node widgets on top of this batched base renderer.
 
 The default `SpatialIndex` remains a simple sorted record vector because it is predictable and easy
-to verify in the first release. Query call sites also have an object-safe `CanvasSpatialIndex`
-visitor trait. That trait deliberately covers query and hit-test traversal, not document mutation
-or cache ownership, so future R-tree or tile indexes can be introduced without making
-`CanvasEditor` generic too early. `CanvasRuntime` is the cache owner that keeps the current
-`SpatialIndex`, `CanvasGraphIndex`, and edge geometry cache synchronized from committed document
-diffs.
+to verify in the first release. Production query call sites go through `CanvasRuntime`, whose
+internal runtime query module owns final `HitOptions` filtering, bounds semantics, z-order ordering,
+stale-record suppression, and precise hit testing. Future R-tree, tile, or GPU-assisted indexes
+should feed coarse candidates into that module rather than becoming public final-query adapters.
+`CanvasRuntime` is the cache owner that keeps the current spatial candidate cache,
+`CanvasGraphIndex`, and edge geometry cache synchronized from committed document diffs.
 
 Geometry has one resolver boundary. `CanvasGeometryResolver` combines the canonical document,
 router policy, and optional kind registry to answer bounds, handle positions, route paths, edge

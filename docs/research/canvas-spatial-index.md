@@ -7,7 +7,7 @@
 
 `open-gpui-canvas` currently ships a simple `SpatialIndex` built from sorted canvas records. That
 choice is intentional for the first release: it is deterministic, easy to test, and already hidden
-behind `CanvasRuntime` plus the object-safe `CanvasSpatialIndex` query trait.
+behind `CanvasRuntime` and its runtime query module.
 
 The next performance step should be selected from real canvas workloads, not from a generic spatial
 index preference. The hot paths are:
@@ -127,9 +127,9 @@ Best use: reference concept only unless a benchmark proves it beats the packed/R
 
 ## Recommendation
 
-Do not replace `SpatialIndex` before the 0.1 release. The current trait and runtime boundaries are
-the important architecture. The next implementation should be a focused benchmark spike with this
-order:
+Do not replace `SpatialIndex` before the 0.1 release. The runtime query boundary is the important
+architecture seam. The next implementation should be a focused
+benchmark spike with this order:
 
 1. Add an internal benchmark harness that runs the same documents through multiple index builders.
 2. Implement an `rstar` prototype behind a non-default feature or test-only module.
@@ -148,7 +148,7 @@ The likely long-term architecture is a hybrid:
 ## Acceptance Criteria For The Next Spike
 
 - Keep `CanvasRuntime` as the cache owner.
-- Keep `CanvasSpatialIndex` as the query boundary.
+- Keep the runtime query module as the final query boundary.
 - Do not expose concrete index choices in `CanvasEditor` or `CanvasPaintModel`.
 - Preserve z-order hit-test behavior and locked/hidden filtering.
 - Benchmark 20k, 100k, and clustered long-edge documents.

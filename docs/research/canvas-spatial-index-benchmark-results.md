@@ -113,11 +113,11 @@ Do not expose public index strategy knobs before the 0.1 release.
 
 The implementation phase following this spike landed these pieces:
 
-1. `CanvasRuntime` owns an internal `CanvasSpatialCache`.
+1. `CanvasRuntime` owns a runtime query module over an internal spatial candidate cache.
 2. `CanvasRuntime::spatial_index()` and `CanvasEditor::index()` were removed so callers use runtime
    query methods instead of bypassing cache ownership.
 3. The cache keeps stable base records, overlay records, stale IDs keyed by `CanvasRecordId`, and
-   canvas-owned filtering and z-ordering.
+   the runtime query module owns final filtering, precise hit testing, and z-ordering.
 4. Runtime diffs materialize changed records through `CanvasGeometryResolver`; node updates also
    refresh current incident edges without rebuilding an oracle index.
 5. The parity suite now checks `CanvasRuntime` directly against `SpatialIndex`.

@@ -1,15 +1,15 @@
-use crate::spatial_cache::CanvasSpatialCache;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
     CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
-    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
+    CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord,
+    runtime_query::CanvasRuntimeQuery,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasRuntime {
-    spatial_cache: CanvasSpatialCache,
+    query: CanvasRuntimeQuery,
     graph_index: CanvasGraphIndex,
     edge_geometries: IndexMap<EdgeId, CanvasResolvedEdgeGeometry>,
 }
@@ -56,17 +56,17 @@ impl CanvasRuntime {
     where
         R: CanvasEdgeRouter + ?Sized,
     {
-        let spatial_cache = match kind_registry {
-            Some(kind_registry) => CanvasSpatialCache::rebuild_with_router_and_kind_registry(
+        let query = match kind_registry {
+            Some(kind_registry) => CanvasRuntimeQuery::rebuild_with_router_and_kind_registry(
                 document,
                 router,
                 kind_registry,
             ),
-            None => CanvasSpatialCache::rebuild_with_router(document, router),
+            None => CanvasRuntimeQuery::rebuild_with_router(document, router),
         };
 
         Self {
-            spatial_cache,
+            query,
             graph_index: CanvasGraphIndex::rebuild(document),
             edge_geometries: resolve_edge_geometries(document, router, kind_registry),
         }
@@ -133,7 +133,7 @@ impl CanvasRuntime {
 
         match kind_registry {
             Some(kind_registry) => {
-                self.spatial_cache.apply_diff_with_router_and_kind_registry(
+                self.query.apply_diff_with_router_and_kind_registry(
                     document,
                     diff,
                     router,
@@ -141,8 +141,7 @@ impl CanvasRuntime {
                 );
             }
             None => {
-                self.spatial_cache
-                    .apply_diff_with_router(document, diff, router);
+                self.query.apply_diff_with_router(document, diff, router);
             }
         }
         self.graph_index.apply_diff(document, diff);
@@ -157,16 +156,12 @@ impl CanvasRuntime {
         self.edge_geometries.get(id)
     }
 
-    pub fn edge_geometries(&self) -> &IndexMap<EdgeId, CanvasResolvedEdgeGeometry> {
-        &self.edge_geometries
-    }
-
     pub fn graph<'a>(&'a self, document: &'a CanvasDocument) -> CanvasIndexedGraph<'a> {
         self.graph_index.graph(document)
     }
 
     pub fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_cache.query(viewport)
+        self.query.query(viewport)
     }
 
     pub fn query_with_options(
@@ -174,7 +169,7 @@ impl CanvasRuntime {
         viewport: Bounds<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_cache.query_with_options(viewport, options)
+        self.query.query_with_options(viewport, options)
     }
 
     pub fn hit_test(
@@ -182,7 +177,7 @@ impl CanvasRuntime {
         point: Point<Pixels>,
         options: HitOptions,
     ) -> impl Iterator<Item = &HitRecord> {
-        self.spatial_cache.hit_test(point, options)
+        self.query.hit_test(point, options)
     }
 
     pub fn precise_hit_test<'a>(
@@ -217,20 +212,8 @@ impl CanvasRuntime {
     where
         R: CanvasEdgeRouter + 'a,
     {
-        self.spatial_cache
-            .hit_test(point, options)
-            .filter(move |record| {
-                let edge_geometry = match &record.target {
-                    HitTarget::Edge(id) => self.edge_geometries.get(id),
-                    _ => None,
-                };
-                resolver.record_contains_point_with_edge_geometry(
-                    record,
-                    point,
-                    options,
-                    edge_geometry,
-                )
-            })
+        self.query
+            .precise_hit_test_with_resolver(resolver, &self.edge_geometries, point, options)
     }
 
     fn apply_edge_geometry_diff<R>(

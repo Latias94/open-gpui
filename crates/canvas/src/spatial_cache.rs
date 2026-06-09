@@ -1,6 +1,6 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasRecordId, HitOptions, HitRecord, HitTarget,
+    CanvasKindRegistry, CanvasRecordId, HitRecord, HitTarget,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Bounds, Pixels, Point};
@@ -129,39 +129,29 @@ impl CanvasSpatialCache {
         }
     }
 
-    pub(crate) fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
-        self.query_with_options(
-            viewport,
-            HitOptions {
-                include_locked: true,
-                ..HitOptions::default()
-            },
-        )
-    }
-
-    pub(crate) fn query_with_options(
+    pub(crate) fn query_candidates(
         &self,
         viewport: Bounds<Pixels>,
-        options: HitOptions,
-    ) -> impl Iterator<Item = &HitRecord> {
+    ) -> impl Iterator<Item = &IndexedHitRecord> {
         self.merged
             .records
             .iter()
-            .map(|record| &record.record)
-            .filter(move |record| query_matches(record, viewport, options))
+            .filter(move |record| record.record.bounds.intersects(&viewport))
     }
 
-    pub(crate) fn hit_test(
+    pub(crate) fn hit_test_candidates(
         &self,
         point: Point<Pixels>,
-        options: HitOptions,
-    ) -> impl Iterator<Item = &HitRecord> {
-        self.merged
-            .records
-            .iter()
-            .rev()
-            .map(|record| &record.record)
-            .filter(move |record| hit_matches(record, point, options))
+        margin: Pixels,
+    ) -> impl Iterator<Item = &IndexedHitRecord> {
+        self.merged.records.iter().filter(move |record| {
+            let bounds = if margin == Pixels::ZERO {
+                record.record.bounds
+            } else {
+                record.record.bounds.dilate(margin)
+            };
+            bounds.contains(&point)
+        })
     }
 
     fn refresh_merged(&mut self) {
@@ -370,33 +360,6 @@ pub(crate) fn record_id_for_target(target: &HitTarget) -> CanvasRecordId {
     }
 }
 
-pub(crate) fn query_matches(
-    record: &HitRecord,
-    viewport: Bounds<Pixels>,
-    options: HitOptions,
-) -> bool {
-    options_match(record, options) && record.bounds.intersects(&viewport)
-}
-
-pub(crate) fn hit_matches(record: &HitRecord, point: Point<Pixels>, options: HitOptions) -> bool {
-    if !options_match(record, options) {
-        return false;
-    }
-
-    let bounds = if options.margin == Pixels::ZERO {
-        record.bounds
-    } else {
-        record.bounds.dilate(options.margin)
-    };
-    bounds.contains(&point)
-}
-
-fn options_match(record: &HitRecord, options: HitOptions) -> bool {
-    (options.include_hidden || !record.hidden)
-        && (options.include_locked || !record.locked)
-        && (options.include_handles || !matches!(record.target, HitTarget::Handle { .. }))
-}
-
 pub(crate) fn dirty_record_ids(
     document: &CanvasDocument,
     diff: &CanvasDocumentDiff,
@@ -462,15 +425,11 @@ mod tests {
 
         assert_eq!(
             cache
-                .query_with_options(
-                    Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-                    HitOptions {
-                        include_locked: true,
-                        ..HitOptions::default()
-                    },
-                )
-                .into_iter()
-                .map(|record| record.target.clone())
+                .query_candidates(Bounds::new(
+                    point(px(0.0), px(0.0)),
+                    size(px(100.0), px(100.0))
+                ))
+                .map(|record| record.record.target.clone())
                 .collect::<Vec<_>>(),
             vec![
                 HitTarget::Node("back".into()),
@@ -503,14 +462,14 @@ mod tests {
 
         assert!(
             cache
-                .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
+                .hit_test_candidates(point(px(10.0), px(10.0)), Pixels::ZERO)
                 .next()
                 .is_none()
         );
         assert!(
             cache
-                .hit_test(point(px(210.0), px(10.0)), HitOptions::default())
-                .any(|record| record.target == HitTarget::Node(NodeId::from("a")))
+                .hit_test_candidates(point(px(210.0), px(10.0)), Pixels::ZERO)
+                .any(|record| record.record.target == HitTarget::Node(NodeId::from("a")))
         );
     }
 
@@ -552,18 +511,15 @@ mod tests {
 
         assert!(
             cache
-                .query_with_options(
-                    Bounds::new(point(px(0.0), px(0.0)), size(px(160.0), px(40.0))),
-                    HitOptions {
-                        include_locked: true,
-                        ..HitOptions::default()
-                    },
-                )
+                .query_candidates(Bounds::new(
+                    point(px(0.0), px(0.0)),
+                    size(px(160.0), px(40.0))
+                ))
                 .any(|record| {
-                    record.target == HitTarget::Edge("a-b".into())
-                        && record.bounds.origin == point(px(44.0), px(4.0))
-                        && record.bounds.size.width == px(72.0)
-                        && record.bounds.size.height == px(12.0)
+                    record.record.target == HitTarget::Edge("a-b".into())
+                        && record.record.bounds.origin == point(px(44.0), px(4.0))
+                        && record.record.bounds.size.width == px(72.0)
+                        && record.record.bounds.size.height == px(12.0)
                 })
         );
     }

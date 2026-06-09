@@ -1,9 +1,9 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryResolver,
     CanvasKindRegistry, CanvasRecordId, EdgeId, HandleId, NodeId, ShapeId,
+    runtime_query::{hit_matches, query_matches},
     spatial_cache::{
-        dirty_record_ids, hit_matches, materialize_records, query_matches,
-        refresh_records_with_resolver, remove_record,
+        dirty_record_ids, materialize_records, refresh_records_with_resolver, remove_record,
     },
 };
 use open_gpui::{Bounds, Pixels, Point};
@@ -46,22 +46,6 @@ impl Default for HitOptions {
             margin: Pixels::ZERO,
         }
     }
-}
-
-pub trait CanvasSpatialIndex {
-    fn visit_query(
-        &self,
-        viewport: Bounds<Pixels>,
-        options: HitOptions,
-        visitor: &mut dyn FnMut(&HitRecord),
-    );
-
-    fn visit_hit_test(
-        &self,
-        point: Point<Pixels>,
-        options: HitOptions,
-        visitor: &mut dyn FnMut(&HitRecord),
-    );
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -233,30 +217,6 @@ impl SpatialIndex {
     }
 }
 
-impl CanvasSpatialIndex for SpatialIndex {
-    fn visit_query(
-        &self,
-        viewport: Bounds<Pixels>,
-        options: HitOptions,
-        visitor: &mut dyn FnMut(&HitRecord),
-    ) {
-        for record in self.query_with_options(viewport, options) {
-            visitor(record);
-        }
-    }
-
-    fn visit_hit_test(
-        &self,
-        point: Point<Pixels>,
-        options: HitOptions,
-        visitor: &mut dyn FnMut(&HitRecord),
-    ) {
-        for record in self.hit_test(point, options) {
-            visitor(record);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,35 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn spatial_index_trait_visits_hit_tests_in_order() {
-        let mut document = CanvasDocument::default();
-        let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
-        back.z_index = 1;
-        let mut front =
-            CanvasNode::new("front", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
-        front.z_index = 2;
-        document.insert_node(back).unwrap();
-        document.insert_node(front).unwrap();
-
-        let index = SpatialIndex::rebuild(&document);
-        let query: &dyn CanvasSpatialIndex = &index;
-        let mut hits = Vec::new();
-        query.visit_hit_test(
-            point(px(50.0), px(50.0)),
-            HitOptions::default(),
-            &mut |record| hits.push(record.target.clone()),
-        );
-
-        assert_eq!(
-            hits,
-            vec![
-                HitTarget::Node(NodeId::from("front")),
-                HitTarget::Node(NodeId::from("back"))
-            ]
-        );
-    }
-
-    #[test]
     fn query_culls_outside_records() {
         let mut document = CanvasDocument::default();
         document
@@ -353,40 +284,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(visible, vec![HitTarget::Node(NodeId::from("inside"))]);
-    }
-
-    #[test]
-    fn spatial_index_trait_visits_query_records_with_options() {
-        let mut document = CanvasDocument::default();
-        let mut locked =
-            CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
-        locked.locked = true;
-        document.insert_node(locked).unwrap();
-
-        let index = SpatialIndex::rebuild(&document);
-        let query: &dyn CanvasSpatialIndex = &index;
-        let mut default_records = Vec::new();
-        query.visit_query(
-            Bounds::new(point(px(0.0), px(0.0)), size(px(20.0), px(20.0))),
-            HitOptions::default(),
-            &mut |record| default_records.push(record.target.clone()),
-        );
-        assert!(default_records.is_empty());
-
-        let mut locked_records = Vec::new();
-        query.visit_query(
-            Bounds::new(point(px(0.0), px(0.0)), size(px(20.0), px(20.0))),
-            HitOptions {
-                include_locked: true,
-                ..HitOptions::default()
-            },
-            &mut |record| locked_records.push(record.target.clone()),
-        );
-
-        assert_eq!(
-            locked_records,
-            vec![HitTarget::Node(NodeId::from("locked"))]
-        );
     }
 
     #[test]

@@ -402,6 +402,13 @@ live under `CanvasRuntime`.
 **Verification:** The unit is complete when replacing the coarse index storage would be local to
 runtime query internals and parity tests still target the runtime interface.
 
+**Implementation outcome:** Added a crate-private `CanvasRuntimeQuery` module that owns final
+`HitOptions` filtering, GPUI bounds semantics, z-order ordering, stale-cache suppression, and
+precise-hit handoff. `CanvasRuntime` now delegates query and hit-test methods through that module,
+while `CanvasSpatialCache` only provides coarse candidates. The pre-0.1 `CanvasSpatialIndex` trait
+was removed because it exposed final query semantics to external adapters; `SpatialIndex` remains
+the simple oracle and fallback model.
+
 ### U7. Documentation, Examples, And API Cleanup
 
 **Goal:** Update public documentation and examples around the deeper modules, and delete pre-1.0
