@@ -151,13 +151,14 @@ impl DockHost {
             .size_full()
             .overflow_hidden()
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
                     this.update_root_drop_scene_from_render(
                         &payload,
                         root,
                         event.bounds,
                         event.event.position,
+                        window,
                         cx,
                     );
                 },
@@ -186,12 +187,13 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .text_color(rgb(0x657083))
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
                     this.update_empty_space_drop_scene_from_render(
                         &payload,
                         event.event.position,
                         event.bounds,
+                        window,
                         cx,
                     );
                 },
@@ -216,12 +218,13 @@ impl DockHost {
             .size_full()
             .bg(rgba(0x00000000))
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
                     this.update_empty_space_drop_scene_from_render(
                         &payload,
                         event.event.position,
                         event.bounds,
+                        window,
                         cx,
                     );
                 },

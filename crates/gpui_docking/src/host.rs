@@ -5,7 +5,7 @@ use crate::{
     DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, WindowId, px};
+use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -41,7 +41,6 @@ pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
     viewport_runtime: Option<DockViewportRuntimeHandle>,
-    viewport_scene_window: Option<WindowId>,
     pending_panel_focus: Option<DockItemId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
@@ -60,7 +59,6 @@ impl DockHost {
             controller,
             space: space.into(),
             viewport_runtime: None,
-            viewport_scene_window: None,
             pending_panel_focus: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
@@ -186,14 +184,6 @@ impl DockHost {
 
     pub(crate) fn viewport_runtime(&self) -> Option<&DockViewportRuntimeHandle> {
         self.viewport_runtime.as_ref()
-    }
-
-    pub(crate) fn set_viewport_scene_window(&mut self, window_id: Option<WindowId>) {
-        self.viewport_scene_window = window_id;
-    }
-
-    pub(crate) fn viewport_scene_window(&self) -> Option<WindowId> {
-        self.viewport_scene_window
     }
 
     pub(crate) fn request_panel_focus(&mut self, item: DockItemId) -> bool {

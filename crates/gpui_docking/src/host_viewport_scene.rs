@@ -9,16 +9,13 @@ impl DockHost {
         window: &Window,
     ) -> bool {
         let Some(runtime) = self.viewport_runtime().cloned() else {
-            self.set_viewport_scene_window(None);
             return false;
         };
         let window_id = window.window_handle().window_id();
         if runtime.window_id_for_space(self.space()) != Some(window_id) {
-            self.set_viewport_scene_window(None);
             return false;
         }
 
-        self.set_viewport_scene_window(Some(window_id));
         runtime.begin_viewport_host_scene(
             self.space().clone(),
             window_id,

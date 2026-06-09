@@ -48,7 +48,7 @@ impl DockHost {
             .border_color(rgb(0xd8dde6))
             .bg(white())
             .on_drag_move(cx.listener(
-                move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
                     this.update_tabs_drop_scene_from_render(
                         &payload,
@@ -56,6 +56,7 @@ impl DockHost {
                         event.bounds,
                         event.event.position,
                         is_central,
+                        window,
                         cx,
                     );
                 },
@@ -129,7 +130,7 @@ impl DockHost {
                     this.select_tab_from_render(node, tab_item.clone(), cx);
                 }))
                 .on_drag_move(cx.listener(
-                    move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                    move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
                         this.update_tab_reorder_drop_scene_from_render(
                             &payload,
@@ -138,6 +139,7 @@ impl DockHost {
                             event.bounds,
                             event.event.position,
                             is_central,
+                            window,
                             cx,
                         );
                     },

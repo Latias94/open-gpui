@@ -156,7 +156,7 @@ impl DockHost {
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 })
                 .on_drag_move(cx.listener(
-                    move |this, event: &DragMoveEvent<DockDragPayload>, _, cx| {
+                    move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
                         this.update_floating_title_bar_drop_scene_from_render(
                             &payload,
@@ -165,6 +165,7 @@ impl DockHost {
                             event.bounds,
                             bounds,
                             event.event.position,
+                            window,
                             cx,
                         );
                     },

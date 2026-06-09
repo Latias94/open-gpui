@@ -39,10 +39,19 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         is_central: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_tabs_drop_interaction(payload, target_tabs, bounds, position, is_central, cx)
-            .finish(cx)
+        self.update_tabs_drop_interaction(
+            payload,
+            target_tabs,
+            bounds,
+            position,
+            is_central,
+            window,
+            cx,
+        )
+        .finish(cx)
     }
 
     pub(crate) fn update_tab_reorder_drop_scene_from_render(
@@ -53,6 +62,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         is_central: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_tab_reorder_drop_interaction(
@@ -62,6 +72,7 @@ impl DockHost {
             bounds,
             position,
             is_central,
+            window,
             cx,
         )
         .finish(cx)
@@ -91,9 +102,10 @@ impl DockHost {
         root: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_root_drop_scene_interaction(payload, root, bounds, position, cx)
+        self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
             .finish(cx)
     }
 
@@ -102,9 +114,10 @@ impl DockHost {
         payload: &DockDragPayload,
         position: Point<Pixels>,
         bounds: Bounds<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_empty_space_drop_scene_interaction(payload, position, bounds, cx)
+        self.update_empty_space_drop_scene_interaction(payload, position, bounds, window, cx)
             .finish(cx)
     }
 
@@ -116,6 +129,7 @@ impl DockHost {
         title_bounds: Bounds<Pixels>,
         preview_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_floating_title_bar_drop_scene_interaction(
@@ -125,6 +139,7 @@ impl DockHost {
             title_bounds,
             preview_bounds,
             position,
+            window,
             cx,
         )
         .finish(cx)

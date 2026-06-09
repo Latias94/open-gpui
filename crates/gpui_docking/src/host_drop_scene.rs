@@ -8,7 +8,7 @@ use crate::{
     },
     host_interaction_outcome::DockHostInteractionOutcome,
 };
-use open_gpui::{Bounds, Context, Pixels, Point};
+use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
     pub(crate) fn begin_host_drop_scene_interaction(
@@ -31,6 +31,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         is_central: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -44,6 +45,7 @@ impl DockHost {
             position,
             payload.excluded_tabs_for_drop_scene(),
             fact,
+            window,
             &policy,
         ))
     }
@@ -56,6 +58,7 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         is_central: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -69,6 +72,7 @@ impl DockHost {
             position,
             payload.excluded_tabs_for_drop_scene(),
             fact,
+            window,
             &policy,
         ))
     }
@@ -79,6 +83,7 @@ impl DockHost {
         root: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -87,6 +92,7 @@ impl DockHost {
             position,
             payload.excluded_tabs_for_drop_scene(),
             fact,
+            window,
             &policy,
         ))
     }
@@ -96,6 +102,7 @@ impl DockHost {
         payload: &DockDragPayload,
         position: Point<Pixels>,
         bounds: Bounds<Pixels>,
+        window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -105,6 +112,7 @@ impl DockHost {
             position,
             payload.excluded_tabs_for_drop_scene(),
             fact,
+            window,
             &policy,
         ))
     }
@@ -117,6 +125,7 @@ impl DockHost {
         title_bounds: Bounds<Pixels>,
         preview_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
+        window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
@@ -130,6 +139,7 @@ impl DockHost {
             position,
             payload.excluded_tabs_for_drop_scene(),
             fact,
+            window,
             &policy,
         ))
     }
@@ -139,12 +149,15 @@ impl DockHost {
         position: Point<Pixels>,
         excluded_tabs: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
+        window: &Window,
         policy: &crate::DockPolicy,
     ) -> bool {
-        if let Some(runtime) = self.viewport_runtime()
-            && let Some(window_id) = self.viewport_scene_window()
-        {
-            runtime.push_viewport_host_scene_fact(self.space(), window_id, fact.clone());
+        if let Some(runtime) = self.viewport_runtime() {
+            runtime.push_viewport_host_scene_fact(
+                self.space(),
+                window.window_handle().window_id(),
+                fact.clone(),
+            );
         }
         self.interaction_mut()
             .push_drop_scene_fact(position, excluded_tabs, fact, policy)
