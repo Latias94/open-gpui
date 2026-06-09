@@ -81,18 +81,7 @@ impl DockHost {
         action: &DockAction,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            let outcome = controller.apply_action(action);
-            if outcome
-                .as_ref()
-                .map(|outcome| outcome.changed())
-                .unwrap_or(false)
-            {
-                cx.notify();
-            }
-            outcome
-        })
+        self.mutate_controller_from_host(cx, |controller| controller.apply_action(action))
     }
 
     pub(crate) fn commit_resolved_drop_from_host(
@@ -100,18 +89,7 @@ impl DockHost {
         request: DockWorkspaceDropRequest<'_>,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            let outcome = controller.commit_resolved_drop(request);
-            if outcome
-                .as_ref()
-                .map(|outcome| outcome.changed())
-                .unwrap_or(false)
-            {
-                cx.notify();
-            }
-            outcome
-        })
+        self.mutate_controller_from_host(cx, |controller| controller.commit_resolved_drop(request))
     }
 
     pub(crate) fn commit_resize_split_from_host(
@@ -120,17 +98,8 @@ impl DockHost {
         fractions: &[f32],
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            let outcome = controller.commit_resize_split(split, fractions);
-            if outcome
-                .as_ref()
-                .map(|outcome| outcome.changed())
-                .unwrap_or(false)
-            {
-                cx.notify();
-            }
-            outcome
+        self.mutate_controller_from_host(cx, |controller| {
+            controller.commit_resize_split(split, fractions)
         })
     }
 
@@ -141,17 +110,8 @@ impl DockHost {
         bounds: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let controller = self.controller.clone();
-        cx.update_entity(&controller, |controller, cx| {
-            let outcome = controller.commit_set_floating_bounds(space, floating, bounds);
-            if outcome
-                .as_ref()
-                .map(|outcome| outcome.changed())
-                .unwrap_or(false)
-            {
-                cx.notify();
-            }
-            outcome
+        self.mutate_controller_from_host(cx, |controller| {
+            controller.commit_set_floating_bounds(space, floating, bounds)
         })
     }
 
@@ -161,9 +121,19 @@ impl DockHost {
         floating: DockNodeId,
         cx: &mut Context<Self>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.mutate_controller_from_host(cx, |controller| {
+            controller.commit_raise_floating(space, floating)
+        })
+    }
+
+    fn mutate_controller_from_host(
+        &mut self,
+        cx: &mut Context<Self>,
+        mutate: impl FnOnce(&mut DockController) -> Result<DockActionOutcome, DockActionApplyError>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
         let controller = self.controller.clone();
         cx.update_entity(&controller, |controller, cx| {
-            let outcome = controller.commit_raise_floating(space, floating);
+            let outcome = mutate(controller);
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())
