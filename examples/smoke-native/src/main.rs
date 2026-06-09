@@ -6,7 +6,7 @@ use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEditor,
     CanvasEditorInputHandler, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKindRegistry,
     CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolEffect,
+    CanvasSelection, CanvasShape, CanvasStyle, CanvasTool, CanvasToolContext, CanvasToolIntent,
     CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, CanvasZOrderCommand, DocumentCommand,
     DocumentError, HandleRole, NodeId, PointerButton, canvas_editor_view,
 };
@@ -39,14 +39,14 @@ impl CanvasToolReducer for StampNodeTool {
         &mut self,
         context: CanvasToolContext<'_>,
         event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
         let CanvasEvent::PointerDown {
             position,
             button: PointerButton::Secondary,
             ..
         } = event
         else {
-            return Ok(vec![CanvasToolEffect::SetTool(CanvasTool::Select)]);
+            return Ok(vec![CanvasToolIntent::SetTool(CanvasTool::Select)]);
         };
 
         self.sequence += 1;
@@ -64,11 +64,11 @@ impl CanvasToolReducer for StampNodeTool {
         selection.insert_node(id);
 
         Ok(vec![
-            CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::InsertNode(node),
             )),
-            CanvasToolEffect::SetSelection(selection),
-            CanvasToolEffect::SetTool(CanvasTool::Select),
+            CanvasToolIntent::SetSelection(selection),
+            CanvasToolIntent::SetTool(CanvasTool::Select),
         ])
     }
 }

@@ -3,8 +3,10 @@ use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
     CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasRecordChange, CanvasRecordId,
     CanvasRecordKind, CanvasSchemaError, CanvasSelection, CanvasTool, CanvasToolContext,
-    CanvasToolEffect, CanvasToolId, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
-    DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton, ToolState,
+    CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction,
+    DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton,
+    persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
+    tool::CanvasToolEffect,
 };
 use open_gpui::{point, px, size};
 use serde_json::json;
@@ -45,7 +47,7 @@ impl CanvasToolReducer for PersistentStampTool {
         &mut self,
         context: CanvasToolContext<'_>,
         event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
+    ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
         self.calls += 1;
 
         let CanvasEvent::PointerDown {
@@ -61,16 +63,13 @@ impl CanvasToolReducer for PersistentStampTool {
             "persistent-stamp-{}",
             context.document().node_count()
         ));
-        Ok(vec![
-            CanvasToolEffect::ApplyTransaction(CanvasTransaction::single(
-                DocumentCommand::InsertNode(CanvasNode::new(
-                    node_id,
-                    context.document_position(position),
-                    size(px(24.0), px(24.0)),
-                )),
-            )),
-            CanvasToolEffect::SetState(ToolState::Idle),
-        ])
+        Ok(vec![CanvasToolIntent::ApplyTransaction(
+            CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+                node_id,
+                context.document_position(position),
+                size(px(24.0), px(24.0)),
+            ))),
+        )])
     }
 }
 

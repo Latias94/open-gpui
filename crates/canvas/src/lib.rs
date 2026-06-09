@@ -73,7 +73,7 @@ pub use persistence::{
     CanvasPersistenceCursor, CanvasPersistenceEnvelope, CanvasPersistenceError,
     CanvasPersistenceRecord, CanvasPersistenceRecordKind, CanvasPersistenceStore,
     CanvasPersistentToolRegistryError, CanvasReplayError, MemoryCanvasPersistenceByteStore,
-    MemoryCanvasPersistenceStore, apply_persistent_tool_effect, apply_persistent_tool_effects,
+    MemoryCanvasPersistenceStore, apply_persistent_tool_intent, apply_persistent_tool_intents,
     apply_persistent_transaction, canvas_persistence_adapter_statuses, handle_persistent_event,
     handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
     load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
@@ -96,7 +96,7 @@ pub use snap::{
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,
-    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolEffect, CanvasToolId,
+    CanvasSelectionMode, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
     CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError, PointerButton, ToolState,
 };
 pub use transform::{

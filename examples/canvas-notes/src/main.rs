@@ -6,7 +6,7 @@ use open_gpui_canvas::{
     CanvasClipboardPayload, CanvasEditor, CanvasEditorInputHandler, CanvasEvent, CanvasKindLabel,
     CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeResizeProposal,
     CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme, CanvasRecordKind, CanvasSchemaError,
-    CanvasToolEffect, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
+    CanvasToolIntent, CanvasWidgetOverlayFrame, CanvasWidgetOverlayHitPriority,
     CanvasWidgetOverlayOptions, CanvasZOrderCommand, DocumentError, HitTarget, NodeId,
     canvas_editor_view_with_frame, document_from_json_canvas_str,
 };
@@ -440,7 +440,7 @@ fn demo_editor() -> CanvasEditor {
     let mut editor = CanvasEditor::try_new_with_kind_registry(document, note_kind_registry())
         .expect("failed to create notes canvas editor");
     editor
-        .apply_tool_effect(CanvasToolEffect::ReplaceSelection(HitTarget::Node(
+        .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
             NodeId::from("research-question"),
         )))
         .expect("failed to select initial note");

@@ -296,18 +296,15 @@ explicit transaction.
 sequence and compacting log entries through that sequence. Checkpointing is explicit rather than
 automatic so applications can choose their own durability cadence and retry policy.
 
-`apply_persistent_tool_effects` bridges the tool reducer model to the same persistence boundary.
-Recorded tool transactions are appended to the log before they are applied. Gesture effects are
-explicit sessions: `BeginGesture` captures the baseline, `UpdateGesture` mutates only in memory,
-and `CommitGesture` appends one forward transaction derived from the baseline and current document
-before the editor pushes one undo entry. `CancelGesture` restores the captured baseline without
-touching history or persistence.
-`handle_persistent_event`, `handle_persistent_event_with_custom_tool`, and
+`apply_persistent_tool_intents` bridges the custom tool reducer model to the same persistence
+boundary. Recorded tool transactions are appended to the log before they are applied. Built-in
+gesture effects stay inside the editor as internal state-machine details, while custom reducers stay
+on the intent surface. `handle_persistent_event`, `handle_persistent_event_with_custom_tool`, and
 `handle_persistent_event_with_tool_registry` provide the application-level convenience path over
-that same boundary. They reduce the active tool event into effects first, then apply the effects
-through the persistence runner, so applications can choose either explicit effect orchestration or a
-single event-dispatch entrypoint. The editor still does not own the store or cursor; this keeps
-redb, Loro, `rkyv`, and application retry policy outside the core editor state.
+that same boundary. They route built-in tools through the editor's internal effect path, route
+custom tools through reducer intents, and leave concrete storage ownership in the application. The
+editor still does not own the store or cursor; this keeps redb, Loro, `rkyv`, and application retry
+policy outside the core editor state.
 
 `undo_persistent_transaction` and `redo_persistent_transaction` close the same loop for editor
 history. They peek the next undo or redo transaction, validate it against the current document,
@@ -330,16 +327,17 @@ Tools should be local, explicit, and easy to test:
 - `CanvasTool` owns the active mode.
 - `CanvasEvent` carries normalized pointer, keyboard, wheel, tick, and cancel events.
 - `CanvasEditor::handle_event` dispatches the event to the active tool.
-- Tools emit `CanvasToolEffect` values instead of mutating editor state directly.
-- Effects are applied through one mutation path, which later enables undo, persistence, and CRDT
-  translation without binding the core to a trait-object plugin model too early.
+- Built-in tools emit `CanvasToolEffect` values inside the editor.
+- Custom tool reducers emit `CanvasToolIntent` values instead of mutating editor state directly.
+- Effects and intents are applied through one mutation path, which later enables undo, persistence,
+  and CRDT translation without binding the core to a trait-object plugin model too early.
 
 The first custom-tool boundary is intentionally reducer-shaped. `CanvasTool::custom` selects an
 application-owned tool, `CanvasToolContext` exposes read-only document, viewport, selection,
 history, edge router, kind registry, and runtime-cache state, and `CanvasToolReducer` returns
-`CanvasToolEffect` values for the editor to apply. This avoids giving extensions mutable access to
+`CanvasToolIntent` values for the editor to apply. This avoids giving extensions mutable access to
 `CanvasEditor`, so undo, selection retention, runtime-cache refresh, schema validation,
-persistence logging, and future CRDT translation still pass through the same effect vocabulary.
+persistence logging, and future CRDT translation still pass through the same intent vocabulary.
 
 `CanvasToolRegistry` is an ergonomic adapter over the same reducer contract. It maps
 `CanvasToolId` values to boxed reducers, dispatches the active custom tool, and reports a
@@ -349,7 +347,7 @@ second mutation path.
 
 The native smoke example now covers this registry path with an application-defined stamp tool. A
 right-click selects `CanvasTool::custom`, dispatches through `CanvasToolRegistry`, inserts a node by
-returning `CanvasToolEffect` values, and then returns to the built-in select tool.
+returning `CanvasToolIntent` values, and then returns to the built-in select tool.
 
 ## Alternatives Considered
 

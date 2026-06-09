@@ -22,7 +22,7 @@ pub use memory::{MemoryCanvasPersistenceByteStore, MemoryCanvasPersistenceStore}
 pub use store::{
     CanvasCheckpoint, CanvasLogEntry, CanvasPersistenceCursor, CanvasPersistenceError,
     CanvasPersistenceStore, CanvasPersistentToolRegistryError, CanvasReplayError,
-    apply_persistent_tool_effect, apply_persistent_tool_effects, apply_persistent_transaction,
+    apply_persistent_tool_intent, apply_persistent_tool_intents, apply_persistent_transaction,
     handle_persistent_event, handle_persistent_event_with_custom_tool,
     handle_persistent_event_with_tool_registry, load_canvas_document,
     load_canvas_persistence_cursor, redo_persistent_transaction, replay_canvas_log,
