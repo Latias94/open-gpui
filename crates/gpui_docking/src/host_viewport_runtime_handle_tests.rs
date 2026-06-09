@@ -65,6 +65,106 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
 }
 
 #[open_gpui::test]
+fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+    cx.update(|app| runtime.observe_window_closed(app).detach());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime handle");
+    assert!(runtime.begin_viewport_host_scene(
+        secondary_space.clone(),
+        opened.window.window_id(),
+        WindowBounds::Windowed(floating_bounds(10.0, 20.0, 360.0, 220.0)),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&secondary_space)
+            .is_some()
+    );
+
+    assert!(
+        runtime
+            .handle_window_should_close(opened.window.window_id())
+            .allows_close(),
+        "RetainLayout should allow GPUI to close the platform viewport"
+    );
+    opened
+        .window
+        .update(cx, |_, window, _| window.remove_window())
+        .expect("opened viewport should still be live");
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
+        None
+    );
+    assert_eq!(
+        runtime.last_host_scene_screen_position(&secondary_space),
+        None,
+        "closing a retained viewport should discard stale host scene facts"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&secondary_space),
+            vec![item("b")],
+            "RetainLayout close must not mutate logical graph layout"
+        );
+    });
+
+    let reopened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("retained dock space should reopen through runtime handle");
+    let reopened_window = reopened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("reopened viewport should render DockHost");
+    let reopened_host = reopened_window
+        .root(cx)
+        .expect("reopened viewport should expose DockHost root");
+    cx.run_until_parked();
+    let reopened_visual = VisualTestContext::from_window(reopened.window, cx);
+
+    assert!(
+        selector_for(
+            &reopened_visual,
+            &reopened_host,
+            DockDebugRegion::Panel { item: item("b") },
+        )
+        .is_some(),
+        "reopened retained layout should render the original panel"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let detached_space = DockSpaceId::from("detached");
