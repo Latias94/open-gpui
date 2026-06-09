@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 /// Drag payload carried by a viewport-routed drop release.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DockViewportDropPayload {
+pub(crate) enum DockViewportDropPayload {
     /// One tab item.
     Item(DockItemId),
     /// The entire source tabs stack.

@@ -213,13 +213,13 @@ pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;
 pub(crate) use viewport_target_context::*;
 pub(crate) use viewport_target_resolver::*;
+pub use viewport_tear_off::DockViewportTearOffCancelReason;
 pub(crate) use viewport_tear_off::{
-    DockViewportActivationTarget, DockViewportDropActionOutcome, DockViewportDropRouteOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
+    DockViewportActivationTarget, DockViewportDropActionOutcome, DockViewportDropPayload,
+    DockViewportDropRouteOutcome, DockViewportTearOffBeginOutcome, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
 };
-pub use viewport_tear_off::{DockViewportDropPayload, DockViewportTearOffCancelReason};
 pub use workspace::*;

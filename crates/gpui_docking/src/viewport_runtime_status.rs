@@ -23,6 +23,18 @@ pub struct DockViewportRuntimeStatus {
     pub last_tear_off: Option<DockViewportTearOffRecord>,
 }
 
+/// Payload shape recorded in viewport runtime diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DockViewportPayloadRecord {
+    /// One tab item was routed.
+    Item {
+        /// Routed item id.
+        item: DockItemId,
+    },
+    /// The entire source tabs stack was routed.
+    Tabs,
+}
+
 /// Route resolution recorded before a rendered drop mutates the workspace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockViewportRouteRecord {
@@ -31,7 +43,7 @@ pub struct DockViewportRouteRecord {
     /// Source tabs node where the payload drag started.
     pub source_tabs: DockNodeId,
     /// Payload being routed.
-    pub payload: DockViewportDropPayload,
+    pub payload: DockViewportPayloadRecord,
     /// Runtime route selected for the release point.
     pub target: DockViewportRouteTarget,
 }
@@ -116,7 +128,7 @@ pub struct DockViewportTearOffRecord {
     /// Target dock space opened for the tear-off.
     pub target_space: DockSpaceId,
     /// Payload that was torn off.
-    pub payload: DockViewportDropPayload,
+    pub payload: DockViewportPayloadRecord,
     /// Cancel reason when the tear-off was cancelled.
     pub cancel_reason: Option<DockViewportTearOffCancelReason>,
     /// Commit error when the viewport opened but graph mutation failed.
@@ -147,7 +159,7 @@ impl DockViewportRuntimeStatus {
         self.last_route = Some(DockViewportRouteRecord {
             source_space: source_space.clone(),
             source_tabs,
-            payload,
+            payload: DockViewportPayloadRecord::from_payload(&payload),
             target: DockViewportRouteTarget::from_route(source_space, route),
         });
     }
@@ -197,6 +209,15 @@ impl DockViewportRouteTarget {
                 release_position: request.release_position,
             },
             DockViewportDropRoute::Rejected(reason) => Self::Rejected { reason: *reason },
+        }
+    }
+}
+
+impl DockViewportPayloadRecord {
+    fn from_payload(payload: &DockViewportDropPayload) -> Self {
+        match payload {
+            DockViewportDropPayload::Item(item) => Self::Item { item: item.clone() },
+            DockViewportDropPayload::Tabs => Self::Tabs,
         }
     }
 }
@@ -263,7 +284,9 @@ impl DockViewportTearOffRecord {
                 kind: DockViewportTearOffOutcomeKind::Completed,
                 source_space: completed.pending.request.source_space.clone(),
                 target_space: completed.pending.target_space.clone(),
-                payload: completed.pending.request.payload.clone(),
+                payload: DockViewportPayloadRecord::from_payload(
+                    &completed.pending.request.payload,
+                ),
                 cancel_reason: None,
                 error: None,
             },
@@ -271,7 +294,7 @@ impl DockViewportTearOffRecord {
                 kind: DockViewportTearOffOutcomeKind::Duplicate,
                 source_space: pending.request.source_space.clone(),
                 target_space: pending.target_space.clone(),
-                payload: pending.request.payload.clone(),
+                payload: DockViewportPayloadRecord::from_payload(&pending.request.payload),
                 cancel_reason: None,
                 error: None,
             },
@@ -279,7 +302,9 @@ impl DockViewportTearOffRecord {
                 kind: DockViewportTearOffOutcomeKind::Cancelled,
                 source_space: cancelled.pending.request.source_space.clone(),
                 target_space: cancelled.pending.target_space.clone(),
-                payload: cancelled.pending.request.payload.clone(),
+                payload: DockViewportPayloadRecord::from_payload(
+                    &cancelled.pending.request.payload,
+                ),
                 cancel_reason: Some(cancelled.reason),
                 error: None,
             },
@@ -287,7 +312,7 @@ impl DockViewportTearOffRecord {
                 kind: DockViewportTearOffOutcomeKind::CommitFailed,
                 source_space: failure.pending.request.source_space.clone(),
                 target_space: failure.pending.target_space.clone(),
-                payload: failure.pending.request.payload.clone(),
+                payload: DockViewportPayloadRecord::from_payload(&failure.pending.request.payload),
                 cancel_reason: None,
                 error: Some(failure.error.clone()),
             },
