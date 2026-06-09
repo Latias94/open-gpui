@@ -1,12 +1,12 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
-    DockTransactionError, DockViewportActivationTarget, DockViewportAdapter,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
-    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteOutcome, DockViewportOpenOutcome, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTargetContext,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
@@ -327,12 +327,7 @@ impl DockViewportRuntime {
             .host_scenes
             .resolve(target_space, host_position, &policy)
         else {
-            return Err(
-                crate::DockTransactionError::ViewportTargetRequiresLocalResolution {
-                    space: target_space.clone(),
-                }
-                .into(),
-            );
+            return Err(DockActionApplyError::DropTargetUnavailable);
         };
         Ok((target_space.clone(), target))
     }
@@ -354,10 +349,8 @@ impl DockViewportRuntime {
             cx,
         )
         .map(DockViewportDropRouteOutcome::TearOff)
-        .map_err(|error| {
-            DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
-                message: error.to_string(),
-            })
+        .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
+            message: error.to_string(),
         })
     }
 
@@ -948,8 +941,8 @@ fn tear_off_payload_mismatch(
     source_space: &DockSpaceId,
     source_tabs: crate::DockNodeId,
 ) -> DockActionApplyError {
-    DockActionApplyError::Transaction(DockTransactionError::TearOffPayloadMismatch {
+    DockActionApplyError::DropPayloadMismatch {
         space: source_space.clone(),
         tabs: source_tabs,
-    })
+    }
 }

@@ -118,34 +118,6 @@ impl DockActionOutcome {
 
 /// Error returned when a docking action cannot be applied.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum DockTransactionError {
-    /// A viewport target must first be resolved in that viewport's local layout.
-    #[error("viewport target for dock space {space} requires host-local resolution")]
-    ViewportTargetRequiresLocalResolution {
-        /// The viewport space that was hit.
-        space: DockSpaceId,
-    },
-    /// Tear-off drops require the viewport runtime state machine.
-    #[error("tear-off target requires viewport runtime transaction")]
-    TearOffRequiresViewportRuntime,
-    /// The viewport runtime could not open a platform window for a tear-off request.
-    #[error("tear-off viewport open failed: {message}")]
-    TearOffViewportOpenFailed {
-        /// Platform or GPUI error message returned while opening the window.
-        message: String,
-    },
-    /// The tear-off route payload did not match the payload being committed.
-    #[error("tear-off payload for dock space {space} and tabs node {tabs:?} did not match")]
-    TearOffPayloadMismatch {
-        /// Source dock space recorded for the payload.
-        space: DockSpaceId,
-        /// Source tabs node recorded for the payload.
-        tabs: DockNodeId,
-    },
-}
-
-/// Error returned when a docking action cannot be applied.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockActionApplyError {
     /// The selected item was not found in the target tabs node.
     #[error("dock item {item} not found in tabs node {tabs:?}")]
@@ -173,7 +145,21 @@ pub enum DockActionApplyError {
     /// The action was rejected by workspace policy.
     #[error(transparent)]
     Policy(#[from] DockPolicyError),
-    /// The higher-level docking transaction could not be completed.
-    #[error(transparent)]
-    Transaction(#[from] DockTransactionError),
+    /// The resolved drop target was no longer available at commit time.
+    #[error("dock drop target is not currently available")]
+    DropTargetUnavailable,
+    /// The viewport runtime could not open a platform window for a tear-off request.
+    #[error("tear-off viewport open failed: {message}")]
+    TearOffViewportOpenFailed {
+        /// Platform or GPUI error message returned while opening the window.
+        message: String,
+    },
+    /// A routed drop payload no longer matched the recorded drag source.
+    #[error("dock drop payload for dock space {space} and tabs node {tabs:?} did not match")]
+    DropPayloadMismatch {
+        /// Source dock space recorded for the payload.
+        space: DockSpaceId,
+        /// Source tabs node recorded for the payload.
+        tabs: DockNodeId,
+    },
 }

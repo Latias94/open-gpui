@@ -1,5 +1,5 @@
 use crate::{
-    DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId, DockTransactionError,
+    DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportRouteTarget,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
@@ -735,15 +735,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         )
     });
 
-    assert_eq!(
-        result,
-        Err(
-            DockTransactionError::ViewportTargetRequiresLocalResolution {
-                space: target_space.clone()
-            }
-            .into()
-        )
-    );
+    assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),

@@ -345,8 +345,8 @@ the coordinator should reject the drop without graph mutation rather than guessi
 - A source viewport route to a destination root-edge, empty-space, or floating-title target resolves
   in the destination host scene and commits the same resolved target that preview rendered.
 
-**Verification:** Cross-viewport tests prove that `KnownViewport` no longer stops at
-`ViewportTargetRequiresLocalResolution` when a valid target host scene is available.
+**Verification:** Cross-viewport tests prove that `KnownViewport` no longer stops at a route-level
+target-unavailable rejection when a valid target host scene is available.
 
 ### U3. User-Facing Tear-Off Release Flow
 

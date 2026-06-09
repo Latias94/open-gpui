@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId, DockTransactionError,
+    DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
@@ -265,10 +265,8 @@ impl DockViewportRuntimeHandle {
                 cx,
             )
             .map(DockViewportDropRouteOutcome::TearOff)
-            .map_err(|error| {
-                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
-                    message: error.to_string(),
-                })
+            .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
+                message: error.to_string(),
             });
         self.runtime.borrow_mut().record_drop_route_result(&result);
         result

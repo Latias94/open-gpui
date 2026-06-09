@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
-    DockTransactionError, DockViewportHit, DockWorkspace, DropZone,
+    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId, DockWorkspace,
+    DropZone,
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
     workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
@@ -114,11 +114,9 @@ impl DockWorkspace {
                     self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
                 }
             },
-            DockResolvedDropTargetKind::KnownViewport { hit } => {
-                Err(viewport_target_error(hit).into())
-            }
-            DockResolvedDropTargetKind::TearOffCandidate { .. } => {
-                Err(DockTransactionError::TearOffRequiresViewportRuntime.into())
+            DockResolvedDropTargetKind::KnownViewport { .. }
+            | DockResolvedDropTargetKind::TearOffCandidate { .. } => {
+                Err(DockActionApplyError::DropTargetUnavailable)
             }
         }
     }
@@ -158,16 +156,11 @@ impl DockWorkspace {
     }
 }
 
-fn viewport_target_error(hit: DockViewportHit) -> DockTransactionError {
-    DockTransactionError::ViewportTargetRequiresLocalResolution { space: hit.space }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId, DockTransactionError,
-        DockViewportHit, SplitAxis,
+        DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId, DockViewportHit, SplitAxis,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     };
     use open_gpui::{Bounds, point, px, size};
@@ -409,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_only_targets_return_transaction_errors_without_mutation() {
+    fn runtime_only_targets_return_drop_target_unavailable_without_mutation() {
         let (mut workspace, _root, left, _right) = split_workspace();
         let secondary = DockSpaceId::from("secondary");
 
@@ -428,12 +421,7 @@ mod tests {
             })
             .expect_err("known viewport requires local target resolution");
 
-        assert_eq!(
-            viewport_err,
-            DockActionApplyError::Transaction(
-                DockTransactionError::ViewportTargetRequiresLocalResolution { space: secondary }
-            )
-        );
+        assert_eq!(viewport_err, DockActionApplyError::DropTargetUnavailable);
         assert_eq!(
             workspace.graph().collect_items_in_space(&space()),
             vec![item("a"), item("b")]
