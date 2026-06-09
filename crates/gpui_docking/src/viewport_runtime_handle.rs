@@ -266,59 +266,23 @@ impl DockViewportRuntimeHandle {
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        if request.source_space != *source_space
-            || request.source_tabs != source_tabs
-            || request.payload != payload
-        {
-            return Err(tear_off_payload_mismatch(source_space, source_tabs));
-        }
-
-        {
-            let runtime = self.runtime.borrow();
-            let graph = runtime.controller().read(cx).graph();
-            match &payload {
-                DockViewportDropPayload::Item(item) => {
-                    if graph
-                        .find_item_in_space(source_space, item)
-                        .is_none_or(|(tabs, _)| tabs != source_tabs)
-                    {
-                        return Err(DockActionApplyError::ItemNotInTabs {
-                            tabs: source_tabs,
-                            item: item.clone(),
-                        });
-                    }
-                }
-                DockViewportDropPayload::Tabs => {
-                    if graph
-                        .root_for_node_in_space(source_space, source_tabs)
-                        .is_none()
-                    {
-                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
-                    }
-                    if !matches!(
-                        graph.node(source_tabs),
-                        Some(crate::DockNode::Tabs { items, .. }) if !items.is_empty()
-                    ) {
-                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
-                    }
-                }
-            }
-        }
-
-        let (target_space, options) = {
+        let prepared = {
             let mut runtime = self.runtime.borrow_mut();
-            let target_space = runtime.next_tear_off_space(&request);
-            let options = runtime.tear_off_window_options(&request);
-            (target_space, options)
+            runtime.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?
         };
 
-        self.open_tear_off_viewport(request, target_space, options, cx)
-            .map(DockViewportDropRouteOutcome::TearOff)
-            .map_err(|error| {
-                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
-                    message: error.to_string(),
-                })
+        self.open_tear_off_viewport(
+            prepared.request,
+            prepared.target_space,
+            prepared.options,
+            cx,
+        )
+        .map(DockViewportDropRouteOutcome::TearOff)
+        .map_err(|error| {
+            DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
+                message: error.to_string(),
             })
+        })
     }
 
     pub(crate) fn last_host_scene_screen_position(
@@ -392,14 +356,4 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
         self.runtime.borrow_mut().apply_placement(placement)
     }
-}
-
-fn tear_off_payload_mismatch(
-    source_space: &DockSpaceId,
-    source_tabs: DockNodeId,
-) -> DockActionApplyError {
-    DockActionApplyError::Transaction(DockTransactionError::TearOffPayloadMismatch {
-        space: source_space.clone(),
-        tabs: source_tabs,
-    })
 }

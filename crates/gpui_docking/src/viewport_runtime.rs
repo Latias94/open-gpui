@@ -38,6 +38,12 @@ pub struct DockViewportRuntime {
     tear_off_tick: DockViewportTearOffTick,
 }
 
+pub(crate) struct DockViewportPreparedTearOffDrop {
+    pub(crate) request: DockViewportTearOffRequest,
+    pub(crate) target_space: DockSpaceId,
+    pub(crate) options: WindowOptions,
+}
+
 fn install_should_close_hook(
     window: AnyWindowHandle,
     cx: &mut App,
@@ -308,6 +314,30 @@ impl DockViewportRuntime {
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        let prepared =
+            self.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?;
+        self.open_tear_off_viewport(
+            prepared.request,
+            prepared.target_space,
+            prepared.options,
+            cx,
+        )
+        .map(DockViewportDropRouteOutcome::TearOff)
+        .map_err(|error| {
+            DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
+                message: error.to_string(),
+            })
+        })
+    }
+
+    pub(crate) fn prepare_tear_off_drop_route(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        payload: DockViewportDropPayload,
+        request: DockViewportTearOffRequest,
+        cx: &App,
+    ) -> Result<DockViewportPreparedTearOffDrop, DockActionApplyError> {
         if request.source_space != *source_space
             || request.source_tabs != source_tabs
             || request.payload != payload
@@ -348,13 +378,11 @@ impl DockViewportRuntime {
 
         let target_space = self.next_tear_off_space(&request);
         let options = self.tear_off_window_options(&request);
-        self.open_tear_off_viewport(request, target_space, options, cx)
-            .map(DockViewportDropRouteOutcome::TearOff)
-            .map_err(|error| {
-                DockActionApplyError::Transaction(DockTransactionError::TearOffViewportOpenFailed {
-                    message: error.to_string(),
-                })
-            })
+        Ok(DockViewportPreparedTearOffDrop {
+            request,
+            target_space,
+            options,
+        })
     }
 
     pub(crate) fn next_tear_off_space(
