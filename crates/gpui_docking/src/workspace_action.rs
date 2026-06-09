@@ -1,18 +1,7 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockItemId, DockNode, DockNodeId, DockOp,
-    DockOpApplyError, DockSpaceId, DockWorkspace, DropZone,
+    DockOpApplyError, DockWorkspace, workspace_move_action::DockWorkspaceMoveTabRequest,
 };
-use open_gpui::{Bounds, Pixels};
-
-struct MoveTabRequest<'a> {
-    source_space: &'a DockSpaceId,
-    source_tabs: DockNodeId,
-    item: &'a DockItemId,
-    target_space: &'a DockSpaceId,
-    target_tabs: DockNodeId,
-    zone: DropZone,
-    insert_index: Option<usize>,
-}
 
 impl DockWorkspace {
     /// Applies a docking interaction action.
@@ -30,7 +19,7 @@ impl DockWorkspace {
                 target_tabs,
                 zone,
                 insert_index,
-            } => self.move_tab(MoveTabRequest {
+            } => self.move_tab_action(DockWorkspaceMoveTabRequest {
                 source_space,
                 source_tabs: *source_tabs,
                 item,
@@ -43,47 +32,58 @@ impl DockWorkspace {
                 source_space,
                 item,
                 target_space,
-            } => self.move_item_to_empty_dock_space(source_space, item, target_space),
+            } => self.move_item_to_empty_dock_space_action(source_space, item, target_space),
             DockAction::MoveTabsToEmptyDockSpace {
                 source_space,
                 source_tabs,
                 target_space,
-            } => self.move_tabs_to_empty_dock_space(source_space, *source_tabs, target_space),
-            DockAction::CloseItem { space, item } => self.close_item(space, item),
+            } => {
+                self.move_tabs_to_empty_dock_space_action(source_space, *source_tabs, target_space)
+            }
+            DockAction::CloseItem { space, item } => self.close_item_action(space, item),
             DockAction::OpenItem {
                 space,
                 target_tabs,
                 item,
                 insert_index,
-            } => self.open_item(space, *target_tabs, item, *insert_index),
+            } => self.open_item_action(space, *target_tabs, item, *insert_index),
             DockAction::FloatItemInWindow {
                 source_space,
                 item,
                 target_space,
                 bounds,
-            } => self.float_item_in_window(source_space, item, target_space, *bounds),
+            } => self.float_item_in_window_action(source_space, item, target_space, *bounds),
             DockAction::FloatTabsInWindow {
                 source_space,
                 source_tabs,
                 target_space,
                 bounds,
-            } => self.float_tabs_in_window(source_space, *source_tabs, target_space, *bounds),
+            } => {
+                self.float_tabs_in_window_action(source_space, *source_tabs, target_space, *bounds)
+            }
             DockAction::SetFloatingBounds {
                 space,
                 floating,
                 bounds,
-            } => self.set_floating_bounds(space, *floating, *bounds),
-            DockAction::RaiseFloating { space, floating } => self.raise_floating(space, *floating),
+            } => self.set_floating_bounds_action(space, *floating, *bounds),
+            DockAction::RaiseFloating { space, floating } => {
+                self.raise_floating_action(space, *floating)
+            }
             DockAction::MergeFloatingInto {
                 space,
                 floating,
                 target_tabs,
-            } => self.merge_floating_into(space, *floating, *target_tabs),
-            DockAction::ResizeSplit { split, fractions } => self.resize_split(*split, fractions),
+            } => self.merge_floating_into_action(space, *floating, *target_tabs),
+            DockAction::ResizeSplit { split, fractions } => {
+                self.resize_split_action(*split, fractions)
+            }
         }
     }
 
-    fn commit_graph_op(&mut self, op: DockOp) -> Result<DockActionOutcome, DockActionApplyError> {
+    pub(crate) fn commit_graph_op(
+        &mut self,
+        op: DockOp,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.apply_op_checked(&op)
             .map(DockActionOutcome::from_changed)
             .map_err(Into::into)
@@ -113,182 +113,6 @@ impl DockWorkspace {
         self.commit_graph_op(DockOp::SetActiveTab {
             tabs,
             active: next_active,
-        })
-    }
-
-    fn move_tab(
-        &mut self,
-        request: MoveTabRequest<'_>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let MoveTabRequest {
-            source_space,
-            source_tabs,
-            item,
-            target_space,
-            target_tabs,
-            zone,
-            insert_index,
-        } = request;
-
-        self.move_validation()
-            .validate_move_tab_source(source_space, source_tabs, item)?;
-        self.policy().validate_drop_zone(zone)?;
-        if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
-            self.policy().validate_same_stack_center_drop()?;
-            if insert_index.is_none() {
-                return Ok(DockActionOutcome::Unchanged);
-            }
-        }
-
-        self.commit_graph_op(DockOp::MoveItem {
-            source_space: source_space.clone(),
-            item: item.clone(),
-            target_space: target_space.clone(),
-            target_tabs,
-            zone,
-            insert_index,
-        })
-    }
-
-    fn move_item_to_empty_dock_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        item: &DockItemId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_platform_viewports()?;
-        self.commit_graph_op(DockOp::MoveItemToEmptyDockSpace {
-            source_space: source_space.clone(),
-            item: item.clone(),
-            target_space: target_space.clone(),
-        })
-    }
-
-    fn move_tabs_to_empty_dock_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_platform_viewports()?;
-        self.commit_graph_op(DockOp::MoveTabsToEmptyDockSpace {
-            source_space: source_space.clone(),
-            source_tabs,
-            target_space: target_space.clone(),
-        })
-    }
-
-    fn close_item(
-        &mut self,
-        space: &DockSpaceId,
-        item: &DockItemId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.panel_lifecycle().validate_close(item)?;
-
-        self.commit_graph_op(DockOp::CloseItem {
-            space: space.clone(),
-            item: item.clone(),
-        })
-    }
-
-    fn open_item(
-        &mut self,
-        space: &DockSpaceId,
-        target_tabs: Option<DockNodeId>,
-        item: &DockItemId,
-        insert_index: Option<usize>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.panel_lifecycle().validate_open(item)?;
-
-        self.commit_graph_op(DockOp::OpenItem {
-            space: space.clone(),
-            target_tabs,
-            item: item.clone(),
-            insert_index,
-        })
-    }
-
-    fn float_item_in_window(
-        &mut self,
-        source_space: &DockSpaceId,
-        item: &DockItemId,
-        target_space: &DockSpaceId,
-        bounds: Bounds<Pixels>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_floating()?;
-        self.commit_graph_op(DockOp::FloatItemInWindow {
-            source_space: source_space.clone(),
-            item: item.clone(),
-            target_space: target_space.clone(),
-            bounds,
-        })
-    }
-
-    fn float_tabs_in_window(
-        &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        target_space: &DockSpaceId,
-        bounds: Bounds<Pixels>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_floating()?;
-        self.commit_graph_op(DockOp::FloatTabsInWindow {
-            source_space: source_space.clone(),
-            source_tabs,
-            target_space: target_space.clone(),
-            bounds,
-        })
-    }
-
-    fn set_floating_bounds(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        bounds: Bounds<Pixels>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_floating()?;
-        self.commit_graph_op(DockOp::SetFloatingBounds {
-            space: space.clone(),
-            floating,
-            bounds,
-        })
-    }
-
-    fn raise_floating(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_floating()?;
-        self.commit_graph_op(DockOp::RaiseFloating {
-            space: space.clone(),
-            floating,
-        })
-    }
-
-    fn merge_floating_into(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        target_tabs: DockNodeId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_floating()?;
-        self.commit_graph_op(DockOp::MergeFloatingInto {
-            space: space.clone(),
-            floating,
-            target_tabs,
-        })
-    }
-
-    fn resize_split(
-        &mut self,
-        split: DockNodeId,
-        fractions: &[f32],
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.policy().validate_splitter_resize()?;
-        self.commit_graph_op(DockOp::SetSplitFractions {
-            split,
-            fractions: fractions.to_vec(),
         })
     }
 }

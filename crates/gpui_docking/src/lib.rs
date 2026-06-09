@@ -116,8 +116,12 @@ mod viewport_runtime;
 mod viewport_target;
 mod workspace;
 mod workspace_action;
+mod workspace_floating_action;
+mod workspace_move_action;
 mod workspace_move_validation;
+mod workspace_panel_action;
 mod workspace_panel_lifecycle;
+mod workspace_resize_action;
 
 #[cfg(test)]
 mod host_floating_tests;
