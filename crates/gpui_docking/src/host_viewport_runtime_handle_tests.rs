@@ -707,6 +707,120 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
 }
 
 #[open_gpui::test]
+fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_window = source_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(source_opened.window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+
+    let source_stack = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tabs { node: source_tabs },
+    )
+    .expect("source tabs selector should be emitted");
+    let target_stack = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    let source_bounds = debug_bounds(&mut source_visual, &source_stack);
+    let start = point(
+        source_bounds.origin.x + source_bounds.size.width - px(8.0),
+        source_bounds.origin.y + px(12.0),
+    );
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = debug_bounds(&mut target_visual, &target_stack).center();
+
+    source_visual.simulate_mouse_down(
+        start,
+        open_gpui::MouseButton::Left,
+        open_gpui::Modifiers::none(),
+    );
+    source_visual.simulate_mouse_move(
+        threshold,
+        open_gpui::MouseButton::Left,
+        open_gpui::Modifiers::none(),
+    );
+    target_visual.simulate_mouse_move(
+        end,
+        open_gpui::MouseButton::Left,
+        open_gpui::Modifiers::none(),
+    );
+    target_visual.simulate_mouse_up(
+        end,
+        open_gpui::MouseButton::Left,
+        open_gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
+        assert_eq!(*active, 2);
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
