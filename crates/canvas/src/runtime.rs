@@ -2,7 +2,7 @@ use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter,
     CanvasGeometryResolver, CanvasGraphIndex, CanvasIndexedGraph, CanvasKindRegistry,
     CanvasRecordId, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord,
-    runtime_query::CanvasRuntimeQuery,
+    mutation::CanvasCommittedMutation, runtime_query::CanvasRuntimeQuery,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -72,39 +72,48 @@ impl CanvasRuntime {
         }
     }
 
-    pub fn apply_diff(&mut self, document: &CanvasDocument, diff: &CanvasDocumentDiff) {
-        self.apply_diff_with_router(document, diff, &CanvasDefaultEdgeRouter);
-    }
-
-    pub fn apply_diff_with_kind_registry(
+    pub fn apply_committed_mutation(
         &mut self,
         document: &CanvasDocument,
-        diff: &CanvasDocumentDiff,
+        committed: &CanvasCommittedMutation,
+    ) {
+        self.apply_committed_mutation_with_router(document, committed, &CanvasDefaultEdgeRouter);
+    }
+
+    pub fn apply_committed_mutation_with_kind_registry(
+        &mut self,
+        document: &CanvasDocument,
+        committed: &CanvasCommittedMutation,
         kind_registry: &CanvasKindRegistry,
     ) {
-        self.apply_diff_with_router_and_kind_registry(
+        self.apply_committed_mutation_with_router_and_kind_registry(
             document,
-            diff,
+            committed,
             &CanvasDefaultEdgeRouter,
             kind_registry,
         );
     }
 
-    pub fn apply_diff_with_router<R>(
+    pub fn apply_committed_mutation_with_router<R>(
         &mut self,
         document: &CanvasDocument,
-        diff: &CanvasDocumentDiff,
+        committed: &CanvasCommittedMutation,
         router: &R,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_router_and_optional_kind_registry(document, diff, router, None);
+        self.apply_diff_with_router_and_optional_kind_registry(
+            document,
+            committed.diff(),
+            router,
+            None,
+        );
     }
 
-    pub fn apply_diff_with_router_and_kind_registry<R>(
+    pub fn apply_committed_mutation_with_router_and_kind_registry<R>(
         &mut self,
         document: &CanvasDocument,
-        diff: &CanvasDocumentDiff,
+        committed: &CanvasCommittedMutation,
         router: &R,
         kind_registry: &CanvasKindRegistry,
     ) where
@@ -112,7 +121,7 @@ impl CanvasRuntime {
     {
         self.apply_diff_with_router_and_optional_kind_registry(
             document,
-            diff,
+            committed.diff(),
             router,
             Some(kind_registry),
         );
@@ -344,12 +353,12 @@ mod tests {
         let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(100.0), px(0.0));
 
-        let diff = document
-            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::UpdateNode(
                 moved,
             )))
             .unwrap();
-        runtime.apply_diff(&document, &diff);
+        runtime.apply_committed_mutation(&document, &committed);
 
         assert!(
             runtime
@@ -375,12 +384,12 @@ mod tests {
         let mut document = connected_document();
         let mut runtime = CanvasRuntime::rebuild(&document);
 
-        let diff = document
-            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::RemoveNode(
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::RemoveNode(
                 NodeId::from("a"),
             )))
             .unwrap();
-        runtime.apply_diff(&document, &diff);
+        runtime.apply_committed_mutation(&document, &committed);
 
         assert!(!runtime.graph_index.contains_edge(&EdgeId::from("a-b")));
         assert_eq!(
@@ -422,12 +431,12 @@ mod tests {
         let mut moved = document.node(&NodeId::from("b")).unwrap().clone();
         moved.position = point(px(40.0), px(0.0));
 
-        let diff = document
-            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::UpdateNode(
                 moved,
             )))
             .unwrap();
-        runtime.apply_diff_with_router(&document, &diff, &VerticalDetourRouter);
+        runtime.apply_committed_mutation_with_router(&document, &committed, &VerticalDetourRouter);
 
         assert_eq!(
             runtime
@@ -575,12 +584,12 @@ mod tests {
         let mut moved = document.node(&NodeId::from("a")).unwrap().clone();
         moved.position = point(px(10.0), px(0.0));
 
-        let diff = document
-            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::UpdateNode(
                 moved,
             )))
             .unwrap();
-        runtime.apply_diff_with_kind_registry(&document, &diff, &registry);
+        runtime.apply_committed_mutation_with_kind_registry(&document, &committed, &registry);
 
         assert_eq!(
             runtime

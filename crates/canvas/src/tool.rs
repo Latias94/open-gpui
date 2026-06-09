@@ -6,12 +6,13 @@ use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
 use crate::{
-    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
-    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryResolver,
-    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasSnapGuide,
-    CanvasTransaction, CanvasValue, CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand,
-    DocumentError, EdgeId, HitOptions, HitRecord, HitTarget, NodeId, ShapeId,
-    connection_hit_options, snap_delta_for_resize_selection, snap_delta_for_selection,
+    CanvasClipboardPayload, CanvasCommittedMutation, CanvasConnectionEndpointRole,
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter,
+    CanvasEndpoint, CanvasGeometryResolver, CanvasKindRegistry, CanvasPasteTransaction,
+    CanvasRecordId, CanvasRuntime, CanvasSnapGuide, CanvasTransaction, CanvasValue, CanvasViewport,
+    DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
+    HitTarget, NodeId, ShapeId, connection_hit_options, snap_delta_for_resize_selection,
+    snap_delta_for_selection,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -817,7 +818,7 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
     }
 
@@ -829,7 +830,8 @@ impl CanvasEditor {
         let diff = committed.diff().clone();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -846,7 +848,8 @@ impl CanvasEditor {
         let _ = self.history.pop_undo();
         self.history.push_redo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -863,7 +866,8 @@ impl CanvasEditor {
         let _ = self.history.pop_redo();
         self.history.push_undo(committed.inverse().clone());
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         diff
     }
 
@@ -959,7 +963,11 @@ impl CanvasEditor {
             .push_undo(prepared.committed().inverse().clone());
         self.gesture = None;
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff(&diff);
+        let kind_registry = Arc::clone(&self.kind_registry);
+        self.sync_runtime_committed_with_kind_registry(
+            prepared.committed(),
+            kind_registry.as_ref(),
+        );
         diff
     }
 
@@ -1330,28 +1338,24 @@ impl CanvasEditor {
             .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
         let diff = committed.diff().clone();
         self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_diff_with_kind_registry(&diff, kind_registry.as_ref());
+        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
     }
 
-    fn sync_runtime_diff(&mut self, diff: &CanvasDocumentDiff) {
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_diff_with_kind_registry(diff, kind_registry.as_ref());
-    }
-
-    fn sync_runtime_diff_with_kind_registry(
+    fn sync_runtime_committed_with_kind_registry(
         &mut self,
-        diff: &CanvasDocumentDiff,
+        committed: &CanvasCommittedMutation,
         kind_registry: &CanvasKindRegistry,
     ) {
         let document = Arc::clone(&self.document);
         let edge_router = Arc::clone(&self.edge_router);
-        self.runtime_mut().apply_diff_with_router_and_kind_registry(
-            document.as_ref(),
-            diff,
-            edge_router.as_ref(),
-            kind_registry,
-        );
+        self.runtime_mut()
+            .apply_committed_mutation_with_router_and_kind_registry(
+                document.as_ref(),
+                committed,
+                edge_router.as_ref(),
+                kind_registry,
+            );
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {

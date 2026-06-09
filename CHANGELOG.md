@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-09
+
 ### Added
+
+- Root-level fork attribution and licensing notes, plus per-crate `NOTICE` files that preserve
+  upstream copyright notices.
+
+- A publish-check workflow that validates leaf crate packaging first and package contents for the
+  rest of the workspace.
 
 - Added `open-gpui-canvas` as a reusable pre-1.0 infinite canvas foundation with separated nodes,
   edges, shapes, handles, viewport transforms, GPUI batched paint, JSON Canvas import/export, and a
@@ -36,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Public package names and Rust import paths are standardized around the `open-gpui` /
+  `open_gpui::...` branding.
+- Workspace metadata is aligned to the fork author and unified version line for the first release.
+- Fork dependencies now resolve from crates.io via `open-gpui-scap` and `open-gpui-font-kit`, and
+  publishable Open GPUI crates no longer inherit the workspace root's `publish = false` guard.
 - Tightened pre-release canvas APIs by removing compatibility constructors that accepted
   caller-supplied `SpatialIndex` values. Runtime cache ownership now stays centralized in
   `CanvasRuntime`.
@@ -52,20 +65,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GPUI paint cannot bypass router and kind-registry policy.
 - Tightened the GPUI canvas adapter API by making paint interaction snapshots, input mapper state,
   custom tool context internals, and runtime graph-index storage private pre-release details.
-
-## [0.1.0] - 2026-06-07
-
-### Added
-
-- Root-level fork attribution and licensing notes, plus per-crate `NOTICE` files that preserve
-  upstream copyright notices.
-
-- A publish-check workflow that validates leaf crate packaging first and package contents for the
-  rest of the workspace.
-
-### Changed
-
-- Public package names and Rust import paths are standardized around the `open-gpui` /
-  `open_gpui::...` branding.
-- Workspace metadata is aligned to the fork author and unified version line for the first release.
-- Fork dependencies now resolve from crates.io via `open-gpui-scap` and `open-gpui-font-kit`, and publishable Open GPUI crates no longer inherit the workspace root's `publish = false` guard.

@@ -1,9 +1,10 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use open_gpui::{BenchAppContext, Bounds, point, px, size};
+use open_gpui_canvas::index::SpatialIndex;
 use open_gpui_canvas::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasKindLabel, CanvasKindRegistry,
     CanvasNode, CanvasNodeKind, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    CanvasTransaction, CanvasViewport, DocumentCommand, SpatialIndex, collect_visible_records,
+    CanvasTransaction, CanvasViewport, DocumentCommand, collect_visible_records,
     prepaint_canvas_frame,
 };
 

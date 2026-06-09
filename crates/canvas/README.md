@@ -68,7 +68,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
 ```rust
 use open_gpui::{point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, DocumentError,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasTransaction,
+    DocumentCommand, DocumentError,
 };
 
 fn build_document() -> Result<CanvasDocument, DocumentError> {
@@ -91,13 +92,15 @@ fn build_document() -> Result<CanvasDocument, DocumentError> {
         .push(CanvasHandle::new("in", point(px(0.0), px(40.0))));
 
     let mut document = CanvasDocument::default();
-    document.insert_node(source)?;
-    document.insert_node(target)?;
-    document.insert_edge(CanvasEdge::new(
-        "source-target",
-        CanvasEndpoint::new("source", Some("out")),
-        CanvasEndpoint::new("target", Some("in")),
-    ))?;
+    document.apply_transaction(CanvasTransaction::new([
+        DocumentCommand::InsertNode(source),
+        DocumentCommand::InsertNode(target),
+        DocumentCommand::InsertEdge(CanvasEdge::new(
+            "source-target",
+            CanvasEndpoint::new("source", Some("out")),
+            CanvasEndpoint::new("target", Some("in")),
+        )),
+    ]))?;
     Ok(document)
 }
 ```
@@ -121,8 +124,10 @@ fn inspect(document: &open_gpui_canvas::CanvasDocument) {
 }
 ```
 
-`CanvasGraph` is scan-based and zero-cache. For hot graph traversal, build a
-`CanvasGraphIndex` explicitly and keep it in sync with `CanvasDocumentDiff`.
+`CanvasGraph` is scan-based and zero-cache. For hot graph traversal that is independent of
+`CanvasEditor`, build a `CanvasGraphIndex` explicitly and keep it in sync with
+`CanvasDocumentDiff`. Application editing paths should prefer `CanvasRuntime`, which keeps graph,
+spatial, and edge-geometry caches behind one owner.
 
 ```rust
 use open_gpui_canvas::{CanvasEdgeDirection, CanvasGraphIndex, NodeId};

@@ -11,7 +11,8 @@ mod geometry;
 mod gesture;
 mod gpui;
 mod graph;
-mod index;
+#[doc(hidden)]
+pub mod index;
 mod json_canvas;
 mod layer;
 mod mutation;
@@ -56,7 +57,7 @@ pub use gpui::{
 pub use graph::{
     CanvasEdgeDirection, CanvasGraph, CanvasGraphEndpointIds, CanvasGraphIndex, CanvasIndexedGraph,
 };
-pub use index::{HitOptions, HitRecord, HitTarget, SpatialIndex};
+pub use index::{HitOptions, HitRecord, HitTarget};
 pub use json_canvas::{
     JsonCanvas, JsonCanvasEdge, JsonCanvasEndpointShape, JsonCanvasError, JsonCanvasNode,
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
