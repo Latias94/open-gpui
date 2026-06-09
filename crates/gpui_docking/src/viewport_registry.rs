@@ -4,20 +4,20 @@ use std::collections::{BTreeMap, HashMap};
 
 /// Runtime snapshot for one rendered dock viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DockViewportSnapshot {
+pub(crate) struct DockViewportSnapshot {
     /// GPUI window currently rendering the logical dock space.
-    pub window: AnyWindowHandle,
+    pub(crate) window: AnyWindowHandle,
     /// Display containing the window, when the application has recorded one.
-    pub display_id: Option<DisplayId>,
+    pub(crate) display_id: Option<DisplayId>,
     /// Last known platform window bounds in screen coordinates.
-    pub window_bounds: Option<WindowBounds>,
+    pub(crate) window_bounds: Option<WindowBounds>,
     /// Last known dock host bounds in window-local coordinates.
-    pub host_bounds: Option<Bounds<Pixels>>,
+    pub(crate) host_bounds: Option<Bounds<Pixels>>,
 }
 
 impl DockViewportSnapshot {
     /// Creates a snapshot for a newly registered viewport window.
-    pub fn new(window: AnyWindowHandle) -> Self {
+    pub(crate) fn new(window: AnyWindowHandle) -> Self {
         Self {
             window,
             display_id: None,
@@ -35,14 +35,6 @@ pub(crate) struct DockViewportRegistry {
 }
 
 impl DockViewportRegistry {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.viewports.is_empty()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.viewports.len()
-    }
-
     pub(crate) fn register(
         &mut self,
         space: DockSpaceId,
@@ -94,15 +86,6 @@ impl DockViewportRegistry {
         let snapshot = self.viewports.remove(space)?;
         self.windows.remove(&snapshot.window.window_id());
         Some(snapshot)
-    }
-
-    pub(crate) fn unregister_window(
-        &mut self,
-        window: AnyWindowHandle,
-    ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
-        let space = self.windows.remove(&window.window_id())?;
-        let snapshot = self.viewports.remove(&space)?;
-        Some((space, snapshot))
     }
 
     pub(crate) fn unregister_window_id(

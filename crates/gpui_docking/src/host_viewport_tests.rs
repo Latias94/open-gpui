@@ -74,7 +74,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
         .expect("live secondary viewport should be reused");
     assert_eq!(reused.status, DockViewportOpenStatus::Reused);
     assert_eq!(reused.window, opened.window);
-    assert_eq!(adapter.len(), 1);
+    assert_eq!(adapter.spaces().len(), 1);
 }
 
 #[open_gpui::test]
@@ -122,8 +122,8 @@ fn viewport_target_context_from_window_marks_event_window_as_hovered(cx: &mut Te
     assert_eq!(context.active_window, Some(zeta_handle.window_id()));
     assert_eq!(
         adapter
-            .hit_test_screen_with_context(point(px(125.0), px(150.0)), &context)
-            .map(|hit| hit.space),
+            .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
+            .map(|target| target.space),
         Some(alpha_space),
         "current event window should win viewport arbitration as hovered"
     );

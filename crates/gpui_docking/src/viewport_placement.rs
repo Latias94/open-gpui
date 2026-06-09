@@ -195,12 +195,17 @@ mod tests {
             }
         );
         assert_eq!(restored.window_for_space(&main), Some(handle(101)));
-        assert_eq!(restored.space_for_window(handle(102)), Some(&secondary));
         assert_eq!(
-            restored.hit_test_screen_with_context(
-                point(px(935.0), px(245.0)),
-                &DockViewportTargetContext::new(),
-            ),
+            restored.space_for_window_id(handle(102).window_id()),
+            Some(&secondary)
+        );
+        assert_eq!(
+            restored
+                .resolve_viewport_target(
+                    point(px(935.0), px(245.0)),
+                    &DockViewportTargetContext::new()
+                )
+                .map(|target| target.into_hit()),
             Some(DockViewportHit {
                 space: secondary,
                 host_position: point(px(5.0), px(5.0)),

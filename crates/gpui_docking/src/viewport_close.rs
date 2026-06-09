@@ -100,7 +100,7 @@ impl DockViewportAdapter {
     /// Applies viewport close policy before a GPUI platform window closes.
     ///
     /// Unknown windows are allowed to close because docking has no mapping to protect.
-    pub fn should_close_viewport(
+    pub(crate) fn should_close_viewport(
         &self,
         window_id: WindowId,
         policy: DockViewportClosePolicy,
@@ -129,7 +129,7 @@ impl DockViewportAdapter {
     /// Removes a viewport by GPUI window id and returns a lifecycle outcome.
     ///
     /// This is the cleanup path for close callbacks that report only [`WindowId`].
-    pub fn unregister_window_id(
+    pub(crate) fn unregister_window_id(
         &mut self,
         window_id: WindowId,
         reason: DockViewportUnregisterReason,
@@ -143,7 +143,7 @@ impl DockViewportAdapter {
     }
 
     /// Handles an already-accepted GPUI window close by removing runtime mapping.
-    pub fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
+    pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         if let Some(outcome) =
             self.unregister_window_id(window_id, DockViewportUnregisterReason::Closed)
         {
@@ -221,7 +221,7 @@ mod tests {
                 status: DockViewportCloseStatus::Closed,
             }
         );
-        assert!(adapter.is_empty());
+        assert!(adapter.spaces().is_empty());
         assert!(
             graph.root(&main).is_some(),
             "runtime cleanup must not mutate the logical docking graph"
@@ -267,7 +267,7 @@ mod tests {
             }
         );
         assert_eq!(adapter.space_for_window_id(window_id), None);
-        assert!(adapter.is_empty());
+        assert!(adapter.spaces().is_empty());
     }
 
     #[test]

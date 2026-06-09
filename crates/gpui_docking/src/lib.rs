@@ -17,7 +17,7 @@
 //!   lifecycle state without storing either in the graph.
 //! - [`DockPanelCatalog`] exposes descriptor-only metadata for policy, restore, and tab chrome
 //!   paths that should not touch live GPUI view state.
-//! - [`DockViewportAdapter`] stores runtime window mappings and placement snapshots outside
+//! - An internal viewport adapter stores runtime window mappings and placement snapshots outside
 //!   [`DockLayout`].
 //! - [`DockViewportRuntimeHandle`] is the application entry point for runtime-aware windows; the
 //!   controller-backed viewport runtime core stays internal so applications cannot bypass the
@@ -199,7 +199,7 @@ pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;
 pub use policy::*;
-pub use viewport::*;
+pub(crate) use viewport::*;
 pub use viewport_close::*;
 pub use viewport_drop_route::*;
 pub use viewport_open::*;
@@ -207,7 +207,7 @@ pub use viewport_placement::*;
 pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
 pub use viewport_registration::*;
-pub use viewport_registry::DockViewportSnapshot;
+pub(crate) use viewport_registry::DockViewportSnapshot;
 pub(crate) use viewport_runtime::*;
 pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;

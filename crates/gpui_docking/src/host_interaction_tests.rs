@@ -675,7 +675,7 @@ fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut T
         "active drag should remain while the platform reports the left button as pressed"
     );
     assert_eq!(
-        runtime.borrow().adapter().len(),
+        runtime.registered_viewport_spaces().len(),
         1,
         "pressed-button polling must not tear off early"
     );
@@ -773,7 +773,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     let visual = VisualTestContext::from_window(opened.window, cx);
 
     assert_eq!(
-        runtime.borrow().adapter().len(),
+        runtime.registered_viewport_spaces().len(),
         1,
         "disabled platform viewports should not open a detached viewport"
     );

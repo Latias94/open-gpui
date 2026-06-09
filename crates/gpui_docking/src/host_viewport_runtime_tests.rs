@@ -88,7 +88,7 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
         .expect("live viewport should be reused through runtime");
     assert_eq!(reused.status, DockViewportOpenStatus::Reused);
     assert_eq!(reused.window, opened.window);
-    assert_eq!(runtime.adapter().len(), 1);
+    assert_eq!(runtime.adapter().spaces().len(), 1);
 }
 
 #[open_gpui::test]
@@ -178,7 +178,7 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
     };
     assert_eq!(existing.target_space, detached_space);
     assert_eq!(runtime.pending_tear_off_len(), 1);
-    assert!(runtime.adapter().is_empty());
+    assert!(runtime.adapter().spaces().is_empty());
 
     let duplicate_open = cx
         .update(|app| {
@@ -383,7 +383,7 @@ fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
     assert_eq!(expired.len(), 1);
     assert_eq!(expired[0].reason, DockViewportTearOffCancelReason::Expired);
     assert_eq!(runtime.pending_tear_off_len(), 0);
-    assert!(runtime.adapter().is_empty());
+    assert!(runtime.adapter().spaces().is_empty());
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&primary_space),

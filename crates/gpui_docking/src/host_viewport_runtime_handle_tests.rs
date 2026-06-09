@@ -51,7 +51,7 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
             )
         })
         .expect("secondary viewport should open through runtime handle");
-    assert_eq!(runtime.borrow().adapter().len(), 1);
+    assert_eq!(runtime.registered_viewport_spaces().len(), 1);
 
     opened
         .window

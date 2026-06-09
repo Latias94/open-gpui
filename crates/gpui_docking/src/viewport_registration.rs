@@ -20,7 +20,7 @@ impl DockViewportAdapter {
     ///
     /// A window can belong to only one dock space at a time. Registering the same window for a
     /// different space removes its previous space mapping.
-    pub fn register_viewport(
+    pub(crate) fn register_viewport(
         &mut self,
         space: impl Into<DockSpaceId>,
         window: impl Into<AnyWindowHandle>,
@@ -34,7 +34,7 @@ impl DockViewportAdapter {
     ///
     /// A single registration can replace two mappings: the previous window for `space`, and the
     /// previous space that already owned `window`.
-    pub fn register_viewport_with_outcome(
+    pub(crate) fn register_viewport_with_outcome(
         &mut self,
         space: impl Into<DockSpaceId>,
         window: impl Into<AnyWindowHandle>,

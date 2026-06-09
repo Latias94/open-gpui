@@ -12,42 +12,26 @@ use open_gpui::{AnyWindowHandle, WindowId};
 /// [`DockViewportPlacementLayout`](crate::DockViewportPlacementLayout) to rehydrate placement
 /// snapshots for coordinate conversion.
 #[derive(Debug, Default)]
-pub struct DockViewportAdapter {
+pub(crate) struct DockViewportAdapter {
     pub(crate) registry: DockViewportRegistry,
 }
 
 impl DockViewportAdapter {
     /// Creates an empty viewport adapter.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Returns true when no viewport mappings are registered.
-    pub fn is_empty(&self) -> bool {
-        self.registry.is_empty()
-    }
-
-    /// Returns the number of registered logical viewports.
-    pub fn len(&self) -> usize {
-        self.registry.len()
-    }
-
     /// Removes a viewport by logical dock space.
-    pub fn unregister_space(&mut self, space: &DockSpaceId) -> Option<crate::DockViewportSnapshot> {
+    pub(crate) fn unregister_space(
+        &mut self,
+        space: &DockSpaceId,
+    ) -> Option<crate::DockViewportSnapshot> {
         self.registry.unregister_space(space)
     }
 
-    /// Removes a viewport by GPUI window handle.
-    pub fn unregister_window(
-        &mut self,
-        window: impl Into<AnyWindowHandle>,
-    ) -> Option<(DockSpaceId, crate::DockViewportSnapshot)> {
-        let window = window.into();
-        self.registry.unregister_window(window)
-    }
-
     /// Returns the snapshot for a logical dock space.
-    pub fn snapshot(&self, space: &DockSpaceId) -> Option<&crate::DockViewportSnapshot> {
+    pub(crate) fn snapshot(&self, space: &DockSpaceId) -> Option<&crate::DockViewportSnapshot> {
         self.registry.snapshot(space)
     }
 
@@ -66,23 +50,17 @@ impl DockViewportAdapter {
     }
 
     /// Returns the window rendering a logical dock space.
-    pub fn window_for_space(&self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
+    pub(crate) fn window_for_space(&self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
         self.registry.window_for_space(space)
     }
 
-    /// Returns the logical dock space rendered by a window.
-    pub fn space_for_window(&self, window: impl Into<AnyWindowHandle>) -> Option<&DockSpaceId> {
-        let window = window.into();
-        self.space_for_window_id(window.window_id())
-    }
-
     /// Returns the logical dock space rendered by a window id.
-    pub fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
+    pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
         self.registry.space_for_window_id(window_id)
     }
 
     /// Returns known dock spaces in stable lexical order.
-    pub fn spaces(&self) -> Vec<DockSpaceId> {
+    pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.registry.spaces()
     }
 
@@ -117,14 +95,14 @@ mod tests {
 
         assert!(adapter.register_viewport(main.clone(), first).is_none());
         assert_eq!(adapter.window_for_space(&main), Some(first));
-        assert_eq!(adapter.space_for_window(first), Some(&main));
+        assert_eq!(adapter.space_for_window_id(first.window_id()), Some(&main));
 
         let previous = adapter
             .register_viewport(main.clone(), second)
             .expect("replacing a space should return the previous snapshot");
         assert_eq!(previous.window, first);
         assert_eq!(adapter.window_for_space(&main), Some(second));
-        assert_eq!(adapter.space_for_window(first), None);
+        assert_eq!(adapter.space_for_window_id(first.window_id()), None);
 
         adapter.register_viewport(secondary.clone(), second);
         assert_eq!(adapter.window_for_space(&main), None);
@@ -147,15 +125,15 @@ mod tests {
             .unregister_space(&main)
             .expect("space should be registered");
         assert_eq!(removed.window, first);
-        assert_eq!(adapter.space_for_window(first), None);
+        assert_eq!(adapter.space_for_window_id(first.window_id()), None);
         assert_eq!(adapter.window_for_space(&main), None);
 
-        let (removed_space, removed) = adapter
-            .unregister_window(second)
+        let removed = adapter
+            .unregister_window_id(second.window_id(), DockViewportUnregisterReason::Closed)
             .expect("window should be registered");
-        assert_eq!(removed_space, secondary);
+        assert_eq!(removed.space, secondary);
         assert_eq!(removed.window, second);
-        assert!(adapter.is_empty());
+        assert!(adapter.spaces().is_empty());
     }
 
     #[test]
@@ -180,7 +158,10 @@ mod tests {
         );
         assert_eq!(adapter.window_for_space(&main), None);
         assert_eq!(adapter.window_for_space(&secondary), Some(first));
-        assert_eq!(adapter.space_for_window(first), Some(&secondary));
+        assert_eq!(
+            adapter.space_for_window_id(first.window_id()),
+            Some(&secondary)
+        );
     }
 
     #[test]
@@ -212,8 +193,8 @@ mod tests {
         );
         assert_eq!(adapter.window_for_space(&main), Some(second));
         assert_eq!(adapter.window_for_space(&secondary), None);
-        assert_eq!(adapter.space_for_window(first), None);
-        assert_eq!(adapter.space_for_window(second), Some(&main));
+        assert_eq!(adapter.space_for_window_id(first.window_id()), None);
+        assert_eq!(adapter.space_for_window_id(second.window_id()), Some(&main));
     }
 
     #[test]

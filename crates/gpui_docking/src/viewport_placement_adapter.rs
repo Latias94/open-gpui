@@ -15,7 +15,7 @@ pub struct DockViewportRestoreOutcome {
 
 impl DockViewportAdapter {
     /// Exports serializable placement snapshots for all registered viewports.
-    pub fn export_placement(&self) -> DockViewportPlacementLayout {
+    pub(crate) fn export_placement(&self) -> DockViewportPlacementLayout {
         DockViewportPlacementLayout::new(
             self.spaces()
                 .into_iter()
@@ -36,9 +36,9 @@ impl DockViewportAdapter {
 
     /// Applies placement snapshots to already registered viewport windows.
     ///
-    /// This does not open windows or create viewport mappings. Applications should first register
-    /// the windows they restored, then apply placement data to rehydrate adapter snapshots.
-    pub fn apply_placement(
+    /// This does not open windows or create viewport mappings. The runtime should first register
+    /// restored windows, then apply placement data to rehydrate adapter snapshots.
+    pub(crate) fn apply_placement(
         &mut self,
         placement: &DockViewportPlacementLayout,
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {

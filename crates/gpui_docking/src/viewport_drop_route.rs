@@ -33,7 +33,7 @@ impl DockViewportAdapter {
     /// route becomes a tear-off request; local and known-viewport commits receive the payload from
     /// the caller when the route is committed.
     #[allow(clippy::too_many_arguments)]
-    pub fn resolve_payload_drop_route_with_context(
+    pub(crate) fn resolve_payload_drop_route_with_context(
         &self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,

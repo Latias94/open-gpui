@@ -16,8 +16,8 @@ The docking crate now matches ADR 0002's layering for the current product surfac
   session, and split/drop math each have one authority.
 - `DockViewportRuntime` is the internal testable platform-viewport lifecycle core, while
   `DockViewportRuntimeHandle` is the application-facing entry point for runtime-aware GPUI
-  windows; `DockViewportAdapter` remains the lower-level mapping, coordinate, and placement
-  primitive.
+  windows; `DockViewportAdapter` remains the internal lower-level mapping, coordinate, and
+  placement primitive.
 - `DockPanelRegistry` separates descriptor metadata from live GPUI view lifecycle state through
   `DockPanelCatalog`, `DockPanelViewStore`, and explicit attach APIs.
 - Rendered product paths now cover item drag, whole-stack drag, host-level drop previews,

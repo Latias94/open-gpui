@@ -1,26 +1,12 @@
 use crate::{
-    DockViewportAdapter, DockViewportHit, DockViewportHitCandidate, DockViewportTargetContext,
+    DockViewportAdapter, DockViewportHitCandidate, DockViewportTargetContext,
     viewport_target_resolver::choose_viewport_target,
 };
 use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
-    /// Finds the registered viewport containing a screen point using platform arbitration inputs.
-    ///
-    /// When more than one registered viewport contains the point, the resolver prefers hovered
-    /// window, then active window, then front-to-back window stack, and uses deterministic adapter
-    /// order only as the final fallback.
-    pub fn hit_test_screen_with_context(
-        &self,
-        position: Point<Pixels>,
-        context: &DockViewportTargetContext,
-    ) -> Option<DockViewportHit> {
-        self.resolve_viewport_target(position, context)
-            .map(DockViewportHitCandidate::into_hit)
-    }
-
     /// Resolves a registered viewport target using explicit platform arbitration inputs.
-    pub fn resolve_viewport_target(
+    pub(crate) fn resolve_viewport_target(
         &self,
         position: Point<Pixels>,
         context: &DockViewportTargetContext,
@@ -73,30 +59,30 @@ mod tests {
         let position = point(px(120.0), px(140.0));
         assert_eq!(
             adapter
-                .hit_test_screen_with_context(position, &DockViewportTargetContext::new())
-                .map(|hit| hit.space),
+                .resolve_viewport_target(position, &DockViewportTargetContext::new())
+                .map(|target| target.space),
             Some(alpha.clone()),
             "empty context uses stable space order as the final fallback"
         );
         assert_eq!(
             adapter
-                .hit_test_screen_with_context(
+                .resolve_viewport_target(
                     position,
                     &DockViewportTargetContext::new().with_active_window(zeta_window),
                 )
-                .map(|hit| hit.space),
+                .map(|target| target.space),
             Some(zeta.clone()),
             "active-window context should beat stable space order"
         );
         assert_eq!(
             adapter
-                .hit_test_screen_with_context(
+                .resolve_viewport_target(
                     position,
                     &DockViewportTargetContext::new()
                         .with_hovered_window(alpha_window)
                         .with_active_window(zeta_window),
                 )
-                .map(|hit| hit.space),
+                .map(|target| target.space),
             Some(alpha),
             "hovered-window context should beat active-window context"
         );
