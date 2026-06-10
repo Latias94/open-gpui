@@ -5,11 +5,40 @@ use open_gpui::{AnyWindowHandle, App, AppContext as _, Entity, Result, WindowOpt
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockViewportOpenOutcome {
     /// Logical dock space rendered by the window.
-    pub space: DockSpaceId,
+    space: DockSpaceId,
     /// GPUI window that renders the logical dock space.
-    pub window: AnyWindowHandle,
+    window: AnyWindowHandle,
     /// Whether the runtime opened, reused, or replaced a window.
-    pub status: DockViewportOpenStatus,
+    status: DockViewportOpenStatus,
+}
+
+impl DockViewportOpenOutcome {
+    pub(crate) fn new(
+        space: DockSpaceId,
+        window: AnyWindowHandle,
+        status: DockViewportOpenStatus,
+    ) -> Self {
+        Self {
+            space,
+            window,
+            status,
+        }
+    }
+
+    /// Logical dock space rendered by the window.
+    pub fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    /// GPUI window that renders the logical dock space.
+    pub fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+
+    /// Whether the runtime opened, reused, or replaced a window.
+    pub fn status(&self) -> DockViewportOpenStatus {
+        self.status
+    }
 }
 
 /// How an open or reopen request resolved.
@@ -39,11 +68,11 @@ impl DockViewportAdapter {
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
             {
-                return Ok(DockViewportOpenOutcome {
+                return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
-                    status: DockViewportOpenStatus::Reused,
-                });
+                    DockViewportOpenStatus::Reused,
+                ));
             }
 
             self.unregister_space(&space);
@@ -58,10 +87,6 @@ impl DockViewportAdapter {
             .into();
         self.register_viewport(space.clone(), window);
 
-        Ok(DockViewportOpenOutcome {
-            space,
-            window,
-            status,
-        })
+        Ok(DockViewportOpenOutcome::new(space, window, status))
     }
 }

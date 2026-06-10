@@ -104,11 +104,11 @@ impl DockViewportRuntimeHandle {
             .reusable_window_for_space(&space, cx)
         {
             DockViewportReusableWindow::Reused(window) => {
-                return Ok(DockViewportOpenOutcome {
+                return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
-                    status: DockViewportOpenStatus::Reused,
-                });
+                    DockViewportOpenStatus::Reused,
+                ));
             }
             DockViewportReusableWindow::Stale => DockViewportOpenStatus::Replaced,
             DockViewportReusableWindow::Missing => DockViewportOpenStatus::Opened,
@@ -147,11 +147,7 @@ impl DockViewportRuntimeHandle {
             return Err(error);
         }
 
-        Ok(DockViewportOpenOutcome {
-            space,
-            window,
-            status,
-        })
+        Ok(DockViewportOpenOutcome::new(space, window, status))
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
@@ -186,7 +182,7 @@ impl DockViewportRuntimeHandle {
         };
 
         let mut runtime = self.runtime.borrow_mut();
-        let completion = runtime.complete_tear_off_viewport(&key, opened.window, cx);
+        let completion = runtime.complete_tear_off_viewport(&key, opened.window(), cx);
         let outcome = runtime.finish_tear_off_open(pending, completion, cx);
         runtime.record_tear_off_outcome(&outcome);
         Ok(outcome)

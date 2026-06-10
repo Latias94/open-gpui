@@ -41,22 +41,22 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
             )
         })
         .expect("secondary viewport should open");
-    assert_eq!(opened.space, secondary_space);
-    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(opened.space(), &secondary_space);
+    assert_eq!(opened.status(), DockViewportOpenStatus::Opened);
     assert_eq!(
         adapter.window_for_space(&secondary_space),
-        Some(opened.window)
+        Some(opened.window())
     );
 
     let opened_window = opened
-        .window
+        .window()
         .downcast::<DockHost>()
         .expect("viewport window should render DockHost");
     let host = opened_window
         .root(cx)
         .expect("opened viewport should expose DockHost root");
     cx.run_until_parked();
-    let visual = VisualTestContext::from_window(opened.window, cx);
+    let visual = VisualTestContext::from_window(opened.window(), cx);
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
         "secondary viewport should render the shared controller's secondary panel"
@@ -72,8 +72,8 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
             )
         })
         .expect("live secondary viewport should be reused");
-    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
-    assert_eq!(reused.window, opened.window);
+    assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), opened.window());
     assert_eq!(adapter.spaces().len(), 1);
 }
 
@@ -174,10 +174,10 @@ fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) 
         })
         .expect("secondary viewport should open with saved placement");
 
-    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(opened.status(), DockViewportOpenStatus::Opened);
     assert_eq!(
         opened
-            .window
+            .window()
             .update(cx, |_, window, _| window.window_bounds())
             .expect("opened window should still be live"),
         saved_window_bounds

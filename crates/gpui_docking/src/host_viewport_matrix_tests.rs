@@ -176,7 +176,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     assert!(
         runtime.begin_viewport_host_scene(
             target_space.clone(),
-            target_opened.window.window_id(),
+            target_opened.window().window_id(),
             target_bounds,
             target_host_bounds,
             point(px(0.0), px(0.0)),
@@ -187,7 +187,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     assert!(
         runtime.begin_viewport_host_scene(
             source_space.clone(),
-            source_opened.window.window_id(),
+            source_opened.window().window_id(),
             source_bounds,
             floating_bounds(0.0, 0.0, 360.0, 220.0),
             point(px(0.0), px(0.0)),
@@ -199,7 +199,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let host_position = push_target_scene_facts(
         &runtime,
         &target_space,
-        target_opened.window.window_id(),
+        target_opened.window().window_id(),
         case,
         &nodes,
     );
@@ -208,7 +208,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         target_bounds.get_bounds().origin.y + host_position.y,
     );
     let source_release_signals = source_opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app)
         })
@@ -280,11 +280,11 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
 
     let source_window = source_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let target_window = target_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("target viewport should render DockHost");
     let source_host = source_window
@@ -295,8 +295,8 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         .expect("target viewport should expose DockHost root");
     cx.run_until_parked();
 
-    let mut source_visual = VisualTestContext::from_window(source_opened.window, cx);
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let start = source_drag_start(&mut source_visual, &source_host, case, &nodes);
     let threshold = point(start.x + px(24.0), start.y);
     let target_position = target_hover_position(&mut target_visual, &target_host, case, &nodes);
@@ -306,7 +306,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     target_visual.simulate_mouse_move(target_position, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
         .unwrap_or_else(|| panic!("{}: target hover should render drop preview", case.name));
     let preview_bounds = debug_bounds(&mut target_visual, &preview);
@@ -348,7 +348,7 @@ fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
         })
         .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
     let source_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let source_host = source_window
@@ -356,7 +356,7 @@ fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
         .expect("source viewport should expose DockHost root");
     cx.run_until_parked();
 
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
     let source_case = MatrixCase {
         name: case.name,
         payload: case.payload,

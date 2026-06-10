@@ -70,8 +70,8 @@ impl RuntimeStatusPanel {
             Ok(outcome) => self.set_operation_log(
                 format!(
                     "opened viewport {}: {:?}",
-                    outcome.space.as_str(),
-                    outcome.status
+                    outcome.space().as_str(),
+                    outcome.status()
                 ),
                 cx,
             ),
@@ -891,14 +891,14 @@ mod tests {
             .update(|app| runtime.open_viewport(space, viewport_window_options(bounds), app))
             .expect("dogfood viewport should open");
         let window = opened
-            .window
+            .window()
             .downcast::<DockHost>()
             .expect("dogfood viewport should render DockHost");
         let host = window
             .root(cx)
             .expect("dogfood viewport should expose DockHost root");
         cx.run_until_parked();
-        let visual = VisualTestContext::from_window(opened.window, cx);
+        let visual = VisualTestContext::from_window(opened.window(), cx);
         (host, visual)
     }
 

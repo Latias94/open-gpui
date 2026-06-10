@@ -274,14 +274,11 @@ mod tests {
     fn viewport_lifecycle_types_preserve_runtime_boundaries() {
         let main = space("main");
         let window = handle(7);
-        let open = DockViewportOpenOutcome {
-            space: main.clone(),
-            window,
-            status: DockViewportOpenStatus::Opened,
-        };
-        assert_eq!(open.space, main.clone());
-        assert_eq!(open.window, window);
-        assert_eq!(open.status, DockViewportOpenStatus::Opened);
+        let open =
+            DockViewportOpenOutcome::new(main.clone(), window, DockViewportOpenStatus::Opened);
+        assert_eq!(open.space(), &main);
+        assert_eq!(open.window(), window);
+        assert_eq!(open.status(), DockViewportOpenStatus::Opened);
         assert_eq!(
             DockViewportClosePolicy::default(),
             DockViewportClosePolicy::RetainLayout

@@ -686,14 +686,14 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         })
         .expect("source viewport should open through runtime");
     let source_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("runtime viewport should render DockHost");
     let source_host = source_window
         .root(cx)
         .expect("runtime viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     let source_tab = selector_for(
         &visual,
@@ -736,7 +736,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         .window_for_space(&detached_space)
         .expect("detached space should have a runtime window");
     let after_drop_context = opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app).target_context()
         })
@@ -784,14 +784,14 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
         })
         .expect("source viewport should open through runtime");
     let source_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("runtime viewport should render DockHost");
     let source_host = source_window
         .root(cx)
         .expect("runtime viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut source_visual = VisualTestContext::from_window(opened.window, cx);
+    let mut source_visual = VisualTestContext::from_window(opened.window(), cx);
 
     let source_tab = selector_for(
         &source_visual,
@@ -925,14 +925,14 @@ fn runtime_secondary_single_tab_outside_release_does_not_spawn_empty_viewport(
         })
         .expect("secondary viewport should open through runtime");
     let secondary_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("secondary viewport should render DockHost");
     let secondary_host = secondary_window
         .root(cx)
         .expect("secondary viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     let source_tab = selector_for(
         &visual,
@@ -993,14 +993,14 @@ fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut T
         })
         .expect("source viewport should open through runtime");
     let source_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("runtime viewport should render DockHost");
     let source_host = source_window
         .root(cx)
         .expect("runtime viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     let source_tab = selector_for(
         &visual,
@@ -1095,14 +1095,14 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
         })
         .expect("source viewport should open through runtime");
     let source_window = opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("runtime viewport should render DockHost");
     let source_host = source_window
         .root(cx)
         .expect("runtime viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     let source_tab = selector_for(
         &visual,
@@ -1121,7 +1121,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    let visual = VisualTestContext::from_window(opened.window, cx);
+    let visual = VisualTestContext::from_window(opened.window(), cx);
 
     assert_eq!(
         runtime.registered_viewport_spaces().len(),

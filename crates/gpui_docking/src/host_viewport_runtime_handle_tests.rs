@@ -68,7 +68,7 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
     assert_eq!(runtime.registered_viewport_spaces().len(), 1);
 
     opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.remove_window())
         .expect("opened viewport should still be live");
     cx.run_until_parked();
@@ -106,7 +106,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         })
         .expect("target viewport should open");
     let window_bounds = opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let window_bounds = WindowBounds::Windowed(window_bounds.get_bounds());
@@ -115,7 +115,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
     let first = runtime
         .begin_viewport_host_scene_frame(
             target_space.clone(),
-            opened.window.window_id(),
+            opened.window().window_id(),
             window_bounds,
             host_bounds,
             point(px(120.0), px(100.0)),
@@ -130,7 +130,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
     let second = runtime
         .begin_viewport_host_scene_frame(
             target_space.clone(),
-            opened.window.window_id(),
+            opened.window().window_id(),
             window_bounds,
             host_bounds,
             point(px(120.0), px(100.0)),
@@ -177,7 +177,7 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
         .expect("secondary viewport should open through runtime handle");
     assert!(runtime.begin_viewport_host_scene(
         secondary_space.clone(),
-        opened.window.window_id(),
+        opened.window().window_id(),
         WindowBounds::Windowed(floating_bounds(10.0, 20.0, 360.0, 220.0)),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
@@ -190,12 +190,12 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
 
     assert!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .allows_close(),
         "RetainLayout should allow GPUI to close the platform viewport"
     );
     opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.remove_window())
         .expect("opened viewport should still be live");
     cx.run_until_parked();
@@ -230,14 +230,14 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
         })
         .expect("retained dock space should reopen through runtime handle");
     let reopened_window = reopened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("reopened viewport should render DockHost");
     let reopened_host = reopened_window
         .root(cx)
         .expect("reopened viewport should expose DockHost root");
     cx.run_until_parked();
-    let reopened_visual = VisualTestContext::from_window(reopened.window, cx);
+    let reopened_visual = VisualTestContext::from_window(reopened.window(), cx);
 
     assert!(
         selector_for(
@@ -291,12 +291,12 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
 
     assert!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .allows_close(),
         "merge-back policy should allow GPUI to close before graph merge"
     );
     opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.remove_window())
         .expect("detached viewport should still be live");
     cx.run_until_parked();
@@ -408,14 +408,14 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         })
         .expect("target viewport should open through runtime handle");
     let target_window_bounds = opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        opened.window.window_id(),
+        opened.window().window_id(),
         target_window_bounds,
         host_bounds,
         point(px(0.0), px(0.0))
@@ -432,7 +432,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
             app,
         )
     });
@@ -442,7 +442,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         DockViewportDropRoute::KnownViewport {
             target: crate::DockViewportTargetHit::new(
                 target_space.clone(),
-                opened.window,
+                opened.window(),
                 point(px(20.0), px(40.0)),
             )
         }
@@ -454,7 +454,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         .expect("runtime status should expose the last resolved route")
         .target;
     assert_eq!(target.space(), Some(&target_space));
-    assert_eq!(target.window_id(), Some(opened.window.window_id()));
+    assert_eq!(target.window_id(), Some(opened.window().window_id()));
     assert_eq!(target.host_position(), Some(point(px(20.0), px(40.0))));
 }
 
@@ -750,13 +750,13 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         })
         .expect("target viewport should open");
     let target_window_bounds = opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        opened.window.window_id(),
+        opened.window().window_id(),
         target_window_bounds,
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0))
@@ -773,14 +773,14 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
         );
         let route = runtime.resolve_payload_drop_route(&request, app);
         assert!(
             matches!(
                 &route,
                 DockViewportDropRoute::KnownViewport { target }
-                    if target.window_id() == opened.window.window_id()
+                    if target.window_id() == opened.window().window_id()
             ),
             "known viewport route should carry the destination window"
         );
@@ -833,7 +833,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         })
         .expect("target viewport should open");
     let target_window_bounds = opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
@@ -847,30 +847,30 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         })
         .expect("source viewport should open");
     source_opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.activate_window())
         .expect("source viewport should be activatable before drop");
     let before_drop_context = opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .expect("target window should be live");
     assert_eq!(
         before_drop_context.active_window(),
-        Some(source_opened.window.window_id()),
+        Some(source_opened.window().window_id()),
         "source viewport should be active before the routed drop commits"
     );
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        opened.window.window_id(),
+        opened.window().window_id(),
         target_window_bounds,
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
     assert!(runtime.push_viewport_host_scene_fact(
         &target_space,
-        opened.window.window_id(),
+        opened.window().window_id(),
         DockHostDropSceneFact::Leaf(DockLeafDropTarget {
             root: target_tabs,
             target_tabs,
@@ -889,7 +889,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
             app,
         );
         let status = runtime.runtime_status();
@@ -898,7 +898,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             .as_ref()
             .expect("screen release should record the destination viewport route")
             .target;
-        assert_eq!(target.window_id(), Some(opened.window.window_id()));
+        assert_eq!(target.window_id(), Some(opened.window().window_id()));
         result
     });
 
@@ -908,7 +908,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     assert_eq!(action.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
         action.activation().map(|activation| activation.window()),
-        Some(opened.window),
+        Some(opened.window()),
         "known viewport drop should request activation of the destination window"
     );
     assert_eq!(
@@ -929,7 +929,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             .last_activation
             .as_ref()
             .map(|activation| activation.window_id),
-        Some(opened.window.window_id()),
+        Some(opened.window().window_id()),
         "runtime status should record the destination activation"
     );
     assert_eq!(
@@ -941,14 +941,14 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         "runtime status should record the focused item"
     );
     let after_drop_context = source_opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .expect("source window should be live");
     assert_eq!(
         after_drop_context.active_window(),
-        Some(opened.window.window_id()),
+        Some(opened.window().window_id()),
         "successful routed drop should activate the destination viewport"
     );
     cx.read_entity(&controller, |controller, _| {
@@ -1003,14 +1003,14 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         .expect("target viewport should open");
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        target_opened.window.window_id(),
+        target_opened.window().window_id(),
         target_bounds,
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
     assert!(runtime.push_viewport_host_scene_fact(
         &target_space,
-        target_opened.window.window_id(),
+        target_opened.window().window_id(),
         DockHostDropSceneFact::Leaf(DockLeafDropTarget {
             root: target_tabs,
             target_tabs,
@@ -1033,11 +1033,11 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         })
         .expect("source viewport should open");
     source_opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.activate_window())
         .expect("source viewport should be activatable before host drop");
     let source_window = source_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let source_window_bounds = source_window
@@ -1072,18 +1072,18 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     cx.run_until_parked();
 
     let after_drop_context = source_opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .expect("source window should be live");
     assert_eq!(
         after_drop_context.active_window(),
-        Some(target_opened.window.window_id()),
+        Some(target_opened.window().window_id()),
         "host interaction should consume the routed activation target"
     );
     target_opened
-        .window
+        .window()
         .update(cx, |_, window, cx| {
             assert_eq!(
                 window.focused(cx),
@@ -1142,7 +1142,7 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         .expect("target viewport should open");
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        target_opened.window.window_id(),
+        target_opened.window().window_id(),
         target_bounds,
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
@@ -1162,7 +1162,7 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         })
         .expect("source viewport should open");
     let source_window = source_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let source_host = source_window
@@ -1258,11 +1258,11 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
         })
         .expect("target viewport should open");
     let source_window = source_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let target_window = target_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("target viewport should render DockHost");
     let source_host = source_window
@@ -1272,8 +1272,8 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
         .root(cx)
         .expect("target viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut source_visual = VisualTestContext::from_window(source_opened.window, cx);
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
 
     let source_tab = selector_for(
         &source_visual,
@@ -1371,7 +1371,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         })
         .expect("source viewport should open");
     let target_window = target_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("target viewport should render DockHost");
     let target_host = target_window
@@ -1379,7 +1379,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         .expect("target viewport should expose DockHost root");
     cx.run_until_parked();
 
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let target_tabs_selector = selector_for(
         &target_visual,
         &target_host,
@@ -1394,7 +1394,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     );
     let target_position = debug_bounds(&mut target_visual, &target_tabs_selector).center();
     let target_window_bounds = target_opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should still be live")
         .get_bounds();
@@ -1403,7 +1403,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         target_window_bounds.origin.y + target_position.y,
     );
     let source_release_signals = source_opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app)
         })
@@ -1412,7 +1412,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     // snapshot so this models a native detached window releasing over main, not over itself.
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),
-        source_opened.window.window_id(),
+        source_opened.window().window_id(),
         WindowBounds::Windowed(floating_bounds(520.0, 0.0, 360.0, 220.0)),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
@@ -1502,11 +1502,11 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
         })
         .expect("target viewport should open");
     let source_window = source_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("source viewport should render DockHost");
     let target_window = target_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("target viewport should render DockHost");
     let source_host = source_window
@@ -1516,8 +1516,8 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
         .root(cx)
         .expect("target viewport should expose DockHost root");
     cx.run_until_parked();
-    let mut source_visual = VisualTestContext::from_window(source_opened.window, cx);
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
 
     let source_stack = selector_for(
         &source_visual,
@@ -1598,7 +1598,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
             )
         })
         .expect("secondary viewport should open through runtime handle");
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     assert_eq!(
         runtime.close_policy(),
@@ -1606,7 +1606,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
     );
     assert_eq!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::Allowed
     );
@@ -1619,7 +1619,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
     );
     assert_eq!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::Vetoed
     );
@@ -1628,7 +1628,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
             .borrow()
             .adapter()
             .window_for_space(&secondary_space),
-        Some(opened.window)
+        Some(opened.window())
     );
 }
 
@@ -1667,20 +1667,20 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
         })
         .expect("target viewport should open");
     let target_window_bounds = opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should be live");
     let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        opened.window.window_id(),
+        opened.window().window_id(),
         target_window_bounds,
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
     assert!(runtime.push_viewport_host_scene_fact(
         &target_space,
-        opened.window.window_id(),
+        opened.window().window_id(),
         DockHostDropSceneFact::Leaf(DockLeafDropTarget {
             root: target_tabs,
             target_tabs,
@@ -1698,7 +1698,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
         );
         let route = runtime.resolve_payload_drop_route(&request, app);
         let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
@@ -1773,7 +1773,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         })
         .expect("source viewport should open");
     let target_window = target_opened
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("target viewport should render DockHost");
     let target_host = target_window
@@ -1781,7 +1781,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         .expect("target viewport should expose DockHost root");
     cx.run_until_parked();
 
-    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window(), cx);
     let right_tabs_selector = selector_for(
         &target_visual,
         &target_host,
@@ -1815,7 +1815,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     ));
 
     let target_window_bounds = target_opened
-        .window
+        .window()
         .update(cx, |_, window, _| window.window_bounds())
         .expect("target window should still be live")
         .get_bounds();
@@ -1824,14 +1824,14 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         target_window_bounds.origin.y + target_host_position.y,
     );
     let source_release_signals = source_opened
-        .window
+        .window()
         .update(cx, |_, window, app| {
             DockViewportPlatformSignals::from_window(window, app)
         })
         .expect("source window should still be live");
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),
-        source_opened.window.window_id(),
+        source_opened.window().window_id(),
         WindowBounds::Windowed(floating_bounds(520.0, 0.0, 360.0, 220.0)),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
@@ -1900,7 +1900,7 @@ fn viewport_runtime_handle_allows_platform_close_with_retain_policy(cx: &mut Tes
             runtime.open_viewport(secondary_space, viewport_window_options(360.0, 220.0), app)
         })
         .expect("secondary viewport should open through runtime handle");
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     assert!(
         visual.simulate_close(),
@@ -1908,7 +1908,7 @@ fn viewport_runtime_handle_allows_platform_close_with_retain_policy(cx: &mut Tes
     );
     assert_eq!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::Allowed
     );

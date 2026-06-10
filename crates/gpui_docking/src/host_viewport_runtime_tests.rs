@@ -71,10 +71,10 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
             )
         })
         .expect("secondary viewport should open through runtime");
-    assert_eq!(opened.status, DockViewportOpenStatus::Opened);
+    assert_eq!(opened.status(), DockViewportOpenStatus::Opened);
     assert_eq!(
         runtime.adapter().window_for_space(&secondary_space),
-        Some(opened.window)
+        Some(opened.window())
     );
 
     let reused = cx
@@ -86,8 +86,8 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
             )
         })
         .expect("live viewport should be reused through runtime");
-    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
-    assert_eq!(reused.window, opened.window);
+    assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), opened.window());
     assert_eq!(runtime.adapter().spaces().len(), 1);
 }
 
@@ -483,7 +483,7 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
             )
         })
         .expect("secondary viewport should open through runtime");
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     assert!(
         visual.simulate_close(),
@@ -497,7 +497,7 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
     );
     assert_eq!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::Vetoed
     );
@@ -533,7 +533,7 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
             )
         })
         .expect("secondary viewport should open through runtime");
-    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
 
     runtime.set_close_policy(DockViewportClosePolicy::Prevent);
     assert!(
@@ -541,12 +541,12 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
         "Prevent should veto a close while the window still belongs to a runtime mapping"
     );
 
-    let cleanup = runtime.handle_window_closed(opened.window.window_id());
+    let cleanup = runtime.handle_window_closed(opened.window().window_id());
     assert_eq!(cleanup.status, DockViewportCloseStatus::Closed);
     assert_eq!(runtime.adapter().window_for_space(&secondary_space), None);
     assert_eq!(
         runtime
-            .handle_window_should_close(opened.window.window_id())
+            .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::UnknownWindow
     );
@@ -641,8 +641,8 @@ fn viewport_runtime_installs_should_close_hook_when_reusing_registered_window(
         })
         .expect("registered live viewport should be reused through runtime");
 
-    assert_eq!(reused.status, DockViewportOpenStatus::Reused);
-    assert_eq!(reused.window, window);
+    assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), window);
     assert!(
         visual.simulate_close(),
         "runtime should install a RetainLayout should-close hook when it reuses a registered window"

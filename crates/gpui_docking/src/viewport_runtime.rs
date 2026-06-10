@@ -665,7 +665,7 @@ impl DockViewportRuntime {
             }
         };
 
-        let completion = self.complete_tear_off_viewport(&key, opened.window, cx);
+        let completion = self.complete_tear_off_viewport(&key, opened.window(), cx);
         let outcome = self.finish_tear_off_open(pending, completion, cx);
         self.status.record_tear_off(&outcome);
         Ok(outcome)
@@ -840,14 +840,13 @@ impl DockViewportRuntime {
             .open_viewport(self.controller.clone(), space, options, cx);
         self.close_gate.sync_adapter(&self.adapter);
         let outcome = outcome?;
-        if !matches!(outcome.status, crate::DockViewportOpenStatus::Reused) {
-            self.host_scenes.unregister_space(&outcome.space);
+        if !matches!(outcome.status(), crate::DockViewportOpenStatus::Reused) {
+            self.host_scenes.unregister_space(outcome.space());
         }
-        if let Err(error) = install_should_close_hook(outcome.window, cx, should_close) {
-            self.adapter
-                .handle_window_closed(outcome.window.window_id());
-            self.host_scenes
-                .unregister_window(outcome.window.window_id());
+        let window = outcome.window();
+        if let Err(error) = install_should_close_hook(window, cx, should_close) {
+            self.adapter.handle_window_closed(window.window_id());
+            self.host_scenes.unregister_window(window.window_id());
             self.close_gate.sync_adapter(&self.adapter);
             return Err(error);
         }
