@@ -1566,10 +1566,10 @@ mod tests {
     fn document_mutation_path_rejects_registered_kind_errors_atomically() {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.kind = "note".to_string();
         node.data.insert("title".to_string(), json!(false));
+        let mut document = document_fixture().build();
 
         let err = document
             .commit_transaction_with_kind_registry(
