@@ -405,16 +405,23 @@ impl DockInteractionRuntime {
         &mut self,
         request: DockRenderedOutsideReleaseRequest,
     ) -> DockRenderedOutsideReleaseDecision {
-        self.cancel_outside_release_poll();
-
         if !request.viewport_runtime_available {
+            self.cancel_outside_release_poll();
             return DockRenderedOutsideReleaseDecision::Inactive;
         }
 
         let Some(payload) = request.payload else {
+            self.cancel_outside_release_poll();
             return DockRenderedOutsideReleaseDecision::Inactive;
         };
 
+        if let Some(session) = self.outside_release_poll.as_ref()
+            && !session.accepts_payload(&payload)
+        {
+            return DockRenderedOutsideReleaseDecision::Inactive;
+        }
+
+        self.cancel_outside_release_poll();
         DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
             payload,
             request.host_space,
@@ -576,6 +583,34 @@ mod tests {
             !runtime.outside_release_poll_session_active(&missing_payload_session),
             "rendered outside release should stop stale poll even without a payload"
         );
+    }
+
+    #[test]
+    fn rendered_outside_release_rejects_stale_payload_without_stopping_active_poll() {
+        let mut runtime = DockInteractionRuntime::default();
+        let stale_payload = item_payload("a", "Panel A");
+        let active_payload = item_payload("b", "Panel B");
+        let active = runtime
+            .begin_outside_release_poll(&active_payload)
+            .expect("active poll session should start");
+
+        assert_eq!(
+            runtime.rendered_outside_release(rendered_request(true, Some(stale_payload))),
+            DockRenderedOutsideReleaseDecision::Inactive
+        );
+        assert!(
+            runtime.outside_release_poll_session_active(&active),
+            "a stale rendered release must not cancel the active drag session"
+        );
+        assert_eq!(
+            runtime.rendered_outside_release(rendered_request(true, Some(active_payload.clone()))),
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+                active_payload,
+                DockSpaceId::from("host"),
+                point(px(120.0), px(80.0)),
+            ))
+        );
+        assert!(!runtime.outside_release_poll_running());
     }
 
     #[test]
