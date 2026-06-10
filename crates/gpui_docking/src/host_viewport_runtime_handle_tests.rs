@@ -30,6 +30,15 @@ fn tear_off_request(
     }
 }
 
+fn leaf_host_scene_fact(root: DockNodeId, target_tabs: DockNodeId) -> DockHostDropSceneFact {
+    DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+        root,
+        target_tabs,
+        bounds: floating_bounds(0.0, 0.0, 360.0, 220.0),
+        is_central: false,
+    })
+}
+
 #[open_gpui::test]
 fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
@@ -70,6 +79,74 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
             .window_for_space(&secondary_space),
         None
     );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestAppContext) {
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let window_bounds = opened
+        .window
+        .update(cx, |_, window, _| window.window_bounds())
+        .expect("target window should be live");
+    let window_bounds = WindowBounds::Windowed(window_bounds.get_bounds());
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+
+    let first = runtime
+        .begin_viewport_host_scene_frame(
+            target_space.clone(),
+            opened.window.window_id(),
+            window_bounds,
+            host_bounds,
+            point(px(120.0), px(100.0)),
+        )
+        .expect("first scene frame should register")
+        .frame;
+    assert!(runtime.push_viewport_host_scene_frame_fact(
+        &first,
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let second = runtime
+        .begin_viewport_host_scene_frame(
+            target_space.clone(),
+            opened.window.window_id(),
+            window_bounds,
+            host_bounds,
+            point(px(120.0), px(100.0)),
+        )
+        .expect("second scene frame should register")
+        .frame;
+    assert!(
+        !runtime.push_viewport_host_scene_frame_fact(
+            &first,
+            leaf_host_scene_fact(target_tabs, target_tabs),
+        ),
+        "facts captured by an older render frame must not populate a newer scene"
+    );
+    assert!(runtime.push_viewport_host_scene_frame_fact(
+        &second,
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
 }
 
 #[open_gpui::test]

@@ -9,7 +9,9 @@ use crate::{
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
+    drop_runtime::DockHostDropSceneFact,
+    viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
+    viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
     App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription, WindowBounds,
@@ -208,6 +210,23 @@ impl DockViewportRuntimeHandle {
         )
     }
 
+    pub(crate) fn begin_viewport_host_scene_frame(
+        &self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+    ) -> Option<DockViewportHostSceneRegistration> {
+        self.runtime.borrow_mut().begin_viewport_host_scene_frame(
+            space,
+            window_id,
+            window_bounds,
+            host_bounds,
+            host_position,
+        )
+    }
+
     pub(crate) fn push_viewport_host_scene_fact(
         &self,
         space: &DockSpaceId,
@@ -217,6 +236,16 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .push_viewport_host_scene_fact(space, window_id, fact)
+    }
+
+    pub(crate) fn push_viewport_host_scene_frame_fact(
+        &self,
+        frame: &DockViewportHostSceneFrame,
+        fact: DockHostDropSceneFact,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .push_viewport_host_scene_frame_fact(frame, fact)
     }
 
     pub(crate) fn window_id_for_space(&self, space: &DockSpaceId) -> Option<WindowId> {

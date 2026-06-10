@@ -14,7 +14,10 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockResolvedDropTarget,
     viewport_close_gate::DockViewportCloseGate,
-    viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
+    viewport_drop_scene::{
+        DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
+        DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
+    },
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
@@ -172,19 +175,37 @@ impl DockViewportRuntime {
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> bool {
+        self.begin_viewport_host_scene_frame(
+            space,
+            window_id,
+            window_bounds,
+            host_bounds,
+            host_position,
+        )
+        .is_some_and(|registration| registration.changed)
+    }
+
+    pub(crate) fn begin_viewport_host_scene_frame(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        window_id: WindowId,
+        window_bounds: WindowBounds,
+        host_bounds: Bounds<Pixels>,
+        host_position: Point<Pixels>,
+    ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
         let Some(window) = self.adapter.window_for_space(&space) else {
-            return false;
+            return None;
         };
         if window.window_id() != window_id {
-            return false;
+            return None;
         }
         let display_id = self
             .adapter
             .snapshot(&space)
             .and_then(|snapshot| snapshot.display_id);
         let changed = self.update_viewport_snapshot(&space, display_id, window_bounds, host_bounds);
-        let registration = self
+        let mut registration = self
             .host_scenes
             .register(DockViewportHostSceneSnapshot::new(
                 space,
@@ -193,7 +214,8 @@ impl DockViewportRuntime {
                 host_bounds,
                 host_position,
             ));
-        registration.changed || changed
+        registration.changed |= changed;
+        Some(registration)
     }
 
     pub(crate) fn push_viewport_host_scene_fact(
@@ -203,6 +225,14 @@ impl DockViewportRuntime {
         fact: DockHostDropSceneFact,
     ) -> bool {
         self.host_scenes.push_fact(space, window_id, fact)
+    }
+
+    pub(crate) fn push_viewport_host_scene_frame_fact(
+        &mut self,
+        frame: &DockViewportHostSceneFrame,
+        fact: DockHostDropSceneFact,
+    ) -> bool {
+        self.host_scenes.push_frame_fact(frame, fact)
     }
 
     pub(crate) fn reusable_window_for_space(

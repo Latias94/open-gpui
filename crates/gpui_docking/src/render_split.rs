@@ -1,6 +1,6 @@
 use crate::{
     DockHost, DockNodeId, SplitAxis, debug::DockDebugRegion, geometry::DockSplitLayout,
-    host_render_session::DockHostRenderSession,
+    host_render_session::DockHostRenderSession, render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -15,6 +15,7 @@ impl DockHost {
         children: Vec<DockNodeId>,
         fractions: Vec<f32>,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if children.is_empty() {
@@ -63,7 +64,7 @@ impl DockHost {
                     .flex_shrink_1()
                     .flex_basis(relative(0.0))
                     .overflow_hidden()
-                    .child(self.render_node(child, session, cx)),
+                    .child(self.render_node(child, session, viewport_host_scene_frame, cx)),
             );
         }
 

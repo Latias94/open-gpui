@@ -6,12 +6,16 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact,
     host_render_session::DockHostRenderSession,
+    viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
     px, rgb, rgba,
 };
+use std::{cell::RefCell, rc::Rc};
+
+pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportHostSceneFrame>>>;
 
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -20,6 +24,8 @@ impl Render for DockHost {
         self.focus_pending_panel_from_render(&session, window, cx);
         let drop_target_space = session.space().clone();
         let outside_drop_target_space = session.space().clone();
+        let viewport_host_scene_frame =
+            self.viewport_runtime().map(|_| Rc::new(RefCell::new(None)));
 
         let selector = self.record_debug_selector(
             DockDebugRegion::Host,
@@ -85,20 +91,40 @@ impl Render for DockHost {
             host = host.bg(rgb(0xf7f8fa));
         }
 
-        if let Some(probe) = self.render_viewport_host_scene_probe() {
-            host = host.child(probe);
+        if let Some(frame_slot) = viewport_host_scene_frame.as_ref() {
+            if let Some(probe) = self.render_viewport_host_scene_probe(frame_slot) {
+                host = host.child(probe);
+            }
         }
 
         if let Some(root) = session.root() {
-            host = host.child(self.render_root_node(root, &session, cx));
+            host = host.child(self.render_root_node(
+                root,
+                &session,
+                viewport_host_scene_frame.as_ref(),
+                cx,
+            ));
         } else if session.empty_central_passthrough() {
-            host = host.child(self.render_passthrough_empty_central_space(&session, cx));
+            host = host.child(self.render_passthrough_empty_central_space(
+                &session,
+                viewport_host_scene_frame.as_ref(),
+                cx,
+            ));
         } else {
-            host = host.child(self.render_empty_space(&session, cx));
+            host = host.child(self.render_empty_space(
+                &session,
+                viewport_host_scene_frame.as_ref(),
+                cx,
+            ));
         }
 
         for floating in session.floating_containers() {
-            host = host.child(self.render_floating_container(*floating, &session, cx));
+            host = host.child(self.render_floating_container(
+                *floating,
+                &session,
+                viewport_host_scene_frame.as_ref(),
+                cx,
+            ));
         }
 
         if let Some(preview) = self.render_host_drop_preview(&session) {
@@ -126,6 +152,7 @@ impl DockHost {
         &mut self,
         node_id: DockNodeId,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(node) = session.node(node_id).cloned() else {
@@ -137,11 +164,26 @@ impl DockHost {
                 axis,
                 children,
                 fractions,
-            } => self.render_split(node_id, axis, children, fractions, session, cx),
-            DockNode::Tabs { items, active } => {
-                self.render_tabs(node_id, items, active, session, cx)
+            } => self.render_split(
+                node_id,
+                axis,
+                children,
+                fractions,
+                session,
+                viewport_host_scene_frame,
+                cx,
+            ),
+            DockNode::Tabs { items, active } => self.render_tabs(
+                node_id,
+                items,
+                active,
+                session,
+                viewport_host_scene_frame,
+                cx,
+            ),
+            DockNode::Floating { child } => {
+                self.render_floating_node(node_id, child, session, viewport_host_scene_frame, cx)
             }
-            DockNode::Floating { child } => self.render_floating_node(node_id, child, session, cx),
         }
     }
 
@@ -149,9 +191,10 @@ impl DockHost {
         &mut self,
         root: DockNodeId,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let root_child = self.render_node(root, session, cx);
+        let root_child = self.render_node(root, session, viewport_host_scene_frame, cx);
         let mut root_container = div()
             .relative()
             .flex()
@@ -170,9 +213,11 @@ impl DockHost {
                     );
                 },
             ));
-        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            drop_scene_fact::root(root, bounds)
-        }) {
+        if let Some(probe) = self
+            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                drop_scene_fact::root(root, bounds)
+            })
+        {
             root_container = root_container.child(probe);
         }
         root_container.child(root_child).into_any_element()
@@ -181,6 +226,7 @@ impl DockHost {
     fn render_empty_space(
         &mut self,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -211,9 +257,11 @@ impl DockHost {
                     );
                 },
             ));
-        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            drop_scene_fact::empty_space(space, bounds)
-        }) {
+        if let Some(probe) = self
+            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                drop_scene_fact::empty_space(space, bounds)
+            })
+        {
             empty = empty.child(probe);
         }
         empty
@@ -224,6 +272,7 @@ impl DockHost {
     fn render_passthrough_empty_central_space(
         &mut self,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -250,9 +299,11 @@ impl DockHost {
                     );
                 },
             ));
-        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            drop_scene_fact::empty_space(space, bounds)
-        }) {
+        if let Some(probe) = self
+            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                drop_scene_fact::empty_space(space, bounds)
+            })
+        {
             empty = empty.child(probe);
         }
         empty.into_any_element()
@@ -317,9 +368,13 @@ impl DockHost {
 
     /// Publishes viewport bounds during prepaint so cross-window releases can resolve even when
     /// the target window did not receive the drag-move event.
-    pub(crate) fn render_viewport_host_scene_probe(&self) -> Option<AnyElement> {
+    pub(crate) fn render_viewport_host_scene_probe(
+        &self,
+        frame_slot: &DockViewportHostSceneFrameSlot,
+    ) -> Option<AnyElement> {
         let runtime = self.viewport_runtime()?.clone();
         let space = self.space().clone();
+        let frame_slot = frame_slot.clone();
         Some(
             canvas(
                 move |bounds, window, _| {
@@ -328,13 +383,14 @@ impl DockHost {
                         mouse_position.x - bounds.origin.x,
                         mouse_position.y - bounds.origin.y,
                     );
-                    runtime.begin_viewport_host_scene(
+                    let registration = runtime.begin_viewport_host_scene_frame(
                         space,
                         window.window_handle().window_id(),
                         window.window_bounds(),
                         bounds,
                         host_position,
                     );
+                    *frame_slot.borrow_mut() = registration.map(|registration| registration.frame);
                 },
                 |_, _, _, _| (),
             )
@@ -349,18 +405,18 @@ impl DockHost {
     /// Publishes target bounds during prepaint for runtime-routed drops.
     pub(crate) fn render_viewport_drop_scene_fact_probe(
         &self,
+        frame_slot: Option<&DockViewportHostSceneFrameSlot>,
         fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
     ) -> Option<AnyElement> {
         let runtime = self.viewport_runtime()?.clone();
-        let space = self.space().clone();
+        let frame_slot = frame_slot?.clone();
         Some(
             canvas(
-                move |bounds, window, _| {
-                    runtime.push_viewport_host_scene_fact(
-                        &space,
-                        window.window_handle().window_id(),
-                        fact_for_bounds(bounds),
-                    );
+                move |bounds, _window, _| {
+                    let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
+                        return;
+                    };
+                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds));
                 },
                 |_, _, _, _| (),
             )

@@ -4,6 +4,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPreview},
     drop_scene_fact,
     host_render_session::DockHostRenderSession,
+    render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
     AnyElement, AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
@@ -17,6 +18,7 @@ impl DockHost {
         node: DockNodeId,
         child: DockNodeId,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -30,7 +32,7 @@ impl DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .child(self.render_node(child, session, cx))
+            .child(self.render_node(child, session, viewport_host_scene_frame, cx))
             .into_any_element()
     }
 
@@ -38,6 +40,7 @@ impl DockHost {
         &mut self,
         container: DockFloatingContainer,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -53,7 +56,7 @@ impl DockHost {
         let child = session.floating_child(container.node);
         let bounds = container.bounds;
         let content = child
-            .map(|child| self.render_node(child, session, cx))
+            .map(|child| self.render_node(child, session, viewport_host_scene_frame, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
         let title = child
             .map(|child| session.floating_title(child))
@@ -74,7 +77,13 @@ impl DockHost {
             .border_color(rgb(0x4b5563))
             .bg(white())
             .shadow_md()
-            .child(self.render_floating_handle(container, title, session, cx))
+            .child(self.render_floating_handle(
+                container,
+                title,
+                session,
+                viewport_host_scene_frame,
+                cx,
+            ))
             .child(
                 div()
                     .flex()
@@ -91,6 +100,7 @@ impl DockHost {
         container: DockFloatingContainer,
         title: String,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -126,9 +136,12 @@ impl DockHost {
             .cursor_pointer();
 
         if let Some(target_tabs) = floating_tabs {
-            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |title_bounds| {
-                drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
-            }) {
+            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(
+                viewport_host_scene_frame,
+                move |title_bounds| {
+                    drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
+                },
+            ) {
                 handle = handle.child(probe);
             }
             let payload = DockDragPayload::new_tabs(space.clone(), target_tabs, title.clone());

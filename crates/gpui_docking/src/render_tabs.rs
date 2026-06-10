@@ -4,6 +4,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPreview},
     drop_scene_fact,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
+    render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
@@ -17,6 +18,7 @@ impl DockHost {
         items: Vec<DockItemId>,
         active: usize,
         session: &DockHostRenderSession,
+        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if items.is_empty() {
@@ -64,9 +66,11 @@ impl DockHost {
                     );
                 },
             ));
-        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            drop_scene_fact::leaf(drop_root, node, bounds, is_central)
-        }) {
+        if let Some(probe) = self
+            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                drop_scene_fact::leaf(drop_root, node, bounds, is_central)
+            })
+        {
             tabs = tabs.child(probe);
         }
 
@@ -156,9 +160,11 @@ impl DockHost {
                 .on_drag(payload, |payload, _, _, cx| {
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });
-            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-                drop_scene_fact::tab_label(node, target_index, bounds, is_central)
-            }) {
+            if let Some(probe) = self
+                .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                    drop_scene_fact::tab_label(node, target_index, bounds, is_central)
+                })
+            {
                 tab = tab.child(probe);
             }
             tab = tab.child(title);
