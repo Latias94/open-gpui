@@ -1,7 +1,7 @@
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportHit, DockViewportTargetContext,
-    DockViewportTearOffRequest,
+    DockViewportDropPayload, DockViewportHit, DockViewportPlatformSignals,
+    DockViewportTargetContext, DockViewportTearOffRequest,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 
@@ -56,6 +56,24 @@ impl DockViewportDropRouteRequest {
             suggested_window_bounds,
             target_context,
         }
+    }
+
+    pub(crate) fn from_platform_signals(
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        platform_signals: DockViewportPlatformSignals,
+    ) -> Self {
+        Self::new(
+            source_space,
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            platform_signals.target_context(),
+        )
     }
 }
 

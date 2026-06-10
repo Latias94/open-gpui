@@ -70,13 +70,13 @@ fn viewport_drop_route_request_from_host(
     window: &Window,
     cx: &Context<DockHost>,
 ) -> DockViewportDropRouteRequest {
-    DockViewportDropRouteRequest::new(
+    DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
         payload.source_tabs,
         viewport_payload(payload),
         window_screen_position(window, host_position),
         None,
-        DockViewportPlatformSignals::from_window(window, cx).target_context(),
+        DockViewportPlatformSignals::from_window(window, cx),
     )
 }
 
