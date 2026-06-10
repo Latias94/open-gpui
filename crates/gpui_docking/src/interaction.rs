@@ -95,6 +95,12 @@ pub(crate) enum DockOutsideReleasePollDecision {
     Stop,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockRenderedOutsideReleaseDecision {
+    Inactive,
+    CommitRelease(DockPayloadDropRelease),
+}
+
 impl DockInteractionRuntime {
     pub(crate) fn start_splitter_drag(
         &mut self,
@@ -291,6 +297,28 @@ impl DockInteractionRuntime {
         }
     }
 
+    pub(crate) fn rendered_outside_release(
+        &self,
+        viewport_runtime_available: bool,
+        payload: Option<DockDragPayload>,
+        target_space: DockSpaceId,
+        release_position: Point<Pixels>,
+    ) -> DockRenderedOutsideReleaseDecision {
+        if !viewport_runtime_available {
+            return DockRenderedOutsideReleaseDecision::Inactive;
+        }
+
+        let Some(payload) = payload else {
+            return DockRenderedOutsideReleaseDecision::Inactive;
+        };
+
+        DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+            payload,
+            target_space,
+            release_position,
+        ))
+    }
+
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
         self.drop
             .drop_resolution()
@@ -359,6 +387,41 @@ mod tests {
         assert_eq!(release.payload(), &payload);
         assert_eq!(release.target_space(), &target_space);
         assert_eq!(release.release_position(), release_position);
+    }
+
+    #[test]
+    fn rendered_outside_release_requires_viewport_runtime_and_payload() {
+        let runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A");
+        let target_space = DockSpaceId::from("target");
+        let release_position = point(px(120.0), px(80.0));
+
+        assert_eq!(
+            runtime.rendered_outside_release(
+                false,
+                Some(payload.clone()),
+                target_space.clone(),
+                release_position,
+            ),
+            DockRenderedOutsideReleaseDecision::Inactive
+        );
+        assert_eq!(
+            runtime.rendered_outside_release(true, None, target_space.clone(), release_position),
+            DockRenderedOutsideReleaseDecision::Inactive
+        );
+        assert_eq!(
+            runtime.rendered_outside_release(
+                true,
+                Some(payload.clone()),
+                target_space.clone(),
+                release_position,
+            ),
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+                payload,
+                target_space,
+                release_position,
+            ))
+        );
     }
 
     #[test]

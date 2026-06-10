@@ -6,7 +6,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact,
     host_render_session::DockHostRenderSession,
-    interaction::DockPayloadDropRelease,
+    interaction::{DockPayloadDropRelease, DockRenderedOutsideReleaseDecision},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -70,23 +70,19 @@ impl Render for DockHost {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
-                    if this.viewport_runtime().is_none() {
-                        return;
+                    match this.interaction().rendered_outside_release(
+                        this.viewport_runtime().is_some(),
+                        cx.active_drag_value::<DockDragPayload>().cloned(),
+                        outside_drop_target_space.clone(),
+                        event.position,
+                    ) {
+                        DockRenderedOutsideReleaseDecision::Inactive => {}
+                        DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
+                            this.drop_payload_release_from_render(release, window, cx);
+                            cx.stop_active_drag(window);
+                            cx.stop_propagation();
+                        }
                     }
-                    let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
-                        return;
-                    };
-                    this.drop_payload_release_from_render(
-                        DockPayloadDropRelease::new(
-                            payload,
-                            outside_drop_target_space.clone(),
-                            event.position,
-                        ),
-                        window,
-                        cx,
-                    );
-                    cx.stop_active_drag(window);
-                    cx.stop_propagation();
                 }),
             );
 
