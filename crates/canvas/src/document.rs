@@ -455,6 +455,13 @@ pub enum DocumentError {
     MissingRelationRecord(CanvasRecordId),
     #[error("canvas record `{0}` cannot be its own parent")]
     SelfParentRelation(CanvasRecordId),
+    #[error("canvas record `{0}` has more than one parent relation")]
+    DuplicateParentRelation(CanvasRecordId),
+    #[error("canvas group relation from `{group}` to `{member}` is duplicated")]
+    DuplicateGroupRelation {
+        group: CanvasRecordId,
+        member: CanvasRecordId,
+    },
     #[error(transparent)]
     Schema(#[from] CanvasSchemaError),
 }
@@ -1099,7 +1106,13 @@ impl CanvasDocument {
     }
 
     pub fn validate_relations(&self) -> Result<(), DocumentError> {
+        let mut parent_children = IndexSet::new();
         for relation in self.relations.parents() {
+            if !parent_children.insert(relation.child.clone()) {
+                return Err(DocumentError::DuplicateParentRelation(
+                    relation.child.clone(),
+                ));
+            }
             if relation.child == relation.parent {
                 return Err(DocumentError::SelfParentRelation(relation.child.clone()));
             }
@@ -1107,7 +1120,14 @@ impl CanvasDocument {
             self.validate_record_id(&relation.parent)?;
         }
 
+        let mut group_relations = IndexSet::new();
         for relation in self.relations.groups() {
+            if !group_relations.insert((relation.group.clone(), relation.member.clone())) {
+                return Err(DocumentError::DuplicateGroupRelation {
+                    group: relation.group.clone(),
+                    member: relation.member.clone(),
+                });
+            }
             if relation.group == relation.member {
                 return Err(DocumentError::SelfParentRelation(relation.group.clone()));
             }
@@ -1517,6 +1537,84 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![child]
+        );
+    }
+
+    #[test]
+    fn from_snapshot_rejects_duplicate_parent_relations_for_one_child() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        for id in ["frame-a", "frame-b"] {
+            document
+                .insert_shape(CanvasShape::new(
+                    id,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+                ))
+                .unwrap();
+        }
+
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                },
+            ))
+            .unwrap();
+        let mut value = serde_json::to_value(document.to_snapshot()).unwrap();
+        let parents = value["relations"]["parents"].as_array_mut().unwrap();
+        let mut duplicate = parents[0].clone();
+        duplicate["parent"] =
+            serde_json::to_value(CanvasRecordId::Shape(ShapeId::from("frame-b"))).unwrap();
+        parents.push(duplicate);
+        let snapshot = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            CanvasDocument::from_snapshot(snapshot).unwrap_err(),
+            DocumentError::DuplicateParentRelation(CanvasRecordId::Node(NodeId::from("child")))
+        );
+    }
+
+    #[test]
+    fn from_snapshot_rejects_duplicate_group_relations() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        document
+            .insert_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let member = CanvasRecordId::Node(NodeId::from("child"));
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::AddRecordToGroup {
+                    group: group.clone(),
+                    member: member.clone(),
+                },
+            ))
+            .unwrap();
+        let mut value = serde_json::to_value(document.to_snapshot()).unwrap();
+        let groups = value["relations"]["groups"].as_array_mut().unwrap();
+        groups.push(groups[0].clone());
+        let snapshot = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            CanvasDocument::from_snapshot(snapshot).unwrap_err(),
+            DocumentError::DuplicateGroupRelation { group, member }
         );
     }
 

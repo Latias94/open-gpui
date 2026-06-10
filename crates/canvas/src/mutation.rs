@@ -1,7 +1,7 @@
 use crate::{
     CanvasDocument, CanvasDocumentDiff, CanvasKindRegistry, CanvasRecord, CanvasRecordChange,
     CanvasRecordId, CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
-    CanvasRelationOperationBatch, CanvasTransaction, DocumentError,
+    CanvasRelationOperationBatch, CanvasTransaction, DocumentCommand, DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,7 +88,7 @@ impl CanvasMutationJournal {
         kind_registry: &CanvasKindRegistry,
     ) -> Result<CanvasPreparedMutation, DocumentError> {
         let transaction = kind_registry.normalize_transaction(transaction)?;
-        let inverse = document.invert_transaction(&transaction)?;
+        let mut inverse = document.invert_transaction(&transaction)?;
         let mut draft = document.clone();
 
         for command in transaction.commands.iter().cloned() {
@@ -97,6 +97,7 @@ impl CanvasMutationJournal {
         draft.prune_missing_relations();
         draft.validate_relations()?;
         kind_registry.validate_document(&draft)?;
+        complete_inverse_relation_commands(document, &draft, &mut inverse)?;
 
         let diff = draft.diff_against(document);
         let record_changes = record_changes_from_diff(&draft, &diff);
@@ -197,6 +198,63 @@ fn relation_changes_from_diff(
     }
 
     changes
+}
+
+fn complete_inverse_relation_commands(
+    previous: &CanvasDocument,
+    current: &CanvasDocument,
+    inverse: &mut CanvasTransaction,
+) -> Result<(), DocumentError> {
+    let mut restored = current.clone();
+    for command in inverse.commands.iter().cloned() {
+        restored.apply(command)?;
+    }
+    restored.prune_missing_relations();
+    restored.validate_relations()?;
+
+    let commands = relation_changes_from_diff(previous, &restored)
+        .into_iter()
+        .map(relation_change_to_command)
+        .collect::<Vec<_>>();
+    if commands.is_empty() {
+        return Ok(());
+    }
+
+    for command in commands.iter().cloned() {
+        restored.apply(command)?;
+    }
+    restored.prune_missing_relations();
+    restored.validate_relations()?;
+    inverse.commands.extend(commands);
+    Ok(())
+}
+
+fn relation_change_to_command(change: CanvasRelationChange) -> DocumentCommand {
+    match change {
+        CanvasRelationChange::Upsert(CanvasRecordRelation::Parent(relation)) => {
+            DocumentCommand::SetRecordParent {
+                child: relation.child,
+                parent: relation.parent,
+            }
+        }
+        CanvasRelationChange::Delete(CanvasRecordRelation::Parent(relation)) => {
+            DocumentCommand::ClearRecordParent {
+                child: relation.child,
+            }
+        }
+        CanvasRelationChange::Upsert(CanvasRecordRelation::Group(relation)) => {
+            DocumentCommand::AddRecordToGroup {
+                group: relation.group,
+                member: relation.member,
+            }
+        }
+        CanvasRelationChange::Delete(CanvasRecordRelation::Group(relation)) => {
+            DocumentCommand::RemoveRecordFromGroup {
+                group: relation.group,
+                member: relation.member,
+            }
+        }
+    }
 }
 
 fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Option<CanvasRecord> {
@@ -497,6 +555,48 @@ mod tests {
             .commit_transaction(committed.inverse().clone())
             .unwrap();
         assert_eq!(document, before);
+    }
+
+    #[test]
+    fn committed_inverse_restores_relations_pruned_by_deleted_records() {
+        let mut document = connected_document();
+        let edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
+        let group = CanvasRecordId::Node(NodeId::from("b"));
+        document
+            .commit_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: edge.clone(),
+                    parent: group.clone(),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: group.clone(),
+                    member: edge.clone(),
+                },
+            ]))
+            .unwrap();
+        let before = document.clone();
+
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(DocumentCommand::RemoveNode(
+                NodeId::from("a"),
+            )))
+            .unwrap();
+
+        assert!(document.relations().is_empty());
+
+        document
+            .commit_transaction(committed.inverse().clone())
+            .unwrap();
+        assert_eq!(document, before);
+        assert_eq!(document.relations().parent_of(&edge), Some(&group));
+        assert_eq!(
+            document
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![edge]
+        );
     }
 
     fn connected_document() -> CanvasDocument {

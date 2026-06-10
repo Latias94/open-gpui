@@ -1027,6 +1027,81 @@ fn persistent_undo_and_redo_log_relation_operation_batches() {
 }
 
 #[test]
+fn persistent_undo_replay_restores_relations_pruned_by_remove_node() {
+    let mut document = CanvasDocument::default();
+    document
+        .insert_node(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_node(CanvasNode::new(
+            "b",
+            point(px(20.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .unwrap();
+    document
+        .insert_edge(CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        ))
+        .unwrap();
+    let edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
+    let group = CanvasRecordId::Node(NodeId::from("b"));
+    document
+        .apply_transaction(CanvasTransaction::new([
+            DocumentCommand::SetRecordParent {
+                child: edge.clone(),
+                parent: group.clone(),
+            },
+            DocumentCommand::AddRecordToGroup {
+                group: group.clone(),
+                member: edge.clone(),
+            },
+        ]))
+        .unwrap();
+
+    let mut editor = CanvasEditor::new(document.clone());
+    let mut store = MemoryCanvasPersistenceStore::default();
+    store
+        .save_checkpoint(CanvasCheckpoint::new(0, &document))
+        .unwrap();
+    let mut cursor = CanvasPersistenceCursor::default();
+
+    apply_persistent_transaction(
+        &mut editor,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::single(DocumentCommand::RemoveNode(NodeId::from("a"))),
+    )
+    .unwrap();
+    assert!(editor.document().relations().is_empty());
+
+    assert!(undo_persistent_transaction(&mut editor, &mut store, &mut cursor).unwrap());
+    assert_eq!(editor.document().relations().parent_of(&edge), Some(&group));
+    assert_eq!(
+        editor
+            .document()
+            .relations()
+            .members_of(&group)
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![edge.clone()]
+    );
+    let restored = load_canvas_document(&store).unwrap();
+    assert_eq!(restored, editor.document().clone());
+
+    assert!(redo_persistent_transaction(&mut editor, &mut store, &mut cursor).unwrap());
+    assert!(editor.document().relations().is_empty());
+    let replayed = load_canvas_document(&store).unwrap();
+    assert_eq!(replayed, editor.document().clone());
+}
+
+#[test]
 fn persistent_undo_reuses_prepared_mutation_after_logging() {
     let mut document = CanvasDocument::default();
     let mut original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
