@@ -355,9 +355,11 @@ impl DockInteractionRuntime {
     }
 
     pub(crate) fn rendered_outside_release(
-        &self,
+        &mut self,
         request: DockRenderedOutsideReleaseRequest,
     ) -> DockRenderedOutsideReleaseDecision {
+        self.cancel_outside_release_poll();
+
         if !request.viewport_runtime_available {
             return DockRenderedOutsideReleaseDecision::Inactive;
         }
@@ -471,7 +473,7 @@ mod tests {
 
     #[test]
     fn rendered_outside_release_requires_viewport_runtime_and_payload() {
-        let runtime = DockInteractionRuntime::default();
+        let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
         let host_space = DockSpaceId::from("host");
         let release_position = point(px(120.0), px(80.0));
@@ -491,6 +493,40 @@ mod tests {
                 host_space,
                 release_position,
             ))
+        );
+    }
+
+    #[test]
+    fn rendered_outside_release_stops_outside_poll_session() {
+        let mut runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A");
+        runtime
+            .begin_outside_release_poll(payload.identity())
+            .expect("poll session should start");
+
+        assert_eq!(
+            runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+                payload,
+                DockSpaceId::from("host"),
+                point(px(120.0), px(80.0)),
+            ))
+        );
+        assert!(
+            !runtime.outside_release_poll_running(),
+            "rendered outside release should own poll session cleanup"
+        );
+
+        let missing_payload_session = runtime
+            .begin_outside_release_poll(item_payload("b", "Panel B").identity())
+            .expect("poll session should restart");
+        assert_eq!(
+            runtime.rendered_outside_release(rendered_request(true, None)),
+            DockRenderedOutsideReleaseDecision::Inactive
+        );
+        assert!(
+            !runtime.outside_release_poll_session_active(&missing_payload_session),
+            "rendered outside release should stop stale poll even without a payload"
         );
     }
 

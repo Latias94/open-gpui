@@ -79,7 +79,7 @@ impl Render for DockHost {
                         outside_release_host_space.clone(),
                         event.position,
                     );
-                    match this.interaction().rendered_outside_release(request) {
+                    match this.interaction_mut().rendered_outside_release(request) {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
                         DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
                             this.drop_payload_release_from_render(release, window, cx);
