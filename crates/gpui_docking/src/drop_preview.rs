@@ -25,9 +25,9 @@ impl DockDropPreview {
         let target = resolution_target(resolution)?;
         let rejected = matches!(resolution, DockDropResolution::Rejected(_));
         let (kind, bounds) = match &target.kind {
-            DockResolvedDropTargetKind::KnownViewport { hit } => (
+            DockResolvedDropTargetKind::KnownViewport { target } => (
                 DockDropPreviewKind::KnownViewportRoute,
-                route_bounds(hit.host_position()),
+                route_bounds(target.host_position()),
             ),
             DockResolvedDropTargetKind::TearOffCandidate {
                 release_position, ..

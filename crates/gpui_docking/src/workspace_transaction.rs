@@ -161,7 +161,9 @@ mod tests {
     use super::*;
     use crate::{
         DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId, DockViewportHit, SplitAxis,
-        drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+        drop_target::{
+            DockDropResolveSource, DockKnownViewportDropTarget, DockResolvedDropTargetKind,
+        },
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -413,7 +415,10 @@ mod tests {
                 item: &item("a"),
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::KnownViewport {
-                    hit: DockViewportHit::new(secondary.clone(), point(px(5.0), px(5.0))),
+                    target: DockKnownViewportDropTarget::from_hit(DockViewportHit::new(
+                        secondary.clone(),
+                        point(px(5.0), px(5.0)),
+                    )),
                 }),
             })
             .expect_err("known viewport requires local target resolution");

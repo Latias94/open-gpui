@@ -55,12 +55,27 @@ pub(crate) enum DockResolvedDropTargetKind {
         space: DockSpaceId,
     },
     KnownViewport {
-        hit: DockViewportHit,
+        target: DockKnownViewportDropTarget,
     },
     TearOffCandidate {
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockKnownViewportDropTarget {
+    hit: DockViewportHit,
+}
+
+impl DockKnownViewportDropTarget {
+    pub(crate) fn from_hit(hit: DockViewportHit) -> Self {
+        Self { hit }
+    }
+
+    pub(crate) fn host_position(&self) -> Point<Pixels> {
+        self.hit.host_position()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,7 +185,9 @@ pub(crate) struct DockDropRejection {
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
     if let Some(hit) = input.known_viewport {
         return Some(DockDropResolution::Valid(DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::KnownViewport { hit },
+            kind: DockResolvedDropTargetKind::KnownViewport {
+                target: DockKnownViewportDropTarget::from_hit(hit),
+            },
             source: DockDropResolveSource::KnownViewport,
             preview_bounds: None,
             is_central_region: false,
@@ -940,7 +957,9 @@ mod tests {
         assert_eq!(target.source, DockDropResolveSource::KnownViewport);
         assert_eq!(
             target.kind,
-            DockResolvedDropTargetKind::KnownViewport { hit }
+            DockResolvedDropTargetKind::KnownViewport {
+                target: DockKnownViewportDropTarget::from_hit(hit)
+            }
         );
     }
 
