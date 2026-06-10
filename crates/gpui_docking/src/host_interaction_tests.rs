@@ -742,7 +742,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         })
         .expect("source viewport should still be live");
     assert_eq!(
-        after_drop_context.active_window,
+        after_drop_context.active_window(),
         Some(detached_window.window_id()),
         "rendered tear-off should activate the new detached viewport"
     );

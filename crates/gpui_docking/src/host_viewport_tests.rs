@@ -118,8 +118,8 @@ fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppCont
         })
         .expect("alpha window should be live");
 
-    assert_eq!(context.event_window, Some(alpha_handle.window_id()));
-    assert_eq!(context.active_window, Some(zeta_handle.window_id()));
+    assert_eq!(context.event_window(), Some(alpha_handle.window_id()));
+    assert_eq!(context.active_window(), Some(zeta_handle.window_id()));
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)

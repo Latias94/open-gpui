@@ -40,29 +40,30 @@ impl DockViewportPlatformSignals {
 
     /// Converts the platform snapshot into the pure resolver context.
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
-        DockViewportTargetContext {
-            event_window: self.event_window,
-            active_window: self.active_window,
-            window_stack: self.window_stack.clone(),
-        }
+        DockViewportTargetContext::from_window_signals(
+            self.event_window,
+            self.active_window,
+            self.window_stack.clone(),
+        )
     }
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
+        let (event_window, active_window, window_stack) = target_context.into_window_signals();
         Self {
-            event_window: target_context.event_window,
-            active_window: target_context.active_window,
-            window_stack: target_context.window_stack,
+            event_window,
+            active_window,
+            window_stack,
         }
     }
 }
 
 impl From<DockViewportPlatformSignals> for DockViewportTargetContext {
     fn from(signals: DockViewportPlatformSignals) -> Self {
-        Self {
-            event_window: signals.event_window,
-            active_window: signals.active_window,
-            window_stack: signals.window_stack,
-        }
+        Self::from_window_signals(
+            signals.event_window,
+            signals.active_window,
+            signals.window_stack,
+        )
     }
 }

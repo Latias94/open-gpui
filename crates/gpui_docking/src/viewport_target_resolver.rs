@@ -41,15 +41,15 @@ pub(crate) fn choose_viewport_target(
             let window_id = hit.window.window_id();
             (
                 context
-                    .event_window
+                    .event_window()
                     .map(|event| usize::from(event != window_id))
                     .unwrap_or(1),
                 context
-                    .active_window
+                    .active_window()
                     .map(|active| usize::from(active != window_id))
                     .unwrap_or(1),
                 context
-                    .window_stack
+                    .window_stack()
                     .iter()
                     .position(|stacked| *stacked == window_id)
                     .unwrap_or(usize::MAX),

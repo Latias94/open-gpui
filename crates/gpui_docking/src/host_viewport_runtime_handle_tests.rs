@@ -871,7 +871,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         })
         .expect("target window should be live");
     assert_eq!(
-        before_drop_context.active_window,
+        before_drop_context.active_window(),
         Some(source_opened.window.window_id()),
         "source viewport should be active before the routed drop commits"
     );
@@ -970,7 +970,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         })
         .expect("source window should be live");
     assert_eq!(
-        after_drop_context.active_window,
+        after_drop_context.active_window(),
         Some(opened.window.window_id()),
         "successful routed drop should activate the destination viewport"
     );
@@ -1101,7 +1101,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         })
         .expect("source window should be live");
     assert_eq!(
-        after_drop_context.active_window,
+        after_drop_context.active_window(),
         Some(target_opened.window.window_id()),
         "host interaction should consume the routed activation target"
     );
