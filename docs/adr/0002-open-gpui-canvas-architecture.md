@@ -212,6 +212,8 @@ flowchart TD
 The canonical document is made of records:
 
 - `CanvasDocument`: metadata plus `IndexMap` collections for nodes, edges, and shapes.
+- `CanvasDocumentBuilder`: construction-only draft path for snapshots, import formats, examples,
+  and fixtures.
 - `CanvasNode`: id, kind, position, size, z-index, flags, arbitrary serializable payload, and
   handles.
 - `CanvasEdge`: id, kind, source endpoint, target endpoint, z-index, flags, style, route
@@ -225,6 +227,13 @@ The distinction between nodes and shapes is intentional. Nodes are semantic grap
 handles and optional application payload. Shapes are drawable records with bounds and no required
 graph semantics. Applications may build mind-map topics as nodes, freehand strokes as shapes, and
 links as edges in the same document.
+
+Construction and editing are separate write modes. `CanvasDocumentBuilder` assembles an initial
+document, validates nodes, edges, shapes, and relation facts, prunes dangling relationships at load
+time, and then yields a canonical `CanvasDocument`. It does not publish committed mutations,
+runtime-cache updates, history entries, persistence log records, or listener notifications.
+Application edits therefore still go through `CanvasDocument` transactions, `CanvasStore`, or
+`CanvasEditor` depending on the layer doing the work.
 
 Record relationships are structural document facts, not arbitrary kind payload. Parent and group
 relations live in `CanvasRecordRelations`, use `CanvasRecordId` so nodes, edges, and shapes can all

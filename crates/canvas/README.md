@@ -28,6 +28,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   act as coarse candidate providers.
 - `CanvasStore` owns the canonical document, runtime cache, history, edge router, kind registry, and
   committed change feed. No-op and failed mutations do not advance history or notify listeners.
+- `CanvasDocumentBuilder` is the explicit construction path for snapshots, imports, examples, and
+  fixtures. It validates records and relation facts without publishing edit history or store
+  changes.
 - `CanvasGeometryFacts` centralizes record bounds, handle positions, route paths, edge bounds,
   hit areas, endpoint picking, previews, and paint fallback geometry.
 - `CanvasKindRegistry` lets applications register node, edge, and shape kind policy bundles for
@@ -76,8 +79,7 @@ command, query, tool, and persistence boundaries over early feature breadth.
 ```rust
 use open_gpui::{point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasTransaction,
-    DocumentCommand, DocumentError,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, DocumentError,
 };
 
 fn build_document() -> Result<CanvasDocument, DocumentError> {
@@ -99,19 +101,23 @@ fn build_document() -> Result<CanvasDocument, DocumentError> {
         .handles
         .push(CanvasHandle::new("in", point(px(0.0), px(40.0))));
 
-    let mut document = CanvasDocument::default();
-    document.apply_transaction(CanvasTransaction::new([
-        DocumentCommand::InsertNode(source),
-        DocumentCommand::InsertNode(target),
-        DocumentCommand::InsertEdge(CanvasEdge::new(
-            "source-target",
-            CanvasEndpoint::new("source", Some("out")),
-            CanvasEndpoint::new("target", Some("in")),
-        )),
-    ]))?;
-    Ok(document)
+    let mut builder = CanvasDocument::builder();
+    builder.add_node(source)?;
+    builder.add_node(target)?;
+    builder.add_edge(CanvasEdge::new(
+        "source-target",
+        CanvasEndpoint::new("source", Some("out")),
+        CanvasEndpoint::new("target", Some("in")),
+    ))?;
+    builder.build()
 }
 ```
+
+Use `CanvasDocumentBuilder` when creating a document from snapshots, import formats, examples, or
+fixtures. Use `CanvasDocument::apply_transaction`, `CanvasStore`, or `CanvasEditor` when modeling an
+edit to an existing document, because those paths produce committed mutation facts, inverse
+transactions, runtime-cache updates, history entries, persistence log records, and listener
+notifications as appropriate.
 
 ## Query Graph Structure
 
@@ -420,9 +426,11 @@ assert_eq!(
 ```
 
 Use `CanvasDocument::from_snapshot_with_kind_registry` to normalize and validate a snapshot at load
-time. Use `CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_registry` when the
-interactive editor should apply the same registry to transactions, gestures, undo/redo validation,
-runtime caches, and paint snapshots.
+time. Snapshot loading and JSON Canvas import use the construction path rather than store changes;
+the resulting document is already valid, but no edit history or listeners are produced. Use
+`CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_registry` when the interactive
+editor should apply the same registry to transactions, gestures, undo/redo validation, runtime
+caches, and paint snapshots.
 
 Node, edge, and shape render policies can all return renderer-neutral `CanvasKindPaint` defaults.
 Node and shape render policies can also return `CanvasKindLabel` metadata for paint-frame snapshots.

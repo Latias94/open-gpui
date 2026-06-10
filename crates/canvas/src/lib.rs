@@ -40,10 +40,10 @@ pub use changes::{
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,
-    CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape,
-    CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue, DocumentCommand, DocumentError,
-    EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder, CanvasDocumentDiff,
+    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue,
+    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
 };
 pub use format::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,

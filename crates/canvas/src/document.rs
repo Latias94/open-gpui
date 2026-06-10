@@ -643,9 +643,70 @@ impl Default for CanvasDocument {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CanvasDocumentBuilder {
+    document: CanvasDocument,
+}
+
+impl CanvasDocumentBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_format_version(mut self, format_version: u32) -> Self {
+        self.document.format_version = format_version;
+        self
+    }
+
+    pub fn with_metadata(mut self, metadata: CanvasValue) -> Self {
+        self.document.metadata = metadata;
+        self
+    }
+
+    pub fn with_relations(mut self, relations: CanvasRecordRelations) -> Self {
+        self.document.relations = relations;
+        self
+    }
+
+    pub fn add_node(&mut self, node: CanvasNode) -> Result<&mut Self, DocumentError> {
+        self.document.insert_node_rule(node)?;
+        Ok(self)
+    }
+
+    pub fn add_edge(&mut self, edge: CanvasEdge) -> Result<&mut Self, DocumentError> {
+        self.document.insert_edge_rule(edge)?;
+        Ok(self)
+    }
+
+    pub fn add_shape(&mut self, shape: CanvasShape) -> Result<&mut Self, DocumentError> {
+        self.document.insert_shape_rule(shape)?;
+        Ok(self)
+    }
+
+    pub fn build(mut self) -> Result<CanvasDocument, DocumentError> {
+        self.document.prune_missing_relations();
+        self.document.validate_relations()?;
+        Ok(self.document)
+    }
+
+    pub fn build_with_kind_registry(
+        mut self,
+        kind_registry: &CanvasKindRegistry,
+    ) -> Result<CanvasDocument, DocumentError> {
+        self.document.prune_missing_relations();
+        self.document.validate_relations()?;
+        kind_registry.validate_document(&self.document)?;
+        Ok(self.document)
+    }
+}
+
 impl CanvasDocument {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn builder() -> CanvasDocumentBuilder {
+        CanvasDocumentBuilder::new()
     }
 
     pub fn format_version(&self) -> u32 {
@@ -746,32 +807,27 @@ impl CanvasDocument {
     ) -> Result<Self, DocumentError> {
         let snapshot = migrate_canvas_snapshot(snapshot)?;
 
-        let mut document = Self {
-            format_version: snapshot.format_version,
-            metadata: snapshot.metadata,
-            relations: snapshot.relations,
-            ..Self::default()
-        };
+        let mut builder = Self::builder()
+            .with_format_version(snapshot.format_version)
+            .with_metadata(snapshot.metadata)
+            .with_relations(snapshot.relations);
 
         for node in snapshot.nodes {
             let node = kind_registry.normalize_node(node)?;
-            document.insert_node(node)?;
+            builder.add_node(node)?;
         }
 
         for shape in snapshot.shapes {
             let shape = kind_registry.normalize_shape(shape)?;
-            document.insert_shape(shape)?;
+            builder.add_shape(shape)?;
         }
 
         for edge in snapshot.edges {
             let edge = kind_registry.normalize_edge(edge)?;
-            document.insert_edge(edge)?;
+            builder.add_edge(edge)?;
         }
 
-        document.prune_missing_relations();
-        document.validate_relations()?;
-        kind_registry.validate_document(&document)?;
-        Ok(document)
+        builder.build_with_kind_registry(kind_registry)
     }
 
     pub fn to_snapshot(&self) -> CanvasSnapshot {
@@ -787,24 +843,24 @@ impl CanvasDocument {
 
     pub(crate) fn apply(&mut self, command: DocumentCommand) -> Result<(), DocumentError> {
         match command {
-            DocumentCommand::InsertNode(node) => self.insert_node(node),
-            DocumentCommand::UpdateNode(node) => self.update_node(node),
-            DocumentCommand::RemoveNode(id) => self.remove_node(&id).map(drop),
-            DocumentCommand::InsertEdge(edge) => self.insert_edge(edge),
-            DocumentCommand::UpdateEdge(edge) => self.update_edge(edge),
-            DocumentCommand::RemoveEdge(id) => self.remove_edge(&id).map(drop),
-            DocumentCommand::InsertShape(shape) => self.insert_shape(shape),
-            DocumentCommand::UpdateShape(shape) => self.update_shape(shape),
-            DocumentCommand::RemoveShape(id) => self.remove_shape(&id).map(drop),
+            DocumentCommand::InsertNode(node) => self.insert_node_rule(node),
+            DocumentCommand::UpdateNode(node) => self.update_node_rule(node),
+            DocumentCommand::RemoveNode(id) => self.remove_node_rule(&id).map(drop),
+            DocumentCommand::InsertEdge(edge) => self.insert_edge_rule(edge),
+            DocumentCommand::UpdateEdge(edge) => self.update_edge_rule(edge),
+            DocumentCommand::RemoveEdge(id) => self.remove_edge_rule(&id).map(drop),
+            DocumentCommand::InsertShape(shape) => self.insert_shape_rule(shape),
+            DocumentCommand::UpdateShape(shape) => self.update_shape_rule(shape),
+            DocumentCommand::RemoveShape(id) => self.remove_shape_rule(&id).map(drop),
             DocumentCommand::SetRecordParent { child, parent } => {
-                self.set_record_parent(child, parent)
+                self.set_record_parent_rule(child, parent)
             }
             DocumentCommand::ClearRecordParent { child } => {
                 self.relations.clear_parent(&child);
                 Ok(())
             }
             DocumentCommand::AddRecordToGroup { group, member } => {
-                self.add_record_to_group(group, member)
+                self.add_record_to_group_rule(group, member)
             }
             DocumentCommand::RemoveRecordFromGroup { group, member } => {
                 self.relations.remove_from_group(&group, &member);
@@ -869,7 +925,7 @@ impl CanvasDocument {
         })
     }
 
-    pub(crate) fn insert_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+    fn insert_node_rule(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
         if self.nodes.contains_key(&node.id) {
             return Err(DocumentError::DuplicateNode(node.id));
         }
@@ -879,7 +935,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn update_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+    fn update_node_rule(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
         if !self.nodes.contains_key(&node.id) {
             return Err(DocumentError::MissingNode(node.id));
         }
@@ -892,7 +948,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn remove_node(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
+    fn remove_node_rule(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
         let Some(node) = self.nodes.shift_remove(id) else {
             return Err(DocumentError::MissingNode(id.clone()));
         };
@@ -902,7 +958,7 @@ impl CanvasDocument {
         Ok(node)
     }
 
-    pub(crate) fn insert_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+    fn insert_edge_rule(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
         if self.edges.contains_key(&edge.id) {
             return Err(DocumentError::DuplicateEdge(edge.id));
         }
@@ -912,7 +968,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn update_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+    fn update_edge_rule(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
         if !self.edges.contains_key(&edge.id) {
             return Err(DocumentError::MissingEdge(edge.id));
         }
@@ -922,13 +978,13 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn remove_edge(&mut self, id: &EdgeId) -> Result<CanvasEdge, DocumentError> {
+    fn remove_edge_rule(&mut self, id: &EdgeId) -> Result<CanvasEdge, DocumentError> {
         self.edges
             .shift_remove(id)
             .ok_or_else(|| DocumentError::MissingEdge(id.clone()))
     }
 
-    pub(crate) fn insert_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
+    fn insert_shape_rule(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
         if self.shapes.contains_key(&shape.id) {
             return Err(DocumentError::DuplicateShape(shape.id));
         }
@@ -937,7 +993,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn update_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
+    fn update_shape_rule(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
         if !self.shapes.contains_key(&shape.id) {
             return Err(DocumentError::MissingShape(shape.id));
         }
@@ -946,13 +1002,13 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn remove_shape(&mut self, id: &ShapeId) -> Result<CanvasShape, DocumentError> {
+    fn remove_shape_rule(&mut self, id: &ShapeId) -> Result<CanvasShape, DocumentError> {
         self.shapes
             .shift_remove(id)
             .ok_or_else(|| DocumentError::MissingShape(id.clone()))
     }
 
-    pub(crate) fn set_record_parent(
+    fn set_record_parent_rule(
         &mut self,
         child: CanvasRecordId,
         parent: CanvasRecordId,
@@ -966,7 +1022,7 @@ impl CanvasDocument {
         Ok(())
     }
 
-    pub(crate) fn add_record_to_group(
+    fn add_record_to_group_rule(
         &mut self,
         group: CanvasRecordId,
         member: CanvasRecordId,
@@ -978,6 +1034,37 @@ impl CanvasDocument {
         self.validate_record_id(&member)?;
         self.relations.add_to_group(group, member);
         Ok(())
+    }
+
+    // Fixture helpers are test-only; production mutations go through builder or journaled paths.
+    #[cfg(test)]
+    pub(crate) fn insert_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+        self.insert_node_rule(node)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
+        self.update_node_rule(node)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_node(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
+        self.remove_node_rule(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+        self.insert_edge_rule(edge)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
+        self.update_edge_rule(edge)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_shape(&mut self, shape: CanvasShape) -> Result<(), DocumentError> {
+        self.insert_shape_rule(shape)
     }
 
     pub fn validate_endpoint(&self, endpoint: &CanvasEndpoint) -> Result<(), DocumentError> {
@@ -1537,6 +1624,140 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![child]
+        );
+    }
+
+    #[test]
+    fn builder_rejects_duplicate_records_during_construction() {
+        let mut builder = CanvasDocument::builder();
+        builder
+            .add_node(CanvasNode::new(
+                "duplicate",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let error = builder
+            .add_node(CanvasNode::new(
+                "duplicate",
+                point(px(20.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            DocumentError::DuplicateNode(NodeId::from("duplicate"))
+        );
+    }
+
+    #[test]
+    fn builder_rejects_invalid_edge_endpoints_during_construction() {
+        let mut builder = CanvasDocument::builder();
+        builder
+            .add_node(CanvasNode::new(
+                "source",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+
+        let error = builder
+            .add_edge(CanvasEdge::new(
+                "edge",
+                CanvasEndpoint::new("source", None::<&str>),
+                CanvasEndpoint::new("missing", None::<&str>),
+            ))
+            .unwrap_err();
+
+        assert_eq!(error, DocumentError::MissingNode(NodeId::from("missing")));
+    }
+
+    #[test]
+    fn builder_prunes_dangling_relations_at_build_time() {
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let existing_group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let missing_group = CanvasRecordId::Shape(ShapeId::from("missing"));
+
+        let mut relations = CanvasRecordRelations::default();
+        relations.set_parent(child.clone(), missing_group.clone());
+        relations.add_to_group(existing_group.clone(), child.clone());
+        relations.add_to_group(missing_group, child.clone());
+
+        let mut builder = CanvasDocument::builder().with_relations(relations);
+        builder
+            .add_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        builder
+            .add_shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+
+        let document = builder.build().unwrap();
+
+        assert_eq!(document.relations().parent_of(&child), None);
+        assert_eq!(
+            document
+                .relations()
+                .members_of(&existing_group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![child]
+        );
+    }
+
+    #[test]
+    fn builder_rejects_duplicate_parent_relations_at_build_time() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "child",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .unwrap();
+        for id in ["frame-a", "frame-b"] {
+            document
+                .insert_shape(CanvasShape::new(
+                    id,
+                    Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+                ))
+                .unwrap();
+        }
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                },
+            ))
+            .unwrap();
+        let mut value = serde_json::to_value(document.to_snapshot()).unwrap();
+        let parents = value["relations"]["parents"].as_array_mut().unwrap();
+        let mut duplicate = parents[0].clone();
+        duplicate["parent"] =
+            serde_json::to_value(CanvasRecordId::Shape(ShapeId::from("frame-b"))).unwrap();
+        parents.push(duplicate);
+        let snapshot: CanvasSnapshot = serde_json::from_value(value).unwrap();
+
+        let mut builder = CanvasDocument::builder().with_relations(snapshot.relations);
+        for node in snapshot.nodes {
+            builder.add_node(node).unwrap();
+        }
+        for shape in snapshot.shapes {
+            builder.add_shape(shape).unwrap();
+        }
+
+        assert_eq!(
+            builder.build().unwrap_err(),
+            DocumentError::DuplicateParentRelation(CanvasRecordId::Node(NodeId::from("child")))
         );
     }
 

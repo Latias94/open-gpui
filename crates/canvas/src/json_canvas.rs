@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasStyle, CanvasValue,
-    DocumentError, NodeId,
+    CanvasDocument, CanvasDocumentBuilder, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasStyle, CanvasValue, DocumentError, NodeId,
 };
 use indexmap::IndexMap;
 use open_gpui::{Pixels, Point, point, px, size};
@@ -102,16 +102,16 @@ impl TryFrom<JsonCanvas> for CanvasDocument {
             }
         }
 
-        let mut document = CanvasDocument::default();
+        let mut builder = CanvasDocumentBuilder::new();
         for (_, node) in nodes {
-            document.insert_node(node)?;
+            builder.add_node(node)?;
         }
 
         for edge in canvas.edges {
-            document.insert_edge(edge.into_canvas_edge())?;
+            builder.add_edge(edge.into_canvas_edge())?;
         }
 
-        Ok(document)
+        builder.build().map_err(Into::into)
     }
 }
 
@@ -821,6 +821,25 @@ mod tests {
         assert!(matches!(
             err,
             JsonCanvasError::Document(DocumentError::DuplicateNode(id)) if id == NodeId::from("note")
+        ));
+    }
+
+    #[test]
+    fn rejects_edges_with_missing_nodes_on_import() {
+        let input = r#"{
+            "nodes": [
+                { "id": "note", "type": "text", "x": 0, "y": 0, "width": 100, "height": 100, "text": "A" }
+            ],
+            "edges": [
+                { "id": "edge", "fromNode": "note", "toNode": "missing" }
+            ]
+        }"#;
+
+        let err = document_from_json_canvas_str(input).unwrap_err();
+
+        assert!(matches!(
+            err,
+            JsonCanvasError::Document(DocumentError::MissingNode(id)) if id == NodeId::from("missing")
         ));
     }
 
