@@ -28,6 +28,11 @@ impl CanvasDocumentFixtureBuilder {
         self
     }
 
+    pub(crate) fn shape(mut self, shape: CanvasShape) -> Self {
+        self.add_shape(shape);
+        self
+    }
+
     pub(crate) fn add_node(&mut self, node: CanvasNode) -> &mut Self {
         self.builder.add_node(node).unwrap();
         self

@@ -204,6 +204,7 @@ fn options_match(record: &HitRecord, options: HitOptions) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{
         CanvasDefaultEdgeRouter, CanvasHandle, CanvasNode, CanvasShape, CanvasTransaction,
         DocumentCommand, NodeId,
@@ -212,7 +213,6 @@ mod tests {
 
     #[test]
     fn runtime_query_owns_filtering_and_ordering_over_cache_candidates() {
-        let mut document = CanvasDocument::default();
         let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         back.z_index = 1;
         back.handles
@@ -222,8 +222,7 @@ mod tests {
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         );
         front.z_index = 2;
-        document.insert_node(back).unwrap();
-        document.insert_shape(front).unwrap();
+        let document = document_fixture().node(back).shape(front).build();
 
         let query = CanvasRuntimeQuery::rebuild_with_router(&document, &CanvasDefaultEdgeRouter);
 
@@ -261,14 +260,13 @@ mod tests {
 
     #[test]
     fn runtime_query_suppresses_stale_cache_records_after_diff() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut query =
             CanvasRuntimeQuery::rebuild_with_router(&document, &CanvasDefaultEdgeRouter);
 
