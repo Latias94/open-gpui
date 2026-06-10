@@ -300,9 +300,16 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let (source_space, source_tabs, payload, target_space) = match commit {
             DockViewportDropRouteCommit::Workspace(commit) => {
-                let (source_space, source_tabs, payload, route_space, host_position) =
-                    commit.into_parts();
-                let target_space = self.resolve_route_target(&route_space, host_position, cx)?;
+                let (
+                    source_space,
+                    source_tabs,
+                    payload,
+                    route_space,
+                    target_window_id,
+                    host_position,
+                ) = commit.into_parts();
+                let target_space =
+                    self.resolve_route_target(&route_space, target_window_id, host_position, cx)?;
                 (source_space, source_tabs, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {
@@ -339,14 +346,17 @@ impl DockViewportRuntime {
     fn resolve_route_target(
         &self,
         target_space: &DockSpaceId,
+        target_window_id: Option<WindowId>,
         host_position: Point<Pixels>,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
         let policy = *self.controller.read(cx).workspace().policy();
-        let Some(target) = self
-            .host_scenes
-            .resolve(target_space, host_position, &policy)
-        else {
+        let Some(target) = self.host_scenes.resolve_for_window(
+            target_space,
+            target_window_id,
+            host_position,
+            &policy,
+        ) else {
             return Err(DockActionApplyError::DropTargetUnavailable);
         };
         Ok((target_space.clone(), target))

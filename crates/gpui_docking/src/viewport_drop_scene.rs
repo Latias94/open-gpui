@@ -144,13 +144,27 @@ impl DockViewportHostSceneRegistry {
         Some(scene.frame())
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve(
         &self,
         space: &DockSpaceId,
         host_position: Point<Pixels>,
         policy: &DockPolicy,
     ) -> Option<DockResolvedDropTarget> {
+        self.resolve_for_window(space, None, host_position, policy)
+    }
+
+    pub(crate) fn resolve_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        host_position: Point<Pixels>,
+        policy: &DockPolicy,
+    ) -> Option<DockResolvedDropTarget> {
         let snapshot = self.scenes.get(space)?;
+        if window_id.is_some_and(|window_id| snapshot.window_id != window_id) {
+            return None;
+        }
         let mut scene = snapshot.scene.clone();
         scene.position = point(
             snapshot.host_bounds.origin.x + host_position.x,
@@ -207,6 +221,64 @@ mod tests {
 
         assert!(registry.push_frame_fact(&second, empty_space_fact(space.clone())));
         assert_empty_space_target(&registry, &space);
+    }
+
+    #[test]
+    fn host_scene_resolve_rejects_stale_window_identity() {
+        let space = space("main");
+        let old_window = WindowId::from(1);
+        let new_window = WindowId::from(2);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let old_frame = registry.register(snapshot(space.clone(), old_window)).frame;
+        assert!(registry.push_frame_fact(&old_frame, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .resolve_for_window(
+                    &space,
+                    Some(old_window),
+                    point(px(10.0), px(10.0)),
+                    &DockPolicy::default(),
+                )
+                .is_some(),
+            "the current window should resolve its own scene"
+        );
+        assert!(
+            registry
+                .resolve_for_window(
+                    &space,
+                    Some(new_window),
+                    point(px(10.0), px(10.0)),
+                    &DockPolicy::default(),
+                )
+                .is_none(),
+            "a different window id must not consume another window's scene"
+        );
+
+        let new_frame = registry.register(snapshot(space.clone(), new_window)).frame;
+        assert!(registry.push_frame_fact(&new_frame, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .resolve_for_window(
+                    &space,
+                    Some(old_window),
+                    point(px(10.0), px(10.0)),
+                    &DockPolicy::default(),
+                )
+                .is_none(),
+            "a stale route from the old window must not resolve the reopened scene"
+        );
+        assert!(
+            registry
+                .resolve_for_window(
+                    &space,
+                    Some(new_window),
+                    point(px(10.0), px(10.0)),
+                    &DockPolicy::default(),
+                )
+                .is_some(),
+            "the reopened window should resolve its own scene"
+        );
     }
 
     fn snapshot(space: DockSpaceId, window_id: WindowId) -> DockViewportHostSceneSnapshot {

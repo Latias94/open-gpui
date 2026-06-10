@@ -4,7 +4,7 @@ use crate::{
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
     DockViewportTearOffRequest,
 };
-use open_gpui::{Pixels, Point, WindowBounds};
+use open_gpui::{Pixels, Point, WindowBounds, WindowId};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +54,7 @@ pub(crate) struct DockViewportDropWorkspaceCommit {
     source_tabs: DockNodeId,
     payload: DockViewportDropPayload,
     target_space: DockSpaceId,
+    target_window_id: Option<WindowId>,
     host_position: Point<Pixels>,
 }
 
@@ -61,6 +62,7 @@ impl DockViewportDropWorkspaceCommit {
     fn from_request_target(
         request: &DockViewportDropRouteRequest,
         target_space: DockSpaceId,
+        target_window_id: Option<WindowId>,
         host_position: Point<Pixels>,
     ) -> Self {
         Self {
@@ -68,6 +70,7 @@ impl DockViewportDropWorkspaceCommit {
             source_tabs: request.source_tabs(),
             payload: request.payload().clone(),
             target_space,
+            target_window_id,
             host_position,
         }
     }
@@ -79,6 +82,7 @@ impl DockViewportDropWorkspaceCommit {
         DockNodeId,
         DockViewportDropPayload,
         DockSpaceId,
+        Option<WindowId>,
         Point<Pixels>,
     ) {
         (
@@ -86,6 +90,7 @@ impl DockViewportDropWorkspaceCommit {
             self.source_tabs,
             self.payload,
             self.target_space,
+            self.target_window_id,
             self.host_position,
         )
     }
@@ -101,15 +106,18 @@ impl DockViewportDropRouteCommit {
                 Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
                     request,
                     request.source_space().clone(),
+                    None,
                     host_position,
                 ))
             }
             DockViewportDropRoute::KnownViewport { target } => {
                 let target_space = target.space().clone();
+                let target_window_id = Some(target.window_id());
                 let host_position = target.host_position();
                 Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
                     request,
                     target_space,
+                    target_window_id,
                     host_position,
                 ))
             }
@@ -397,32 +405,51 @@ mod tests {
         else {
             panic!("local route should derive a workspace commit");
         };
-        let (recorded_source, recorded_tabs, payload, target_space, host_position) =
-            local.into_parts();
+        let (
+            recorded_source,
+            recorded_tabs,
+            payload,
+            target_space,
+            target_window_id,
+            host_position,
+        ) = local.into_parts();
         assert_eq!(recorded_source, source);
         assert_eq!(recorded_tabs, source_tabs);
         assert_eq!(payload, DockViewportDropPayload::Item(item.clone()));
         assert_eq!(target_space, recorded_source);
+        assert_eq!(target_window_id, None);
         assert_eq!(host_position, local_position);
 
         let target = space("target");
+        let target_window = handle(9);
         let known_position = point(px(12.0), px(34.0));
         let DockViewportDropRouteCommit::Workspace(known) =
             DockViewportDropRouteCommit::from_route_request(
                 &request,
                 DockViewportDropRoute::KnownViewport {
-                    target: DockViewportTargetHit::new(target.clone(), handle(9), known_position),
+                    target: DockViewportTargetHit::new(
+                        target.clone(),
+                        target_window,
+                        known_position,
+                    ),
                 },
             )
         else {
             panic!("known viewport route should derive a workspace commit");
         };
-        let (recorded_source, recorded_tabs, payload, target_space, host_position) =
-            known.into_parts();
+        let (
+            recorded_source,
+            recorded_tabs,
+            payload,
+            target_space,
+            target_window_id,
+            host_position,
+        ) = known.into_parts();
         assert_eq!(recorded_source, source);
         assert_eq!(recorded_tabs, source_tabs);
         assert_eq!(payload, DockViewportDropPayload::Item(item));
         assert_eq!(target_space, target);
+        assert_eq!(target_window_id, Some(target_window.window_id()));
         assert_eq!(host_position, known_position);
     }
 
