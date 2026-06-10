@@ -58,7 +58,7 @@ pub(crate) struct DockViewportPreparedTearOffDrop {
 #[derive(Debug)]
 pub(crate) enum DockViewportTearOffCommitPreparation {
     Noop(DockViewportDropRouteOutcome),
-    Prepared(DockViewportPreparedTearOffDrop),
+    Prepared(Box<DockViewportPreparedTearOffDrop>),
 }
 
 fn install_should_close_hook(
@@ -429,17 +429,19 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         match self.prepare_tear_off_drop_route_commit(request, cx)? {
             DockViewportTearOffCommitPreparation::Noop(outcome) => Ok(outcome),
-            DockViewportTearOffCommitPreparation::Prepared(prepared) => self
-                .open_tear_off_viewport(
+            DockViewportTearOffCommitPreparation::Prepared(prepared) => {
+                let prepared = *prepared;
+                self.open_tear_off_viewport(
                     prepared.request,
                     prepared.target_space,
                     prepared.options,
                     cx,
                 )
-                .map(DockViewportDropRouteOutcome::TearOff)
+                .map(DockViewportDropRouteOutcome::tear_off)
                 .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
                     message: error.to_string(),
-                }),
+                })
+            }
         }
     }
 
@@ -458,9 +460,9 @@ impl DockViewportRuntime {
             return Ok(DockViewportTearOffCommitPreparation::Noop(outcome));
         }
 
-        Ok(DockViewportTearOffCommitPreparation::Prepared(
+        Ok(DockViewportTearOffCommitPreparation::Prepared(Box::new(
             self.prepare_tear_off_drop_route(request, cx)?,
-        ))
+        )))
     }
 
     pub(crate) fn prepare_tear_off_drop_route(

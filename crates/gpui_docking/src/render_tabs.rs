@@ -55,13 +55,11 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    this.update_leaf_drop_scene_from_render(
+                    let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
+                    this.update_drop_scene_fact_from_render(
                         &payload,
-                        drop_root,
-                        node,
-                        event.bounds,
+                        fact,
                         event.event.position,
-                        is_central,
                         window,
                         cx,
                     );
@@ -151,13 +149,16 @@ impl DockHost {
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
-                        this.update_tab_label_drop_scene_from_render(
-                            &payload,
+                        let fact = drop_scene_fact::tab_label(
                             node,
                             target_index,
                             event.bounds,
-                            event.event.position,
                             is_central,
+                        );
+                        this.update_drop_scene_fact_from_render(
+                            &payload,
+                            fact,
+                            event.event.position,
                             window,
                             cx,
                         );

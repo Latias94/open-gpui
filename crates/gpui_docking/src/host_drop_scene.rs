@@ -21,41 +21,15 @@ impl DockHost {
         ))
     }
 
-    pub(crate) fn update_leaf_drop_scene_interaction(
+    pub(crate) fn update_drop_scene_fact_interaction(
         &mut self,
         payload: &DockDragPayload,
-        root: DockNodeId,
-        target_tabs: DockNodeId,
-        bounds: Bounds<Pixels>,
+        fact: DockHostDropSceneFact,
         position: Point<Pixels>,
-        is_central: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        let fact = drop_scene_fact::leaf(root, target_tabs, bounds, is_central);
-        DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
-            position,
-            payload.excluded_tabs_for_drop_scene(),
-            fact,
-            window,
-            &policy,
-        ))
-    }
-
-    pub(crate) fn update_tab_label_drop_scene_interaction(
-        &mut self,
-        payload: &DockDragPayload,
-        target_tabs: DockNodeId,
-        target_index: usize,
-        bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        is_central: bool,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> DockHostInteractionOutcome {
-        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        let fact = drop_scene_fact::tab_label(target_tabs, target_index, bounds, is_central);
         DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
             position,
             payload.excluded_tabs_for_drop_scene(),
@@ -74,15 +48,8 @@ impl DockHost {
         window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
         let fact = drop_scene_fact::root(root, bounds);
-        DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
-            position,
-            payload.excluded_tabs_for_drop_scene(),
-            fact,
-            window,
-            &policy,
-        ))
+        self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
     }
 
     pub(crate) fn update_empty_space_drop_scene_interaction(
@@ -93,43 +60,9 @@ impl DockHost {
         window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
         let space = self.space().clone();
         let fact = drop_scene_fact::empty_space(space, bounds);
-        DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
-            position,
-            payload.excluded_tabs_for_drop_scene(),
-            fact,
-            window,
-            &policy,
-        ))
-    }
-
-    pub(crate) fn update_floating_title_bar_drop_scene_interaction(
-        &mut self,
-        payload: &DockDragPayload,
-        floating: DockNodeId,
-        target_tabs: DockNodeId,
-        title_bounds: Bounds<Pixels>,
-        preview_bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> DockHostInteractionOutcome {
-        let policy = self.with_workspace(cx, |workspace| *workspace.policy());
-        let fact = drop_scene_fact::floating_title_bar(
-            floating,
-            target_tabs,
-            title_bounds,
-            preview_bounds,
-        );
-        DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
-            position,
-            payload.excluded_tabs_for_drop_scene(),
-            fact,
-            window,
-            &policy,
-        ))
+        self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
     }
 
     fn push_drop_scene_fact_interaction(

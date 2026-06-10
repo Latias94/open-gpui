@@ -299,7 +299,7 @@ impl DockViewportRuntimeHandle {
                     runtime.record_drop_route_result(&result);
                     return result;
                 }
-                DockViewportTearOffCommitPreparation::Prepared(prepared) => prepared,
+                DockViewportTearOffCommitPreparation::Prepared(prepared) => *prepared,
             }
         };
 
@@ -310,7 +310,7 @@ impl DockViewportRuntimeHandle {
                 prepared.options,
                 cx,
             )
-            .map(DockViewportDropRouteOutcome::TearOff)
+            .map(DockViewportDropRouteOutcome::tear_off)
             .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
                 message: error.to_string(),
             });

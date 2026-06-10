@@ -7,17 +7,44 @@ use open_gpui::{
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Styled, canvas, div, px, relative, rgb,
 };
 
-impl DockHost {
-    pub(crate) fn render_split(
-        &mut self,
+pub(crate) struct DockRenderSplitInput {
+    node: DockNodeId,
+    axis: SplitAxis,
+    children: Vec<DockNodeId>,
+    fractions: Vec<f32>,
+}
+
+impl DockRenderSplitInput {
+    pub(crate) fn new(
         node: DockNodeId,
         axis: SplitAxis,
         children: Vec<DockNodeId>,
         fractions: Vec<f32>,
+    ) -> Self {
+        Self {
+            node,
+            axis,
+            children,
+            fractions,
+        }
+    }
+}
+
+impl DockHost {
+    pub(crate) fn render_split(
+        &mut self,
+        input: DockRenderSplitInput,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let DockRenderSplitInput {
+            node,
+            axis,
+            children,
+            fractions,
+        } = input;
+
         if children.is_empty() {
             return self.render_missing_node(node, session);
         }

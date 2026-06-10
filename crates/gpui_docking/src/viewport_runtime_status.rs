@@ -177,7 +177,7 @@ impl DockViewportRuntimeStatus {
                 .as_ref()
                 .map(DockViewportActivationRecord::from);
             if let DockViewportDropRouteOutcome::TearOff(tear_off) = outcome {
-                self.record_tear_off(tear_off);
+                self.record_tear_off(tear_off.as_ref());
             }
         }
     }
@@ -275,7 +275,7 @@ impl DockViewportDropOutcomeRecord {
                 error: None,
             },
             Ok(DockViewportDropRouteOutcome::TearOff(outcome)) => {
-                Self::from_tear_off_outcome(outcome)
+                Self::from_tear_off_outcome(outcome.as_ref())
             }
             Err(error) => Self {
                 kind: DockViewportDropOutcomeKind::Error,

@@ -316,7 +316,7 @@ pub(crate) enum DockViewportDropRouteOutcome {
     /// The route resolved to a normal workspace action.
     Action(DockViewportDropActionOutcome),
     /// The route opened or reused a platform viewport through the tear-off runtime transaction.
-    TearOff(DockViewportTearOffOpenOutcome),
+    TearOff(Box<DockViewportTearOffOpenOutcome>),
 }
 
 /// Workspace action outcome plus viewport-side effects requested by a routed drop.
@@ -383,38 +383,40 @@ impl DockViewportActivationTarget {
 }
 
 impl DockViewportDropRouteOutcome {
+    pub(crate) fn tear_off(outcome: DockViewportTearOffOpenOutcome) -> Self {
+        Self::TearOff(Box::new(outcome))
+    }
+
     /// Returns the runtime viewport that should be activated after the drop, when known.
     pub(crate) fn activation_target(&self) -> Option<DockViewportActivationTarget> {
         match self {
             DockViewportDropRouteOutcome::Action(outcome) => outcome.activation().cloned(),
-            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
-                completed,
-            )) => Some(DockViewportActivationTarget::new(
-                completed.pending().target_space().clone(),
-                completed.registration().window(),
-                completed.pending().focus_item().cloned(),
-            )),
-            DockViewportDropRouteOutcome::TearOff(
+            DockViewportDropRouteOutcome::TearOff(outcome) => match outcome.as_ref() {
+                DockViewportTearOffOpenOutcome::Completed(completed) => {
+                    Some(DockViewportActivationTarget::new(
+                        completed.pending().target_space().clone(),
+                        completed.registration().window(),
+                        completed.pending().focus_item().cloned(),
+                    ))
+                }
                 DockViewportTearOffOpenOutcome::Duplicate(_)
                 | DockViewportTearOffOpenOutcome::Cancelled(_)
-                | DockViewportTearOffOpenOutcome::CommitFailed(_),
-            ) => None,
+                | DockViewportTearOffOpenOutcome::CommitFailed(_) => None,
+            },
         }
     }
 
     pub(crate) fn action_result(&self) -> Result<DockActionOutcome, DockActionApplyError> {
         match self {
             DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action()),
-            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
-                completed,
-            )) => Ok(completed.action()),
-            DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Duplicate(_))
-            | DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Cancelled(_)) => {
-                Ok(DockActionOutcome::Unchanged)
-            }
-            DockViewportDropRouteOutcome::TearOff(
-                DockViewportTearOffOpenOutcome::CommitFailed(failure),
-            ) => Err(failure.error().clone()),
+            DockViewportDropRouteOutcome::TearOff(outcome) => match outcome.as_ref() {
+                DockViewportTearOffOpenOutcome::Completed(completed) => Ok(completed.action()),
+                DockViewportTearOffOpenOutcome::Duplicate(_)
+                | DockViewportTearOffOpenOutcome::Cancelled(_) => Ok(DockActionOutcome::Unchanged),
+                DockViewportTearOffOpenOutcome::CommitFailed(failure) => {
+                    Err(failure.error().clone())
+                }
+            },
         }
     }
 }

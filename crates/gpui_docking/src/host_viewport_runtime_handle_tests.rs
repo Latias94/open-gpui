@@ -602,9 +602,10 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
         .expect("tear-off route should commit through runtime handle");
 
     let activation = outcome.activation_target();
-    let DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(completed)) =
-        outcome
-    else {
+    let DockViewportDropRouteOutcome::TearOff(tear_off) = outcome else {
+        panic!("tear-off route should open a viewport and complete the move");
+    };
+    let DockViewportTearOffOpenOutcome::Completed(completed) = *tear_off else {
         panic!("tear-off route should open a viewport and complete the move");
     };
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
@@ -697,9 +698,10 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
         .expect("stack tear-off route should commit through runtime handle");
 
     let activation = outcome.activation_target();
-    let DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(completed)) =
-        outcome
-    else {
+    let DockViewportDropRouteOutcome::TearOff(tear_off) = outcome else {
+        panic!("stack tear-off route should open a viewport and complete the move");
+    };
+    let DockViewportTearOffOpenOutcome::Completed(completed) = *tear_off else {
         panic!("stack tear-off route should open a viewport and complete the move");
     };
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);

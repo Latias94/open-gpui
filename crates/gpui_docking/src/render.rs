@@ -10,6 +10,7 @@ use crate::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
     },
+    render_split::DockRenderSplitInput,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -181,10 +182,7 @@ impl DockHost {
                 children,
                 fractions,
             } => self.render_split(
-                node_id,
-                axis,
-                children,
-                fractions,
+                DockRenderSplitInput::new(node_id, axis, children, fractions),
                 session,
                 viewport_host_scene_frame,
                 cx,

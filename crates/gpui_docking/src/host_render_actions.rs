@@ -1,6 +1,7 @@
 use crate::{
     DockHost, DockItemId, DockNodeId, DockSpaceId,
     drag::DockDragPayload,
+    drop_runtime::DockHostDropSceneFact,
     interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
@@ -85,52 +86,16 @@ impl DockHost {
         changed || session_changed
     }
 
-    pub(crate) fn update_leaf_drop_scene_from_render(
+    pub(crate) fn update_drop_scene_fact_from_render(
         &mut self,
         payload: &DockDragPayload,
-        root: DockNodeId,
-        target_tabs: DockNodeId,
-        bounds: Bounds<Pixels>,
+        fact: DockHostDropSceneFact,
         position: Point<Pixels>,
-        is_central: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_leaf_drop_scene_interaction(
-            payload,
-            root,
-            target_tabs,
-            bounds,
-            position,
-            is_central,
-            window,
-            cx,
-        )
-        .finish(cx)
-    }
-
-    pub(crate) fn update_tab_label_drop_scene_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        target_tabs: DockNodeId,
-        target_index: usize,
-        bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        is_central: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_tab_label_drop_scene_interaction(
-            payload,
-            target_tabs,
-            target_index,
-            bounds,
-            position,
-            is_central,
-            window,
-            cx,
-        )
-        .finish(cx)
+        self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
+            .finish(cx)
     }
 
     pub(crate) fn begin_host_drop_scene_from_render(
@@ -174,30 +139,6 @@ impl DockHost {
     ) -> bool {
         self.update_empty_space_drop_scene_interaction(payload, position, bounds, window, cx)
             .finish(cx)
-    }
-
-    pub(crate) fn update_floating_title_bar_drop_scene_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        floating: DockNodeId,
-        target_tabs: DockNodeId,
-        title_bounds: Bounds<Pixels>,
-        preview_bounds: Bounds<Pixels>,
-        position: Point<Pixels>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.update_floating_title_bar_drop_scene_interaction(
-            payload,
-            floating,
-            target_tabs,
-            title_bounds,
-            preview_bounds,
-            position,
-            window,
-            cx,
-        )
-        .finish(cx)
     }
 
     pub(crate) fn begin_floating_drag_from_render(
