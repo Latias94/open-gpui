@@ -55,8 +55,11 @@ pub(crate) struct DockRuntimeDragSession {
 }
 
 impl DockRuntimeDragSession {
-    fn new(id: u64, payload: DockDragPayloadIdentity) -> Self {
-        Self { id, payload }
+    fn new(id: u64, payload: &DockDragPayload) -> Self {
+        Self {
+            id,
+            payload: payload.identity(),
+        }
     }
 
     fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
@@ -70,7 +73,7 @@ pub(crate) struct DockOutsideReleasePollSession {
 }
 
 impl DockOutsideReleasePollSession {
-    fn new(id: u64, payload: DockDragPayloadIdentity) -> Self {
+    fn new(id: u64, payload: &DockDragPayload) -> Self {
         Self {
             drag: DockRuntimeDragSession::new(id, payload),
         }
@@ -303,7 +306,7 @@ impl DockInteractionRuntime {
 
     pub(crate) fn begin_outside_release_poll(
         &mut self,
-        payload: DockDragPayloadIdentity,
+        payload: &DockDragPayload,
     ) -> Option<DockOutsideReleasePollSession> {
         if self.outside_release_poll.is_some() {
             return None;
@@ -528,7 +531,7 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
         runtime
-            .begin_outside_release_poll(payload.identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should start");
 
         assert_eq!(
@@ -544,8 +547,9 @@ mod tests {
             "rendered outside release should own poll session cleanup"
         );
 
+        let payload = item_payload("b", "Panel B");
         let missing_payload_session = runtime
-            .begin_outside_release_poll(item_payload("b", "Panel B").identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should restart");
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, None)),
@@ -672,15 +676,13 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
 
         assert!(!runtime.outside_release_poll_running());
-        let payload = item_payload("a", "Panel A").identity();
+        let payload = item_payload("a", "Panel A");
         let session = runtime
-            .begin_outside_release_poll(payload)
+            .begin_outside_release_poll(&payload)
             .expect("poll session should start");
         assert!(runtime.outside_release_poll_running());
-        assert_eq!(
-            runtime.begin_outside_release_poll(item_payload("b", "Panel B").identity()),
-            None
-        );
+        let other_payload = item_payload("b", "Panel B");
+        assert_eq!(runtime.begin_outside_release_poll(&other_payload), None);
         assert!(runtime.outside_release_poll_session_active(&session));
         assert!(runtime.finish_outside_release_poll(&session));
         assert!(!runtime.outside_release_poll_running());
@@ -691,12 +693,14 @@ mod tests {
     fn outside_release_poll_rejects_stale_session_finish() {
         let mut runtime = DockInteractionRuntime::default();
 
+        let stale_payload = item_payload("a", "Panel A");
         let stale = runtime
-            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
+            .begin_outside_release_poll(&stale_payload)
             .expect("first poll session should start");
         assert!(runtime.cancel_outside_release_poll());
+        let active_payload = item_payload("b", "Panel B");
         let active = runtime
-            .begin_outside_release_poll(item_payload("b", "Panel B").identity())
+            .begin_outside_release_poll(&active_payload)
             .expect("second poll session should start");
 
         assert!(!runtime.finish_outside_release_poll(&stale));
@@ -709,8 +713,9 @@ mod tests {
     fn outside_release_poll_session_rejects_different_active_payload() {
         let mut runtime = DockInteractionRuntime::default();
 
+        let payload = item_payload("a", "Panel A");
         let session = runtime
-            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should start");
 
         assert!(runtime.outside_release_poll_session_accepts_payload(
@@ -731,7 +736,7 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
         let session = runtime
-            .begin_outside_release_poll(payload.identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should start");
 
         assert_eq!(
@@ -759,7 +764,7 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
         let session = runtime
-            .begin_outside_release_poll(payload.identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should start");
 
         assert_eq!(
@@ -770,7 +775,7 @@ mod tests {
 
         let payload = item_payload("a", "Panel A");
         let session = runtime
-            .begin_outside_release_poll(payload.identity())
+            .begin_outside_release_poll(&payload)
             .expect("poll session should restart");
         let changed_payload = item_payload("b", "Panel B");
 
@@ -788,13 +793,14 @@ mod tests {
     #[test]
     fn outside_release_poll_inactive_decision_preserves_newer_session() {
         let mut runtime = DockInteractionRuntime::default();
+        let stale_payload = item_payload("a", "Panel A");
         let stale = runtime
-            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
+            .begin_outside_release_poll(&stale_payload)
             .expect("first poll session should start");
         assert!(runtime.cancel_outside_release_poll());
-        let active_payload = item_payload("b", "Panel B").identity();
+        let active_payload = item_payload("b", "Panel B");
         let active = runtime
-            .begin_outside_release_poll(active_payload.clone())
+            .begin_outside_release_poll(&active_payload)
             .expect("second poll session should start");
 
         assert_eq!(

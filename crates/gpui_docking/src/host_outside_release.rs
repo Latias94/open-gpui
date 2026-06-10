@@ -21,10 +21,7 @@ impl DockHost {
         {
             return false;
         }
-        let Some(session) = self
-            .interaction_mut()
-            .begin_outside_release_poll(payload.identity())
-        else {
+        let Some(session) = self.interaction_mut().begin_outside_release_poll(payload) else {
             return false;
         };
 
