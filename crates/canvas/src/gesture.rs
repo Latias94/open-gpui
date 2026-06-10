@@ -174,6 +174,7 @@ fn document_contains_record(document: &CanvasDocument, id: &CanvasRecordId) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{
         CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, CanvasShape, EdgeId, NodeId,
     };
@@ -181,9 +182,8 @@ mod tests {
 
     #[test]
     fn gesture_commit_coalesces_transient_updates() {
-        let mut baseline = CanvasDocument::default();
         let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
-        baseline.insert_node(original.clone()).unwrap();
+        let baseline = document_fixture().node(original.clone()).build();
         let session = CanvasGestureSession::begin(&baseline);
 
         let mut current = baseline.clone();
@@ -239,13 +239,17 @@ mod tests {
         let mut target = previous.clone();
         let mut source = target.node(&NodeId::from("a")).unwrap().clone();
         source.position = point(px(100.0), px(0.0));
-        target.update_node(source).unwrap();
         let changed_edge = CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("b", None::<&str>),
             CanvasEndpoint::new("a", None::<&str>),
         );
-        target.update_edge(changed_edge.clone()).unwrap();
+        target
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::UpdateNode(source),
+                DocumentCommand::UpdateEdge(changed_edge.clone()),
+            ]))
+            .unwrap();
 
         let transaction = transaction_between(&previous, &target);
         let mut replayed = previous;
@@ -329,50 +333,41 @@ mod tests {
     }
 
     fn connected_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn related_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
+        let mut fixture = document_fixture();
         for id in ["child", "member"] {
-            document
-                .insert_node(CanvasNode::new(
-                    id,
-                    point(px(0.0), px(0.0)),
-                    size(px(10.0), px(10.0)),
-                ))
-                .unwrap();
+            fixture.add_node(CanvasNode::new(
+                id,
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ));
         }
         for id in ["frame-a", "frame-b", "group-a", "group-b"] {
-            document
-                .insert_shape(CanvasShape::new(
-                    id,
-                    Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
-                ))
-                .unwrap();
+            fixture.add_shape(CanvasShape::new(
+                id,
+                Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+            ));
         }
+        let mut document = fixture.build();
         document
             .apply_transaction(CanvasTransaction::new([
                 DocumentCommand::SetRecordParent {
