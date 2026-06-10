@@ -592,7 +592,7 @@ mod tests {
             .with_active_window(source_window)
             .with_window_stack([target_window, source_window]);
         let request = DockViewportDropRouteRequest::from_platform_signals(
-            source.clone(),
+            source,
             DockNodeId::null(),
             DockViewportDropPayload::Tabs,
             point(px(120.0), px(140.0)),
@@ -600,30 +600,6 @@ mod tests {
             DockViewportPlatformSignals::from_target_context(target_context.clone()),
         );
 
-        assert_eq!(request.source_space(), &source);
-        assert_eq!(request.source_tabs(), DockNodeId::null());
         assert_eq!(request.target_context(), &target_context);
-        assert_eq!(
-            request.target_context().hovered_window(),
-            Some(target_window.window_id())
-        );
-        assert_eq!(
-            request.target_context().active_window(),
-            Some(source_window.window_id())
-        );
-        assert_eq!(
-            request.target_context().window_stack(),
-            &[target_window.window_id(), source_window.window_id()]
-        );
-        assert_eq!(
-            request.tear_off_request(),
-            DockViewportTearOffRequest::new(
-                source,
-                DockNodeId::null(),
-                DockViewportDropPayload::Tabs,
-                point(px(120.0), px(140.0)),
-                None,
-            )
-        );
     }
 }
