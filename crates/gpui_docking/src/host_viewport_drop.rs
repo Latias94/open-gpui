@@ -42,15 +42,7 @@ impl DockHost {
             );
         };
 
-        let target_context = DockViewportPlatformSignals::from_window(window, cx).target_context();
-        let request = DockViewportDropRouteRequest::new(
-            payload.source_space.clone(),
-            payload.source_tabs,
-            viewport_payload(payload),
-            window_screen_position(window, position),
-            None,
-            target_context,
-        );
+        let request = viewport_drop_route_request_from_host(payload, position, window, cx);
         let route = runtime.resolve_payload_drop_route(&request, cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
@@ -66,20 +58,26 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        let release_position = window_screen_position(window, release_position);
-        let viewport_payload = viewport_payload(payload);
-        let target_context = DockViewportPlatformSignals::from_window(window, cx).target_context();
-        let request = DockViewportDropRouteRequest::new(
-            payload.source_space.clone(),
-            payload.source_tabs,
-            viewport_payload,
-            release_position,
-            None,
-            target_context,
-        );
+        let request = viewport_drop_route_request_from_host(payload, release_position, window, cx);
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
+}
+
+fn viewport_drop_route_request_from_host(
+    payload: &DockDragPayload,
+    host_position: Point<Pixels>,
+    window: &Window,
+    cx: &Context<DockHost>,
+) -> DockViewportDropRouteRequest {
+    DockViewportDropRouteRequest::new(
+        payload.source_space.clone(),
+        payload.source_tabs,
+        viewport_payload(payload),
+        window_screen_position(window, host_position),
+        None,
+        DockViewportPlatformSignals::from_window(window, cx).target_context(),
+    )
 }
 
 fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
