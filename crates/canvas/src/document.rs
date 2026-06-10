@@ -1513,7 +1513,7 @@ fn default_edge_interaction_width() -> Pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{CanvasCommandGenerator, TestRng};
+    use crate::test_support::{CanvasCommandGenerator, TestRng, document_fixture};
     use crate::{CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION, CANVAS_SNAPSHOT_MIGRATIONS};
     use open_gpui::{point, px, size};
 
@@ -1541,28 +1541,23 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_array_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let snapshot = document.to_snapshot();
         assert_eq!(snapshot.nodes.len(), 2);
@@ -1575,20 +1570,17 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_record_relations() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let group = CanvasRecordId::Shape(ShapeId::from("group"));
         document
@@ -1705,14 +1697,13 @@ mod tests {
 
     #[test]
     fn builder_rejects_duplicate_parent_relations_at_build_time() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         for id in ["frame-a", "frame-b"] {
             document
                 .insert_shape(CanvasShape::new(
@@ -1753,14 +1744,13 @@ mod tests {
 
     #[test]
     fn from_snapshot_rejects_duplicate_parent_relations_for_one_child() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         for id in ["frame-a", "frame-b"] {
             document
                 .insert_shape(CanvasShape::new(
@@ -1794,20 +1784,17 @@ mod tests {
 
     #[test]
     fn from_snapshot_rejects_duplicate_group_relations() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let group = CanvasRecordId::Shape(ShapeId::from("group"));
         let member = CanvasRecordId::Node(NodeId::from("child"));
         document
