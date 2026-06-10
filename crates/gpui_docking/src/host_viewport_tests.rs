@@ -133,7 +133,7 @@ fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppCont
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
-            .map(|target| target.space),
+            .map(|target| target.space().clone()),
         Some(alpha_space),
         "current event window should win viewport arbitration"
     );

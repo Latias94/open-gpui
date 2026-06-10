@@ -440,11 +440,11 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     assert_eq!(
         route,
         DockViewportDropRoute::KnownViewport {
-            target: crate::DockViewportTargetHit {
-                space: target_space.clone(),
-                window: opened.window,
-                host_position: point(px(20.0), px(40.0)),
-            }
+            target: crate::DockViewportTargetHit::new(
+                target_space.clone(),
+                opened.window,
+                point(px(20.0), px(40.0)),
+            )
         }
     );
     assert_eq!(
@@ -794,7 +794,8 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         assert!(
             matches!(
                 &route,
-                DockViewportDropRoute::KnownViewport { target } if target.window == opened.window
+                DockViewportDropRoute::KnownViewport { target }
+                    if target.window_id() == opened.window.window_id()
             ),
             "known viewport route should carry the destination window"
         );

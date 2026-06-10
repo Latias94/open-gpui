@@ -200,9 +200,9 @@ impl DockViewportRouteTarget {
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
-                space: target.space.clone(),
-                window_id: target.window.window_id(),
-                host_position: target.host_position,
+                space: target.space().clone(),
+                window_id: target.window_id(),
+                host_position: target.host_position(),
             },
             DockViewportDropRoute::TearOff(request) => Self::TearOff {
                 release_position: request.release_position,

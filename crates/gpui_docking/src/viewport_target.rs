@@ -21,11 +21,7 @@ impl DockViewportAdapter {
             .filter_map(|space| {
                 let window = self.snapshot(&space)?.window;
                 let host_position = self.screen_to_host(&space, position)?;
-                Some(DockViewportTargetHit {
-                    space,
-                    window,
-                    host_position,
-                })
+                Some(DockViewportTargetHit::new(space, window, host_position))
             })
             .collect()
     }
@@ -60,7 +56,7 @@ mod tests {
         assert_eq!(
             adapter
                 .resolve_viewport_target(position, &DockViewportTargetContext::new())
-                .map(|target| target.space),
+                .map(|target| target.space().clone()),
             Some(alpha.clone()),
             "empty context uses stable space order as the final fallback"
         );
@@ -70,7 +66,7 @@ mod tests {
                     position,
                     &DockViewportTargetContext::new().with_active_window(zeta_window),
                 )
-                .map(|target| target.space),
+                .map(|target| target.space().clone()),
             Some(zeta.clone()),
             "active-window context should beat stable space order"
         );
@@ -82,7 +78,7 @@ mod tests {
                         .with_event_window(alpha_window)
                         .with_active_window(zeta_window),
                 )
-                .map(|target| target.space),
+                .map(|target| target.space().clone()),
             Some(alpha),
             "event-window context should beat active-window context"
         );

@@ -315,7 +315,7 @@ impl DockViewportRuntime {
                 target,
             } => {
                 let target_space =
-                    self.resolve_route_target(&target.space, target.host_position, cx)?;
+                    self.resolve_route_target(target.space(), target.host_position(), cx)?;
                 (source_space, source_tabs, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {

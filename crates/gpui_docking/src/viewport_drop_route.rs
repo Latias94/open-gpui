@@ -135,9 +135,9 @@ impl DockViewportAdapter {
         if let Some(candidate) =
             self.resolve_viewport_target(request.release_position, &target_context)
         {
-            if candidate.space == request.source_space {
+            if candidate.space() == &request.source_space {
                 return DockViewportDropRoute::Local {
-                    host_position: candidate.host_position,
+                    host_position: candidate.host_position(),
                 };
             }
 
@@ -264,11 +264,7 @@ mod tests {
         assert_eq!(
             route,
             DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit {
-                    space: zeta,
-                    window: zeta_window,
-                    host_position: point(px(20.0), px(40.0)),
-                },
+                target: DockViewportTargetHit::new(zeta, zeta_window, point(px(20.0), px(40.0)),),
             }
         );
     }
