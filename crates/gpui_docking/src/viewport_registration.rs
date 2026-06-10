@@ -8,11 +8,26 @@ use open_gpui::AnyWindowHandle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportRegisterOutcome {
     /// Logical dock space now rendered by the registered window.
-    pub(crate) space: DockSpaceId,
+    space: DockSpaceId,
     /// GPUI window now rendering the logical dock space.
-    pub(crate) window: AnyWindowHandle,
+    window: AnyWindowHandle,
     /// Runtime mappings removed to preserve one-to-one space/window ownership.
-    pub(crate) replaced: Vec<DockViewportUnregisterOutcome>,
+    replaced: Vec<DockViewportUnregisterOutcome>,
+}
+
+impl DockViewportRegisterOutcome {
+    #[cfg(test)]
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+
+    pub(crate) fn replaced(&self) -> &[DockViewportUnregisterOutcome] {
+        &self.replaced
+    }
 }
 
 impl DockViewportAdapter {

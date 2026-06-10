@@ -376,7 +376,7 @@ impl DockViewportDropRouteOutcome {
                 completed,
             )) => Some(DockViewportActivationTarget::new(
                 completed.pending().target_space().clone(),
-                completed.registration().window,
+                completed.registration().window(),
                 completed.pending().focus_item().cloned(),
             )),
             DockViewportDropRouteOutcome::TearOff(

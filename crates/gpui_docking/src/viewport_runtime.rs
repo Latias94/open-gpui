@@ -260,7 +260,7 @@ impl DockViewportRuntime {
 
     pub(crate) fn register_opened_viewport(&mut self, space: DockSpaceId, window: AnyWindowHandle) {
         let replaced = self.adapter.register_viewport_with_outcome(space, window);
-        for removed in replaced.replaced {
+        for removed in replaced.replaced() {
             self.host_scenes.unregister_space(&removed.space);
         }
         self.close_gate.sync_adapter(&self.adapter);
@@ -614,7 +614,7 @@ impl DockViewportRuntime {
         match self.commit_tear_off_move(&pending, cx) {
             Ok(action) => {
                 let _ = registration
-                    .window
+                    .window()
                     .update(cx, |_, window, _| window.activate_window());
                 DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted::new(
                     pending,

@@ -146,11 +146,11 @@ mod tests {
         adapter.register_viewport(main.clone(), first);
         let outcome = adapter.register_viewport_with_outcome(secondary.clone(), first);
 
-        assert_eq!(outcome.space, secondary.clone());
-        assert_eq!(outcome.window, first);
+        assert_eq!(outcome.space(), &secondary);
+        assert_eq!(outcome.window(), first);
         assert_eq!(
-            outcome.replaced,
-            vec![DockViewportUnregisterOutcome {
+            outcome.replaced(),
+            &[DockViewportUnregisterOutcome {
                 space: main.clone(),
                 window: first,
                 reason: DockViewportUnregisterReason::Replaced,
@@ -177,8 +177,8 @@ mod tests {
         let outcome = adapter.register_viewport_with_outcome(main.clone(), second);
 
         assert_eq!(
-            outcome.replaced,
-            vec![
+            outcome.replaced(),
+            &[
                 DockViewportUnregisterOutcome {
                     space: main.clone(),
                     window: first,
@@ -214,9 +214,9 @@ mod tests {
             "re-registering the same space/window pair should be a no-op"
         );
         let outcome = adapter.register_viewport_with_outcome(main.clone(), window);
-        assert!(outcome.replaced.is_empty());
-        assert_eq!(outcome.space, main.clone());
-        assert_eq!(outcome.window, window);
+        assert!(outcome.replaced().is_empty());
+        assert_eq!(outcome.space(), &main);
+        assert_eq!(outcome.window(), window);
 
         let snapshot = adapter
             .snapshot(&main)

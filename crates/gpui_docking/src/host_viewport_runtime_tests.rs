@@ -128,7 +128,7 @@ fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppCont
     assert_eq!(runtime.pending_tear_off_len(), 0);
     assert_eq!(
         runtime.adapter().window_for_space(&detached_space),
-        Some(completed.registration().window)
+        Some(completed.registration().window())
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(

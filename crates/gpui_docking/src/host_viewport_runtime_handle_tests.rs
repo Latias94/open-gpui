@@ -361,7 +361,7 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
     assert_eq!(runtime.borrow().pending_tear_off_len(), 0);
     assert_eq!(
         runtime.borrow().adapter().window_for_space(&detached_space),
-        Some(completed.registration().window)
+        Some(completed.registration().window())
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -579,7 +579,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
         activation.as_ref().map(|target| target.window()),
-        Some(completed.registration().window),
+        Some(completed.registration().window()),
         "tear-off completion should surface the new viewport activation target"
     );
     assert_eq!(
@@ -599,11 +599,11 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
             .borrow()
             .adapter()
             .window_for_space(completed.pending().target_space()),
-        Some(completed.registration().window)
+        Some(completed.registration().window())
     );
     let opened_window = completed
         .registration()
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("tear-off viewport should render DockHost");
     let opened_host = opened_window
@@ -674,7 +674,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
         activation.as_ref().map(|target| target.window()),
-        Some(completed.registration().window),
+        Some(completed.registration().window()),
         "stack tear-off completion should surface the new viewport activation target"
     );
     assert_eq!(
@@ -683,7 +683,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     );
     let opened_window = completed
         .registration()
-        .window
+        .window()
         .downcast::<crate::DockHost>()
         .expect("stack tear-off viewport should render DockHost");
     let opened_host = opened_window
