@@ -45,6 +45,8 @@ pub struct DockViewportRouteRecord {
     pub source_tabs: DockNodeId,
     /// Payload being routed.
     pub payload: DockViewportPayloadRecord,
+    /// Runtime drag session that produced this route, when known.
+    pub drag_session_id: Option<u64>,
     /// Runtime route selected for the release point.
     pub target: DockViewportRouteTarget,
 }
@@ -159,6 +161,7 @@ impl DockViewportRuntimeStatus {
             source_space: request.source_space().clone(),
             source_tabs: request.source_tabs(),
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
+            drag_session_id: request.drag_session().map(|session| session.id()),
             target: DockViewportRouteTarget::from_route(request.source_space(), route),
         });
     }
@@ -375,6 +378,7 @@ impl DockViewportTearOffRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{drag::DockDragPayload, interaction::DockRuntimeDragSession};
     use open_gpui::{point, px};
     use slotmap::Key;
 
@@ -400,8 +404,39 @@ mod tests {
             .as_ref()
             .expect("route record should be captured");
         assert_eq!(route.source_space, source);
+        assert_eq!(route.drag_session_id, None);
         assert_eq!(route.target.space(), Some(&source));
         assert_eq!(route.target.host_position(), Some(host_position));
         assert_eq!(route.target.window_id(), None);
+    }
+
+    #[test]
+    fn route_record_preserves_runtime_drag_session_id() {
+        let source = DockSpaceId::from("source");
+        let source_tabs = DockNodeId::null();
+        let host_position = point(px(12.0), px(34.0));
+        let payload = DockDragPayload::new_tabs(source.clone(), source_tabs, "Stack".to_string());
+        let drag_session = DockRuntimeDragSession::new(19, &payload);
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default(),
+        )
+        .with_drag_session(Some(drag_session));
+
+        status.record_route(&request, &DockViewportDropRoute::Local { host_position });
+
+        assert_eq!(
+            status
+                .last_route
+                .as_ref()
+                .map(|route| route.drag_session_id),
+            Some(Some(19))
+        );
     }
 }

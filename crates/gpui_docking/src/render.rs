@@ -59,11 +59,13 @@ impl Render for DockHost {
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
+                    let drag_session = this.active_payload_drag_session(payload);
                     this.drop_payload_release_from_render(
-                        DockPayloadDropRelease::hovered_host(
+                        DockPayloadDropRelease::hovered_host_with_session(
                             payload.clone(),
                             drop_host_space.clone(),
                             window.mouse_position(),
+                            drag_session,
                         ),
                         window,
                         cx,
@@ -73,15 +75,23 @@ impl Render for DockHost {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    let payload = cx.active_drag_value::<DockDragPayload>().cloned();
+                    let drag_session = payload
+                        .as_ref()
+                        .and_then(|payload| this.active_payload_drag_session(payload));
                     let request = DockRenderedOutsideReleaseRequest::new(
                         this.viewport_runtime().is_some(),
-                        cx.active_drag_value::<DockDragPayload>().cloned(),
+                        payload,
                         cx.mouse_button_is_pressed(MouseButton::Left),
                         outside_release_host_space.clone(),
                         event.position,
-                    );
+                    )
+                    .with_drag_session(drag_session);
                     match this.interaction_mut().rendered_outside_release(request) {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
+                        DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
+                            this.finish_payload_drag_session(&drag_session);
+                        }
                         DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
                             this.drop_payload_release_from_render(release, window, cx);
                             cx.stop_active_drag(window);

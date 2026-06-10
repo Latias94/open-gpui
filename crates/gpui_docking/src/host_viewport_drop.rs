@@ -2,7 +2,7 @@ use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
-    interaction::DockPayloadDropReleaseOrigin,
+    interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
@@ -54,6 +54,7 @@ impl DockHost {
             window,
             cx,
             DockPayloadDropReleaseOrigin::HoveredHost,
+            self.active_payload_drag_session(payload),
         );
         let route = runtime.resolve_payload_drop_route(&request, cx);
         DockHostInteractionOutcome::from_session_changed(
@@ -64,15 +65,19 @@ impl DockHost {
 
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
-        payload: &DockDragPayload,
-        origin: DockPayloadDropReleaseOrigin,
-        release_position: Point<Pixels>,
+        release: &DockPayloadDropRelease,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        let request =
-            viewport_drop_route_request_from_host(payload, release_position, window, cx, origin);
+        let request = viewport_drop_route_request_from_host(
+            release.payload(),
+            release.release_position(),
+            window,
+            cx,
+            release.origin(),
+            release.drag_session().cloned(),
+        );
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
@@ -84,6 +89,7 @@ fn viewport_drop_route_request_from_host(
     window: &Window,
     cx: &Context<DockHost>,
     origin: DockPayloadDropReleaseOrigin,
+    drag_session: Option<DockRuntimeDragSession>,
 ) -> DockViewportDropRouteRequest {
     let platform_signals = match origin {
         DockPayloadDropReleaseOrigin::HoveredHost => {
@@ -99,6 +105,7 @@ fn viewport_drop_route_request_from_host(
         None,
         platform_signals,
     )
+    .with_drag_session(drag_session)
 }
 
 fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {

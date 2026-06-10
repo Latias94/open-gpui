@@ -121,15 +121,10 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let payload = release.payload();
-        let origin = release.origin();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let outcome = if let Some(outcome) = self.commit_runtime_routed_payload_drop_interaction(
-            payload,
-            origin,
-            release.release_position(),
-            window,
-            cx,
-        ) {
+        let outcome = if let Some(outcome) =
+            self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
+        {
             outcome
         } else {
             let target = self.interaction_mut().take_resolved_drop_target();

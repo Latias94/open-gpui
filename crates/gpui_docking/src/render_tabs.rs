@@ -33,6 +33,7 @@ impl DockHost {
         let active_item = items[active].clone();
         let is_central = session.is_central_tabs(node);
         let drop_root = session.drop_root_for_tabs(node);
+        let entity = cx.entity();
         let stack_title = if items.len() == 1 {
             session.panel_title(&active_item)
         } else {
@@ -74,6 +75,7 @@ impl DockHost {
             tabs = tabs.child(probe);
         }
 
+        let stack_drag_entity = entity.clone();
         let mut tab_bar = div()
             .id(format!(
                 "{}:tabs:{}:bar",
@@ -85,7 +87,10 @@ impl DockHost {
             .flex_none()
             .overflow_hidden()
             .bg(rgb(0xe7ebf0))
-            .on_drag(stack_payload, |payload, _, _, cx| {
+            .on_drag(stack_payload, move |payload, _, _, cx| {
+                stack_drag_entity.update(cx, |host, _| {
+                    host.begin_payload_drag_from_render(payload);
+                });
                 cx.new(|_| DockDragPreview::new(payload.title()))
             });
 
@@ -109,6 +114,7 @@ impl DockHost {
                 item.clone(),
                 title.clone(),
             );
+            let drag_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
             let mut tab = div()
@@ -157,7 +163,10 @@ impl DockHost {
                         );
                     },
                 ))
-                .on_drag(payload, |payload, _, _, cx| {
+                .on_drag(payload, move |payload, _, _, cx| {
+                    drag_entity.update(cx, |host, _| {
+                        host.begin_payload_drag_from_render(payload);
+                    });
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });
             if let Some(probe) = self

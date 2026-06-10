@@ -57,14 +57,18 @@ pub(crate) struct DockRuntimeDragSession {
 }
 
 impl DockRuntimeDragSession {
-    fn new(id: u64, payload: &DockDragPayload) -> Self {
+    pub(crate) fn new(id: u64, payload: &DockDragPayload) -> Self {
         Self {
             id,
             payload: payload.identity(),
         }
     }
 
-    fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
         self.payload == payload.identity()
     }
 }
@@ -81,6 +85,14 @@ impl DockOutsideReleasePollSession {
         }
     }
 
+    fn from_drag_session(drag: DockRuntimeDragSession) -> Self {
+        Self { drag }
+    }
+
+    fn drag_session(&self) -> &DockRuntimeDragSession {
+        &self.drag
+    }
+
     fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
         self.drag.accepts_payload(payload)
     }
@@ -89,6 +101,7 @@ impl DockOutsideReleasePollSession {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPayloadDropRelease {
     payload: DockDragPayload,
+    drag_session: Option<DockRuntimeDragSession>,
     origin: DockPayloadDropReleaseOrigin,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
@@ -104,26 +117,48 @@ pub(crate) enum DockPayloadDropReleaseOrigin {
 }
 
 impl DockPayloadDropRelease {
+    #[cfg(test)]
     pub(crate) fn hovered_host(
         payload: DockDragPayload,
         host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
+        Self::hovered_host_with_session(payload, host_space, release_position, None)
+    }
+
+    pub(crate) fn hovered_host_with_session(
+        payload: DockDragPayload,
+        host_space: DockSpaceId,
+        release_position: Point<Pixels>,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
         Self {
             payload,
+            drag_session,
             origin: DockPayloadDropReleaseOrigin::HoveredHost,
             host_space,
             release_position,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn source_only(
         payload: DockDragPayload,
         host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
+        Self::source_only_with_session(payload, host_space, release_position, None)
+    }
+
+    pub(crate) fn source_only_with_session(
+        payload: DockDragPayload,
+        host_space: DockSpaceId,
+        release_position: Point<Pixels>,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
         Self {
             payload,
+            drag_session,
             origin: DockPayloadDropReleaseOrigin::SourceOnly,
             host_space,
             release_position,
@@ -132,6 +167,10 @@ impl DockPayloadDropRelease {
 
     pub(crate) fn payload(&self) -> &DockDragPayload {
         &self.payload
+    }
+
+    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
+        self.drag_session.as_ref()
     }
 
     pub(crate) fn origin(&self) -> DockPayloadDropReleaseOrigin {
@@ -180,13 +219,14 @@ pub(crate) enum DockOutsideReleasePollDecision {
     Inactive,
     Continue,
     CommitRelease(DockPayloadDropRelease),
-    Stop,
+    Stop(DockRuntimeDragSession),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockRenderedOutsideReleaseRequest {
     viewport_runtime_available: bool,
     payload: Option<DockDragPayload>,
+    drag_session: Option<DockRuntimeDragSession>,
     left_button_pressed: Option<bool>,
     /// Host space that observed the rendered mouse-up outside event.
     host_space: DockSpaceId,
@@ -204,16 +244,26 @@ impl DockRenderedOutsideReleaseRequest {
         Self {
             viewport_runtime_available,
             payload,
+            drag_session: None,
             left_button_pressed,
             host_space,
             release_position,
         }
+    }
+
+    pub(crate) fn with_drag_session(
+        mut self,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
+        self.drag_session = drag_session;
+        self
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockRenderedOutsideReleaseDecision {
     Inactive,
+    StopDragSession(DockRuntimeDragSession),
     CommitRelease(DockPayloadDropRelease),
 }
 
@@ -351,17 +401,36 @@ impl DockInteractionRuntime {
         self.set_drop_route_preview(None)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_outside_release_poll(
         &mut self,
         payload: &DockDragPayload,
+    ) -> Option<DockOutsideReleasePollSession> {
+        self.begin_outside_release_poll_with_session(payload, None)
+    }
+
+    pub(crate) fn begin_outside_release_poll_with_session(
+        &mut self,
+        payload: &DockDragPayload,
+        drag_session: Option<DockRuntimeDragSession>,
     ) -> Option<DockOutsideReleasePollSession> {
         if self.outside_release_poll.is_some() {
             return None;
         }
 
-        let id = self.next_outside_release_poll_id.wrapping_add(1);
-        self.next_outside_release_poll_id = id;
-        let session = DockOutsideReleasePollSession::new(id, payload);
+        let session = match drag_session {
+            Some(drag_session) => {
+                if !drag_session.accepts_payload(payload) {
+                    return None;
+                }
+                DockOutsideReleasePollSession::from_drag_session(drag_session)
+            }
+            None => {
+                let id = self.next_outside_release_poll_id.wrapping_add(1);
+                self.next_outside_release_poll_id = id;
+                DockOutsideReleasePollSession::new(id, payload)
+            }
+        };
         self.outside_release_poll = Some(session.clone());
         Some(session)
     }
@@ -378,7 +447,11 @@ impl DockInteractionRuntime {
     }
 
     pub(crate) fn cancel_outside_release_poll(&mut self) -> bool {
-        self.outside_release_poll.take().is_some()
+        self.cancel_outside_release_poll_session().is_some()
+    }
+
+    fn cancel_outside_release_poll_session(&mut self) -> Option<DockOutsideReleasePollSession> {
+        self.outside_release_poll.take()
     }
 
     pub(crate) fn outside_release_poll_session_active(
@@ -406,27 +479,33 @@ impl DockInteractionRuntime {
         }
 
         let Some(payload) = request.payload else {
+            let drag_session = session.drag_session().clone();
             self.finish_outside_release_poll(session);
-            return DockOutsideReleasePollDecision::Stop;
+            return DockOutsideReleasePollDecision::Stop(drag_session);
         };
         if !self.outside_release_poll_session_accepts_payload(session, &payload) {
+            let drag_session = session.drag_session().clone();
             self.finish_outside_release_poll(session);
-            return DockOutsideReleasePollDecision::Stop;
+            return DockOutsideReleasePollDecision::Stop(drag_session);
         }
 
         match request.left_button_pressed {
             Some(true) => DockOutsideReleasePollDecision::Continue,
             Some(false) => {
                 self.finish_outside_release_poll(session);
-                DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                    payload,
-                    request.host_space,
-                    request.release_position,
-                ))
+                DockOutsideReleasePollDecision::CommitRelease(
+                    DockPayloadDropRelease::source_only_with_session(
+                        payload,
+                        request.host_space,
+                        request.release_position,
+                        Some(session.drag_session().clone()),
+                    ),
+                )
             }
             None => {
+                let drag_session = session.drag_session().clone();
                 self.finish_outside_release_poll(session);
-                DockOutsideReleasePollDecision::Stop
+                DockOutsideReleasePollDecision::Stop(drag_session)
             }
         }
     }
@@ -436,31 +515,50 @@ impl DockInteractionRuntime {
         request: DockRenderedOutsideReleaseRequest,
     ) -> DockRenderedOutsideReleaseDecision {
         if !request.viewport_runtime_available {
-            self.cancel_outside_release_poll();
-            return DockRenderedOutsideReleaseDecision::Inactive;
+            return match self.cancel_outside_release_poll_session() {
+                Some(session) => DockRenderedOutsideReleaseDecision::StopDragSession(
+                    session.drag_session().clone(),
+                ),
+                None => DockRenderedOutsideReleaseDecision::Inactive,
+            };
         }
 
         let Some(payload) = request.payload else {
-            self.cancel_outside_release_poll();
-            return DockRenderedOutsideReleaseDecision::Inactive;
+            return match self.cancel_outside_release_poll_session() {
+                Some(session) => DockRenderedOutsideReleaseDecision::StopDragSession(
+                    session.drag_session().clone(),
+                ),
+                None => DockRenderedOutsideReleaseDecision::Inactive,
+            };
         };
 
-        if let Some(session) = self.outside_release_poll.as_ref()
-            && !session.accepts_payload(&payload)
-        {
-            return DockRenderedOutsideReleaseDecision::Inactive;
-        }
+        let drag_session = if let Some(session) = self.outside_release_poll.as_ref() {
+            if !session.accepts_payload(&payload) {
+                return DockRenderedOutsideReleaseDecision::Inactive;
+            }
+            Some(session.drag_session().clone())
+        } else if let Some(drag_session) = request.drag_session {
+            if !drag_session.accepts_payload(&payload) {
+                return DockRenderedOutsideReleaseDecision::Inactive;
+            }
+            Some(drag_session)
+        } else {
+            None
+        };
 
         if request.left_button_pressed == Some(true) {
             return DockRenderedOutsideReleaseDecision::Inactive;
         }
 
         self.cancel_outside_release_poll();
-        DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
-            payload,
-            request.host_space,
-            request.release_position,
-        ))
+        DockRenderedOutsideReleaseDecision::CommitRelease(
+            DockPayloadDropRelease::source_only_with_session(
+                payload,
+                request.host_space,
+                request.release_position,
+                drag_session,
+            ),
+        )
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
@@ -567,6 +665,7 @@ mod tests {
         );
 
         assert_eq!(release.payload(), &payload);
+        assert_eq!(release.drag_session(), None);
         assert_eq!(release.origin(), DockPayloadDropReleaseOrigin::HoveredHost);
         assert_eq!(release.host_space(), &host_space);
         assert_eq!(release.release_position(), release_position);
@@ -581,8 +680,18 @@ mod tests {
             source_only.origin(),
             DockPayloadDropReleaseOrigin::SourceOnly
         );
+        assert_eq!(source_only.drag_session(), None);
         assert_eq!(source_only.host_space(), &host_space);
         assert_eq!(source_only.release_position(), release_position);
+
+        let drag_session = DockRuntimeDragSession::new(42, &payload);
+        let session_release = DockPayloadDropRelease::source_only_with_session(
+            payload.clone(),
+            host_space,
+            release_position,
+            Some(drag_session.clone()),
+        );
+        assert_eq!(session_release.drag_session(), Some(&drag_session));
     }
 
     #[test]
@@ -611,20 +720,55 @@ mod tests {
     }
 
     #[test]
+    fn rendered_outside_release_carries_request_drag_session() {
+        let mut runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A");
+        let drag_session = DockRuntimeDragSession::new(9, &payload);
+        let stale_session = DockRuntimeDragSession::new(10, &item_payload("b", "Panel B"));
+
+        assert_eq!(
+            runtime.rendered_outside_release(
+                rendered_request(true, Some(payload.clone()))
+                    .with_drag_session(Some(stale_session))
+            ),
+            DockRenderedOutsideReleaseDecision::Inactive,
+            "rendered release must reject a session that belongs to a different payload"
+        );
+
+        assert_eq!(
+            runtime.rendered_outside_release(
+                rendered_request(true, Some(payload.clone()))
+                    .with_drag_session(Some(drag_session.clone()))
+            ),
+            DockRenderedOutsideReleaseDecision::CommitRelease(
+                DockPayloadDropRelease::source_only_with_session(
+                    payload,
+                    DockSpaceId::from("host"),
+                    point(px(120.0), px(80.0)),
+                    Some(drag_session),
+                )
+            )
+        );
+    }
+
+    #[test]
     fn rendered_outside_release_stops_outside_poll_session() {
         let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
-        runtime
+        let session = runtime
             .begin_outside_release_poll(&payload)
             .expect("poll session should start");
 
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                payload,
-                DockSpaceId::from("host"),
-                point(px(120.0), px(80.0)),
-            ))
+            DockRenderedOutsideReleaseDecision::CommitRelease(
+                DockPayloadDropRelease::source_only_with_session(
+                    payload,
+                    DockSpaceId::from("host"),
+                    point(px(120.0), px(80.0)),
+                    Some(session.drag_session().clone()),
+                )
+            )
         );
         assert!(
             !runtime.outside_release_poll_running(),
@@ -637,7 +781,9 @@ mod tests {
             .expect("poll session should restart");
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, None)),
-            DockRenderedOutsideReleaseDecision::Inactive
+            DockRenderedOutsideReleaseDecision::StopDragSession(
+                missing_payload_session.drag_session().clone()
+            )
         );
         assert!(
             !runtime.outside_release_poll_session_active(&missing_payload_session),
@@ -664,11 +810,14 @@ mod tests {
         );
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(active_payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                active_payload,
-                DockSpaceId::from("host"),
-                point(px(120.0), px(80.0)),
-            ))
+            DockRenderedOutsideReleaseDecision::CommitRelease(
+                DockPayloadDropRelease::source_only_with_session(
+                    active_payload,
+                    DockSpaceId::from("host"),
+                    point(px(120.0), px(80.0)),
+                    Some(active.drag_session().clone()),
+                )
+            )
         );
         assert!(!runtime.outside_release_poll_running());
     }
@@ -700,11 +849,14 @@ mod tests {
                 Some(payload.clone()),
                 Some(false),
             )),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                payload,
-                DockSpaceId::from("host"),
-                point(px(120.0), px(80.0)),
-            ))
+            DockRenderedOutsideReleaseDecision::CommitRelease(
+                DockPayloadDropRelease::source_only_with_session(
+                    payload,
+                    DockSpaceId::from("host"),
+                    point(px(120.0), px(80.0)),
+                    Some(active.drag_session().clone()),
+                )
+            )
         );
         assert!(!runtime.outside_release_poll_running());
     }
@@ -838,6 +990,29 @@ mod tests {
     }
 
     #[test]
+    fn outside_release_poll_reuses_runtime_drag_session() {
+        let mut runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A");
+        let drag_session = DockRuntimeDragSession::new(77, &payload);
+        let session = runtime
+            .begin_outside_release_poll_with_session(&payload, Some(drag_session.clone()))
+            .expect("poll session should reuse matching runtime drag session");
+
+        assert_eq!(session.drag_session(), &drag_session);
+        assert!(runtime.finish_outside_release_poll(&session));
+
+        let mut runtime = DockInteractionRuntime::default();
+        assert_eq!(
+            runtime.begin_outside_release_poll_with_session(
+                &item_payload("b", "Panel B"),
+                Some(drag_session),
+            ),
+            None,
+            "a runtime drag session must not be reused for another payload"
+        );
+    }
+
+    #[test]
     fn outside_release_poll_rejects_stale_session_finish() {
         let mut runtime = DockInteractionRuntime::default();
 
@@ -898,11 +1073,14 @@ mod tests {
                 Some(payload.clone()),
                 Some(false)
             )),
-            DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                payload,
-                DockSpaceId::from("host"),
-                point(px(120.0), px(80.0)),
-            ))
+            DockOutsideReleasePollDecision::CommitRelease(
+                DockPayloadDropRelease::source_only_with_session(
+                    payload,
+                    DockSpaceId::from("host"),
+                    point(px(120.0), px(80.0)),
+                    Some(session.drag_session().clone()),
+                )
+            )
         );
         assert!(!runtime.outside_release_poll_running());
     }
@@ -917,7 +1095,7 @@ mod tests {
 
         assert_eq!(
             runtime.poll_outside_release(poll_request(&session, None, Some(false))),
-            DockOutsideReleasePollDecision::Stop
+            DockOutsideReleasePollDecision::Stop(session.drag_session().clone())
         );
         assert!(!runtime.outside_release_poll_running());
 
@@ -933,7 +1111,7 @@ mod tests {
                 Some(changed_payload),
                 Some(false)
             )),
-            DockOutsideReleasePollDecision::Stop
+            DockOutsideReleasePollDecision::Stop(session.drag_session().clone())
         );
         assert!(!runtime.outside_release_poll_running());
     }

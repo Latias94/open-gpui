@@ -164,6 +164,7 @@ impl DockHost {
                 .on_drag(payload, move |payload, _, window, cx| {
                     let start_position = window.mouse_position();
                     drag_entity.update(cx, |host, cx| {
+                        host.begin_payload_drag_from_render(payload);
                         host.begin_floating_drag_from_render(
                             drag_space.clone(),
                             floating,

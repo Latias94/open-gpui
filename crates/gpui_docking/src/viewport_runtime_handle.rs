@@ -6,7 +6,9 @@ use crate::{
     DockViewportRestoreOutcome, DockViewportRuntime, DockViewportRuntimeStatus,
     DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
+    interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_runtime::DockViewportReusableWindow,
 };
@@ -66,6 +68,21 @@ impl DockViewportRuntimeHandle {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.runtime.borrow().runtime_status()
+    }
+
+    pub(crate) fn begin_payload_drag(&self, payload: &DockDragPayload) -> DockRuntimeDragSession {
+        self.runtime.borrow_mut().begin_payload_drag(payload)
+    }
+
+    pub(crate) fn active_payload_drag_session(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<DockRuntimeDragSession> {
+        self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn finish_payload_drag(&self, session: &DockRuntimeDragSession) -> bool {
+        self.runtime.borrow_mut().finish_payload_drag(session)
     }
 
     /// Returns registered dock spaces in stable lexical order.

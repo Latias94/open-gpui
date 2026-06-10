@@ -1,10 +1,31 @@
 use crate::{
-    DockHost, DockItemId, DockNodeId, DockSpaceId, drag::DockDragPayload,
-    interaction::DockPayloadDropRelease,
+    DockHost, DockItemId, DockNodeId, DockSpaceId,
+    drag::DockDragPayload,
+    interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
+    pub(crate) fn begin_payload_drag_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+    ) -> Option<DockRuntimeDragSession> {
+        Some(self.viewport_runtime()?.begin_payload_drag(payload))
+    }
+
+    pub(crate) fn active_payload_drag_session(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<DockRuntimeDragSession> {
+        self.viewport_runtime()?
+            .active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn finish_payload_drag_session(&self, session: &DockRuntimeDragSession) -> bool {
+        self.viewport_runtime()
+            .is_some_and(|runtime| runtime.finish_payload_drag(session))
+    }
+
     pub(crate) fn select_tab_from_render(
         &mut self,
         tabs: DockNodeId,
@@ -53,9 +74,15 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        let drag_session = release.drag_session().cloned();
         self.interaction_mut().cancel_outside_release_poll();
-        self.commit_payload_drop_interaction(release, window, cx)
-            .finish(cx)
+        let changed = self
+            .commit_payload_drop_interaction(release, window, cx)
+            .finish(cx);
+        let session_changed = drag_session
+            .as_ref()
+            .is_some_and(|session| self.finish_payload_drag_session(session));
+        changed || session_changed
     }
 
     pub(crate) fn update_leaf_drop_scene_from_render(

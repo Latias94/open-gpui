@@ -2,7 +2,7 @@ use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest,
+    DockViewportTearOffRequest, interaction::DockRuntimeDragSession,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
 
@@ -31,6 +31,7 @@ pub(crate) struct DockViewportDropRouteRequest {
     source_space: DockSpaceId,
     source_tabs: DockNodeId,
     payload: DockViewportDropPayload,
+    drag_session: Option<DockRuntimeDragSession>,
     release_position: Point<Pixels>,
     suggested_window_bounds: Option<WindowBounds>,
     platform_signals: DockViewportPlatformSignals,
@@ -53,6 +54,7 @@ pub(crate) struct DockViewportDropWorkspaceCommit {
     source_space: DockSpaceId,
     source_tabs: DockNodeId,
     payload: DockViewportDropPayload,
+    drag_session: Option<DockRuntimeDragSession>,
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     host_position: Point<Pixels>,
@@ -69,6 +71,7 @@ impl DockViewportDropWorkspaceCommit {
             source_space: request.source_space().clone(),
             source_tabs: request.source_tabs(),
             payload: request.payload().clone(),
+            drag_session: request.drag_session().cloned(),
             target_space,
             target_window_id,
             host_position,
@@ -93,6 +96,11 @@ impl DockViewportDropWorkspaceCommit {
             self.target_window_id,
             self.host_position,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
+        self.drag_session.as_ref()
     }
 }
 
@@ -142,10 +150,19 @@ impl DockViewportDropRouteRequest {
             source_space: source_space.into(),
             source_tabs,
             payload,
+            drag_session: None,
             release_position,
             suggested_window_bounds,
             platform_signals,
         }
+    }
+
+    pub(crate) fn with_drag_session(
+        mut self,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
+        self.drag_session = drag_session;
+        self
     }
 
     pub(crate) fn source_space(&self) -> &DockSpaceId {
@@ -158,6 +175,10 @@ impl DockViewportDropRouteRequest {
 
     pub(crate) fn payload(&self) -> &DockViewportDropPayload {
         &self.payload
+    }
+
+    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
+        self.drag_session.as_ref()
     }
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {
@@ -264,6 +285,8 @@ mod tests {
     use super::*;
     use crate::{
         DockPolicy,
+        drag::DockDragPayload,
+        interaction::DockRuntimeDragSession,
         viewport_test_support::{bounds, handle, item, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
@@ -429,6 +452,9 @@ mod tests {
         let source = space("source");
         let source_tabs = DockNodeId::null();
         let item = item("a");
+        let drag_payload =
+            DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
+        let drag_session = DockRuntimeDragSession::new(13, &drag_payload);
         let request = DockViewportDropRouteRequest::from_target_context(
             source.clone(),
             source_tabs,
@@ -436,7 +462,8 @@ mod tests {
             point(px(900.0), px(900.0)),
             None,
             DockViewportTargetContext::new(),
-        );
+        )
+        .with_drag_session(Some(drag_session.clone()));
         let local_position = point(px(5.0), px(7.0));
 
         let DockViewportDropRouteCommit::Workspace(local) =
@@ -449,6 +476,7 @@ mod tests {
         else {
             panic!("local route should derive a workspace commit");
         };
+        assert_eq!(local.drag_session(), Some(&drag_session));
         let (
             recorded_source,
             recorded_tabs,
@@ -481,6 +509,7 @@ mod tests {
         else {
             panic!("known viewport route should derive a workspace commit");
         };
+        assert_eq!(known.drag_session(), Some(&drag_session));
         let (
             recorded_source,
             recorded_tabs,

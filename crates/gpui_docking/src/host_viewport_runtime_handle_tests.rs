@@ -16,6 +16,7 @@ use open_gpui::{
     AppContext as _, Focusable, TestAppContext, VisualTestContext, WindowBounds, WindowOptions,
     point, px,
 };
+use slotmap::Key;
 
 fn tear_off_request(
     source_space: DockSpaceId,
@@ -38,6 +39,36 @@ fn leaf_host_scene_fact(root: DockNodeId, target_tabs: DockNodeId) -> DockHostDr
         bounds: floating_bounds(0.0, 0.0, 360.0, 220.0),
         is_central: false,
     })
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_tracks_payload_drag_session(cx: &mut TestAppContext) {
+    let source = DockSpaceId::from("source");
+    let source_tabs = DockNodeId::null();
+    let workspace = DockWorkspace::new(source.clone(), DockGraph::new());
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+    let payload = DockDragPayload::new_tabs(source, source_tabs, "Stack".to_string());
+
+    let session = runtime.begin_payload_drag(&payload);
+    assert_eq!(session.id(), 1);
+    assert_eq!(
+        runtime.active_payload_drag_session(&payload),
+        Some(session.clone())
+    );
+    assert_eq!(
+        runtime.active_payload_drag_session(&DockDragPayload::new_item(
+            DockSpaceId::from("source"),
+            source_tabs,
+            item("other"),
+            "Other".to_string(),
+        )),
+        None
+    );
+
+    assert!(runtime.finish_payload_drag(&session));
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+    assert!(!runtime.finish_payload_drag(&session));
 }
 
 #[open_gpui::test]

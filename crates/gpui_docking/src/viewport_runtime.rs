@@ -11,8 +11,10 @@ use crate::{
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
+    drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockResolvedDropTarget,
+    interaction::DockRuntimeDragSession,
     viewport_close_gate::DockViewportCloseGate,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
@@ -40,6 +42,8 @@ pub(crate) struct DockViewportRuntime {
     host_scenes: DockViewportHostSceneRegistry,
     tear_off: DockViewportTearOffMachine,
     tear_off_tick: DockViewportTearOffTick,
+    drag_session: Option<DockRuntimeDragSession>,
+    next_drag_session_id: u64,
     status: DockViewportRuntimeStatus,
 }
 
@@ -78,6 +82,8 @@ impl DockViewportRuntime {
             host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
+            drag_session: None,
+            next_drag_session_id: 0,
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -98,6 +104,8 @@ impl DockViewportRuntime {
             host_scenes: DockViewportHostSceneRegistry::default(),
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
+            drag_session: None,
+            next_drag_session_id: 0,
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -119,6 +127,35 @@ impl DockViewportRuntime {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub(crate) fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.status.clone()
+    }
+
+    pub(crate) fn begin_payload_drag(
+        &mut self,
+        payload: &DockDragPayload,
+    ) -> DockRuntimeDragSession {
+        let id = self.next_drag_session_id.wrapping_add(1);
+        self.next_drag_session_id = id;
+        let session = DockRuntimeDragSession::new(id, payload);
+        self.drag_session = Some(session.clone());
+        session
+    }
+
+    pub(crate) fn active_payload_drag_session(
+        &self,
+        payload: &DockDragPayload,
+    ) -> Option<DockRuntimeDragSession> {
+        self.drag_session
+            .as_ref()
+            .filter(|session| session.accepts_payload(payload))
+            .cloned()
+    }
+
+    pub(crate) fn finish_payload_drag(&mut self, session: &DockRuntimeDragSession) -> bool {
+        if self.drag_session.as_ref() != Some(session) {
+            return false;
+        }
+        self.drag_session = None;
+        true
     }
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).

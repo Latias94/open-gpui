@@ -21,7 +21,11 @@ impl DockHost {
         {
             return false;
         }
-        let Some(session) = self.interaction_mut().begin_outside_release_poll(payload) else {
+        let drag_session = self.active_payload_drag_session(payload);
+        let Some(session) = self
+            .interaction_mut()
+            .begin_outside_release_poll_with_session(payload, drag_session)
+        else {
             return false;
         };
 
@@ -67,9 +71,11 @@ impl DockHost {
                 cx.stop_active_drag(window);
                 changed
             }
-            DockOutsideReleasePollDecision::Inactive | DockOutsideReleasePollDecision::Stop => {
+            DockOutsideReleasePollDecision::Stop(drag_session) => {
+                self.finish_payload_drag_session(&drag_session);
                 false
             }
+            DockOutsideReleasePollDecision::Inactive => false,
         }
     }
 }
