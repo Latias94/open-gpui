@@ -98,7 +98,6 @@ impl DockViewportDropWorkspaceCommit {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
         self.drag_session.as_ref()
     }
@@ -278,6 +277,7 @@ fn tear_off_request_from_route_request(
         request.release_position(),
         request.suggested_window_bounds(),
     )
+    .with_drag_session(request.drag_session().cloned())
 }
 
 #[cfg(test)]
@@ -533,6 +533,9 @@ mod tests {
         let item = item("a");
         let release_position = point(px(900.0), px(900.0));
         let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
+        let drag_payload =
+            DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
+        let drag_session = DockRuntimeDragSession::new(21, &drag_payload);
         let request = DockViewportDropRouteRequest::from_target_context(
             source.clone(),
             source_tabs,
@@ -540,7 +543,8 @@ mod tests {
             release_position,
             Some(suggested_window_bounds),
             DockViewportTargetContext::new(),
-        );
+        )
+        .with_drag_session(Some(drag_session.clone()));
         let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
             space("other"),
             source_tabs,
@@ -551,13 +555,16 @@ mod tests {
 
         assert_eq!(
             DockViewportDropRouteCommit::from_route_request(&request, mismatched_route),
-            DockViewportDropRouteCommit::TearOff(DockViewportTearOffRequest::new(
-                source,
-                source_tabs,
-                DockViewportDropPayload::Item(item),
-                release_position,
-                Some(suggested_window_bounds),
-            ))
+            DockViewportDropRouteCommit::TearOff(
+                DockViewportTearOffRequest::new(
+                    source,
+                    source_tabs,
+                    DockViewportDropPayload::Item(item),
+                    release_position,
+                    Some(suggested_window_bounds),
+                )
+                .with_drag_session(Some(drag_session))
+            )
         );
     }
 }

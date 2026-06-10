@@ -6,6 +6,7 @@ use crate::{
     DockViewportOpenStatus, DockViewportRuntime, DockViewportShouldCloseStatus,
     DockViewportTargetContext, DockViewportTargetHit, DockViewportTearOffOpenOutcome,
     DockViewportTearOffOutcomeKind, DockViewportTearOffRequest, DockWorkspace,
+    drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
     host_test_support::*,
@@ -770,6 +771,143 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
         assert_eq!(
             controller.graph().collect_items_in_space(&target_space),
             vec![item("b")]
+        );
+    });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let target_window = handle(21);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(target_space.clone(), target_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = point(px(120.0), px(100.0));
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        window_bounds,
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let stale_session = runtime.begin_payload_drag(&payload);
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(target_window),
+    )
+    .with_drag_session(Some(stale_session.clone()));
+    let stale_commit = DockViewportDropRouteCommit::from_route_request(
+        &request,
+        DockViewportDropRoute::KnownViewport {
+            target: DockViewportTargetHit::new(target_space.clone(), target_window, host_position),
+        },
+    );
+
+    let _replacement = runtime.begin_payload_drag(&payload);
+    let result = cx.update(|app| runtime.commit_payload_drop_route_with_outcome(stale_commit, app));
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::DropDragSessionStale {
+            session: stale_session.id()
+        })
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")]
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("b")]
+        );
+    });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_rejects_tear_off_commit_from_stale_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller.clone());
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let stale_session = runtime.begin_payload_drag(&payload);
+    let _replacement = runtime.begin_payload_drag(&payload);
+    let request = DockViewportTearOffRequest::new(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(900.0), px(900.0)),
+        None,
+    )
+    .with_drag_session(Some(stale_session.clone()));
+
+    let result = cx.update(|app| runtime.commit_tear_off_drop_route(request, app));
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::DropDragSessionStale {
+            session: stale_session.id()
+        })
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")]
         );
     });
 }

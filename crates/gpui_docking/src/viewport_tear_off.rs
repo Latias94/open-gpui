@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
-    workspace_transaction::DockWorkspaceDropPayload,
+    interaction::DockRuntimeDragSession, workspace_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
@@ -58,6 +58,8 @@ pub(crate) struct DockViewportTearOffRequest {
     source_tabs: DockNodeId,
     /// Payload being torn off.
     payload: DockViewportDropPayload,
+    /// Runtime drag session that produced this tear-off, when known.
+    drag_session: Option<DockRuntimeDragSession>,
     /// Release position in screen coordinates.
     release_position: Point<Pixels>,
     /// Suggested platform window bounds for the new viewport, when known.
@@ -76,9 +78,18 @@ impl DockViewportTearOffRequest {
             source_space: source_space.into(),
             source_tabs,
             payload,
+            drag_session: None,
             release_position,
             suggested_window_bounds,
         }
+    }
+
+    pub(crate) fn with_drag_session(
+        mut self,
+        drag_session: Option<DockRuntimeDragSession>,
+    ) -> Self {
+        self.drag_session = drag_session;
+        self
     }
 
     pub(crate) fn source_space(&self) -> &DockSpaceId {
@@ -91,6 +102,10 @@ impl DockViewportTearOffRequest {
 
     pub(crate) fn payload(&self) -> &DockViewportDropPayload {
         &self.payload
+    }
+
+    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
+        self.drag_session.as_ref()
     }
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {

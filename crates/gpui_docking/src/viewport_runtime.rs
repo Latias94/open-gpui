@@ -158,6 +158,21 @@ impl DockViewportRuntime {
         true
     }
 
+    pub(crate) fn validate_payload_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Result<(), DockActionApplyError> {
+        let Some(session) = session else {
+            return Ok(());
+        };
+        if self.drag_session.as_ref() == Some(session) {
+            return Ok(());
+        }
+        Err(DockActionApplyError::DropDragSessionStale {
+            session: session.id(),
+        })
+    }
+
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub(crate) fn close_policy(&self) -> DockViewportClosePolicy {
         self.close_gate.close_policy()
@@ -337,6 +352,7 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let (source_space, source_tabs, payload, target_space) = match commit {
             DockViewportDropRouteCommit::Workspace(commit) => {
+                self.validate_payload_drag_session(commit.drag_session())?;
                 let (
                     source_space,
                     source_tabs,
@@ -404,6 +420,7 @@ impl DockViewportRuntime {
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        self.validate_payload_drag_session(request.drag_session())?;
         if let Some(outcome) = self.single_viewport_outside_release_noop(
             request.source_space(),
             request.source_tabs(),

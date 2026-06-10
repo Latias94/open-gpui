@@ -148,6 +148,12 @@ pub enum DockActionApplyError {
     /// The resolved drop target was no longer available at commit time.
     #[error("dock drop target is not currently available")]
     DropTargetUnavailable,
+    /// The routed drop was created by a drag session that is no longer active.
+    #[error("dock drop drag session {session} is no longer active")]
+    DropDragSessionStale {
+        /// Runtime drag session id recorded by the routed drop.
+        session: u64,
+    },
     /// The viewport runtime could not open a platform window for a tear-off request.
     #[error("tear-off viewport open failed: {message}")]
     TearOffViewportOpenFailed {
