@@ -340,6 +340,12 @@ impl DockViewportRuntime {
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        if let Some(outcome) =
+            self.single_viewport_outside_release_noop(source_space, source_tabs, &payload, cx)
+        {
+            return Ok(outcome);
+        }
+
         let prepared =
             self.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?;
         self.open_tear_off_viewport(
@@ -407,6 +413,58 @@ impl DockViewportRuntime {
             target_space,
             options,
         })
+    }
+
+    pub(crate) fn single_viewport_outside_release_noop(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        payload: &DockViewportDropPayload,
+        cx: &mut App,
+    ) -> Option<DockViewportDropRouteOutcome> {
+        // A secondary viewport whose root payload already fills the whole window is the window.
+        // Until GPUI exposes platform-window dragging here, outside release should not spawn a
+        // replacement viewport and leave the source window empty.
+        if !self.payload_covers_entire_secondary_viewport(source_space, source_tabs, payload, cx) {
+            return None;
+        }
+
+        Some(DockViewportDropRouteOutcome::Action(
+            DockViewportDropActionOutcome {
+                action: DockActionOutcome::Unchanged,
+                activation: None,
+            },
+        ))
+    }
+
+    fn payload_covers_entire_secondary_viewport(
+        &self,
+        source_space: &DockSpaceId,
+        source_tabs: crate::DockNodeId,
+        payload: &DockViewportDropPayload,
+        cx: &App,
+    ) -> bool {
+        let controller = self.controller.read(cx);
+        if source_space == controller.space()
+            || self.adapter.window_for_space(source_space).is_none()
+        {
+            return false;
+        }
+
+        let graph = controller.graph();
+        if graph.root(source_space) != Some(source_tabs) {
+            return false;
+        }
+
+        let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
+            return false;
+        };
+        let payload_covers_root = match payload {
+            DockViewportDropPayload::Item(item) => items.len() == 1 && items.first() == Some(item),
+            DockViewportDropPayload::Tabs => !items.is_empty(),
+        };
+
+        payload_covers_root && graph.collect_items_in_space(source_space).len() == items.len()
     }
 
     pub(crate) fn next_tear_off_space(

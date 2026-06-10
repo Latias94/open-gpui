@@ -616,6 +616,215 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
+fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext) {
+    let source_space = crate::DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open through runtime");
+    let source_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("runtime viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("runtime viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut source_visual = VisualTestContext::from_window(opened.window, cx);
+
+    let source_tab = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut source_visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let (detached_space, detached_tabs) = cx.read_entity(&controller, |controller, _| {
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| space.as_str().starts_with("source:tear-off:a:"))
+            .expect("outside release should create a detached viewport space");
+        let (detached_tabs, _) = controller
+            .graph()
+            .find_item_in_space(&detached_space, &item("a"))
+            .expect("detached viewport should contain torn-off item");
+        (detached_space, detached_tabs)
+    });
+    let detached_window = runtime
+        .borrow()
+        .adapter()
+        .window_for_space(&detached_space)
+        .expect("detached space should have a runtime window");
+    let detached_window = detached_window
+        .downcast::<crate::DockHost>()
+        .expect("detached viewport should render DockHost");
+    let detached_host = detached_window
+        .root(cx)
+        .expect("detached viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut detached_visual = VisualTestContext::from_window(detached_window.into(), cx);
+
+    let detached_tab = selector_for(
+        &detached_visual,
+        &detached_host,
+        DockDebugRegion::Tab {
+            tabs: detached_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("detached tab selector should be emitted");
+    let target_tabs = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tabs { node: source_tabs },
+    )
+    .expect("source target tabs selector should remain emitted");
+    let start = debug_bounds(&mut detached_visual, &detached_tab).center();
+    let end = debug_bounds(&mut source_visual, &target_tabs).center();
+
+    detached_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    detached_visual.simulate_mouse_move(
+        point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    source_visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("b"), item("a")]
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&detached_space)
+                .is_empty(),
+            "detached viewport should be empty after docking its tab back"
+        );
+    });
+}
+
+#[open_gpui::test]
+fn runtime_secondary_single_tab_outside_release_does_not_spawn_empty_viewport(
+    cx: &mut TestAppContext,
+) {
+    let primary_space = crate::DockSpaceId::from("primary");
+    let secondary_space = crate::DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(primary_space.clone(), primary_tabs);
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    cx.update(|app| {
+        runtime
+            .open_viewport(
+                primary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+            .expect("primary viewport should open through runtime");
+    });
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+    let secondary_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("secondary viewport should render DockHost");
+    let secondary_host = secondary_window
+        .root(cx)
+        .expect("secondary viewport should expose DockHost root");
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+
+    let source_tab = selector_for(
+        &visual,
+        &secondary_host,
+        DockDebugRegion::Tab {
+            tabs: secondary_tabs,
+            item: item("b"),
+        },
+    )
+    .expect("secondary tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_up(outside_window, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&secondary_space),
+            vec![item("b")],
+            "single-tab secondary viewport should keep its only tab on outside release"
+        );
+        assert_eq!(
+            runtime.registered_viewport_spaces(),
+            vec![primary_space.clone(), secondary_space.clone()],
+            "outside release should not create another viewport for an already detached single-tab window"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut TestAppContext) {
     let source_space = crate::DockSpaceId::from("source");
     let mut graph = DockGraph::new();

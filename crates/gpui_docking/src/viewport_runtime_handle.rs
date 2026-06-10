@@ -254,6 +254,16 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
+            if let Some(outcome) = runtime.single_viewport_outside_release_noop(
+                source_space,
+                source_tabs,
+                &payload,
+                cx,
+            ) {
+                let result = Ok(outcome);
+                runtime.record_drop_route_result(&result);
+                return result;
+            }
             runtime.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?
         };
 
