@@ -1,11 +1,12 @@
 use crate::{
     DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportOpenOutcome,
-    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportTargetContext, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTargetContext,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
 };
 use open_gpui::{
@@ -306,6 +307,18 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    pub(crate) fn resolve_payload_drop_route(
+        &self,
+        request: DockViewportDropRouteRequest<'_>,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        self.runtime
+            .borrow_mut()
+            .resolve_payload_drop_route(request, cx)
+    }
+
+    /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_payload_drop_route_with_context(
         &self,
@@ -317,17 +330,15 @@ impl DockViewportRuntimeHandle {
         target_context: &DockViewportTargetContext,
         cx: &App,
     ) -> DockViewportDropRoute {
-        self.runtime
-            .borrow_mut()
-            .resolve_payload_drop_route_with_context(
-                source_space,
-                source_tabs,
-                payload,
-                release_position,
-                suggested_window_bounds,
-                target_context,
-                cx,
-            )
+        let request = DockViewportDropRouteRequest::new(
+            source_space,
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            target_context,
+        );
+        self.resolve_payload_drop_route(request, cx)
     }
 
     /// Resolves and commits a rendered payload release from a screen-space point.
@@ -343,15 +354,15 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let source_space = source_space.into();
-        let route = self.resolve_payload_drop_route_with_context(
+        let request = DockViewportDropRouteRequest::new(
             source_space.clone(),
             source_tabs,
             payload.clone(),
             release_position,
             suggested_window_bounds,
             target_context,
-            cx,
         );
+        let route = self.resolve_payload_drop_route(request, cx);
         self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
     }
 

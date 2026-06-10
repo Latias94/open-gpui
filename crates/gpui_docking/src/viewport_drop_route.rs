@@ -26,26 +26,47 @@ pub(crate) enum DockViewportDropRoute {
     Rejected(DockPolicyError),
 }
 
-impl DockViewportAdapter {
-    /// Resolves a rendered payload release into a runtime route without mutating the graph.
-    ///
-    /// The route contains viewport-level information only. The payload is carried only when the
-    /// route becomes a tear-off request; local and known-viewport commits receive the payload from
-    /// the caller when the route is committed.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn resolve_payload_drop_route_with_context(
-        &self,
+/// All platform and payload facts needed to route one rendered drop release.
+#[derive(Debug, Clone)]
+pub(crate) struct DockViewportDropRouteRequest<'a> {
+    pub(crate) source_space: DockSpaceId,
+    pub(crate) source_tabs: DockNodeId,
+    pub(crate) payload: DockViewportDropPayload,
+    pub(crate) release_position: Point<Pixels>,
+    pub(crate) suggested_window_bounds: Option<WindowBounds>,
+    pub(crate) target_context: &'a DockViewportTargetContext,
+}
+
+impl<'a> DockViewportDropRouteRequest<'a> {
+    pub(crate) fn new(
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
+        target_context: &'a DockViewportTargetContext,
+    ) -> Self {
+        Self {
+            source_space: source_space.into(),
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            target_context,
+        }
+    }
+}
+
+impl DockViewportAdapter {
+    pub(crate) fn resolve_payload_drop_route(
+        &self,
+        request: &DockViewportDropRouteRequest<'_>,
         policy: &DockPolicy,
-        target_context: &DockViewportTargetContext,
     ) -> DockViewportDropRoute {
-        let source_space = source_space.into();
-        if let Some(candidate) = self.resolve_viewport_target(release_position, target_context) {
-            if candidate.space == source_space {
+        if let Some(candidate) =
+            self.resolve_viewport_target(request.release_position, request.target_context)
+        {
+            if candidate.space == request.source_space {
                 return DockViewportDropRoute::Local {
                     host_position: candidate.host_position,
                 };
@@ -63,12 +84,40 @@ impl DockViewportAdapter {
         }
 
         DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+            source_space: request.source_space.clone(),
+            source_tabs: request.source_tabs,
+            payload: request.payload.clone(),
+            release_position: request.release_position,
+            suggested_window_bounds: request.suggested_window_bounds,
+        })
+    }
+
+    /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    ///
+    /// The route contains viewport-level information only. The payload is carried only when the
+    /// route becomes a tear-off request; local and known-viewport commits receive the payload from
+    /// the caller when the route is committed.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_payload_drop_route_with_context(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        policy: &DockPolicy,
+        target_context: &DockViewportTargetContext,
+    ) -> DockViewportDropRoute {
+        let request = DockViewportDropRouteRequest::new(
             source_space,
             source_tabs,
             payload,
             release_position,
             suggested_window_bounds,
-        })
+            target_context,
+        );
+        self.resolve_payload_drop_route(&request, policy)
     }
 }
 

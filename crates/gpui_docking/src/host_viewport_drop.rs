@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockViewportDropPayload, DockViewportTargetContext,
+    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportTargetContext,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
 };
@@ -42,15 +42,16 @@ impl DockHost {
             );
         };
 
-        let route = runtime.resolve_payload_drop_route_with_context(
+        let target_context = DockViewportTargetContext::from_window(window, cx);
+        let request = DockViewportDropRouteRequest::new(
             payload.source_space.clone(),
             payload.source_tabs,
             viewport_payload(payload),
             window_screen_position(window, position),
             None,
-            &DockViewportTargetContext::from_window(window, cx),
-            cx,
+            &target_context,
         );
+        let route = runtime.resolve_payload_drop_route(request, cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
                 .update_drop_route_preview(&route, position),
