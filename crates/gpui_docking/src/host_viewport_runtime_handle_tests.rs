@@ -2,9 +2,9 @@ use crate::{
     DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportRouteTarget,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace, DropZone, SplitAxis,
+    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffRequest, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropPreviewKind,
@@ -447,19 +447,15 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
             )
         }
     );
-    assert_eq!(
-        runtime
-            .runtime_status()
-            .last_route
-            .as_ref()
-            .map(|record| &record.target),
-        Some(&DockViewportRouteTarget::KnownViewport {
-            space: target_space,
-            window_id: opened.window.window_id(),
-            host_position: point(px(20.0), px(40.0)),
-        }),
-        "runtime status should expose the last resolved known-viewport route"
-    );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .expect("runtime status should expose the last resolved route")
+        .target;
+    assert_eq!(target.space(), Some(&target_space));
+    assert_eq!(target.window_id(), Some(opened.window.window_id()));
+    assert_eq!(target.host_position(), Some(point(px(20.0), px(40.0))));
 }
 
 #[open_gpui::test]
@@ -496,18 +492,15 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
         ),
         "default workspace policy should reject outside-all-viewports route"
     );
-    assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::Rejected {
-                reason: crate::DockPolicyError::PlatformViewportsDisabled,
-            })
-        ),
-        "runtime status should record the rejected route"
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .expect("runtime status should record the rejected route")
+        .target;
+    assert_eq!(
+        target.rejection_reason(),
+        Some(crate::DockPolicyError::PlatformViewportsDisabled)
     );
 
     cx.update_entity(&controller, |controller, _| {
@@ -537,19 +530,13 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             && routed_item == item("a")
             && routed_position == release_position
     ));
-    assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::TearOff {
-                release_position: recorded_position,
-            }) if *recorded_position == release_position
-        ),
-        "runtime status should record the tear-off route"
-    );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .expect("runtime status should record the tear-off route")
+        .target;
+    assert_eq!(target.release_position(), Some(release_position));
 }
 
 #[open_gpui::test]
@@ -907,18 +894,13 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
             app,
         );
-        assert!(
-            matches!(
-                runtime
-                    .runtime_status()
-                    .last_route
-                    .as_ref()
-                    .map(|record| &record.target),
-                Some(DockViewportRouteTarget::KnownViewport { window_id, .. })
-                    if *window_id == opened.window.window_id()
-            ),
-            "screen release seam should record the destination viewport route"
-        );
+        let status = runtime.runtime_status();
+        let target = &status
+            .last_route
+            .as_ref()
+            .expect("screen release should record the destination viewport route")
+            .target;
+        assert_eq!(target.window_id(), Some(opened.window.window_id()));
         result
     });
 
@@ -1458,18 +1440,13 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     else {
         panic!("dock-back should resolve to a normal action");
     };
-    assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::KnownViewport { space, .. }) if space == &target_space
-        ),
-        "dock-back should route to the target viewport, got {:?}",
-        runtime.runtime_status().last_route
-    );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .expect("dock-back should route to the target viewport")
+        .target;
+    assert_eq!(target.space(), Some(&target_space));
     assert_eq!(action.action, crate::DockActionOutcome::Changed);
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller

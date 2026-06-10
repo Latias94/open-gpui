@@ -193,6 +193,48 @@ impl DockViewportRuntimeStatus {
 }
 
 impl DockViewportRouteTarget {
+    /// Returns the dock space for routes that target an existing workspace.
+    pub fn space(&self) -> Option<&DockSpaceId> {
+        match self {
+            Self::Local { space, .. } | Self::KnownViewport { space, .. } => Some(space),
+            Self::TearOff { .. } | Self::Rejected { .. } => None,
+        }
+    }
+
+    /// Returns the destination window id for routes that target a registered viewport.
+    pub fn window_id(&self) -> Option<WindowId> {
+        match self {
+            Self::KnownViewport { window_id, .. } => Some(*window_id),
+            Self::Local { .. } | Self::TearOff { .. } | Self::Rejected { .. } => None,
+        }
+    }
+
+    /// Returns the host-relative pointer position for routes into an existing workspace.
+    pub fn host_position(&self) -> Option<Point<Pixels>> {
+        match self {
+            Self::Local { host_position, .. } | Self::KnownViewport { host_position, .. } => {
+                Some(*host_position)
+            }
+            Self::TearOff { .. } | Self::Rejected { .. } => None,
+        }
+    }
+
+    /// Returns the screen release position for tear-off routes.
+    pub fn release_position(&self) -> Option<Point<Pixels>> {
+        match self {
+            Self::TearOff { release_position } => Some(*release_position),
+            Self::Local { .. } | Self::KnownViewport { .. } | Self::Rejected { .. } => None,
+        }
+    }
+
+    /// Returns the policy rejection reason for rejected routes.
+    pub fn rejection_reason(&self) -> Option<DockPolicyError> {
+        match self {
+            Self::Rejected { reason } => Some(*reason),
+            Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff { .. } => None,
+        }
+    }
+
     fn from_route(source_space: &DockSpaceId, route: &DockViewportDropRoute) -> Self {
         match route {
             DockViewportDropRoute::Local { host_position } => Self::Local {
@@ -347,16 +389,8 @@ mod tests {
             .as_ref()
             .expect("route record should be captured");
         assert_eq!(route.source_space, source);
-        assert!(
-            matches!(
-                &route.target,
-                DockViewportRouteTarget::Local {
-                    space,
-                    host_position: recorded_position,
-                } if space == &source && *recorded_position == host_position
-            ),
-            "local route target should be the recorded source, got {:?}",
-            route.target
-        );
+        assert_eq!(route.target.space(), Some(&source));
+        assert_eq!(route.target.host_position(), Some(host_position));
+        assert_eq!(route.target.window_id(), None);
     }
 }

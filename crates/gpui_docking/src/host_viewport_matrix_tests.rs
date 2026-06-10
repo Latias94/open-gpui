@@ -1,8 +1,7 @@
 use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRouteTarget, DockViewportRuntimeHandle, DockWorkspace,
-    SplitAxis,
+    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace, SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget},
@@ -236,20 +235,14 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         );
     };
     assert_eq!(action.action, DockActionOutcome::Changed, "{}", case.name);
-    assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::KnownViewport { space, host_position: routed_position, .. })
-                if space == &target_space && *routed_position == host_position
-        ),
-        "{}: release should route to target viewport, got {:?}",
-        case.name,
-        runtime.runtime_status().last_route
-    );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+        .target;
+    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
+    assert_eq!(target.host_position(), Some(host_position), "{}", case.name);
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
@@ -405,18 +398,22 @@ fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
         "{}: fallback poll should stop the active drag after committing release",
         case.name
     );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: polled outside release should record a route",
+                case.name
+            )
+        })
+        .target;
     assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::TearOff { .. })
-        ),
+        target.release_position().is_some(),
         "{}: polled outside release should route as tear-off, got {:?}",
         case.name,
-        runtime.runtime_status().last_route
+        status.last_route
     );
     assert!(
         matches!(
@@ -684,20 +681,14 @@ fn assert_known_viewport_route(
     host_position: Point<Pixels>,
     case_name: &str,
 ) {
-    assert!(
-        matches!(
-            runtime
-                .runtime_status()
-                .last_route
-                .as_ref()
-                .map(|record| &record.target),
-            Some(DockViewportRouteTarget::KnownViewport { space, host_position: routed_position, .. })
-                if space == target_space && *routed_position == host_position
-        ),
-        "{}: hover/release should route to target viewport, got {:?}",
-        case_name,
-        runtime.runtime_status().last_route
-    );
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .unwrap_or_else(|| panic!("{}: hover/release should record a route", case_name))
+        .target;
+    assert_eq!(target.space(), Some(target_space), "{}", case_name);
+    assert_eq!(target.host_position(), Some(host_position), "{}", case_name);
 }
 
 fn assert_case_graph(
