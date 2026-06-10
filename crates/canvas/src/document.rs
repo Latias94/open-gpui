@@ -1043,11 +1043,6 @@ impl CanvasDocument {
     }
 
     #[cfg(test)]
-    pub(crate) fn update_node(&mut self, node: CanvasNode) -> Result<(), DocumentError> {
-        self.update_node_rule(node)
-    }
-
-    #[cfg(test)]
     pub(crate) fn remove_node(&mut self, id: &NodeId) -> Result<CanvasNode, DocumentError> {
         self.remove_node_rule(id)
     }
@@ -1055,11 +1050,6 @@ impl CanvasDocument {
     #[cfg(test)]
     pub(crate) fn insert_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
         self.insert_edge_rule(edge)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn update_edge(&mut self, edge: CanvasEdge) -> Result<(), DocumentError> {
-        self.update_edge_rule(edge)
     }
 
     #[cfg(test)]
@@ -2305,7 +2295,11 @@ mod tests {
             .unwrap();
 
         node.handles.clear();
-        let err = document.update_node(node).unwrap_err();
+        let err = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+                node,
+            )))
+            .unwrap_err();
 
         assert_eq!(
             err,

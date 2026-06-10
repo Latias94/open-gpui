@@ -382,26 +382,24 @@ mod tests {
     use super::*;
     use crate::{
         CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasShape, NodeId, ShapeId,
+        test_support::document_fixture,
     };
     use open_gpui::{point, size};
 
     #[test]
     fn snaps_selected_bounds_to_nearby_left_edge() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "active",
                 point(px(0.0), px(0.0)),
                 size(px(40.0), px(40.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "target",
                 point(px(100.0), px(0.0)),
                 size(px(40.0), px(40.0)),
             ))
-            .unwrap();
+            .build();
         let mut selection = CanvasSelection::default();
         selection.insert_node(NodeId::from("active"));
 
@@ -433,9 +431,7 @@ mod tests {
             size(px(40.0), px(40.0)),
         );
         locked.locked = true;
-        let mut document = CanvasDocument::default();
-        document.insert_node(active).unwrap();
-        document.insert_node(locked).unwrap();
+        let document = document_fixture().node(active).node(locked).build();
         let mut selection = CanvasSelection::default();
         selection.insert_node(NodeId::from("active"));
 
@@ -461,9 +457,7 @@ mod tests {
             point(px(100.0), px(80.0)),
             size(px(40.0), px(40.0)),
         );
-        let mut document = CanvasDocument::default();
-        document.insert_node(active).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(active).node(target).build();
         let mut selection = CanvasSelection::default();
         selection.insert_node(NodeId::from("active"));
         let mut registry = CanvasKindRegistry::open();
@@ -495,20 +489,17 @@ mod tests {
 
     #[test]
     fn resize_snaps_only_the_dragged_edges() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "active",
                 point(px(100.0), px(100.0)),
                 size(px(40.0), px(40.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "target",
                 Bounds::new(point(px(50.0), px(60.0)), size(px(32.0), px(24.0))),
             ))
-            .unwrap();
+            .build();
         let mut selection = CanvasSelection::default();
         selection.insert_node(NodeId::from("active"));
         selection.insert_shape(ShapeId::from("target"));
