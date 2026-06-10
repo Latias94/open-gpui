@@ -88,7 +88,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.schedule_outside_release_poll_from_host(window, cx);
+        self.schedule_outside_release_poll_from_host(payload, window, cx);
         self.publish_viewport_host_scene_interaction(host_bounds, position, window);
         self.update_floating_drag_interaction(position, cx)
             .merge(

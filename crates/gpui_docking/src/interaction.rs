@@ -1,5 +1,6 @@
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
+    drag::DockDragPayloadIdentity,
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
@@ -47,9 +48,10 @@ pub(crate) struct DockFloatingBoundsRequest {
     pub(crate) bounds: Bounds<Pixels>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockOutsideReleasePollSession {
     id: u64,
+    payload: DockDragPayloadIdentity,
 }
 
 impl DockInteractionRuntime {
@@ -171,23 +173,26 @@ impl DockInteractionRuntime {
         self.set_drop_route_preview(None)
     }
 
-    pub(crate) fn begin_outside_release_poll(&mut self) -> Option<DockOutsideReleasePollSession> {
+    pub(crate) fn begin_outside_release_poll(
+        &mut self,
+        payload: DockDragPayloadIdentity,
+    ) -> Option<DockOutsideReleasePollSession> {
         if self.outside_release_poll.is_some() {
             return None;
         }
 
         let id = self.next_outside_release_poll_id.wrapping_add(1);
         self.next_outside_release_poll_id = id;
-        let session = DockOutsideReleasePollSession { id };
-        self.outside_release_poll = Some(session);
+        let session = DockOutsideReleasePollSession { id, payload };
+        self.outside_release_poll = Some(session.clone());
         Some(session)
     }
 
     pub(crate) fn finish_outside_release_poll(
         &mut self,
-        session: DockOutsideReleasePollSession,
+        session: &DockOutsideReleasePollSession,
     ) -> bool {
-        if self.outside_release_poll != Some(session) {
+        if self.outside_release_poll.as_ref() != Some(session) {
             return false;
         }
         self.outside_release_poll = None;
@@ -200,9 +205,17 @@ impl DockInteractionRuntime {
 
     pub(crate) fn outside_release_poll_session_active(
         &self,
-        session: DockOutsideReleasePollSession,
+        session: &DockOutsideReleasePollSession,
     ) -> bool {
-        self.outside_release_poll == Some(session)
+        self.outside_release_poll.as_ref() == Some(session)
+    }
+
+    pub(crate) fn outside_release_poll_session_accepts_payload(
+        &self,
+        session: &DockOutsideReleasePollSession,
+        payload: &DockDragPayloadIdentity,
+    ) -> bool {
+        self.outside_release_poll_session_active(session) && &session.payload == payload
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
@@ -244,12 +257,21 @@ impl DockInteractionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DockNodeId;
+    use crate::{DockItemId, DockNodeId, drag::DockDragPayload};
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
     fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
         Bounds::new(point(px(x), px(y)), size(px(width), px(height)))
+    }
+
+    fn item_payload(item: &str, title: &str) -> DockDragPayload {
+        DockDragPayload::new_item(
+            DockSpaceId::from("main"),
+            DockNodeId::null(),
+            DockItemId::from(item),
+            title.to_string(),
+        )
     }
 
     #[test]
@@ -367,15 +389,19 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
 
         assert!(!runtime.outside_release_poll_running());
+        let payload = item_payload("a", "Panel A").identity();
         let session = runtime
-            .begin_outside_release_poll()
+            .begin_outside_release_poll(payload)
             .expect("poll session should start");
         assert!(runtime.outside_release_poll_running());
-        assert_eq!(runtime.begin_outside_release_poll(), None);
-        assert!(runtime.outside_release_poll_session_active(session));
-        assert!(runtime.finish_outside_release_poll(session));
+        assert_eq!(
+            runtime.begin_outside_release_poll(item_payload("b", "Panel B").identity()),
+            None
+        );
+        assert!(runtime.outside_release_poll_session_active(&session));
+        assert!(runtime.finish_outside_release_poll(&session));
         assert!(!runtime.outside_release_poll_running());
-        assert!(!runtime.finish_outside_release_poll(session));
+        assert!(!runtime.finish_outside_release_poll(&session));
     }
 
     #[test]
@@ -383,16 +409,35 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
 
         let stale = runtime
-            .begin_outside_release_poll()
+            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
             .expect("first poll session should start");
         assert!(runtime.cancel_outside_release_poll());
         let active = runtime
-            .begin_outside_release_poll()
+            .begin_outside_release_poll(item_payload("b", "Panel B").identity())
             .expect("second poll session should start");
 
-        assert!(!runtime.finish_outside_release_poll(stale));
-        assert!(runtime.outside_release_poll_session_active(active));
-        assert!(runtime.finish_outside_release_poll(active));
+        assert!(!runtime.finish_outside_release_poll(&stale));
+        assert!(runtime.outside_release_poll_session_active(&active));
+        assert!(runtime.finish_outside_release_poll(&active));
         assert!(!runtime.outside_release_poll_running());
+    }
+
+    #[test]
+    fn outside_release_poll_session_rejects_different_payload_identity() {
+        let mut runtime = DockInteractionRuntime::default();
+
+        let session = runtime
+            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
+            .expect("poll session should start");
+
+        assert!(runtime.outside_release_poll_session_accepts_payload(
+            &session,
+            &item_payload("a", "Renamed Panel A").identity()
+        ));
+        assert!(!runtime.outside_release_poll_session_accepts_payload(
+            &session,
+            &item_payload("b", "Panel B").identity()
+        ));
+        assert!(runtime.finish_outside_release_poll(&session));
     }
 }

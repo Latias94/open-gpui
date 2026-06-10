@@ -15,6 +15,13 @@ pub(crate) enum DockDragPayloadKind {
     Tabs,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockDragPayloadIdentity {
+    source_space: DockSpaceId,
+    source_tabs: DockNodeId,
+    kind: DockDragPayloadKind,
+}
+
 impl DockDragPayload {
     pub(crate) fn new_item(
         source_space: DockSpaceId,
@@ -58,6 +65,14 @@ impl DockDragPayload {
 
     pub(crate) fn title(&self) -> &str {
         &self.title
+    }
+
+    pub(crate) fn identity(&self) -> DockDragPayloadIdentity {
+        DockDragPayloadIdentity {
+            source_space: self.source_space.clone(),
+            source_tabs: self.source_tabs,
+            kind: self.kind.clone(),
+        }
     }
 
     pub(crate) fn excluded_tabs_for_drop_scene(&self) -> Option<DockNodeId> {
@@ -116,5 +131,26 @@ mod tests {
         assert!(!item_payload.is_tabs_stack());
         assert_eq!(tabs_payload.item(), None);
         assert!(tabs_payload.is_tabs_stack());
+    }
+
+    #[test]
+    fn drag_payload_identity_ignores_preview_title() {
+        let source_space = DockSpaceId::from("main");
+        let source_tabs = DockNodeId::null();
+        let original = DockDragPayload::new_item(
+            source_space.clone(),
+            source_tabs,
+            DockItemId::from("a"),
+            "Original title".to_string(),
+        );
+        let renamed = DockDragPayload::new_item(
+            source_space,
+            source_tabs,
+            DockItemId::from("a"),
+            "Renamed title".to_string(),
+        );
+
+        assert_eq!(original.identity(), renamed.identity());
+        assert_ne!(original, renamed);
     }
 }

@@ -5,6 +5,7 @@ use std::time::Duration;
 impl DockHost {
     pub(crate) fn schedule_outside_release_poll_from_host(
         &mut self,
+        payload: &DockDragPayload,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -13,7 +14,10 @@ impl DockHost {
         {
             return false;
         }
-        let Some(session) = self.interaction_mut().begin_outside_release_poll() else {
+        let Some(session) = self
+            .interaction_mut()
+            .begin_outside_release_poll(payload.identity())
+        else {
             return false;
         };
 
@@ -24,7 +28,7 @@ impl DockHost {
                     .await;
                 let should_continue = host
                     .update_in(cx, |host, window, cx| {
-                        host.poll_outside_release_from_host(session, window, cx)
+                        host.poll_outside_release_from_host(&session, window, cx)
                     })
                     .unwrap_or(false);
                 if !should_continue {
@@ -38,7 +42,7 @@ impl DockHost {
 
     fn poll_outside_release_from_host(
         &mut self,
-        session: DockOutsideReleasePollSession,
+        session: &DockOutsideReleasePollSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -53,6 +57,13 @@ impl DockHost {
             self.interaction_mut().finish_outside_release_poll(session);
             return false;
         };
+        if !self
+            .interaction()
+            .outside_release_poll_session_accepts_payload(session, &payload.identity())
+        {
+            self.interaction_mut().finish_outside_release_poll(session);
+            return false;
+        }
 
         match cx.mouse_button_is_pressed(MouseButton::Left) {
             Some(true) => true,
