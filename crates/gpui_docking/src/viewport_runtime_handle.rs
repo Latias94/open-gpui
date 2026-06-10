@@ -192,6 +192,7 @@ impl DockViewportRuntimeHandle {
         Ok(outcome)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene(
         &self,
         space: impl Into<DockSpaceId>,
@@ -226,6 +227,7 @@ impl DockViewportRuntimeHandle {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &self,
         space: &DockSpaceId,

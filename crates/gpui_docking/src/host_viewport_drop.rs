@@ -7,26 +7,31 @@ use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
 impl DockHost {
     pub(crate) fn publish_viewport_host_scene_interaction(
-        &self,
+        &mut self,
         host_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         window: &Window,
     ) {
         let Some(runtime) = self.viewport_runtime().cloned() else {
+            self.interaction_mut().set_viewport_host_scene_frame(None);
             return;
         };
+        let space = self.space().clone();
         let window_id = window.window_handle().window_id();
-        if runtime.window_id_for_space(self.space()) != Some(window_id) {
+        if runtime.window_id_for_space(&space) != Some(window_id) {
+            self.interaction_mut().set_viewport_host_scene_frame(None);
             return;
         }
 
-        runtime.begin_viewport_host_scene(
-            self.space().clone(),
+        let registration = runtime.begin_viewport_host_scene_frame(
+            space,
             window_id,
             window.window_bounds(),
             host_bounds,
             host_local_point(host_bounds, position),
         );
+        self.interaction_mut()
+            .set_viewport_host_scene_frame(registration.map(|registration| registration.frame));
     }
 
     pub(crate) fn update_viewport_drop_route_preview_interaction(

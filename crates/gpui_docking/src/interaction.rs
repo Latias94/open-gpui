@@ -5,6 +5,7 @@ use crate::{
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
     geometry,
+    viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -16,6 +17,7 @@ pub(crate) struct DockInteractionRuntime {
     drop_route_preview: Option<DockDropPreview>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
+    viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
 }
 
 #[derive(Debug, Clone)]
@@ -286,6 +288,21 @@ impl DockInteractionRuntime {
     ) -> bool {
         self.drop
             .push_scene_fact(position, excluded_tabs, fact, policy)
+    }
+
+    pub(crate) fn set_viewport_host_scene_frame(
+        &mut self,
+        frame: Option<DockViewportHostSceneFrame>,
+    ) -> bool {
+        if self.viewport_host_scene_frame == frame {
+            return false;
+        }
+        self.viewport_host_scene_frame = frame;
+        true
+    }
+
+    pub(crate) fn viewport_host_scene_frame(&self) -> Option<&DockViewportHostSceneFrame> {
+        self.viewport_host_scene_frame.as_ref()
     }
 
     pub(crate) fn take_resolved_drop_target(&mut self) -> Option<DockResolvedDropTarget> {

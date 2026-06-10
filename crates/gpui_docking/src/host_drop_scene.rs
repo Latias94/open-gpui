@@ -140,12 +140,13 @@ impl DockHost {
         window: &Window,
         policy: &crate::DockPolicy,
     ) -> bool {
-        if let Some(runtime) = self.viewport_runtime() {
-            runtime.push_viewport_host_scene_fact(
-                self.space(),
-                window.window_handle().window_id(),
-                fact.clone(),
-            );
+        let viewport_runtime = self.viewport_runtime().cloned();
+        let frame = self.interaction().viewport_host_scene_frame().cloned();
+        if let (Some(runtime), Some(frame)) = (viewport_runtime, frame) {
+            if frame.space == *self.space() && frame.window_id == window.window_handle().window_id()
+            {
+                runtime.push_viewport_host_scene_frame_fact(&frame, fact.clone());
+            }
         }
         self.interaction_mut()
             .push_drop_scene_fact(position, excluded_tabs, fact, policy)

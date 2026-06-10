@@ -103,6 +103,7 @@ impl DockViewportHostSceneRegistry {
         DockViewportHostSceneRegistration { changed, frame }
     }
 
+    #[cfg(test)]
     pub(crate) fn push_fact(
         &mut self,
         space: &DockSpaceId,
@@ -130,6 +131,7 @@ impl DockViewportHostSceneRegistry {
         true
     }
 
+    #[cfg(test)]
     fn current_frame(
         &self,
         space: &DockSpaceId,

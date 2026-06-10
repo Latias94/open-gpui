@@ -167,6 +167,7 @@ impl DockViewportRuntime {
             .update_snapshot(space, display_id, window_bounds, host_bounds)
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene(
         &mut self,
         space: impl Into<DockSpaceId>,
@@ -218,6 +219,7 @@ impl DockViewportRuntime {
         Some(registration)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_viewport_host_scene_fact(
         &mut self,
         space: &DockSpaceId,
