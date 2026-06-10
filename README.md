@@ -58,8 +58,16 @@ During local development, use workspace path dependencies instead of registry ve
 - `crates/gpui_linux`, `crates/gpui_macos`, `crates/gpui_windows`, `crates/gpui_web`: platform backends
 - `crates/gpui_wgpu`: renderer backend
 - `crates/gpui_macros`: Open GPUI proc macros
+- `crates/canvas`: reusable `open-gpui-canvas` model and interaction primitives for infinite canvas applications
+- `examples/canvas-notes`: native JSON Canvas note-map example
 - `examples/smoke-native`: native smoke example
 - `xtask`: workspace verification and import-boundary checks
+
+Run the note-map example with:
+
+```sh
+cargo run -p open-gpui-canvas-notes
+```
 
 ## Verification
 
@@ -78,6 +86,7 @@ Open GPUI builds on the work of several open-source projects and communities:
 - [Zed GPUI](https://github.com/zed-industries/zed), developed by Zed Industries, is the upstream Apache-2.0 GPUI framework lineage that Open GPUI was forked from.
 - [scap](https://github.com/CapSoftware/scap) provides the screen capture library lineage used by the Open GPUI-maintained `open-gpui-scap` fork.
 - [font-kit](https://github.com/servo/font-kit) provides the cross-platform font loading library lineage used by the Open GPUI-maintained `open-gpui-font-kit` fork.
+- [JSON Canvas](https://jsoncanvas.org/) provides the open canvas interchange format used by the `open-gpui-canvas` JSON Canvas adapter.
 - The Rust and crates.io ecosystem provides the third-party crates listed by Cargo metadata and the lockfile.
 
 ## License and Attribution

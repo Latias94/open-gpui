@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/canvas",
     "crates/collections",
     "crates/gpui",
     "crates/gpui_docking",
@@ -23,6 +24,7 @@ members = [
     "crates/sum_tree",
     "crates/util",
     "crates/util_macros",
+    "examples/canvas-notes",
     "examples/docking-native",
     "examples/smoke-native",
     "xtask",
@@ -44,6 +46,7 @@ publish = false
 
 [workspace.dependencies]
 open_gpui = { package = "open-gpui", version = "0.1.0", path = "crates/gpui", default-features = false }
+open_gpui_canvas = { package = "open-gpui-canvas", version = "0.1.0", path = "crates/canvas" }
 open_gpui_collections = { package = "open-gpui-collections", version = "0.1.0", path = "crates/collections" }
 open_gpui_docking = { package = "open-gpui-docking", version = "0.1.0", path = "crates/gpui_docking" }
 open_gpui_core_util = { package = "open-gpui-core-util", version = "0.1.0", path = "crates/gpui_util" }

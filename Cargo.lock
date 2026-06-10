@@ -2628,6 +2628,16 @@ dependencies = [
 
 [[package]]
 name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
@@ -4163,7 +4173,7 @@ dependencies = [
  "futures-concurrency",
  "getrandom 0.3.4",
  "hdrhistogram",
- "heapless",
+ "heapless 0.9.3",
  "image",
  "inventory",
  "itertools 0.14.0",
@@ -4218,6 +4228,29 @@ dependencies = [
  "waker-fn",
  "web-time",
  "windows 0.61.3",
+]
+
+[[package]]
+name = "open-gpui-canvas"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "indexmap",
+ "open-gpui",
+ "rstar",
+ "serde",
+ "serde_json",
+ "static_aabb2d_index",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "open-gpui-canvas-notes"
+version = "0.1.0"
+dependencies = [
+ "open-gpui",
+ "open-gpui-canvas",
+ "open-gpui-platform",
 ]
 
 [[package]]
@@ -4525,6 +4558,7 @@ name = "open-gpui-smoke-native"
 version = "0.1.0"
 dependencies = [
  "open-gpui",
+ "open-gpui-canvas",
  "open-gpui-platform",
 ]
 
@@ -4533,7 +4567,7 @@ name = "open-gpui-sum-tree"
 version = "0.1.0"
 dependencies = [
  "ctor",
- "heapless",
+ "heapless 0.9.3",
  "log",
  "proptest",
  "rand 0.9.4",
@@ -5638,6 +5672,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rstar"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5912b862fa5ffb462607bfd1e35036c458c537921f508c8235a83d5f3987edfe"
+dependencies = [
+ "heapless 0.8.0",
+ "num-traits",
+ "smallvec",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6284,6 +6329,15 @@ dependencies = [
  "proc-macro-error2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "static_aabb2d_index"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1204bd3057a2225dc60d157bd921aaeaa4d318527bd32af4678cad39e5279849"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

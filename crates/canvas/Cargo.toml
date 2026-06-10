@@ -1,0 +1,43 @@
+[package]
+name = "open-gpui-canvas"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/open-gpui-canvas"
+readme = "README.md"
+description = "Extensible infinite canvas model and interaction primitives for Open GPUI."
+keywords = ["canvas", "graph", "gui", "whiteboard"]
+categories = ["gui", "data-structures"]
+
+[features]
+default = []
+redb-store = []
+loro-crdt = []
+rkyv-snapshot = []
+
+[dependencies]
+indexmap.workspace = true
+open_gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+open_gpui = { workspace = true, features = ["test-support"] }
+rstar = "0.13.0"
+static_aabb2d_index = "2.0.0"
+
+[[bench]]
+name = "large_canvas"
+harness = false
+
+[[bench]]
+name = "spatial_index_strategies"
+harness = false
+
+[lints]
+workspace = true

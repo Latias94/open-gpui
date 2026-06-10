@@ -1,5 +1,5 @@
 [package]
-name = "open-gpui-smoke-native"
+name = "open-gpui-canvas-notes"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,10 +9,10 @@ homepage.workspace = true
 documentation.workspace = true
 readme.workspace = true
 publish = false
-description = "Native smoke example for Open GPUI."
+description = "Native note-map example for open-gpui-canvas."
 
 [[bin]]
-name = "open-gpui-smoke-native"
+name = "open-gpui-canvas-notes"
 path = "src/main.rs"
 
 [dependencies]

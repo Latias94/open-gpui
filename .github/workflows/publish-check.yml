@@ -68,6 +68,7 @@ jobs:
 
           leaf = sorted((pkg for pkg in packages if not has_local_workspace_dep(pkg)), key=lambda pkg: pkg["name"])
           non_leaf = sorted((pkg for pkg in packages if has_local_workspace_dep(pkg)), key=lambda pkg: pkg["name"])
+          explicit_package_targets = {"open-gpui-canvas"}
 
           print("Leaf crates:")
           print(", ".join(pkg["name"] for pkg in leaf) or "(none)")
@@ -87,6 +88,11 @@ jobs:
           for pkg in leaf:
               run_package(pkg, ["--no-verify"])
 
+          for pkg in packages:
+              if pkg["name"] in explicit_package_targets and pkg not in leaf:
+                  run_package(pkg, ["--no-verify"])
+
           for pkg in non_leaf:
-              run_package(pkg, ["--list"])
+              if pkg["name"] not in explicit_package_targets:
+                  run_package(pkg, ["--list"])
           PY
