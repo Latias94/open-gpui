@@ -2,7 +2,8 @@ use crate::{
     DockHost,
     drag::DockDragPayload,
     interaction::{
-        DockOutsideReleasePollDecision, DockOutsideReleasePollSession, DockPayloadDropRelease,
+        DockOutsideReleasePollDecision, DockOutsideReleasePollRequest,
+        DockOutsideReleasePollSession,
     },
 };
 use open_gpui::{Context, MouseButton, Window};
@@ -53,26 +54,19 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         let payload = cx.active_drag_value::<DockDragPayload>().cloned();
-        let payload_identity = payload.as_ref().map(DockDragPayload::identity);
-        let decision = self.interaction_mut().poll_outside_release(
-            session,
-            payload_identity.as_ref(),
+        let request = DockOutsideReleasePollRequest::new(
+            session.clone(),
+            payload,
             cx.mouse_button_is_pressed(MouseButton::Left),
+            self.space().clone(),
+            window.mouse_position(),
         );
+        let decision = self.interaction_mut().poll_outside_release(request);
 
         match decision {
             DockOutsideReleasePollDecision::Continue => true,
-            DockOutsideReleasePollDecision::CommitRelease => {
-                let Some(payload) = payload else {
-                    return false;
-                };
-                let target_space = self.space().clone();
-                let release_position = window.mouse_position();
-                let changed = self.drop_payload_release_from_render(
-                    DockPayloadDropRelease::new(payload, target_space, release_position),
-                    window,
-                    cx,
-                );
+            DockOutsideReleasePollDecision::CommitRelease(release) => {
+                let changed = self.drop_payload_release_from_render(release, window, cx);
                 cx.stop_active_drag(window);
                 changed
             }
