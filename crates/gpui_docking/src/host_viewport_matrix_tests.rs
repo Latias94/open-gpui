@@ -1,7 +1,8 @@
 use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportDropPayload, DockViewportDropRouteOutcome, DockViewportRouteTarget,
-    DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, SplitAxis,
+    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
+    DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace,
+    SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget},
@@ -11,6 +12,7 @@ use open_gpui::{
     AppContext as _, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext,
     WindowBounds, point, px,
 };
+use std::time::Duration;
 
 #[derive(Clone, Copy)]
 enum MatrixPayload {
@@ -30,6 +32,12 @@ struct MatrixCase {
     name: &'static str,
     payload: MatrixPayload,
     target: MatrixTarget,
+}
+
+#[derive(Clone, Copy)]
+struct PollMatrixCase {
+    name: &'static str,
+    payload: MatrixPayload,
 }
 
 struct MatrixNodes {
@@ -76,6 +84,13 @@ fn target_hover_known_viewport_release_matrix_commits_payloads_to_rendered_targe
     }
 }
 
+#[open_gpui::test]
+fn capture_loss_poll_release_matrix_tears_off_payloads_without_mouse_up(cx: &mut TestAppContext) {
+    for case in poll_matrix_cases() {
+        run_capture_loss_poll_case(cx, case);
+    }
+}
+
 fn matrix_cases() -> [MatrixCase; 6] {
     [
         MatrixCase {
@@ -107,6 +122,19 @@ fn matrix_cases() -> [MatrixCase; 6] {
             name: "tabs to empty space",
             payload: MatrixPayload::Tabs,
             target: MatrixTarget::EmptySpace,
+        },
+    ]
+}
+
+fn poll_matrix_cases() -> [PollMatrixCase; 2] {
+    [
+        PollMatrixCase {
+            name: "item outside release",
+            payload: MatrixPayload::Item,
+        },
+        PollMatrixCase {
+            name: "tabs outside release",
+            payload: MatrixPayload::Tabs,
         },
     ]
 }
@@ -300,6 +328,150 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     cx.run_until_parked();
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
+}
+
+fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
+    let source_space = DockSpaceId::from(format!("poll source:{}", case.name));
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: case.payload.source_items(),
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
+    let source_window = opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut visual = VisualTestContext::from_window(opened.window, cx);
+    let source_case = MatrixCase {
+        name: case.name,
+        payload: case.payload,
+        target: MatrixTarget::EmptySpace,
+    };
+    let nodes = MatrixNodes {
+        source_tabs,
+        target_tabs: None,
+        target_root: None,
+    };
+    let start = source_drag_start(&mut visual, &source_host, source_case, &nodes);
+    let threshold = point(start.x + px(24.0), start.y);
+    let outside_window = point(px(900.0), px(900.0));
+
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(true));
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(outside_window, MouseButton::Left, Modifiers::none());
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|app| app.has_active_drag()),
+        "{}: active drag should continue while platform reports the left button pressed",
+        case.name
+    );
+    assert_eq!(
+        runtime.registered_viewport_spaces(),
+        vec![source_space.clone()],
+        "{}: pressed-button poll must not open a tear-off viewport early",
+        case.name
+    );
+
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, Some(false));
+    cx.executor().advance_clock(Duration::from_millis(20));
+    cx.run_until_parked();
+    cx.set_platform_mouse_button_is_pressed(MouseButton::Left, None);
+    assert!(
+        !cx.read(|app| app.has_active_drag()),
+        "{}: fallback poll should stop the active drag after committing release",
+        case.name
+    );
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_route
+                .as_ref()
+                .map(|record| &record.target),
+            Some(DockViewportRouteTarget::TearOff { .. })
+        ),
+        "{}: polled outside release should route as tear-off, got {:?}",
+        case.name,
+        runtime.runtime_status().last_route
+    );
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_drop_outcome
+                .as_ref()
+                .map(|record| record.kind),
+            Some(DockViewportDropOutcomeKind::TearOffCompleted)
+        ),
+        "{}: polled outside release should complete a tear-off, got {:?}",
+        case.name,
+        runtime.runtime_status().last_drop_outcome
+    );
+
+    let detached_space = cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            Vec::<DockItemId>::new(),
+            "{}: source space should be emptied by the tear-off",
+            case.name
+        );
+        let detached_prefix = format!(
+            "{}:tear-off:{}:",
+            source_space,
+            case.payload.drop_payload().label()
+        );
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| space.as_str().starts_with(&detached_prefix))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: polled outside release should create detached space with prefix {detached_prefix}",
+                    case.name
+                )
+            });
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            case.payload.moved_items(),
+            "{}: detached space should receive the full dragged payload",
+            case.name
+        );
+        detached_space
+    });
+    assert!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&detached_space)
+            .is_some(),
+        "{}: detached space should be registered with a runtime window",
+        case.name
+    );
 }
 
 fn matrix_graph(
