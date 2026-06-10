@@ -1,6 +1,6 @@
 use crate::{
     DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
-    DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, DropZone, SplitAxis,
+    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     host_test_support::*,
@@ -738,7 +738,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     let after_drop_context = opened
         .window
         .update(cx, |_, window, app| {
-            DockViewportTargetContext::from_window(window, app)
+            DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .expect("source viewport should still be live");
     assert_eq!(

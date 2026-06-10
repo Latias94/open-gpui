@@ -1,7 +1,7 @@
 use crate::{
     DockController, DockGraph, DockHost, DockLayoutRect, DockNode, DockSpaceId,
     DockViewportAdapter, DockViewportOpenStatus, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportTargetContext, DockViewportWindowBounds,
+    DockViewportPlacementLayout, DockViewportPlatformSignals, DockViewportWindowBounds,
     DockViewportWindowState, DockWorkspace, debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
@@ -78,7 +78,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn viewport_target_context_from_window_marks_event_window_as_hovered(cx: &mut TestAppContext) {
+fn viewport_platform_signals_from_window_marks_event_window_as_hovered(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let (alpha_graph, _alpha_root) = tabs_graph(&["a"], 0);
@@ -114,7 +114,7 @@ fn viewport_target_context_from_window_marks_event_window_as_hovered(cx: &mut Te
         .expect("zeta window should be live");
     let context = alpha_window
         .update(cx, |_, window, app| {
-            DockViewportTargetContext::from_window(window, app)
+            DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .expect("alpha window should be live");
 

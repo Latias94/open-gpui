@@ -1,7 +1,7 @@
 use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace,
+    DockViewportPlatformSignals, DockViewportRouteTarget, DockViewportRuntimeHandle, DockWorkspace,
     SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
@@ -211,7 +211,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let source_release_context = source_opened
         .window
         .update(cx, |_, window, app| {
-            DockViewportTargetContext::from_window(window, app)
+            DockViewportPlatformSignals::from_window(window, app).target_context()
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
