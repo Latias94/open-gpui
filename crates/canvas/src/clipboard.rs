@@ -299,6 +299,7 @@ fn remap_record_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape};
     use open_gpui::{Bounds, point, px, size};
 
@@ -477,46 +478,37 @@ mod tests {
     }
 
     fn connected_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(40.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn related_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         document
             .apply_transaction(CanvasTransaction::new([
                 DocumentCommand::SetRecordParent {
