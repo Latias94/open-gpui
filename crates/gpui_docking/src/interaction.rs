@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
-    drag::DockDragPayloadIdentity,
+    drag::{DockDragPayload, DockDragPayloadIdentity},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
@@ -52,6 +52,39 @@ pub(crate) struct DockFloatingBoundsRequest {
 pub(crate) struct DockOutsideReleasePollSession {
     id: u64,
     payload: DockDragPayloadIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockPayloadDropRelease {
+    payload: DockDragPayload,
+    target_space: DockSpaceId,
+    release_position: Point<Pixels>,
+}
+
+impl DockPayloadDropRelease {
+    pub(crate) fn new(
+        payload: DockDragPayload,
+        target_space: DockSpaceId,
+        release_position: Point<Pixels>,
+    ) -> Self {
+        Self {
+            payload,
+            target_space,
+            release_position,
+        }
+    }
+
+    pub(crate) fn payload(&self) -> &DockDragPayload {
+        &self.payload
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
+    }
+
+    pub(crate) fn release_position(&self) -> Point<Pixels> {
+        self.release_position
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,7 +330,7 @@ impl DockInteractionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockItemId, DockNodeId, drag::DockDragPayload};
+    use crate::{DockItemId, DockNodeId};
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -312,6 +345,20 @@ mod tests {
             DockItemId::from(item),
             title.to_string(),
         )
+    }
+
+    #[test]
+    fn payload_drop_release_carries_payload_target_and_position() {
+        let payload = item_payload("a", "Panel A");
+        let target_space = DockSpaceId::from("target");
+        let release_position = point(px(120.0), px(80.0));
+
+        let release =
+            DockPayloadDropRelease::new(payload.clone(), target_space.clone(), release_position);
+
+        assert_eq!(release.payload(), &payload);
+        assert_eq!(release.target_space(), &target_space);
+        assert_eq!(release.release_position(), release_position);
     }
 
     #[test]

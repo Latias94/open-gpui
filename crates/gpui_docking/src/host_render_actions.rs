@@ -1,4 +1,7 @@
-use crate::{DockHost, DockItemId, DockNodeId, DockSpaceId, drag::DockDragPayload};
+use crate::{
+    DockHost, DockItemId, DockNodeId, DockSpaceId, drag::DockDragPayload,
+    interaction::DockPayloadDropRelease,
+};
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
@@ -19,6 +22,7 @@ impl DockHost {
         self.close_item_interaction(item, cx).finish(cx)
     }
 
+    #[cfg(test)]
     pub(crate) fn drop_payload_from_render(
         &mut self,
         payload: &DockDragPayload,
@@ -27,8 +31,21 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.drop_payload_release_from_render(
+            DockPayloadDropRelease::new(payload.clone(), target_space, release_position),
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn drop_payload_release_from_render(
+        &mut self,
+        release: DockPayloadDropRelease,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.interaction_mut().cancel_outside_release_poll();
-        self.commit_payload_drop_interaction(payload, target_space, release_position, window, cx)
+        self.commit_payload_drop_interaction(release, window, cx)
             .finish(cx)
     }
 

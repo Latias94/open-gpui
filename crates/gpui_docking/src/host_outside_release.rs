@@ -1,7 +1,9 @@
 use crate::{
     DockHost,
     drag::DockDragPayload,
-    interaction::{DockOutsideReleasePollDecision, DockOutsideReleasePollSession},
+    interaction::{
+        DockOutsideReleasePollDecision, DockOutsideReleasePollSession, DockPayloadDropRelease,
+    },
 };
 use open_gpui::{Context, MouseButton, Window};
 use std::time::Duration;
@@ -66,10 +68,8 @@ impl DockHost {
                 };
                 let target_space = self.space().clone();
                 let release_position = window.mouse_position();
-                let changed = self.drop_payload_from_render(
-                    &payload,
-                    target_space,
-                    release_position,
+                let changed = self.drop_payload_release_from_render(
+                    DockPayloadDropRelease::new(payload, target_space, release_position),
                     window,
                     cx,
                 );

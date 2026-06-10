@@ -4,7 +4,7 @@ use crate::{
     DockHost, DockItemId, DockNodeId, DockSpaceId,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
-    interaction::{DockFloatingBoundsRequest, DockSplitterResizeRequest},
+    interaction::{DockFloatingBoundsRequest, DockPayloadDropRelease, DockSplitterResizeRequest},
     workspace_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
@@ -116,16 +116,15 @@ impl DockHost {
 
     pub(crate) fn commit_payload_drop_interaction(
         &mut self,
-        payload: &DockDragPayload,
-        target_space: DockSpaceId,
-        release_position: Point<Pixels>,
+        release: DockPayloadDropRelease,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
+        let payload = release.payload();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let outcome = if let Some(outcome) = self.commit_runtime_routed_payload_drop_interaction(
             payload,
-            release_position,
+            release.release_position(),
             window,
             cx,
         ) {
@@ -145,7 +144,7 @@ impl DockHost {
                 DockWorkspacePayloadDropRequest {
                     source_space: &payload.source_space,
                     payload: workspace_payload(payload),
-                    target_space: &target_space,
+                    target_space: release.target_space(),
                     target,
                 },
                 cx,

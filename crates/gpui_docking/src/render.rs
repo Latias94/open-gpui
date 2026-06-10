@@ -6,6 +6,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact,
     host_render_session::DockHostRenderSession,
+    interaction::DockPayloadDropRelease,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
@@ -55,10 +56,12 @@ impl Render for DockHost {
             ))
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
-                    this.drop_payload_from_render(
-                        payload,
-                        drop_target_space.clone(),
-                        window.mouse_position(),
+                    this.drop_payload_release_from_render(
+                        DockPayloadDropRelease::new(
+                            payload.clone(),
+                            drop_target_space.clone(),
+                            window.mouse_position(),
+                        ),
                         window,
                         cx,
                     );
@@ -73,10 +76,12 @@ impl Render for DockHost {
                     let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
                         return;
                     };
-                    this.drop_payload_from_render(
-                        &payload,
-                        outside_drop_target_space.clone(),
-                        event.position,
+                    this.drop_payload_release_from_render(
+                        DockPayloadDropRelease::new(
+                            payload,
+                            outside_drop_target_space.clone(),
+                            event.position,
+                        ),
                         window,
                         cx,
                     );
