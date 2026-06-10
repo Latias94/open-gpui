@@ -3812,20 +3812,17 @@ mod tests {
 
     #[test]
     fn no_op_committed_transactions_do_not_push_history_or_clear_redo() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "frame",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let relation_transaction = CanvasTransaction::single(DocumentCommand::SetRecordParent {
             child: CanvasRecordId::Node(NodeId::from("child")),
@@ -3857,14 +3854,14 @@ mod tests {
 
     #[test]
     fn relation_order_only_transactions_do_not_push_history() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "member",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
+        let mut document = document;
         for id in ["group-a", "group-b"] {
             document
                 .insert_shape(CanvasShape::new(
@@ -3909,14 +3906,13 @@ mod tests {
 
     #[test]
     fn no_op_undo_and_redo_discard_stale_history_entries() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let noop = CanvasTransaction::single(DocumentCommand::ClearRecordParent {
             child: CanvasRecordId::Node(NodeId::from("child")),
