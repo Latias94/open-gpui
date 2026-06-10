@@ -478,19 +478,18 @@ mod tests {
     use super::*;
     use crate::{
         CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasRelationChange, CanvasShape,
-        DocumentCommand, NodeId, ShapeId,
+        DocumentCommand, NodeId, ShapeId, test_support::document_fixture,
     };
 
     #[test]
     fn store_rebuilds_runtime_from_initial_document() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let store = CanvasStore::new(document);
 
@@ -574,20 +573,17 @@ mod tests {
     fn listeners_receive_relation_only_change_facts() {
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "frame",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let mut store = CanvasStore::new(document);
         let changes = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&changes);
@@ -626,20 +622,17 @@ mod tests {
     fn store_changes_expose_relation_cleanup_for_deleted_records() {
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "frame",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         document
             .apply_transaction(CanvasTransaction::single(
                 DocumentCommand::SetRecordParent {
