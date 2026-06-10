@@ -1,4 +1,5 @@
 use crate::DockSpaceId;
+use crate::DockViewportIdentity;
 use open_gpui::{AnyWindowHandle, Bounds, DisplayId, Pixels, WindowBounds, WindowId};
 use std::collections::{BTreeMap, HashMap};
 
@@ -24,6 +25,10 @@ impl DockViewportSnapshot {
             window_bounds: None,
             host_bounds: None,
         }
+    }
+
+    fn identity(&self, space: &DockSpaceId) -> DockViewportIdentity {
+        DockViewportIdentity::new(space.clone(), self.window.window_id())
     }
 }
 
@@ -53,7 +58,7 @@ impl DockViewportRegistry {
     ) -> Vec<(DockSpaceId, DockViewportSnapshot)> {
         let window_id = window.window_id();
         if let Some(snapshot) = self.viewports.get(&space)
-            && snapshot.window.window_id() == window_id
+            && snapshot.identity(&space).matches(&space, window_id)
             && self
                 .windows
                 .get(&window_id)
@@ -93,6 +98,13 @@ impl DockViewportRegistry {
         window_id: WindowId,
     ) -> Option<(DockSpaceId, DockViewportSnapshot)> {
         let space = self.windows.remove(&window_id)?;
+        if !self
+            .viewports
+            .get(&space)
+            .is_some_and(|snapshot| snapshot.identity(&space).matches(&space, window_id))
+        {
+            return None;
+        }
         let snapshot = self.viewports.remove(&space)?;
         Some((space, snapshot))
     }
@@ -113,9 +125,12 @@ impl DockViewportRegistry {
     }
 
     pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
-        self.windows
-            .get(&window_id)
-            .and_then(|space| self.viewports.get_key_value(space).map(|(space, _)| space))
+        let space = self.windows.get(&window_id)?;
+        let (space, snapshot) = self.viewports.get_key_value(space)?;
+        snapshot
+            .identity(space)
+            .matches(space, window_id)
+            .then_some(space)
     }
 
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
@@ -171,5 +186,23 @@ mod tests {
         assert_eq!(registry.space_for_window_id(window_id), None);
         assert_eq!(registry.unregister_window_id(window_id), None);
         assert_eq!(registry.space_for_window_id(window_id), None);
+    }
+
+    #[test]
+    fn valid_window_lookup_rejects_stale_index_to_rebound_space() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let stale_window_id = WindowId::from(7);
+        let current_window = handle(8);
+        registry.register(main.clone(), current_window);
+        registry.insert_stale_window_index_for_test(stale_window_id, main.clone());
+
+        assert_eq!(registry.space_for_window_id(stale_window_id), None);
+        assert_eq!(registry.unregister_window_id(stale_window_id), None);
+        assert_eq!(registry.window_for_space(&main), Some(current_window));
+        assert_eq!(
+            registry.space_for_window_id(current_window.window_id()),
+            Some(&main)
+        );
     }
 }

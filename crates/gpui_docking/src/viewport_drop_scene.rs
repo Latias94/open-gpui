@@ -1,5 +1,5 @@
 use crate::{
-    DockPolicy, DockSpaceId,
+    DockPolicy, DockSpaceId, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
 };
@@ -8,9 +8,23 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportHostSceneFrame {
-    pub(crate) space: DockSpaceId,
-    pub(crate) window_id: WindowId,
+    identity: DockViewportIdentity,
     generation: u64,
+}
+
+impl DockViewportHostSceneFrame {
+    /// Reports whether this render frame still belongs to the supplied viewport binding.
+    pub(crate) fn matches_viewport(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        self.identity.matches(space, window_id)
+    }
+
+    fn space(&self) -> &DockSpaceId {
+        self.identity.space()
+    }
+
+    fn matches_snapshot(&self, snapshot: &DockViewportHostSceneSnapshot) -> bool {
+        self.identity == snapshot.identity() && self.generation == snapshot.generation
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,10 +75,13 @@ impl DockViewportHostSceneSnapshot {
 
     fn frame(&self) -> DockViewportHostSceneFrame {
         DockViewportHostSceneFrame {
-            space: self.space.clone(),
-            window_id: self.window_id,
+            identity: self.identity(),
             generation: self.generation,
         }
+    }
+
+    fn identity(&self) -> DockViewportIdentity {
+        DockViewportIdentity::new(self.space.clone(), self.window_id)
     }
 
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
@@ -121,10 +138,10 @@ impl DockViewportHostSceneRegistry {
         frame: &DockViewportHostSceneFrame,
         fact: DockHostDropSceneFact,
     ) -> bool {
-        let Some(scene) = self.scenes.get_mut(&frame.space) else {
+        let Some(scene) = self.scenes.get_mut(frame.space()) else {
             return false;
         };
-        if scene.window_id != frame.window_id || scene.generation != frame.generation {
+        if !frame.matches_snapshot(scene) {
             return false;
         }
         scene.push_fact(fact);
@@ -138,7 +155,7 @@ impl DockViewportHostSceneRegistry {
         window_id: WindowId,
     ) -> Option<DockViewportHostSceneFrame> {
         let scene = self.scenes.get(space)?;
-        if scene.window_id != window_id {
+        if !scene.identity().matches(space, window_id) {
             return None;
         }
         Some(scene.frame())
@@ -162,7 +179,7 @@ impl DockViewportHostSceneRegistry {
         policy: &DockPolicy,
     ) -> Option<DockResolvedDropTarget> {
         let snapshot = self.scenes.get(space)?;
-        if window_id.is_some_and(|window_id| snapshot.window_id != window_id) {
+        if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
         let mut scene = snapshot.scene.clone();

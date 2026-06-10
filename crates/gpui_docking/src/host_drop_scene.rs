@@ -143,8 +143,7 @@ impl DockHost {
         let viewport_runtime = self.viewport_runtime().cloned();
         let frame = self.interaction().viewport_host_scene_frame().cloned();
         if let (Some(runtime), Some(frame)) = (viewport_runtime, frame) {
-            if frame.space == *self.space() && frame.window_id == window.window_handle().window_id()
-            {
+            if frame.matches_viewport(self.space(), window.window_handle().window_id()) {
                 runtime.push_viewport_host_scene_frame_fact(&frame, fact.clone());
             }
         }

@@ -293,6 +293,30 @@ mod tests {
     }
 
     #[test]
+    fn window_closed_stale_index_to_live_space_does_not_remove_current_viewport() {
+        let mut adapter = DockViewportAdapter::new();
+        let main = space("main");
+        let stale_window_id = WindowId::from(1);
+        let current_window = handle(2);
+        adapter.register_viewport(main.clone(), current_window);
+        adapter.insert_stale_window_index_for_test(stale_window_id, main.clone());
+
+        assert_eq!(
+            adapter.handle_window_closed(stale_window_id),
+            DockViewportCloseOutcome::new(
+                None,
+                stale_window_id,
+                DockViewportCloseStatus::UnknownWindow
+            )
+        );
+        assert_eq!(adapter.window_for_space(&main), Some(current_window));
+        assert_eq!(
+            adapter.space_for_window_id(current_window.window_id()),
+            Some(&main)
+        );
+    }
+
+    #[test]
     fn viewport_lifecycle_types_preserve_runtime_boundaries() {
         let main = space("main");
         let window = handle(7);

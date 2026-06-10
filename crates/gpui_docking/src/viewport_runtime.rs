@@ -3,10 +3,11 @@ use crate::{
     DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteCommit,
-    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
-    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportIdentity,
+    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
@@ -257,7 +258,8 @@ impl DockViewportRuntime {
         let Some(window) = self.adapter.window_for_space(&space) else {
             return None;
         };
-        if window.window_id() != window_id {
+        let current_identity = DockViewportIdentity::new(space.clone(), window.window_id());
+        if !current_identity.matches(&space, window_id) {
             return None;
         }
         let display_id = self
