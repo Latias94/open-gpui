@@ -54,6 +54,14 @@ pub(crate) struct DockOutsideReleasePollSession {
     payload: DockDragPayloadIdentity,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockOutsideReleasePollDecision {
+    Inactive,
+    Continue,
+    CommitRelease,
+    Stop,
+}
+
 impl DockInteractionRuntime {
     pub(crate) fn start_splitter_drag(
         &mut self,
@@ -216,6 +224,38 @@ impl DockInteractionRuntime {
         payload: &DockDragPayloadIdentity,
     ) -> bool {
         self.outside_release_poll_session_active(session) && &session.payload == payload
+    }
+
+    pub(crate) fn poll_outside_release(
+        &mut self,
+        session: &DockOutsideReleasePollSession,
+        payload: Option<&DockDragPayloadIdentity>,
+        left_button_pressed: Option<bool>,
+    ) -> DockOutsideReleasePollDecision {
+        if !self.outside_release_poll_session_active(session) {
+            return DockOutsideReleasePollDecision::Inactive;
+        }
+
+        let Some(payload) = payload else {
+            self.finish_outside_release_poll(session);
+            return DockOutsideReleasePollDecision::Stop;
+        };
+        if !self.outside_release_poll_session_accepts_payload(session, payload) {
+            self.finish_outside_release_poll(session);
+            return DockOutsideReleasePollDecision::Stop;
+        }
+
+        match left_button_pressed {
+            Some(true) => DockOutsideReleasePollDecision::Continue,
+            Some(false) => {
+                self.finish_outside_release_poll(session);
+                DockOutsideReleasePollDecision::CommitRelease
+            }
+            None => {
+                self.finish_outside_release_poll(session);
+                DockOutsideReleasePollDecision::Stop
+            }
+        }
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
@@ -439,5 +479,72 @@ mod tests {
             &item_payload("b", "Panel B").identity()
         ));
         assert!(runtime.finish_outside_release_poll(&session));
+    }
+
+    #[test]
+    fn outside_release_poll_decides_continue_and_commit_release() {
+        let mut runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A").identity();
+        let session = runtime
+            .begin_outside_release_poll(payload.clone())
+            .expect("poll session should start");
+
+        assert_eq!(
+            runtime.poll_outside_release(&session, Some(&payload), Some(true)),
+            DockOutsideReleasePollDecision::Continue
+        );
+        assert!(runtime.outside_release_poll_session_active(&session));
+        assert_eq!(
+            runtime.poll_outside_release(&session, Some(&payload), Some(false)),
+            DockOutsideReleasePollDecision::CommitRelease
+        );
+        assert!(!runtime.outside_release_poll_running());
+    }
+
+    #[test]
+    fn outside_release_poll_stops_without_committing_missing_or_changed_payload() {
+        let mut runtime = DockInteractionRuntime::default();
+        let payload = item_payload("a", "Panel A").identity();
+        let session = runtime
+            .begin_outside_release_poll(payload)
+            .expect("poll session should start");
+
+        assert_eq!(
+            runtime.poll_outside_release(&session, None, Some(false)),
+            DockOutsideReleasePollDecision::Stop
+        );
+        assert!(!runtime.outside_release_poll_running());
+
+        let payload = item_payload("a", "Panel A").identity();
+        let session = runtime
+            .begin_outside_release_poll(payload)
+            .expect("poll session should restart");
+        let changed_payload = item_payload("b", "Panel B").identity();
+
+        assert_eq!(
+            runtime.poll_outside_release(&session, Some(&changed_payload), Some(false)),
+            DockOutsideReleasePollDecision::Stop
+        );
+        assert!(!runtime.outside_release_poll_running());
+    }
+
+    #[test]
+    fn outside_release_poll_inactive_decision_preserves_newer_session() {
+        let mut runtime = DockInteractionRuntime::default();
+        let stale = runtime
+            .begin_outside_release_poll(item_payload("a", "Panel A").identity())
+            .expect("first poll session should start");
+        assert!(runtime.cancel_outside_release_poll());
+        let active_payload = item_payload("b", "Panel B").identity();
+        let active = runtime
+            .begin_outside_release_poll(active_payload.clone())
+            .expect("second poll session should start");
+
+        assert_eq!(
+            runtime.poll_outside_release(&stale, Some(&active_payload), Some(false)),
+            DockOutsideReleasePollDecision::Inactive
+        );
+        assert!(runtime.outside_release_poll_session_active(&active));
+        assert!(runtime.finish_outside_release_poll(&active));
     }
 }

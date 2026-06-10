@@ -1,4 +1,8 @@
-use crate::{DockHost, drag::DockDragPayload, interaction::DockOutsideReleasePollSession};
+use crate::{
+    DockHost,
+    drag::DockDragPayload,
+    interaction::{DockOutsideReleasePollDecision, DockOutsideReleasePollSession},
+};
 use open_gpui::{Context, MouseButton, Window};
 use std::time::Duration;
 
@@ -46,29 +50,20 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self
-            .interaction()
-            .outside_release_poll_session_active(session)
-        {
-            return false;
-        }
+        let payload = cx.active_drag_value::<DockDragPayload>().cloned();
+        let payload_identity = payload.as_ref().map(DockDragPayload::identity);
+        let decision = self.interaction_mut().poll_outside_release(
+            session,
+            payload_identity.as_ref(),
+            cx.mouse_button_is_pressed(MouseButton::Left),
+        );
 
-        let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
-            self.interaction_mut().finish_outside_release_poll(session);
-            return false;
-        };
-        if !self
-            .interaction()
-            .outside_release_poll_session_accepts_payload(session, &payload.identity())
-        {
-            self.interaction_mut().finish_outside_release_poll(session);
-            return false;
-        }
-
-        match cx.mouse_button_is_pressed(MouseButton::Left) {
-            Some(true) => true,
-            Some(false) => {
-                self.interaction_mut().finish_outside_release_poll(session);
+        match decision {
+            DockOutsideReleasePollDecision::Continue => true,
+            DockOutsideReleasePollDecision::CommitRelease => {
+                let Some(payload) = payload else {
+                    return false;
+                };
                 let target_space = self.space().clone();
                 let release_position = window.mouse_position();
                 let changed = self.drop_payload_from_render(
@@ -81,8 +76,7 @@ impl DockHost {
                 cx.stop_active_drag(window);
                 changed
             }
-            None => {
-                self.interaction_mut().finish_outside_release_poll(session);
+            DockOutsideReleasePollDecision::Inactive | DockOutsideReleasePollDecision::Stop => {
                 false
             }
         }
