@@ -13,7 +13,8 @@ pub(crate) struct DockInteractionRuntime {
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
     drop_route_preview: Option<DockDropPreview>,
-    outside_release_poll_running: bool,
+    outside_release_poll: Option<DockOutsideReleasePollSession>,
+    next_outside_release_poll_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +45,11 @@ pub(crate) struct DockFloatingBoundsRequest {
     pub(crate) space: DockSpaceId,
     pub(crate) floating: DockNodeId,
     pub(crate) bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockOutsideReleasePollSession {
+    id: u64,
 }
 
 impl DockInteractionRuntime {
@@ -165,23 +171,38 @@ impl DockInteractionRuntime {
         self.set_drop_route_preview(None)
     }
 
-    pub(crate) fn begin_outside_release_poll(&mut self) -> bool {
-        if self.outside_release_poll_running {
+    pub(crate) fn begin_outside_release_poll(&mut self) -> Option<DockOutsideReleasePollSession> {
+        if self.outside_release_poll.is_some() {
+            return None;
+        }
+
+        let id = self.next_outside_release_poll_id.wrapping_add(1);
+        self.next_outside_release_poll_id = id;
+        let session = DockOutsideReleasePollSession { id };
+        self.outside_release_poll = Some(session);
+        Some(session)
+    }
+
+    pub(crate) fn finish_outside_release_poll(
+        &mut self,
+        session: DockOutsideReleasePollSession,
+    ) -> bool {
+        if self.outside_release_poll != Some(session) {
             return false;
         }
-        self.outside_release_poll_running = true;
+        self.outside_release_poll = None;
         true
     }
 
-    pub(crate) fn finish_outside_release_poll(&mut self) -> bool {
-        if !std::mem::take(&mut self.outside_release_poll_running) {
-            return false;
-        }
-        true
+    pub(crate) fn cancel_outside_release_poll(&mut self) -> bool {
+        self.outside_release_poll.take().is_some()
     }
 
-    pub(crate) fn outside_release_poll_running(&self) -> bool {
-        self.outside_release_poll_running
+    pub(crate) fn outside_release_poll_session_active(
+        &self,
+        session: DockOutsideReleasePollSession,
+    ) -> bool {
+        self.outside_release_poll == Some(session)
     }
 
     pub(crate) fn drop_preview(&self) -> Option<DockDropPreview> {
@@ -212,6 +233,11 @@ impl DockInteractionRuntime {
     #[cfg(test)]
     pub(crate) fn resolved_drop_target(&self) -> Option<&DockResolvedDropTarget> {
         self.drop.resolved_target()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn outside_release_poll_running(&self) -> bool {
+        self.outside_release_poll.is_some()
     }
 }
 
@@ -341,11 +367,32 @@ mod tests {
         let mut runtime = DockInteractionRuntime::default();
 
         assert!(!runtime.outside_release_poll_running());
-        assert!(runtime.begin_outside_release_poll());
+        let session = runtime
+            .begin_outside_release_poll()
+            .expect("poll session should start");
         assert!(runtime.outside_release_poll_running());
-        assert!(!runtime.begin_outside_release_poll());
-        assert!(runtime.finish_outside_release_poll());
+        assert_eq!(runtime.begin_outside_release_poll(), None);
+        assert!(runtime.outside_release_poll_session_active(session));
+        assert!(runtime.finish_outside_release_poll(session));
         assert!(!runtime.outside_release_poll_running());
-        assert!(!runtime.finish_outside_release_poll());
+        assert!(!runtime.finish_outside_release_poll(session));
+    }
+
+    #[test]
+    fn outside_release_poll_rejects_stale_session_finish() {
+        let mut runtime = DockInteractionRuntime::default();
+
+        let stale = runtime
+            .begin_outside_release_poll()
+            .expect("first poll session should start");
+        assert!(runtime.cancel_outside_release_poll());
+        let active = runtime
+            .begin_outside_release_poll()
+            .expect("second poll session should start");
+
+        assert!(!runtime.finish_outside_release_poll(stale));
+        assert!(runtime.outside_release_poll_session_active(active));
+        assert!(runtime.finish_outside_release_poll(active));
+        assert!(!runtime.outside_release_poll_running());
     }
 }

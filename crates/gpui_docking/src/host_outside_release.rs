@@ -1,4 +1,4 @@
-use crate::{DockHost, drag::DockDragPayload};
+use crate::{DockHost, drag::DockDragPayload, interaction::DockOutsideReleasePollSession};
 use open_gpui::{Context, MouseButton, Window};
 use std::time::Duration;
 
@@ -10,10 +10,12 @@ impl DockHost {
     ) -> bool {
         if self.viewport_runtime().is_none()
             || cx.mouse_button_is_pressed(MouseButton::Left).is_none()
-            || !self.interaction_mut().begin_outside_release_poll()
         {
             return false;
         }
+        let Some(session) = self.interaction_mut().begin_outside_release_poll() else {
+            return false;
+        };
 
         cx.spawn_in(window, async move |host, cx| {
             loop {
@@ -22,7 +24,7 @@ impl DockHost {
                     .await;
                 let should_continue = host
                     .update_in(cx, |host, window, cx| {
-                        host.poll_outside_release_from_host(window, cx)
+                        host.poll_outside_release_from_host(session, window, cx)
                     })
                     .unwrap_or(false);
                 if !should_continue {
@@ -36,22 +38,26 @@ impl DockHost {
 
     fn poll_outside_release_from_host(
         &mut self,
+        session: DockOutsideReleasePollSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.interaction().outside_release_poll_running() {
+        if !self
+            .interaction()
+            .outside_release_poll_session_active(session)
+        {
             return false;
         }
 
         let Some(payload) = cx.active_drag_value::<DockDragPayload>().cloned() else {
-            self.interaction_mut().finish_outside_release_poll();
+            self.interaction_mut().finish_outside_release_poll(session);
             return false;
         };
 
         match cx.mouse_button_is_pressed(MouseButton::Left) {
             Some(true) => true,
             Some(false) => {
-                self.interaction_mut().finish_outside_release_poll();
+                self.interaction_mut().finish_outside_release_poll(session);
                 let target_space = self.space().clone();
                 let release_position = window.mouse_position();
                 let changed = self.drop_payload_from_render(
@@ -65,7 +71,7 @@ impl DockHost {
                 changed
             }
             None => {
-                self.interaction_mut().finish_outside_release_poll();
+                self.interaction_mut().finish_outside_release_poll(session);
                 false
             }
         }
