@@ -198,6 +198,51 @@ mod tests {
         (DockWorkspace::new(space(), graph), root, left, right)
     }
 
+    fn root_edge_workspace(
+        source_items: Vec<DockItemId>,
+    ) -> (
+        DockWorkspace,
+        DockSpaceId,
+        DockSpaceId,
+        DockNodeId,
+        DockNodeId,
+        DockNodeId,
+        DockNodeId,
+    ) {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: source_items,
+            active: 0,
+        });
+        let target_left = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            active: 0,
+        });
+        let target_right = graph.insert_node(DockNode::Tabs {
+            items: vec![item("d")],
+            active: 0,
+        });
+        let target_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![target_left, target_right],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(source_space.clone(), source_tabs);
+        graph.set_root(target_space.clone(), target_root);
+
+        (
+            DockWorkspace::new(source_space.clone(), graph),
+            source_space,
+            target_space,
+            source_tabs,
+            target_root,
+            target_left,
+            target_right,
+        )
+    }
+
     fn resolved_target(kind: DockResolvedDropTargetKind) -> DockResolvedDropTarget {
         DockResolvedDropTarget {
             kind,
@@ -401,6 +446,163 @@ mod tests {
         };
         assert_eq!(items, &vec![item("a"), item("c")]);
         assert_eq!(*active, 1);
+    }
+
+    #[test]
+    fn resolved_root_edge_targets_commit_against_workspace_root_for_all_edges() {
+        for move_tabs in [false, true] {
+            for zone in [
+                DropZone::Left,
+                DropZone::Right,
+                DropZone::Top,
+                DropZone::Bottom,
+            ] {
+                let source_items = if move_tabs {
+                    vec![item("a"), item("c")]
+                } else {
+                    vec![item("a")]
+                };
+                let expected_items = source_items.clone();
+                let (
+                    mut workspace,
+                    source_space,
+                    target_space,
+                    source_tabs,
+                    target_root,
+                    target_left,
+                    target_right,
+                ) = root_edge_workspace(source_items);
+                let item_a = item("a");
+                let payload = if move_tabs {
+                    DockWorkspaceDropPayload::Tabs { source_tabs }
+                } else {
+                    DockWorkspaceDropPayload::Item {
+                        source_tabs,
+                        item: &item_a,
+                    }
+                };
+                let leaf_tabs = match zone {
+                    DropZone::Left => target_left,
+                    DropZone::Right | DropZone::Top | DropZone::Bottom => target_right,
+                    DropZone::Center => unreachable!(),
+                };
+
+                let outcome = workspace
+                    .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                        source_space: &source_space,
+                        payload,
+                        target_space: &target_space,
+                        target: resolved_target(DockResolvedDropTargetKind::RootEdge {
+                            root: target_root,
+                            leaf_tabs,
+                            zone,
+                        }),
+                    })
+                    .unwrap_or_else(|error| {
+                        panic!("{zone:?} root-edge payload drop should commit: {error}")
+                    });
+
+                assert_eq!(outcome, DockActionOutcome::Changed, "{zone:?}");
+                assert_root_edge_commit_graph(
+                    &workspace,
+                    &target_space,
+                    target_root,
+                    target_left,
+                    target_right,
+                    zone,
+                    &expected_items,
+                );
+            }
+        }
+    }
+
+    fn assert_root_edge_commit_graph(
+        workspace: &DockWorkspace,
+        target_space: &DockSpaceId,
+        old_root: DockNodeId,
+        target_left: DockNodeId,
+        target_right: DockNodeId,
+        zone: DropZone,
+        expected_items: &[DockItemId],
+    ) {
+        match zone {
+            DropZone::Left | DropZone::Right => {
+                assert_eq!(
+                    workspace.graph().root(target_space),
+                    Some(old_root),
+                    "{zone:?}"
+                );
+                let DockNode::Split { axis, children, .. } = workspace
+                    .graph()
+                    .node(old_root)
+                    .expect("root split should still exist")
+                else {
+                    panic!("{zone:?}: root should remain a split");
+                };
+                assert_eq!(*axis, SplitAxis::Horizontal, "{zone:?}");
+                assert_eq!(children.len(), 3, "{zone:?}");
+                let moved_index = if zone == DropZone::Left { 0 } else { 2 };
+                assert_tabs_items(workspace, children[moved_index], expected_items, zone);
+                assert_eq!(
+                    children
+                        .iter()
+                        .copied()
+                        .filter(|child| *child == target_left)
+                        .count(),
+                    1,
+                    "{zone:?}: left target should stay in the root split"
+                );
+                assert_eq!(
+                    children
+                        .iter()
+                        .copied()
+                        .filter(|child| *child == target_right)
+                        .count(),
+                    1,
+                    "{zone:?}: right target should stay in the root split"
+                );
+            }
+            DropZone::Top | DropZone::Bottom => {
+                let new_root = workspace
+                    .graph()
+                    .root(target_space)
+                    .expect("target space should keep a root");
+                assert_ne!(new_root, old_root, "{zone:?}");
+                let DockNode::Split { axis, children, .. } = workspace
+                    .graph()
+                    .node(new_root)
+                    .expect("new root split should exist")
+                else {
+                    panic!("{zone:?}: target space should be wrapped in a new root split");
+                };
+                assert_eq!(*axis, SplitAxis::Vertical, "{zone:?}");
+                assert_eq!(children.len(), 2, "{zone:?}");
+                let (moved_index, old_root_index) = if zone == DropZone::Top {
+                    (0, 1)
+                } else {
+                    (1, 0)
+                };
+                assert_tabs_items(workspace, children[moved_index], expected_items, zone);
+                assert_eq!(children[old_root_index], old_root, "{zone:?}");
+            }
+            DropZone::Center => unreachable!(),
+        }
+    }
+
+    fn assert_tabs_items(
+        workspace: &DockWorkspace,
+        tabs: DockNodeId,
+        expected_items: &[DockItemId],
+        zone: DropZone,
+    ) {
+        let DockNode::Tabs { items, .. } = workspace
+            .graph()
+            .node(tabs)
+            .expect("moved tabs should exist")
+        else {
+            panic!("{zone:?}: moved child should be tabs");
+        };
+        assert_eq!(items, expected_items, "{zone:?}");
     }
 
     #[test]

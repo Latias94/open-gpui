@@ -250,7 +250,10 @@ fn center_target_tabs(target: &DockResolvedDropTarget) -> Option<DockNodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DropZone, drop_target::DockResolvedDropTargetKind};
+    use crate::{
+        DropZone,
+        drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+    };
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -265,6 +268,22 @@ mod tests {
             return None;
         };
         Some(insert_index)
+    }
+
+    fn root_edge_leaf_bounds_and_position(zone: DropZone) -> (Bounds<Pixels>, Point<Pixels>) {
+        match zone {
+            DropZone::Left => (bounds(0.0, 20.0, 160.0, 180.0), point(px(2.0), px(100.0))),
+            DropZone::Right => (
+                bounds(240.0, 20.0, 160.0, 180.0),
+                point(px(398.0), px(100.0)),
+            ),
+            DropZone::Top => (bounds(120.0, 0.0, 160.0, 120.0), point(px(200.0), px(2.0))),
+            DropZone::Bottom => (
+                bounds(120.0, 120.0, 160.0, 120.0),
+                point(px(200.0), px(238.0)),
+            ),
+            DropZone::Center => unreachable!(),
+        }
     }
 
     #[test]
@@ -455,49 +474,62 @@ mod tests {
     }
 
     #[test]
-    fn resolved_target_take_does_not_require_receiver_bounds() {
+    fn root_edge_targets_can_be_taken_without_receiver_bounds() {
         let root = DockNodeId::null();
         let mut graph = crate::DockGraph::new();
         let leaf = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("a")],
             active: 0,
         });
-        let mut runtime = DockDropRuntime::default();
-        let position = point(px(2.0), px(100.0));
 
-        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
-        assert!(!runtime.push_scene_fact(
-            position,
-            None,
-            DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
-                root,
-                bounds: bounds(0.0, 0.0, 400.0, 240.0),
-            }),
-            &DockPolicy::default()
-        ));
-        assert!(runtime.push_scene_fact(
-            position,
-            None,
-            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root,
-                target_tabs: leaf,
-                bounds: bounds(0.0, 20.0, 160.0, 180.0),
-                is_central: false,
-            }),
-            &DockPolicy::default()
-        ));
+        for zone in [
+            DropZone::Left,
+            DropZone::Right,
+            DropZone::Top,
+            DropZone::Bottom,
+        ] {
+            let mut runtime = DockDropRuntime::default();
+            let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(zone);
 
-        let target = runtime
-            .take_resolved_target()
-            .expect("root-edge target should resolve without receiver bounds");
-        assert!(matches!(
-            target.kind,
-            DockResolvedDropTargetKind::RootEdge {
-                root: matched_root,
-                leaf_tabs,
-                zone: DropZone::Left,
-            } if matched_root == root && leaf_tabs == leaf
-        ));
+            runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+            assert!(!runtime.push_scene_fact(
+                position,
+                None,
+                DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
+                    root,
+                    bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                }),
+                &DockPolicy::default()
+            ));
+            assert!(runtime.push_scene_fact(
+                position,
+                None,
+                DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                    root,
+                    target_tabs: leaf,
+                    bounds: leaf_bounds,
+                    is_central: false,
+                }),
+                &DockPolicy::default()
+            ));
+
+            let target = runtime
+                .take_resolved_target()
+                .unwrap_or_else(|| panic!("{zone:?} root-edge target should resolve"));
+            assert_eq!(target.source, DockDropResolveSource::RootEdge, "{zone:?}");
+            assert!(
+                matches!(
+                    target.kind,
+                    DockResolvedDropTargetKind::RootEdge {
+                        root: matched_root,
+                        leaf_tabs,
+                        zone: matched_zone,
+                    } if matched_root == root && leaf_tabs == leaf && matched_zone == zone
+                ),
+                "{zone:?}: unexpected target {:?}",
+                target
+            );
+        }
     }
 
     #[test]

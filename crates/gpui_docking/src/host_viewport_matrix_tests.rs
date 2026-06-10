@@ -1,15 +1,18 @@
 use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace, SplitAxis,
+    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
-    drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget},
+    drop_target::{
+        DockDropResolveSource, DockEmptySpaceDropTarget, DockLeafDropTarget,
+        DockResolvedDropTargetKind, DockRootDropTarget,
+    },
     host_test_support::*,
 };
 use open_gpui::{
-    AppContext as _, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext,
-    WindowBounds, point, px,
+    AppContext as _, Bounds, Modifiers, MouseButton, Pixels, Point, TestAppContext,
+    VisualTestContext, WindowBounds, point, px,
 };
 use std::time::Duration;
 
@@ -22,7 +25,7 @@ enum MatrixPayload {
 #[derive(Clone, Copy)]
 enum MatrixTarget {
     LeafCenter,
-    RootEdge,
+    RootEdge { zone: DropZone },
     EmptySpace,
 }
 
@@ -90,7 +93,7 @@ fn capture_loss_poll_release_matrix_tears_off_payloads_without_mouse_up(cx: &mut
     }
 }
 
-fn matrix_cases() -> [MatrixCase; 6] {
+fn matrix_cases() -> [MatrixCase; 12] {
     [
         MatrixCase {
             name: "item to leaf center",
@@ -103,14 +106,60 @@ fn matrix_cases() -> [MatrixCase; 6] {
             target: MatrixTarget::LeafCenter,
         },
         MatrixCase {
-            name: "item to root edge",
+            name: "item to left root edge",
             payload: MatrixPayload::Item,
-            target: MatrixTarget::RootEdge,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Left,
+            },
         },
         MatrixCase {
-            name: "tabs to root edge",
+            name: "tabs to left root edge",
             payload: MatrixPayload::Tabs,
-            target: MatrixTarget::RootEdge,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Left,
+            },
+        },
+        MatrixCase {
+            name: "item to right root edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Right,
+            },
+        },
+        MatrixCase {
+            name: "tabs to right root edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Right,
+            },
+        },
+        MatrixCase {
+            name: "item to top root edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Top,
+            },
+        },
+        MatrixCase {
+            name: "tabs to top root edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Top,
+            },
+        },
+        MatrixCase {
+            name: "item to bottom root edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Bottom,
+            },
+        },
+        MatrixCase {
+            name: "tabs to bottom root edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Bottom,
+            },
         },
         MatrixCase {
             name: "item to empty space",
@@ -315,6 +364,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         "{}: target hover preview should have visible bounds",
         case.name
     );
+    assert_target_hover_resolution(cx, &target_host, case, &nodes);
     assert_known_viewport_route(&runtime, &target_space, target_position, case.name);
 
     target_visual.simulate_mouse_up(target_position, MouseButton::Left, Modifiers::none());
@@ -492,7 +542,7 @@ fn matrix_graph(
             graph.set_root(target_space.clone(), target_tabs);
             (Some(target_tabs), Some(target_tabs))
         }
-        MatrixTarget::RootEdge => {
+        MatrixTarget::RootEdge { zone } => {
             let left_tabs = graph.insert_node(DockNode::Tabs {
                 items: vec![item("b")],
                 active: 0,
@@ -507,7 +557,12 @@ fn matrix_graph(
                 fractions: vec![0.5, 0.5],
             });
             graph.set_root(target_space.clone(), root);
-            (Some(right_tabs), Some(root))
+            let target_tabs = match zone {
+                DropZone::Left => left_tabs,
+                DropZone::Right | DropZone::Top | DropZone::Bottom => right_tabs,
+                DropZone::Center => unreachable!(),
+            };
+            (Some(target_tabs), Some(root))
         }
         MatrixTarget::EmptySpace => (None, None),
     };
@@ -550,11 +605,11 @@ fn push_target_scene_facts(
             );
             point(px(210.0), px(120.0))
         }
-        MatrixTarget::RootEdge => {
+        MatrixTarget::RootEdge { zone } => {
             let root = nodes.target_root.expect("root-edge case should have root");
-            let right_tabs = nodes
+            let target_tabs = nodes
                 .target_tabs
-                .expect("root-edge case should have right target tabs");
+                .expect("root-edge case should have target tabs");
             assert!(
                 runtime.push_viewport_host_scene_fact(
                     target_space,
@@ -573,15 +628,15 @@ fn push_target_scene_facts(
                     window_id,
                     DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                         root,
-                        target_tabs: right_tabs,
-                        bounds: floating_bounds(210.0, 0.0, 210.0, 240.0),
+                        target_tabs,
+                        bounds: root_edge_leaf_bounds(zone),
                         is_central: false,
                     }),
                 ),
                 "{}: root-edge leaf fact should publish",
                 case.name
             );
-            point(px(418.0), px(120.0))
+            root_edge_host_position(zone)
         }
         MatrixTarget::EmptySpace => {
             assert!(
@@ -653,17 +708,14 @@ fn target_hover_position(
                 .unwrap_or_else(|| panic!("{}: target tabs selector should be emitted", case.name));
             debug_bounds(visual, &selector).center()
         }
-        MatrixTarget::RootEdge => {
-            let root = nodes.target_root.expect("root-edge case should have root");
-            let selector = selector_for(visual, host, DockDebugRegion::Split { node: root })
-                .unwrap_or_else(|| {
-                    panic!("{}: target split selector should be emitted", case.name)
-                });
+        MatrixTarget::RootEdge { zone } => {
+            let target_tabs = nodes
+                .target_tabs
+                .expect("root-edge case should have target tabs");
+            let selector = selector_for(visual, host, DockDebugRegion::Tabs { node: target_tabs })
+                .unwrap_or_else(|| panic!("{}: target tabs selector should be emitted", case.name));
             let bounds = debug_bounds(visual, &selector);
-            point(
-                bounds.origin.x + bounds.size.width - px(2.0),
-                bounds.center().y,
-            )
+            root_edge_position_in_bounds(zone, bounds)
         }
         MatrixTarget::EmptySpace => {
             let selector =
@@ -691,6 +743,47 @@ fn assert_known_viewport_route(
     assert_eq!(target.host_position(), Some(host_position), "{}", case_name);
 }
 
+fn assert_target_hover_resolution(
+    cx: &TestAppContext,
+    host: &open_gpui::Entity<crate::DockHost>,
+    case: MatrixCase,
+    nodes: &MatrixNodes,
+) {
+    let MatrixTarget::RootEdge { zone } = case.target else {
+        return;
+    };
+    let target = cx
+        .read_entity(host, |host, _| {
+            host.interaction().resolved_drop_target().cloned()
+        })
+        .unwrap_or_else(|| panic!("{}: target hover should resolve locally", case.name));
+    let root = nodes.target_root.expect("root-edge case should have root");
+    let leaf_tabs = nodes
+        .target_tabs
+        .expect("root-edge case should have target tabs");
+
+    assert_eq!(
+        target.source,
+        DockDropResolveSource::RootEdge,
+        "{}: expected RootEdge target, got {:?}",
+        case.name,
+        target
+    );
+    assert!(
+        matches!(
+            target.kind,
+            DockResolvedDropTargetKind::RootEdge {
+                root: matched_root,
+                leaf_tabs: matched_leaf_tabs,
+                zone: matched_zone,
+            } if matched_root == root && matched_leaf_tabs == leaf_tabs && matched_zone == zone
+        ),
+        "{}: unexpected root-edge target {:?}",
+        case.name,
+        target
+    );
+}
+
 fn assert_case_graph(
     cx: &TestAppContext,
     controller: &open_gpui::Entity<DockController>,
@@ -714,28 +807,16 @@ fn assert_case_graph(
             expected.extend(case.payload.moved_items());
             assert_eq!(items, &expected, "{}", case.name);
         }
-        MatrixTarget::RootEdge => {
+        MatrixTarget::RootEdge { zone } => {
             let root = nodes.target_root.expect("root-edge case should have root");
-            let DockNode::Split { children, .. } = controller
-                .graph()
-                .node(root)
-                .expect("root-edge target root should still exist")
-            else {
-                panic!("{}: root-edge target should remain a split", case.name);
-            };
-            assert_eq!(children.len(), 3, "{}", case.name);
-            let DockNode::Tabs { items, .. } = controller
-                .graph()
-                .node(
-                    *children
-                        .last()
-                        .expect("root-edge split should have a right child"),
-                )
-                .expect("rightmost child should exist")
-            else {
-                panic!("{}: rightmost root-edge child should be tabs", case.name);
-            };
-            assert_eq!(items, &case.payload.moved_items(), "{}", case.name);
+            assert_root_edge_graph(
+                controller.graph(),
+                target_space,
+                root,
+                zone,
+                &case.payload.moved_items(),
+                case.name,
+            );
         }
         MatrixTarget::EmptySpace => {
             let target_root = controller
@@ -752,4 +833,101 @@ fn assert_case_graph(
             assert_eq!(items, &case.payload.moved_items(), "{}", case.name);
         }
     });
+}
+
+fn root_edge_leaf_bounds(zone: DropZone) -> Bounds<Pixels> {
+    match zone {
+        DropZone::Left => floating_bounds(0.0, 0.0, 210.0, 240.0),
+        DropZone::Right => floating_bounds(210.0, 0.0, 210.0, 240.0),
+        DropZone::Top => floating_bounds(210.0, 0.0, 210.0, 240.0),
+        DropZone::Bottom => floating_bounds(210.0, 0.0, 210.0, 240.0),
+        DropZone::Center => unreachable!(),
+    }
+}
+
+fn root_edge_host_position(zone: DropZone) -> Point<Pixels> {
+    match zone {
+        DropZone::Left => point(px(2.0), px(120.0)),
+        DropZone::Right => point(px(418.0), px(120.0)),
+        DropZone::Top => point(px(315.0), px(2.0)),
+        DropZone::Bottom => point(px(315.0), px(238.0)),
+        DropZone::Center => unreachable!(),
+    }
+}
+
+fn root_edge_position_in_bounds(zone: DropZone, bounds: Bounds<Pixels>) -> Point<Pixels> {
+    match zone {
+        DropZone::Left => point(bounds.origin.x + px(2.0), bounds.center().y),
+        DropZone::Right => point(
+            bounds.origin.x + bounds.size.width - px(2.0),
+            bounds.center().y,
+        ),
+        DropZone::Top => point(
+            bounds.origin.x + bounds.size.width - px(64.0),
+            bounds.origin.y + px(2.0),
+        ),
+        DropZone::Bottom => point(
+            bounds.origin.x + bounds.size.width - px(64.0),
+            bounds.origin.y + bounds.size.height - px(2.0),
+        ),
+        DropZone::Center => unreachable!(),
+    }
+}
+
+fn assert_root_edge_graph(
+    graph: &DockGraph,
+    target_space: &DockSpaceId,
+    old_root: DockNodeId,
+    zone: DropZone,
+    expected_items: &[DockItemId],
+    case_name: &str,
+) {
+    match zone {
+        DropZone::Left | DropZone::Right => {
+            assert_eq!(graph.root(target_space), Some(old_root), "{}", case_name);
+            let DockNode::Split { axis, children, .. } = graph
+                .node(old_root)
+                .expect("root-edge target root should exist")
+            else {
+                panic!("{}: root-edge target should remain a split", case_name);
+            };
+            assert_eq!(*axis, SplitAxis::Horizontal, "{}", case_name);
+            assert_eq!(children.len(), 3, "{}", case_name);
+            let moved_index = if zone == DropZone::Left { 0 } else { 2 };
+            assert_tabs_child_items(graph, children[moved_index], expected_items, case_name);
+        }
+        DropZone::Top | DropZone::Bottom => {
+            let new_root = graph
+                .root(target_space)
+                .expect("root-edge target space should keep a root");
+            assert_ne!(new_root, old_root, "{}", case_name);
+            let DockNode::Split { axis, children, .. } =
+                graph.node(new_root).expect("new root split should exist")
+            else {
+                panic!("{}: root-edge target space should be wrapped", case_name);
+            };
+            assert_eq!(*axis, SplitAxis::Vertical, "{}", case_name);
+            assert_eq!(children.len(), 2, "{}", case_name);
+            let (moved_index, old_root_index) = if zone == DropZone::Top {
+                (0, 1)
+            } else {
+                (1, 0)
+            };
+            assert_tabs_child_items(graph, children[moved_index], expected_items, case_name);
+            assert_eq!(children[old_root_index], old_root, "{}", case_name);
+        }
+        DropZone::Center => unreachable!(),
+    }
+}
+
+fn assert_tabs_child_items(
+    graph: &DockGraph,
+    tabs: DockNodeId,
+    expected_items: &[DockItemId],
+    case_name: &str,
+) {
+    let DockNode::Tabs { items, .. } = graph.node(tabs).expect("moved child should exist") else {
+        panic!("{}: moved root-edge child should be tabs", case_name);
+    };
+    assert_eq!(items, expected_items, "{}", case_name);
 }

@@ -740,8 +740,44 @@ mod tests {
         );
     }
 
+    fn root_bounds() -> Bounds<Pixels> {
+        Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(400.0)))
+    }
+
+    fn root_edge_leaf_bounds_and_position(zone: DropZone) -> (Bounds<Pixels>, Point<Pixels>) {
+        match zone {
+            DropZone::Left => (
+                Bounds::new(point(px(0.0), px(40.0)), size(px(220.0), px(320.0))),
+                point(px(2.0), px(200.0)),
+            ),
+            DropZone::Right => (
+                Bounds::new(point(px(380.0), px(40.0)), size(px(220.0), px(320.0))),
+                point(px(598.0), px(200.0)),
+            ),
+            DropZone::Top => (
+                Bounds::new(point(px(180.0), px(0.0)), size(px(240.0), px(180.0))),
+                point(px(300.0), px(2.0)),
+            ),
+            DropZone::Bottom => (
+                Bounds::new(point(px(180.0), px(220.0)), size(px(240.0), px(180.0))),
+                point(px(300.0), px(398.0)),
+            ),
+            DropZone::Center => unreachable!(),
+        }
+    }
+
+    fn expected_root_edge_preview_bounds(zone: DropZone) -> Bounds<Pixels> {
+        match zone {
+            DropZone::Left => Bounds::new(point(px(0.0), px(0.0)), size(px(48.0), px(400.0))),
+            DropZone::Right => Bounds::new(point(px(552.0), px(0.0)), size(px(48.0), px(400.0))),
+            DropZone::Top => Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(48.0))),
+            DropZone::Bottom => Bounds::new(point(px(0.0), px(352.0)), size(px(600.0), px(48.0))),
+            DropZone::Center => unreachable!(),
+        }
+    }
+
     #[test]
-    fn root_outer_edge_resolves_before_leaf_inner_edge_when_root_and_leaf_differ() {
+    fn root_outer_edges_resolve_before_leaf_inner_edges_when_root_and_leaf_differ() {
         let mut graph = DockGraph::new();
         let leaf_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
@@ -756,12 +792,62 @@ mod tests {
             children: vec![leaf_tabs, sibling],
             fractions: vec![0.5, 0.5],
         });
-        let root_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(400.0)));
-        let leaf_bounds = Bounds::new(point(px(10.0), px(20.0)), size(px(280.0), px(360.0)));
+        for zone in [
+            DropZone::Left,
+            DropZone::Right,
+            DropZone::Top,
+            DropZone::Bottom,
+        ] {
+            let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(zone);
+            let target = resolve_layout_drop(DockDropResolverInput {
+                root: Some(DockRootDropTarget {
+                    root,
+                    bounds: root_bounds(),
+                }),
+                leaves: &[DockLeafDropTarget {
+                    root,
+                    target_tabs: leaf_tabs,
+                    bounds: leaf_bounds,
+                    is_central: false,
+                }],
+                ..DockDropResolverInput::new(position, &policy())
+            })
+            .and_then(DockDropResolution::target)
+            .unwrap_or_else(|| panic!("{zone:?} root edge should resolve"));
+
+            assert_eq!(target.source, DockDropResolveSource::RootEdge, "{zone:?}");
+            assert_eq!(
+                target.kind,
+                DockResolvedDropTargetKind::RootEdge {
+                    root,
+                    leaf_tabs,
+                    zone,
+                },
+                "{zone:?}"
+            );
+            assert_eq!(target.zone(), Some(zone), "{zone:?}");
+            assert_eq!(
+                target.preview_bounds,
+                Some(expected_root_edge_preview_bounds(zone)),
+                "{zone:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn leaf_edge_inside_root_center_stays_inner_edge() {
+        let (leaf_tabs, sibling) = two_node_ids();
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![leaf_tabs, sibling],
+            fractions: vec![0.5, 0.5],
+        });
+        let leaf_bounds = Bounds::new(point(px(240.0), px(60.0)), size(px(120.0), px(280.0)));
         let target = resolve_layout_drop(DockDropResolverInput {
             root: Some(DockRootDropTarget {
                 root,
-                bounds: root_bounds,
+                bounds: root_bounds(),
             }),
             leaves: &[DockLeafDropTarget {
                 root,
@@ -769,24 +855,56 @@ mod tests {
                 bounds: leaf_bounds,
                 is_central: false,
             }],
-            ..DockDropResolverInput::new(point(px(12.0), px(180.0)), &policy())
+            ..DockDropResolverInput::new(point(px(242.0), px(200.0)), &policy())
         })
         .and_then(DockDropResolution::target)
-        .expect("root edge should resolve");
+        .expect("leaf edge inside the root center should resolve");
 
-        assert_eq!(target.source, DockDropResolveSource::RootEdge);
+        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
         assert_eq!(
             target.kind,
-            DockResolvedDropTargetKind::RootEdge {
+            DockResolvedDropTargetKind::InnerEdge {
                 root,
-                leaf_tabs,
+                target_tabs: leaf_tabs,
                 zone: DropZone::Left,
             }
         );
-        assert_eq!(target.zone(), Some(DropZone::Left));
-        assert!(
-            target.preview_bounds.is_some(),
-            "outer edge should carry product preview bounds"
+    }
+
+    #[test]
+    fn leaf_from_different_root_does_not_promote_to_root_edge() {
+        let (floating_tabs, primary_tabs) = two_node_ids();
+        let mut graph = DockGraph::new();
+        let primary_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![primary_tabs],
+            fractions: vec![1.0],
+        });
+        let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(DropZone::Right);
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root: primary_root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[DockLeafDropTarget {
+                root: floating_tabs,
+                target_tabs: floating_tabs,
+                bounds: leaf_bounds,
+                is_central: false,
+            }],
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("foreign-root leaf should still resolve its own inner edge");
+
+        assert_eq!(target.source, DockDropResolveSource::InnerEdge);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::InnerEdge {
+                root: floating_tabs,
+                target_tabs: floating_tabs,
+                zone: DropZone::Right,
+            }
         );
     }
 
