@@ -5,8 +5,8 @@ use open_gpui::WindowId;
 /// Platform facts used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportTargetContext {
-    /// Window currently owning the pointer, when known.
-    pub(crate) hovered_window: Option<WindowId>,
+    /// Window that produced the route event, when known.
+    pub(crate) event_window: Option<WindowId>,
     /// Platform-active window, when known.
     pub(crate) active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
@@ -20,10 +20,10 @@ impl DockViewportTargetContext {
         Self::default()
     }
 
-    /// Adds the hovered window signal.
+    /// Adds the event window signal.
     #[cfg(test)]
-    pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.hovered_window = Some(window.into().window_id());
+    pub(crate) fn with_event_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.event_window = Some(window.into().window_id());
         self
     }
 

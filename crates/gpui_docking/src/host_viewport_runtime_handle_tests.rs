@@ -432,7 +432,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
             app,
         )
     });
@@ -798,7 +798,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
             app,
         );
         assert!(
@@ -918,7 +918,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
             app,
         );
         assert!(
@@ -1741,7 +1741,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),
             None,
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
+            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
             app,
         );
         runtime

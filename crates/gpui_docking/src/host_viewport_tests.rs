@@ -78,7 +78,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn viewport_platform_signals_from_window_marks_event_window_as_hovered(cx: &mut TestAppContext) {
+fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let (alpha_graph, _alpha_root) = tabs_graph(&["a"], 0);
@@ -118,14 +118,14 @@ fn viewport_platform_signals_from_window_marks_event_window_as_hovered(cx: &mut 
         })
         .expect("alpha window should be live");
 
-    assert_eq!(context.hovered_window, Some(alpha_handle.window_id()));
+    assert_eq!(context.event_window, Some(alpha_handle.window_id()));
     assert_eq!(context.active_window, Some(zeta_handle.window_id()));
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
             .map(|target| target.space),
         Some(alpha_space),
-        "current event window should win viewport arbitration as hovered"
+        "current event window should win viewport arbitration"
     );
 }
 

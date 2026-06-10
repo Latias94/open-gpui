@@ -79,12 +79,12 @@ mod tests {
                 .resolve_viewport_target(
                     position,
                     &DockViewportTargetContext::new()
-                        .with_hovered_window(alpha_window)
+                        .with_event_window(alpha_window)
                         .with_active_window(zeta_window),
                 )
                 .map(|target| target.space),
             Some(alpha),
-            "hovered-window context should beat active-window context"
+            "event-window context should beat active-window context"
         );
     }
 }

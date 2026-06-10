@@ -40,8 +40,8 @@ pub(crate) fn choose_viewport_target(
             let window_id = hit.window.window_id();
             (
                 context
-                    .hovered_window
-                    .map(|hovered| usize::from(hovered != window_id))
+                    .event_window
+                    .map(|event| usize::from(event != window_id))
                     .unwrap_or(1),
                 context
                     .active_window
@@ -73,7 +73,7 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_prefers_hovered_active_then_window_stack() {
+    fn viewport_target_prefers_event_active_then_window_stack() {
         let first = handle(1);
         let second = handle(2);
         let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
@@ -103,7 +103,7 @@ mod tests {
             choose_viewport_target(
                 hits(),
                 &DockViewportTargetContext::new()
-                    .with_hovered_window(first)
+                    .with_event_window(first)
                     .with_active_window(second)
                     .with_window_stack([second, first]),
             )
