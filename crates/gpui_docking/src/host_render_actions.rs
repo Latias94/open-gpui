@@ -44,6 +44,15 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.commit_payload_drop_release(release, window, cx)
+    }
+
+    pub(crate) fn commit_payload_drop_release(
+        &mut self,
+        release: DockPayloadDropRelease,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.interaction_mut().cancel_outside_release_poll();
         self.commit_payload_drop_interaction(release, window, cx)
             .finish(cx)

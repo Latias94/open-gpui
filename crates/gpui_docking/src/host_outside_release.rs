@@ -66,7 +66,7 @@ impl DockHost {
         match decision {
             DockOutsideReleasePollDecision::Continue => true,
             DockOutsideReleasePollDecision::CommitRelease(release) => {
-                let changed = self.drop_payload_release_from_render(release, window, cx);
+                let changed = self.commit_payload_drop_release(release, window, cx);
                 cx.stop_active_drag(window);
                 changed
             }
