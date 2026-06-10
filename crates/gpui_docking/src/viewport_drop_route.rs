@@ -73,16 +73,6 @@ impl DockViewportDropRouteCommit {
         )
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_parts(
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
-    ) -> Self {
-        Self::from_source_facts(source_space.into(), source_tabs, payload, route)
-    }
-
     fn from_source_facts(
         source_space: DockSpaceId,
         source_tabs: DockNodeId,

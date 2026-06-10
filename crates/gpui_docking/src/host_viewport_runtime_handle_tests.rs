@@ -2,9 +2,9 @@ use crate::{
     DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRouteTarget, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffRequest, DockWorkspace, DropZone, SplitAxis,
+    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportRouteTarget,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropPreviewKind,
@@ -574,21 +574,16 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
 
     let outcome = cx
         .update(|app| {
-            let route = runtime.resolve_payload_drop_route_with_context(
+            let request = DockViewportDropRouteRequest::from_target_context(
                 source_space.clone(),
                 source_tabs,
                 DockViewportDropPayload::Item(item("a")),
                 release_position,
                 Some(suggested_window_bounds),
                 DockViewportTargetContext::new(),
-                app,
             );
-            let commit = DockViewportDropRouteCommit::from_parts(
-                source_space.clone(),
-                source_tabs,
-                DockViewportDropPayload::Item(item("a")),
-                route,
-            );
+            let route = runtime.resolve_payload_drop_route(&request, app);
+            let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
             runtime.commit_payload_drop_route_with_outcome(commit, app)
         })
         .expect("tear-off route should commit through runtime handle");
@@ -671,21 +666,16 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
 
     let outcome = cx
         .update(|app| {
-            let route = runtime.resolve_payload_drop_route_with_context(
+            let request = DockViewportDropRouteRequest::from_target_context(
                 source_space.clone(),
                 source_tabs,
                 DockViewportDropPayload::Tabs,
                 release_position,
                 Some(suggested_window_bounds),
                 DockViewportTargetContext::new(),
-                app,
             );
-            let commit = DockViewportDropRouteCommit::from_parts(
-                source_space.clone(),
-                source_tabs,
-                DockViewportDropPayload::Tabs,
-                route,
-            );
+            let route = runtime.resolve_payload_drop_route(&request, app);
+            let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
             runtime.commit_payload_drop_route_with_outcome(commit, app)
         })
         .expect("stack tear-off route should commit through runtime handle");
@@ -792,15 +782,15 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         target_window_bounds.get_bounds().origin.y + px(100.0),
     );
     let result = cx.update(|app| {
-        let route = runtime.resolve_payload_drop_route_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
             DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
-            app,
         );
+        let route = runtime.resolve_payload_drop_route(&request, app);
         assert!(
             matches!(
                 &route,
@@ -808,12 +798,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             ),
             "known viewport route should carry the destination window"
         );
-        let commit = DockViewportDropRouteCommit::from_parts(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            route,
-        );
+        let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
         runtime.commit_payload_drop_route_with_outcome(commit, app)
     });
 
@@ -1733,7 +1718,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
     ));
 
     let result = cx.update(|app| {
-        let route = runtime.resolve_payload_drop_route_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Tabs,
@@ -1742,14 +1727,9 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .expect("target scene should expose a screen position"),
             None,
             DockViewportPlatformSignals::from_app(app).with_event_window(opened.window),
-            app,
         );
-        let commit = DockViewportDropRouteCommit::from_parts(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Tabs,
-            route,
-        );
+        let route = runtime.resolve_payload_drop_route(&request, app);
+        let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
         runtime
             .commit_payload_drop_route_with_outcome(commit, app)
             .and_then(|outcome| outcome.action_result())
