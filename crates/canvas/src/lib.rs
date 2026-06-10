@@ -26,6 +26,7 @@ mod runtime_query;
 mod schema;
 mod snap;
 mod spatial_cache;
+mod store;
 #[cfg(test)]
 mod test_support;
 mod tool;
@@ -72,7 +73,7 @@ pub use json_canvas::{
     JsonCanvasSide, document_from_json_canvas_str, document_to_json_canvas_string,
 };
 pub use layer::CanvasZOrderCommand;
-pub use mutation::CanvasCommittedMutation;
+pub use mutation::{CanvasCommittedMutation, CanvasPreparedMutation};
 pub use persistence::{
     CANVAS_LORO_CRDT_FEATURE, CANVAS_PERSISTENCE_ADAPTERS, CANVAS_PERSISTENCE_CODEC_VERSION,
     CANVAS_REDB_STORE_FEATURE, CANVAS_RKYV_SNAPSHOT_FEATURE, CanvasCheckpoint,
@@ -82,12 +83,14 @@ pub use persistence::{
     CanvasPersistenceCodecError, CanvasPersistenceCursor, CanvasPersistenceEnvelope,
     CanvasPersistenceError, CanvasPersistenceRecord, CanvasPersistenceRecordKind,
     CanvasPersistenceStore, CanvasPersistentToolRegistryError, CanvasReplayError,
-    MemoryCanvasPersistenceByteStore, MemoryCanvasPersistenceStore, apply_persistent_tool_intent,
+    MemoryCanvasPersistenceByteStore, MemoryCanvasPersistenceStore,
+    apply_persistent_store_transaction, apply_persistent_tool_intent,
     apply_persistent_tool_intents, apply_persistent_transaction,
     canvas_persistence_adapter_statuses, handle_persistent_event,
     handle_persistent_event_with_custom_tool, handle_persistent_event_with_tool_registry,
-    load_canvas_document, load_canvas_persistence_cursor, redo_persistent_transaction,
-    replay_canvas_log, save_canvas_checkpoint, undo_persistent_transaction,
+    load_canvas_document, load_canvas_persistence_cursor, redo_persistent_store_transaction,
+    redo_persistent_transaction, replay_canvas_log, save_canvas_checkpoint,
+    save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
 pub use relations::{CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelations};
 pub use routing::{
@@ -107,6 +110,10 @@ pub use schema::{
 pub use snap::{
     CanvasSnapAxis, CanvasSnapGuide, CanvasSnapResult, DEFAULT_SNAP_THRESHOLD,
     snap_delta_for_resize_selection, snap_delta_for_selection,
+};
+pub use store::{
+    CanvasStore, CanvasStoreChange, CanvasStoreHistoryEffect, CanvasStoreListenerId,
+    CanvasStoreMutationSource,
 };
 pub use tool::{
     CanvasEditor, CanvasEvent, CanvasHistory, CanvasKey, CanvasKeyModifiers, CanvasSelection,

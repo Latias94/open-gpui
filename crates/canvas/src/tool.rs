@@ -6,10 +6,10 @@ use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
 use crate::{
-    CanvasClipboardPayload, CanvasCommittedMutation, CanvasConnectionEndpointRole,
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter,
-    CanvasEndpoint, CanvasGeometryFacts, CanvasKindRegistry, CanvasPasteTransaction,
-    CanvasRecordId, CanvasRuntime, CanvasSnapGuide, CanvasTransaction, CanvasViewport,
+    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
+    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts,
+    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasSnapGuide,
+    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
     DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
     HitTarget, NodeId, ShapeId, connection_hit_options, snap_delta_for_resize_selection,
     snap_delta_for_selection,
@@ -622,38 +622,34 @@ impl CanvasHistory {
         self.redo_stack.last()
     }
 
-    fn push_undo(&mut self, transaction: CanvasTransaction) {
+    pub(crate) fn push_undo(&mut self, transaction: CanvasTransaction) {
         if !transaction.is_empty() {
             self.undo_stack.push(transaction);
             self.redo_stack.clear();
         }
     }
 
-    fn pop_undo(&mut self) -> Option<CanvasTransaction> {
+    pub(crate) fn pop_undo(&mut self) -> Option<CanvasTransaction> {
         self.undo_stack.pop()
     }
 
-    fn push_redo(&mut self, transaction: CanvasTransaction) {
+    pub(crate) fn push_redo(&mut self, transaction: CanvasTransaction) {
         if !transaction.is_empty() {
             self.redo_stack.push(transaction);
         }
     }
 
-    fn pop_redo(&mut self) -> Option<CanvasTransaction> {
+    pub(crate) fn pop_redo(&mut self) -> Option<CanvasTransaction> {
         self.redo_stack.pop()
     }
 }
 
 pub struct CanvasEditor {
-    document: Arc<CanvasDocument>,
+    store: CanvasStore,
     viewport: CanvasViewport,
     tool: CanvasTool,
     state: ToolState,
-    runtime: Arc<CanvasRuntime>,
-    edge_router: Arc<dyn CanvasEdgeRouter + Send + Sync>,
-    kind_registry: Arc<CanvasKindRegistry>,
     selection: CanvasSelection,
-    history: CanvasHistory,
     gesture: Option<CanvasGestureSession>,
 }
 
@@ -672,23 +668,12 @@ impl CanvasEditor {
     where
         R: CanvasEdgeRouter + Send + Sync + 'static,
     {
-        let edge_router = Arc::new(edge_router);
-        let kind_registry = Arc::new(CanvasKindRegistry::open());
-        let runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
-            &document,
-            edge_router.as_ref(),
-            kind_registry.as_ref(),
-        );
         Self {
-            document: Arc::new(document),
+            store: CanvasStore::new_with_router(document, edge_router),
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
-            runtime: Arc::new(runtime),
-            edge_router,
-            kind_registry,
             selection: CanvasSelection::default(),
-            history: CanvasHistory::default(),
             gesture: None,
         }
     }
@@ -712,27 +697,16 @@ impl CanvasEditor {
     where
         R: CanvasEdgeRouter + Send + Sync + 'static,
     {
-        let document = CanvasDocument::from_snapshot_with_kind_registry(
-            document.to_snapshot(),
-            &kind_registry,
-        )?;
-        let edge_router = Arc::new(edge_router);
-        let kind_registry = Arc::new(kind_registry);
-        let runtime = CanvasRuntime::rebuild_with_router_and_kind_registry(
-            &document,
-            edge_router.as_ref(),
-            kind_registry.as_ref(),
-        );
         Ok(Self {
-            document: Arc::new(document),
+            store: CanvasStore::try_new_with_router_and_kind_registry(
+                document,
+                edge_router,
+                kind_registry,
+            )?,
             viewport: CanvasViewport::default(),
             tool: CanvasTool::Select,
             state: ToolState::Idle,
-            runtime: Arc::new(runtime),
-            edge_router,
-            kind_registry,
             selection: CanvasSelection::default(),
-            history: CanvasHistory::default(),
             gesture: None,
         })
     }
@@ -749,7 +723,7 @@ impl CanvasEditor {
     }
 
     pub fn document(&self) -> &CanvasDocument {
-        self.document.as_ref()
+        self.store.document()
     }
 
     pub fn viewport(&self) -> CanvasViewport {
@@ -765,27 +739,27 @@ impl CanvasEditor {
     }
 
     pub fn runtime(&self) -> &CanvasRuntime {
-        self.runtime.as_ref()
+        self.store.runtime()
     }
 
     pub(crate) fn document_snapshot(&self) -> Arc<CanvasDocument> {
-        Arc::clone(&self.document)
+        self.store.document_snapshot()
     }
 
     pub(crate) fn runtime_snapshot(&self) -> Arc<CanvasRuntime> {
-        Arc::clone(&self.runtime)
+        self.store.runtime_snapshot()
     }
 
     pub(crate) fn kind_registry_snapshot(&self) -> Arc<CanvasKindRegistry> {
-        Arc::clone(&self.kind_registry)
+        self.store.kind_registry_snapshot()
     }
 
     pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
-        self.edge_router.as_ref()
+        self.store.edge_router()
     }
 
     pub fn kind_registry(&self) -> &CanvasKindRegistry {
-        self.kind_registry.as_ref()
+        self.store.kind_registry()
     }
 
     pub fn selection(&self) -> &CanvasSelection {
@@ -793,15 +767,36 @@ impl CanvasEditor {
     }
 
     pub fn history(&self) -> &CanvasHistory {
-        &self.history
+        self.store.history()
     }
 
-    fn document_mut(&mut self) -> &mut CanvasDocument {
-        Arc::make_mut(&mut self.document)
+    pub fn store(&self) -> &CanvasStore {
+        &self.store
     }
 
-    fn runtime_mut(&mut self) -> &mut CanvasRuntime {
-        Arc::make_mut(&mut self.runtime)
+    pub(crate) fn store_mut(&mut self) -> &mut CanvasStore {
+        &mut self.store
+    }
+
+    pub fn listen(
+        &mut self,
+        listener: impl Fn(&CanvasStoreChange) + Send + Sync + 'static,
+    ) -> CanvasStoreListenerId {
+        self.store.listen(listener)
+    }
+
+    pub fn remove_listener(&mut self, id: CanvasStoreListenerId) -> bool {
+        self.store.remove_listener(id)
+    }
+
+    #[cfg(test)]
+    fn history_mut_for_test(&mut self) -> &mut CanvasHistory {
+        self.store.history_mut_for_test()
+    }
+
+    pub(crate) fn retain_selection_for_current_document(&mut self) {
+        let document = self.store.document_snapshot();
+        self.selection.retain_document(document.as_ref());
     }
 
     pub fn apply_transaction(
@@ -819,80 +814,11 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
-        let kind_registry = Arc::clone(&self.kind_registry);
-        let committed = self
-            .document_mut()
-            .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
-        Ok(self.apply_committed_editor_mutation(committed, Some(kind_registry.as_ref())))
-    }
-
-    pub(crate) fn apply_prepared_document_mutation(
-        &mut self,
-        prepared: crate::mutation::CanvasPreparedMutation,
-    ) -> CanvasDocumentDiff {
-        let committed = prepared.apply_to(self.document_mut());
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.apply_committed_editor_mutation(committed, Some(kind_registry.as_ref()))
-    }
-
-    pub(crate) fn apply_prepared_undo_mutation(
-        &mut self,
-        prepared: crate::mutation::CanvasPreparedMutation,
-    ) -> CanvasDocumentDiff {
-        debug_assert_eq!(
-            self.history.next_undo_transaction(),
-            Some(prepared.committed().transaction())
-        );
-        let committed = prepared.apply_to(self.document_mut());
-        let diff = committed.diff().clone();
-        if diff.is_empty() {
-            let _ = self.history.pop_undo();
-            return diff;
+        let diff = self.store.apply_transaction(transaction)?;
+        if !diff.is_empty() {
+            self.retain_selection_for_current_document();
         }
-        let _ = self.history.pop_undo();
-        self.history.push_redo(committed.inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
-        diff
-    }
-
-    pub(crate) fn apply_prepared_redo_mutation(
-        &mut self,
-        prepared: crate::mutation::CanvasPreparedMutation,
-    ) -> CanvasDocumentDiff {
-        debug_assert_eq!(
-            self.history.next_redo_transaction(),
-            Some(prepared.committed().transaction())
-        );
-        let committed = prepared.apply_to(self.document_mut());
-        let diff = committed.diff().clone();
-        if diff.is_empty() {
-            let _ = self.history.pop_redo();
-            return diff;
-        }
-        let _ = self.history.pop_redo();
-        self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
-        diff
-    }
-
-    pub(crate) fn prepare_document_transaction(
-        &self,
-        transaction: CanvasTransaction,
-    ) -> Result<crate::mutation::CanvasPreparedMutation, DocumentError> {
-        self.document
-            .prepare_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())
-    }
-
-    pub(crate) fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.history.next_undo_transaction()
-    }
-
-    pub(crate) fn next_redo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.history.next_redo_transaction()
+        Ok(diff)
     }
 
     pub(crate) fn apply_tool_effect(
@@ -919,24 +845,24 @@ impl CanvasEditor {
                 self.set_tool(tool)?;
             }
             CanvasToolEffect::SetSelection(mut selection) => {
-                selection.retain_document(self.document.as_ref());
+                selection.retain_document(self.document());
                 self.selection = selection;
             }
             CanvasToolEffect::ReplaceSelection(target) => {
                 self.selection.replace_with(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolEffect::AddSelection(target) => {
                 self.selection.insert_target(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolEffect::RemoveSelection(target) => {
                 self.selection.remove_target(&target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolEffect::ToggleSelection(target) => {
                 self.selection.toggle_target(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolEffect::ClearSelection => {
                 self.selection.clear();
@@ -961,29 +887,17 @@ impl CanvasEditor {
         let Some(gesture) = &self.gesture else {
             return Ok(None);
         };
-        gesture
-            .prepare_commit_with_kind_registry(self.document.as_ref(), self.kind_registry.as_ref())
+        gesture.prepare_commit_with_kind_registry(self.document(), self.kind_registry())
     }
 
-    pub(crate) fn apply_prepared_gesture_commit(
+    pub(crate) fn apply_prepared_gesture_store_change(
         &mut self,
         prepared: CanvasPreparedGestureCommit,
-    ) -> CanvasDocumentDiff {
-        let diff = prepared.committed().diff().clone();
+    ) -> Option<CanvasStoreChange> {
         self.gesture = None;
-        if diff.is_empty() {
-            return diff;
-        }
-
-        self.history
-            .push_undo(prepared.committed().inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
-        let kind_registry = Arc::clone(&self.kind_registry);
-        self.sync_runtime_committed_with_kind_registry(
-            prepared.committed(),
-            kind_registry.as_ref(),
-        );
-        diff
+        let change = self.store.apply_prepared_gesture_commit(prepared)?;
+        self.retain_selection_for_current_document();
+        Some(change)
     }
 
     pub(crate) fn apply_tool_effects(
@@ -1018,24 +932,24 @@ impl CanvasEditor {
                 self.set_tool(tool)?;
             }
             CanvasToolIntent::SetSelection(mut selection) => {
-                selection.retain_document(self.document.as_ref());
+                selection.retain_document(self.document());
                 self.selection = selection;
             }
             CanvasToolIntent::ReplaceSelection(target) => {
                 self.selection.replace_with(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolIntent::AddSelection(target) => {
                 self.selection.insert_target(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolIntent::RemoveSelection(target) => {
                 self.selection.remove_target(&target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolIntent::ToggleSelection(target) => {
                 self.selection.toggle_target(target);
-                self.selection.retain_document(self.document.as_ref());
+                self.retain_selection_for_current_document();
             }
             CanvasToolIntent::ClearSelection => {
                 self.selection.clear();
@@ -1063,23 +977,19 @@ impl CanvasEditor {
     }
 
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
-        let Some(transaction) = self.history.next_undo_transaction().cloned() else {
-            return Ok(false);
-        };
-
-        let prepared = self.prepare_document_transaction(transaction)?;
-        let diff = self.apply_prepared_undo_mutation(prepared);
-        Ok(!diff.is_empty())
+        let changed = self.store.undo()?;
+        if changed {
+            self.retain_selection_for_current_document();
+        }
+        Ok(changed)
     }
 
     pub fn redo(&mut self) -> Result<bool, DocumentError> {
-        let Some(transaction) = self.history.next_redo_transaction().cloned() else {
-            return Ok(false);
-        };
-
-        let prepared = self.prepare_document_transaction(transaction)?;
-        let diff = self.apply_prepared_redo_mutation(prepared);
-        Ok(!diff.is_empty())
+        let changed = self.store.redo()?;
+        if changed {
+            self.retain_selection_for_current_document();
+        }
+        Ok(changed)
     }
 
     pub fn rebuild_index(&mut self) {
@@ -1087,38 +997,23 @@ impl CanvasEditor {
     }
 
     pub fn rebuild_runtime(&mut self) {
-        self.runtime = Arc::new(CanvasRuntime::rebuild_with_router_and_kind_registry(
-            self.document.as_ref(),
-            self.edge_router.as_ref(),
-            self.kind_registry.as_ref(),
-        ));
+        self.store.rebuild_runtime();
     }
 
     pub fn set_edge_router<R>(&mut self, edge_router: R)
     where
         R: CanvasEdgeRouter + Send + Sync + 'static,
     {
-        self.edge_router = Arc::new(edge_router);
-        self.rebuild_runtime();
+        self.store.set_edge_router(edge_router);
     }
 
     pub fn set_kind_registry(
         &mut self,
         kind_registry: CanvasKindRegistry,
     ) -> Result<(), DocumentError> {
-        let document = CanvasDocument::from_snapshot_with_kind_registry(
-            self.document.to_snapshot(),
-            &kind_registry,
-        )?;
-        let document_changed = document != *self.document;
-        self.document = Arc::new(document);
-        self.kind_registry = Arc::new(kind_registry);
-        self.selection.retain_document(self.document.as_ref());
+        self.store.set_kind_registry(kind_registry)?;
+        self.retain_selection_for_current_document();
         self.gesture = None;
-        if document_changed {
-            self.history.clear();
-        }
-        self.rebuild_runtime();
         Ok(())
     }
 
@@ -1139,14 +1034,14 @@ impl CanvasEditor {
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
         CanvasToolContext {
-            document: self.document.as_ref(),
+            document: self.document(),
             viewport: &self.viewport,
             tool: &self.tool,
-            runtime: self.runtime.as_ref(),
-            edge_router: self.edge_router.as_ref(),
-            kind_registry: self.kind_registry.as_ref(),
+            runtime: self.runtime(),
+            edge_router: self.edge_router(),
+            kind_registry: self.kind_registry(),
             selection: &self.selection,
-            history: &self.history,
+            history: self.history(),
         }
     }
 
@@ -1166,10 +1061,8 @@ impl CanvasEditor {
     }
 
     pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
-        let payload = CanvasClipboardPayload::from_document_selection(
-            self.document.as_ref(),
-            &self.selection,
-        );
+        let payload =
+            CanvasClipboardPayload::from_document_selection(self.document(), &self.selection);
         (!payload.is_empty()).then_some(payload)
     }
 
@@ -1186,7 +1079,7 @@ impl CanvasEditor {
         payload: &CanvasClipboardPayload,
         offset: Point<Pixels>,
     ) -> Result<bool, DocumentError> {
-        let pasted = payload.paste_transaction(self.document.as_ref(), offset);
+        let pasted = payload.paste_transaction(self.document(), offset);
         self.apply_paste_transaction(pasted)
     }
 
@@ -1262,12 +1155,12 @@ impl CanvasEditor {
     ) -> (Vec<NodeId>, Vec<ShapeId>) {
         let node_ids = selection
             .selected_nodes()
-            .filter(|id| self.document.node(id).is_some_and(|node| !node.locked))
+            .filter(|id| self.document().node(id).is_some_and(|node| !node.locked))
             .cloned()
             .collect();
         let shape_ids = selection
             .selected_shapes()
-            .filter(|id| self.document.shape(id).is_some_and(|shape| !shape.locked))
+            .filter(|id| self.document().shape(id).is_some_and(|shape| !shape.locked))
             .cloned()
             .collect();
 
@@ -1276,10 +1169,10 @@ impl CanvasEditor {
 
     fn transform_handle_at(&self, point: Point<Pixels>) -> Option<CanvasTransformHandle> {
         canvas_transform_handles(
-            self.document.as_ref(),
+            self.document(),
             &self.selection,
             self.viewport,
-            Some(self.kind_registry.as_ref()),
+            Some(self.kind_registry()),
         )
         .into_iter()
         .rev()
@@ -1290,14 +1183,14 @@ impl CanvasEditor {
         let node_ids = self
             .selection
             .selected_nodes()
-            .filter_map(|id| self.document.node(id))
+            .filter_map(|id| self.document().node(id))
             .filter(|node| !node.locked && !node.hidden)
             .map(|node| node.id.clone())
             .collect();
         let shape_ids = self
             .selection
             .selected_shapes()
-            .filter_map(|id| self.document.shape(id))
+            .filter_map(|id| self.document().shape(id))
             .filter(|shape| !shape.locked && !shape.hidden)
             .map(|shape| shape.id.clone())
             .collect();
@@ -1319,11 +1212,11 @@ impl CanvasEditor {
             selection.insert_shape(id.clone());
         }
         snap_delta_for_selection(
-            self.document.as_ref(),
+            self.document(),
             &selection,
             delta,
             DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry.as_ref()),
+            Some(self.kind_registry()),
         )
     }
 
@@ -1342,12 +1235,12 @@ impl CanvasEditor {
             selection.insert_shape(id.clone());
         }
         snap_delta_for_resize_selection(
-            self.document.as_ref(),
+            self.document(),
             &selection,
             handle,
             delta,
             DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry.as_ref()),
+            Some(self.kind_registry()),
         )
     }
 
@@ -1357,19 +1250,19 @@ impl CanvasEditor {
         role: CanvasConnectionEndpointRole,
     ) -> Option<CanvasEndpoint> {
         let facts = CanvasGeometryFacts::with_router_and_kind_registry(
-            self.document.as_ref(),
-            self.edge_router.as_ref(),
-            Some(self.kind_registry.as_ref()),
+            self.document(),
+            self.edge_router(),
+            Some(self.kind_registry()),
         );
         let records =
-            self.runtime
+            self.runtime()
                 .precise_hit_test_with_facts(facts, point, connection_hit_options());
         facts.connection_endpoint_at(records, role)
     }
 
     fn begin_gesture(&mut self) {
         if self.gesture.is_none() {
-            self.gesture = Some(CanvasGestureSession::begin(self.document.as_ref()));
+            self.gesture = Some(CanvasGestureSession::begin(self.document()));
         }
     }
 
@@ -1384,7 +1277,7 @@ impl CanvasEditor {
         let implicit_gesture = self
             .gesture
             .is_none()
-            .then(|| CanvasGestureSession::begin(self.document.as_ref()));
+            .then(|| CanvasGestureSession::begin(self.document()));
         let diff = self.apply_transient_transaction(transaction)?;
         if let Some(gesture) = implicit_gesture {
             self.gesture = Some(gesture);
@@ -1392,73 +1285,15 @@ impl CanvasEditor {
         Ok(diff)
     }
 
-    fn apply_committed_editor_mutation(
-        &mut self,
-        committed: CanvasCommittedMutation,
-        kind_registry: Option<&CanvasKindRegistry>,
-    ) -> CanvasDocumentDiff {
-        let diff = committed.diff().clone();
-        if diff.is_empty() {
-            return diff;
-        }
-
-        self.history.push_undo(committed.inverse().clone());
-        self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_committed_with_optional_kind_registry(&committed, kind_registry);
-        diff
-    }
-
     fn apply_transient_transaction(
         &mut self,
         transaction: CanvasTransaction,
     ) -> Result<CanvasDocumentDiff, DocumentError> {
-        if transaction.is_empty() {
-            return Ok(CanvasDocumentDiff::default());
+        let diff = self.store.apply_transient_transaction(transaction)?;
+        if !diff.is_empty() {
+            self.retain_selection_for_current_document();
         }
-
-        let kind_registry = Arc::clone(&self.kind_registry);
-        let committed = self
-            .document_mut()
-            .commit_transaction_with_kind_registry(transaction, kind_registry.as_ref())?;
-        let diff = committed.diff().clone();
-        if diff.is_empty() {
-            return Ok(diff);
-        }
-        self.selection.retain_document(self.document.as_ref());
-        self.sync_runtime_committed_with_kind_registry(&committed, kind_registry.as_ref());
         Ok(diff)
-    }
-
-    fn sync_runtime_committed_with_kind_registry(
-        &mut self,
-        committed: &CanvasCommittedMutation,
-        kind_registry: &CanvasKindRegistry,
-    ) {
-        self.sync_runtime_committed_with_optional_kind_registry(committed, Some(kind_registry));
-    }
-
-    fn sync_runtime_committed_with_optional_kind_registry(
-        &mut self,
-        committed: &CanvasCommittedMutation,
-        kind_registry: Option<&CanvasKindRegistry>,
-    ) {
-        let document = Arc::clone(&self.document);
-        let edge_router = Arc::clone(&self.edge_router);
-        match kind_registry {
-            Some(kind_registry) => self
-                .runtime_mut()
-                .apply_committed_mutation_with_router_and_kind_registry(
-                    document.as_ref(),
-                    committed,
-                    edge_router.as_ref(),
-                    kind_registry,
-                ),
-            None => self.runtime_mut().apply_committed_mutation_with_router(
-                document.as_ref(),
-                committed,
-                edge_router.as_ref(),
-            ),
-        }
     }
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
@@ -1466,14 +1301,17 @@ impl CanvasEditor {
             self.gesture = None;
             return Ok(CanvasDocumentDiff::default());
         };
-        Ok(self.apply_prepared_gesture_commit(prepared))
+        let Some(change) = self.apply_prepared_gesture_store_change(prepared) else {
+            return Ok(CanvasDocumentDiff::default());
+        };
+        Ok(change.diff().clone())
     }
 
     fn cancel_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
         let Some(gesture) = self.gesture.as_ref() else {
             return Ok(CanvasDocumentDiff::default());
         };
-        let transaction = gesture.cancel_transaction(self.document.as_ref());
+        let transaction = gesture.cancel_transaction(self.document());
         let diff = self.apply_transient_transaction(transaction)?;
         self.gesture = None;
         Ok(diff)
@@ -1483,14 +1321,14 @@ impl CanvasEditor {
         let node_ids = self
             .selection
             .selected_nodes()
-            .filter(|id| self.document.node(*id).is_some_and(|node| !node.locked))
+            .filter(|id| self.document().node(*id).is_some_and(|node| !node.locked))
             .cloned()
             .collect::<IndexSet<_>>();
 
         let mut commands = Vec::new();
 
         for id in self.selection.selected_edges() {
-            let Some(edge) = self.document.edge(id) else {
+            let Some(edge) = self.document().edge(id) else {
                 continue;
             };
             if edge.locked
@@ -1506,7 +1344,7 @@ impl CanvasEditor {
         commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
 
         for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document.shape(id) else {
+            let Some(shape) = self.document().shape(id) else {
                 continue;
             };
             if shape.locked {
@@ -1532,7 +1370,7 @@ impl CanvasEditor {
 
         let mut commands = Vec::new();
         for id in node_ids {
-            let Some(node) = self.document.node(id) else {
+            let Some(node) = self.document().node(id) else {
                 continue;
             };
             if node.locked {
@@ -1540,14 +1378,14 @@ impl CanvasEditor {
             }
             let mut node = node.clone();
             let proposed = resize_bounds_by_handle(node.bounds(), handle, delta);
-            let bounds = self.kind_registry.resize_node_bounds(&node, proposed)?;
+            let bounds = self.kind_registry().resize_node_bounds(&node, proposed)?;
             node.position = bounds.origin;
             node.size = bounds.size;
             commands.push(DocumentCommand::UpdateNode(node));
         }
 
         for id in shape_ids {
-            let Some(shape) = self.document.shape(id) else {
+            let Some(shape) = self.document().shape(id) else {
                 continue;
             };
             if shape.locked {
@@ -1555,7 +1393,7 @@ impl CanvasEditor {
             }
             let mut shape = shape.clone();
             let proposed = resize_bounds_by_handle(shape.bounds, handle, delta);
-            shape.bounds = self.kind_registry.resize_shape_bounds(&shape, proposed)?;
+            shape.bounds = self.kind_registry().resize_shape_bounds(&shape, proposed)?;
             commands.push(DocumentCommand::UpdateShape(shape));
         }
 
@@ -1572,7 +1410,7 @@ impl CanvasEditor {
 
         self.apply_transaction(pasted.transaction)?;
         let mut selection = pasted.selection;
-        selection.retain_document(self.document.as_ref());
+        selection.retain_document(self.document());
         self.selection = selection;
         Ok(true)
     }
@@ -1591,7 +1429,7 @@ impl CanvasEditor {
         let mut ordinal = 0;
         let mut records = Vec::new();
 
-        records.extend(self.document.nodes().map(|node| {
+        records.extend(self.document().nodes().map(|node| {
             let record = CanvasLayerRecord {
                 id: CanvasRecordId::Node(node.id.clone()),
                 z_index: node.z_index,
@@ -1601,7 +1439,7 @@ impl CanvasEditor {
             ordinal += 1;
             record
         }));
-        records.extend(self.document.shapes().map(|shape| {
+        records.extend(self.document().shapes().map(|shape| {
             let record = CanvasLayerRecord {
                 id: CanvasRecordId::Shape(shape.id.clone()),
                 z_index: shape.z_index,
@@ -1611,7 +1449,7 @@ impl CanvasEditor {
             ordinal += 1;
             record
         }));
-        records.extend(self.document.edges().map(|edge| {
+        records.extend(self.document().edges().map(|edge| {
             let record = CanvasLayerRecord {
                 id: CanvasRecordId::Edge(edge.id.clone()),
                 z_index: edge.z_index,
@@ -1633,17 +1471,17 @@ impl CanvasEditor {
     ) -> Option<DocumentCommand> {
         match record_id {
             CanvasRecordId::Node(id) => {
-                let mut node = self.document.node(id)?.clone();
+                let mut node = self.document().node(id)?.clone();
                 node.z_index = z_index;
                 Some(DocumentCommand::UpdateNode(node))
             }
             CanvasRecordId::Edge(id) => {
-                let mut edge = self.document.edge(id)?.clone();
+                let mut edge = self.document().edge(id)?.clone();
                 edge.z_index = z_index;
                 Some(DocumentCommand::UpdateEdge(edge))
             }
             CanvasRecordId::Shape(id) => {
-                let mut shape = self.document.shape(id)?.clone();
+                let mut shape = self.document().shape(id)?.clone();
                 shape.z_index = z_index;
                 Some(DocumentCommand::UpdateShape(shape))
             }
@@ -1653,7 +1491,7 @@ impl CanvasEditor {
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
         for record in self
-            .runtime
+            .runtime()
             .query_with_options(bounds, HitOptions::default())
         {
             match &record.target {
@@ -1712,6 +1550,8 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::{
         CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy,
@@ -1933,22 +1773,22 @@ mod tests {
             })
             .unwrap();
 
-        let node = editor.document.node(&NodeId::from("n1")).unwrap();
+        let node = editor.document().node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("n1")]
         );
         assert_eq!(editor.state, ToolState::Idle);
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        let node = editor.document.node(&NodeId::from("n1")).unwrap();
+        let node = editor.document().node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(0.0), px(0.0)));
-        assert_eq!(editor.history.redo_depth(), 1);
+        assert_eq!(editor.history().redo_depth(), 1);
 
         assert!(editor.redo().unwrap());
-        let node = editor.document.node(&NodeId::from("n1")).unwrap();
+        let node = editor.document().node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
     }
 
@@ -1984,16 +1824,16 @@ mod tests {
             })
             .unwrap();
 
-        let shape = editor.document.shape(&ShapeId::from("shape")).unwrap();
+        let shape = editor.document().shape(&ShapeId::from("shape")).unwrap();
         assert_eq!(shape.bounds.origin, point(px(20.0), px(15.0)));
         assert_eq!(
             editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
             vec![ShapeId::from("shape")]
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        let shape = editor.document.shape(&ShapeId::from("shape")).unwrap();
+        let shape = editor.document().shape(&ShapeId::from("shape")).unwrap();
         assert_eq!(shape.bounds.origin, point(px(0.0), px(0.0)));
     }
 
@@ -2033,13 +1873,13 @@ mod tests {
         assert!(editor.selection.is_empty());
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("locked"))
                 .unwrap()
                 .position,
             point(px(0.0), px(0.0))
         );
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -2130,7 +1970,7 @@ mod tests {
 
         assert!(editor.selection.is_empty());
         assert_eq!(editor.state, ToolState::Idle);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -2169,7 +2009,7 @@ mod tests {
             vec![NodeId::from("a"), NodeId::from("b")]
         );
         assert_eq!(editor.state, ToolState::Idle);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2187,7 +2027,7 @@ mod tests {
             vec![NodeId::from("a")]
         );
         assert_eq!(editor.state, ToolState::Idle);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -2288,17 +2128,17 @@ mod tests {
             })
             .unwrap();
 
-        assert!(!editor.document.contains_node(&NodeId::from("a")));
-        assert!(editor.document.contains_node(&NodeId::from("b")));
-        assert!(editor.document.edge_count() == 0);
-        assert!(editor.document.shape_count() == 0);
+        assert!(!editor.document().contains_node(&NodeId::from("a")));
+        assert!(editor.document().contains_node(&NodeId::from("b")));
+        assert!(editor.document().edge_count() == 0);
+        assert!(editor.document().shape_count() == 0);
         assert!(editor.selection.is_empty());
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert!(editor.document.contains_node(&NodeId::from("a")));
-        assert!(editor.document.contains_edge(&EdgeId::from("a-b")));
-        assert!(editor.document.contains_shape(&ShapeId::from("shape")));
+        assert!(editor.document().contains_node(&NodeId::from("a")));
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
+        assert!(editor.document().contains_shape(&ShapeId::from("shape")));
     }
 
     #[test]
@@ -2354,14 +2194,22 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.document.contains_node(&NodeId::from("locked-node")));
-        assert!(editor.document.contains_edge(&EdgeId::from("locked-edge")));
         assert!(
             editor
-                .document
+                .document()
+                .contains_node(&NodeId::from("locked-node"))
+        );
+        assert!(
+            editor
+                .document()
+                .contains_edge(&EdgeId::from("locked-edge"))
+        );
+        assert!(
+            editor
+                .document()
                 .contains_shape(&ShapeId::from("locked-shape"))
         );
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -2431,18 +2279,22 @@ mod tests {
                 .unwrap()
         );
 
-        assert!(editor.document.contains_node(&NodeId::from("a-copy")));
-        assert!(editor.document.contains_node(&NodeId::from("b-copy")));
-        assert!(editor.document.contains_edge(&EdgeId::from("a-b-copy")));
-        assert!(editor.document.contains_shape(&ShapeId::from("frame-copy")));
+        assert!(editor.document().contains_node(&NodeId::from("a-copy")));
+        assert!(editor.document().contains_node(&NodeId::from("b-copy")));
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b-copy")));
+        assert!(
+            editor
+                .document()
+                .contains_shape(&ShapeId::from("frame-copy"))
+        );
         assert!(
             !editor
-                .document
+                .document()
                 .contains_edge(&EdgeId::from("a-outside-copy"))
         );
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("a-copy"))
                 .unwrap()
                 .position,
@@ -2463,30 +2315,34 @@ mod tests {
         let copied_node = CanvasRecordId::Node(NodeId::from("a-copy"));
         let copied_frame = CanvasRecordId::Shape(ShapeId::from("frame-copy"));
         assert_eq!(
-            editor.document.relations().parent_of(&copied_node),
+            editor.document().relations().parent_of(&copied_node),
             Some(&copied_frame)
         );
         assert_eq!(
             editor
-                .document
+                .document()
                 .relations()
                 .members_of(&copied_frame)
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![copied_node]
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
         assert!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(25.0), px(35.0)), HitOptions::default())
                 .any(|record| record.target == HitTarget::Node(NodeId::from("a-copy")))
         );
 
         assert!(editor.undo().unwrap());
-        assert!(!editor.document.contains_node(&NodeId::from("a-copy")));
-        assert!(!editor.document.contains_edge(&EdgeId::from("a-b-copy")));
-        assert!(!editor.document.contains_shape(&ShapeId::from("frame-copy")));
+        assert!(!editor.document().contains_node(&NodeId::from("a-copy")));
+        assert!(!editor.document().contains_edge(&EdgeId::from("a-b-copy")));
+        assert!(
+            !editor
+                .document()
+                .contains_shape(&ShapeId::from("frame-copy"))
+        );
     }
 
     #[test]
@@ -2510,18 +2366,22 @@ mod tests {
         editor.selection.shapes.insert(ShapeId::from("shape"));
 
         let payload = editor.cut_selection().unwrap().unwrap();
-        assert!(!editor.document.contains_node(&NodeId::from("a")));
-        assert!(!editor.document.contains_shape(&ShapeId::from("shape")));
+        assert!(!editor.document().contains_node(&NodeId::from("a")));
+        assert!(!editor.document().contains_shape(&ShapeId::from("shape")));
         assert!(editor.selection.is_empty());
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(
             editor
                 .paste_clipboard(&payload, point(px(10.0), px(20.0)))
                 .unwrap()
         );
-        assert!(editor.document.contains_node(&NodeId::from("a-copy")));
-        assert!(editor.document.contains_shape(&ShapeId::from("shape-copy")));
+        assert!(editor.document().contains_node(&NodeId::from("a-copy")));
+        assert!(
+            editor
+                .document()
+                .contains_shape(&ShapeId::from("shape-copy"))
+        );
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("a-copy")]
@@ -2530,7 +2390,7 @@ mod tests {
             editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
             vec![ShapeId::from("shape-copy")]
         );
-        assert_eq!(editor.history.undo_depth(), 2);
+        assert_eq!(editor.history().undo_depth(), 2);
     }
 
     #[test]
@@ -2555,13 +2415,17 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            editor.document.node(&NodeId::from("back")).unwrap().z_index,
+            editor
+                .document()
+                .node(&NodeId::from("back"))
+                .unwrap()
+                .z_index,
             2
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
         assert_eq!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(20.0), px(20.0)), HitOptions::default())
                 .next()
                 .map(|record| record.target.clone()),
@@ -2570,7 +2434,11 @@ mod tests {
 
         assert!(editor.undo().unwrap());
         assert_eq!(
-            editor.document.node(&NodeId::from("back")).unwrap().z_index,
+            editor
+                .document()
+                .node(&NodeId::from("back"))
+                .unwrap()
+                .z_index,
             1
         );
     }
@@ -2598,16 +2466,20 @@ mod tests {
 
         assert_eq!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .map(|record| record.target.clone()),
             Some(HitTarget::Node(NodeId::from("back")))
         );
         assert!(
-            editor.document.node(&NodeId::from("back")).unwrap().z_index
+            editor
+                .document()
+                .node(&NodeId::from("back"))
+                .unwrap()
+                .z_index
                 > editor
-                    .document
+                    .document()
                     .shape(&ShapeId::from("front"))
                     .unwrap()
                     .z_index
@@ -2637,7 +2509,7 @@ mod tests {
 
         assert_eq!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(10.0), px(10.0)), HitOptions::default())
                 .next()
                 .map(|record| record.target.clone()),
@@ -2645,11 +2517,15 @@ mod tests {
         );
         assert!(
             editor
-                .document
+                .document()
                 .shape(&ShapeId::from("front"))
                 .unwrap()
                 .z_index
-                < editor.document.node(&NodeId::from("back")).unwrap().z_index
+                < editor
+                    .document()
+                    .node(&NodeId::from("back"))
+                    .unwrap()
+                    .z_index
         );
     }
 
@@ -2689,7 +2565,7 @@ mod tests {
         );
 
         let hits = editor
-            .runtime
+            .runtime()
             .hit_test(
                 point(px(50.0), px(50.0)),
                 HitOptions {
@@ -2812,20 +2688,20 @@ mod tests {
             })
             .unwrap();
 
-        let node = &editor.document.node(&NodeId::from("node")).unwrap();
+        let node = &editor.document().node(&NodeId::from("node")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(20.0)));
         assert_eq!(node.size, size(px(120.0), px(105.0)));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
         assert!(matches!(editor.state, ToolState::Idle));
         assert!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(128.0), px(123.0)), HitOptions::default())
                 .any(|record| record.target == HitTarget::Node(NodeId::from("node")))
         );
 
         assert!(editor.undo().unwrap());
-        let node = &editor.document.node(&NodeId::from("node")).unwrap();
+        let node = &editor.document().node(&NodeId::from("node")).unwrap();
         assert_eq!(node.size, size(px(100.0), px(80.0)));
     }
 
@@ -2862,10 +2738,10 @@ mod tests {
             })
             .unwrap();
 
-        let node = &editor.document.node(&NodeId::from("node")).unwrap();
+        let node = &editor.document().node(&NodeId::from("node")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(20.0)));
         assert_eq!(node.size, size(px(64.0), px(48.0)));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -2907,13 +2783,13 @@ mod tests {
                 && message == "resize is disabled"
         ));
         assert_eq!(
-            editor.document.node(&NodeId::from("node")).unwrap(),
+            editor.document().node(&NodeId::from("node")).unwrap(),
             &original
         );
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
         assert!(
             editor
-                .runtime
+                .runtime()
                 .hit_test(point(px(108.0), px(98.0)), HitOptions::default())
                 .any(|record| record.target == HitTarget::Node(NodeId::from("node")))
         );
@@ -2946,7 +2822,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             editor
-                .document
+                .document()
                 .shape(&ShapeId::from("shape"))
                 .unwrap()
                 .bounds,
@@ -2957,13 +2833,13 @@ mod tests {
 
         assert_eq!(
             editor
-                .document
+                .document()
                 .shape(&ShapeId::from("shape"))
                 .unwrap()
                 .bounds,
             Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)))
         );
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
         assert!(matches!(editor.state, ToolState::Idle));
     }
 
@@ -3119,23 +2995,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.node(&NodeId::from("a")).unwrap().position,
+            editor.document().node(&NodeId::from("a")).unwrap().position,
             point(px(10.0), px(20.0))
         );
         assert_eq!(
-            editor.document.node(&NodeId::from("b")).unwrap().position,
+            editor.document().node(&NodeId::from("b")).unwrap().position,
             point(px(210.0), px(20.0))
         );
         assert_eq!(
             editor
-                .document
+                .document()
                 .shape(&ShapeId::from("shape"))
                 .unwrap()
                 .bounds
                 .origin,
             point(px(410.0), px(20.0))
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -3169,7 +3045,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.node(&NodeId::from("a")).unwrap().position,
+            editor.document().node(&NodeId::from("a")).unwrap().position,
             point(px(0.0), px(20.0))
         );
 
@@ -3194,10 +3070,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.document.node(&NodeId::from("a")).unwrap().position,
+            editor.document().node(&NodeId::from("a")).unwrap().position,
             point(px(0.0), px(25.0))
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -3236,7 +3112,7 @@ mod tests {
 
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("active"))
                 .unwrap()
                 .position,
@@ -3254,7 +3130,7 @@ mod tests {
                 modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -3363,7 +3239,7 @@ mod tests {
 
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("free"))
                 .unwrap()
                 .position,
@@ -3371,13 +3247,13 @@ mod tests {
         );
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("locked"))
                 .unwrap()
                 .position,
             point(px(200.0), px(0.0))
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -3437,14 +3313,14 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(editor.document.edge_count(), 1);
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.document().edge_count(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert!(editor.document.edge_count() == 0);
+        assert!(editor.document().edge_count() == 0);
 
         assert!(editor.redo().unwrap());
-        assert_eq!(editor.document.edge_count(), 1);
+        assert_eq!(editor.document().edge_count(), 1);
     }
 
     #[test]
@@ -3479,8 +3355,8 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.document.edge_count() == 0);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(editor.document().edge_count() == 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -3519,7 +3395,7 @@ mod tests {
             })
             .unwrap();
 
-        let edge = editor.document.edges().next().unwrap();
+        let edge = editor.document().edges().next().unwrap();
         assert_eq!(edge.source.handle_id, Some(HandleId::from("out")));
         assert_eq!(edge.target.handle_id, Some(HandleId::from("in")));
     }
@@ -3556,8 +3432,8 @@ mod tests {
             .unwrap();
 
         assert!(matches!(editor.state, ToolState::Idle));
-        assert!(editor.document.edge_count() == 0);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(editor.document().edge_count() == 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -3597,8 +3473,8 @@ mod tests {
             .unwrap();
 
         assert!(matches!(editor.state, ToolState::Idle));
-        assert!(editor.document.edge_count() == 0);
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(editor.document().edge_count() == 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -3631,9 +3507,9 @@ mod tests {
         assert_eq!(tool.last_tool_id, Some(CanvasToolId::from("stamp")));
         assert_eq!(tool.last_hit, Some(HitTarget::Node(NodeId::from("anchor"))));
 
-        let stamped = editor.document.node(&NodeId::from("stamp-1")).unwrap();
+        let stamped = editor.document().node(&NodeId::from("stamp-1")).unwrap();
         assert_eq!(stamped.position, point(px(110.0), px(55.0)));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
         assert_eq!(
             editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
             vec![NodeId::from("stamp-1")]
@@ -3641,7 +3517,7 @@ mod tests {
         assert_eq!(editor.state, ToolState::Idle);
 
         assert!(editor.undo().unwrap());
-        assert!(!editor.document.contains_node(&NodeId::from("stamp-1")));
+        assert!(!editor.document().contains_node(&NodeId::from("stamp-1")));
     }
 
     #[test]
@@ -3709,9 +3585,9 @@ mod tests {
             )
             .unwrap();
 
-        let stamped = editor.document.node(&NodeId::from("stamp-1")).unwrap();
+        let stamped = editor.document().node(&NodeId::from("stamp-1")).unwrap();
         assert_eq!(stamped.position, point(px(110.0), px(55.0)));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
         assert!(registry.remove(&CanvasToolId::from("stamp")).is_some());
         assert!(!registry.contains(&CanvasToolId::from("stamp")));
     }
@@ -3805,7 +3681,7 @@ mod tests {
             .unwrap();
 
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.history.redo_depth(), 1);
+        assert_eq!(editor.history().redo_depth(), 1);
 
         editor
             .apply(DocumentCommand::InsertNode(CanvasNode::new(
@@ -3815,10 +3691,10 @@ mod tests {
             )))
             .unwrap();
 
-        assert_eq!(editor.history.undo_depth(), 1);
-        assert_eq!(editor.history.redo_depth(), 0);
-        assert!(editor.document.contains_node(&NodeId::from("b")));
-        assert!(!editor.document.contains_node(&NodeId::from("a")));
+        assert_eq!(editor.history().undo_depth(), 1);
+        assert_eq!(editor.history().redo_depth(), 0);
+        assert!(editor.document().contains_node(&NodeId::from("b")));
+        assert!(!editor.document().contains_node(&NodeId::from("a")));
     }
 
     #[test]
@@ -3847,11 +3723,11 @@ mod tests {
             .apply_transaction_with_diff(relation_transaction.clone())
             .unwrap();
         assert!(!first_diff.is_empty());
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.history.undo_depth(), 0);
-        assert_eq!(editor.history.redo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(editor.history().redo_depth(), 1);
 
         let second_diff = editor
             .apply_transaction_with_diff(CanvasTransaction::single(
@@ -3862,8 +3738,8 @@ mod tests {
             .unwrap();
 
         assert!(second_diff.is_empty());
-        assert_eq!(editor.history.undo_depth(), 0);
-        assert_eq!(editor.history.redo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(editor.history().redo_depth(), 1);
     }
 
     #[test]
@@ -3915,7 +3791,7 @@ mod tests {
             .unwrap();
 
         assert!(diff.is_empty());
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
     }
 
     #[test]
@@ -3932,16 +3808,16 @@ mod tests {
         let noop = CanvasTransaction::single(DocumentCommand::ClearRecordParent {
             child: CanvasRecordId::Node(NodeId::from("child")),
         });
-        editor.history.push_undo(noop.clone());
-        editor.history.push_redo(noop);
+        editor.history_mut_for_test().push_undo(noop.clone());
+        editor.history_mut_for_test().push_redo(noop);
 
         assert!(!editor.undo().unwrap());
-        assert_eq!(editor.history.undo_depth(), 0);
-        assert_eq!(editor.history.redo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(editor.history().redo_depth(), 1);
 
         assert!(!editor.redo().unwrap());
-        assert_eq!(editor.history.undo_depth(), 0);
-        assert_eq!(editor.history.redo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
+        assert_eq!(editor.history().redo_depth(), 0);
     }
 
     #[test]
@@ -3958,7 +3834,7 @@ mod tests {
             diff.inserted.iter().cloned().collect::<Vec<_>>(),
             vec![crate::CanvasRecordId::Node(NodeId::from("a"))]
         );
-        assert!(editor.history.can_undo());
+        assert!(editor.history().can_undo());
     }
 
     #[test]
@@ -3976,14 +3852,14 @@ mod tests {
 
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("note"))
                 .unwrap()
                 .data
                 .get("title"),
             Some(&json!("Migrated"))
         );
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         let mut invalid = CanvasNode::new(
             "invalid",
@@ -4005,8 +3881,8 @@ mod tests {
                 ..
             }) if id == NodeId::from("invalid") && kind == "note"
         ));
-        assert!(!editor.document.contains_node(&NodeId::from("invalid")));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(!editor.document().contains_node(&NodeId::from("invalid")));
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -4016,7 +3892,7 @@ mod tests {
         note.data.insert("label".to_string(), json!("Migrated"));
         let mut editor = CanvasEditor::default();
         editor.apply(DocumentCommand::InsertNode(note)).unwrap();
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(editor.history().undo_depth(), 1);
 
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
@@ -4024,14 +3900,14 @@ mod tests {
 
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("note"))
                 .unwrap()
                 .data
                 .get("title"),
             Some(&json!("Migrated"))
         );
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
         assert!(
             editor
                 .runtime()
@@ -4063,7 +3939,7 @@ mod tests {
         ));
         assert_eq!(
             editor
-                .document
+                .document()
                 .node(&NodeId::from("note"))
                 .unwrap()
                 .data
@@ -4087,8 +3963,8 @@ mod tests {
             ))
             .unwrap();
 
-        assert!(editor.document.contains_node(&NodeId::from("a")));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert!(editor.document().contains_node(&NodeId::from("a")));
+        assert_eq!(editor.history().undo_depth(), 1);
         assert!(
             editor
                 .runtime()
@@ -4112,8 +3988,8 @@ mod tests {
             )))
             .unwrap();
 
-        assert!(editor.document.contains_node(&NodeId::from("a")));
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert!(editor.document().contains_node(&NodeId::from("a")));
+        assert_eq!(editor.history().undo_depth(), 0);
         assert!(
             editor
                 .runtime()
@@ -4154,8 +4030,11 @@ mod tests {
                 ..
             }) if id == NodeId::from("note")
         ));
-        assert_eq!(editor.document.node(&NodeId::from("note")).unwrap(), &note);
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor.document().node(&NodeId::from("note")).unwrap(),
+            &note
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -4181,10 +4060,54 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &second);
-        assert_eq!(editor.history.undo_depth(), 2);
+        assert_eq!(editor.document().node(&NodeId::from("a")).unwrap(), &second);
+        assert_eq!(editor.history().undo_depth(), 2);
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
+    }
+
+    #[test]
+    fn gesture_updates_notify_listeners_only_on_commit() {
+        let mut editor = CanvasEditor::default();
+        let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        let moved = CanvasNode::new("a", point(px(40.0), px(0.0)), size(px(100.0), px(100.0)));
+        editor
+            .apply(DocumentCommand::InsertNode(original.clone()))
+            .unwrap();
+        let baseline_depth = editor.history().undo_depth();
+        let changes = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&changes);
+        editor.listen(move |change| observed.lock().unwrap().push(change.clone()));
+
+        editor
+            .apply_tool_effects([
+                CanvasToolEffect::BeginGesture,
+                CanvasToolEffect::UpdateGesture(CanvasTransaction::single(
+                    DocumentCommand::UpdateNode(moved.clone()),
+                )),
+            ])
+            .unwrap();
+
+        assert!(changes.lock().unwrap().is_empty());
+        assert_eq!(editor.history().undo_depth(), baseline_depth);
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::CommitGesture)
+            .unwrap();
+
+        let changes = changes.lock().unwrap();
+        assert_eq!(changes.len(), 1);
+        let change = &changes[0];
+        assert_eq!(change.source(), crate::CanvasStoreMutationSource::Gesture);
+        assert_eq!(
+            change.history_effect(),
+            crate::CanvasStoreHistoryEffect::PushUndo
+        );
+        assert_eq!(change.document().node(&NodeId::from("a")).unwrap(), &moved);
+        assert_eq!(editor.history().undo_depth(), baseline_depth + 1);
     }
 
     #[test]
@@ -4220,11 +4143,14 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.relations().parent_of(&child), Some(&frame));
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor.document().relations().parent_of(&child),
+            Some(&frame)
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.document.relations().parent_of(&child), None);
+        assert_eq!(editor.document().relations().parent_of(&child), None);
     }
 
     #[test]
@@ -4254,7 +4180,7 @@ mod tests {
             .apply_tool_effect(CanvasToolEffect::CommitGesture)
             .unwrap();
 
-        assert_eq!(editor.history.undo_depth(), 0);
+        assert_eq!(editor.history().undo_depth(), 0);
         assert!(editor.is_tool_state_idle());
     }
 
@@ -4276,15 +4202,18 @@ mod tests {
             ])
             .unwrap();
         assert_eq!(
-            editor.document.node(&NodeId::from("a")).unwrap().position,
+            editor.document().node(&NodeId::from("a")).unwrap().position,
             point(px(400.0), px(0.0))
         );
 
         editor.set_tool(CanvasTool::Pan).unwrap();
 
         assert_eq!(editor.tool(), &CanvasTool::Pan);
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
         assert!(
             editor
                 .runtime()
@@ -4324,8 +4253,11 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
-        assert_eq!(editor.history.undo_depth(), 1);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
     }
 
     #[test]
@@ -4337,7 +4269,7 @@ mod tests {
         editor
             .apply(DocumentCommand::InsertNode(original.clone()))
             .unwrap();
-        let baseline_depth = editor.history.undo_depth();
+        let baseline_depth = editor.history().undo_depth();
 
         editor
             .apply_tool_intents([
@@ -4352,10 +4284,13 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &second);
-        assert_eq!(editor.history.undo_depth(), baseline_depth + 1);
+        assert_eq!(editor.document().node(&NodeId::from("a")).unwrap(), &second);
+        assert_eq!(editor.history().undo_depth(), baseline_depth + 1);
         assert!(editor.undo().unwrap());
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
     }
 
     #[test]
@@ -4366,7 +4301,7 @@ mod tests {
         editor
             .apply(DocumentCommand::InsertNode(original.clone()))
             .unwrap();
-        let baseline_depth = editor.history.undo_depth();
+        let baseline_depth = editor.history().undo_depth();
 
         editor
             .apply_tool_intents([
@@ -4378,8 +4313,11 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
-        assert_eq!(editor.history.undo_depth(), baseline_depth);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
+        assert_eq!(editor.history().undo_depth(), baseline_depth);
     }
 
     #[test]
@@ -4390,7 +4328,7 @@ mod tests {
         editor
             .apply(DocumentCommand::InsertNode(original.clone()))
             .unwrap();
-        let undo_depth = editor.history.undo_depth();
+        let undo_depth = editor.history().undo_depth();
 
         editor
             .apply_tool_effects([
@@ -4402,8 +4340,11 @@ mod tests {
             ])
             .unwrap();
 
-        assert_eq!(editor.document.node(&NodeId::from("a")).unwrap(), &original);
-        assert_eq!(editor.history.undo_depth(), undo_depth);
+        assert_eq!(
+            editor.document().node(&NodeId::from("a")).unwrap(),
+            &original
+        );
+        assert_eq!(editor.history().undo_depth(), undo_depth);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use crate::{
     CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentError,
     tool::CanvasToolEffect,
 };
+use crate::{CanvasStore, CanvasStoreChange};
 use std::{convert::Infallible, error::Error, fmt};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -264,19 +265,41 @@ pub fn apply_persistent_transaction<S>(
 where
     S: CanvasPersistenceStore,
 {
+    let change =
+        apply_persistent_store_transaction(editor.store_mut(), store, cursor, transaction)?;
+    let diff = change
+        .as_ref()
+        .map_or_else(CanvasDocumentDiff::default, |change| change.diff().clone());
+    if change.is_some() {
+        editor.retain_selection_for_current_document();
+    }
+    Ok(diff)
+}
+
+pub fn apply_persistent_store_transaction<S>(
+    canvas_store: &mut CanvasStore,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    transaction: CanvasTransaction,
+) -> Result<Option<CanvasStoreChange>, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
     if transaction.is_empty() {
-        return Ok(CanvasDocumentDiff::default());
+        return Ok(None);
     }
 
-    let prepared = editor.prepare_document_transaction(transaction)?;
-    if prepared.committed().diff().is_empty() {
-        let diff = editor.apply_prepared_document_mutation(prepared);
-        return Ok(diff);
+    let prepared = canvas_store.prepare_transaction(transaction)?;
+    let committed = prepared.committed().clone();
+    if committed.diff().is_empty() {
+        return Ok(canvas_store.apply_prepared_transaction(prepared));
     }
-    append_prepared_log_entry(store, cursor, prepared.committed())?;
-    let diff = editor.apply_prepared_document_mutation(prepared);
+
+    append_committed_log_entry(store, cursor, &committed)?;
+    let change = canvas_store.apply_prepared_transaction(prepared);
+    debug_assert!(change.is_some());
     cursor.advance();
-    Ok(diff)
+    Ok(change)
 }
 
 pub fn undo_persistent_transaction<S>(
@@ -287,19 +310,34 @@ pub fn undo_persistent_transaction<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let Some(transaction) = editor.next_undo_transaction() else {
-        return Ok(false);
-    };
-    let transaction = transaction.clone();
-    let prepared = editor.prepare_document_transaction(transaction)?;
-    if prepared.committed().diff().is_empty() {
-        editor.apply_prepared_undo_mutation(prepared);
-        return Ok(false);
+    let change = undo_persistent_store_transaction(editor.store_mut(), store, cursor)?;
+    if change.is_some() {
+        editor.retain_selection_for_current_document();
     }
-    append_prepared_log_entry(store, cursor, prepared.committed())?;
-    editor.apply_prepared_undo_mutation(prepared);
+    Ok(change.is_some())
+}
+
+pub fn undo_persistent_store_transaction<S>(
+    canvas_store: &mut CanvasStore,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+) -> Result<Option<CanvasStoreChange>, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let Some(prepared) = canvas_store.prepare_undo()? else {
+        return Ok(None);
+    };
+    let committed = prepared.committed().clone();
+    if committed.diff().is_empty() {
+        return Ok(canvas_store.apply_prepared_undo(prepared));
+    }
+
+    append_committed_log_entry(store, cursor, &committed)?;
+    let change = canvas_store.apply_prepared_undo(prepared);
+    debug_assert!(change.is_some());
     cursor.advance();
-    Ok(true)
+    Ok(change)
 }
 
 pub fn redo_persistent_transaction<S>(
@@ -310,19 +348,34 @@ pub fn redo_persistent_transaction<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let Some(transaction) = editor.next_redo_transaction() else {
-        return Ok(false);
-    };
-    let transaction = transaction.clone();
-    let prepared = editor.prepare_document_transaction(transaction)?;
-    if prepared.committed().diff().is_empty() {
-        editor.apply_prepared_redo_mutation(prepared);
-        return Ok(false);
+    let change = redo_persistent_store_transaction(editor.store_mut(), store, cursor)?;
+    if change.is_some() {
+        editor.retain_selection_for_current_document();
     }
-    append_prepared_log_entry(store, cursor, prepared.committed())?;
-    editor.apply_prepared_redo_mutation(prepared);
+    Ok(change.is_some())
+}
+
+pub fn redo_persistent_store_transaction<S>(
+    canvas_store: &mut CanvasStore,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+) -> Result<Option<CanvasStoreChange>, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let Some(prepared) = canvas_store.prepare_redo()? else {
+        return Ok(None);
+    };
+    let committed = prepared.committed().clone();
+    if committed.diff().is_empty() {
+        return Ok(canvas_store.apply_prepared_redo(prepared));
+    }
+
+    append_committed_log_entry(store, cursor, &committed)?;
+    let change = canvas_store.apply_prepared_redo(prepared);
+    debug_assert!(change.is_some());
     cursor.advance();
-    Ok(true)
+    Ok(change)
 }
 
 pub(crate) fn apply_persistent_tool_effect<S>(
@@ -479,7 +532,18 @@ pub fn save_canvas_checkpoint<S>(
 where
     S: CanvasPersistenceStore,
 {
-    let checkpoint = CanvasCheckpoint::new(cursor.sequence(), editor.document());
+    save_canvas_store_checkpoint(editor.store(), store, cursor)
+}
+
+pub fn save_canvas_store_checkpoint<S>(
+    canvas_store: &CanvasStore,
+    store: &mut S,
+    cursor: &CanvasPersistenceCursor,
+) -> Result<CanvasCheckpoint, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let checkpoint = CanvasCheckpoint::new(cursor.sequence(), canvas_store.document());
     store
         .save_checkpoint(checkpoint.clone())
         .map_err(CanvasPersistenceError::Store)?;
@@ -489,7 +553,7 @@ where
     Ok(checkpoint)
 }
 
-fn append_prepared_log_entry<S>(
+fn append_committed_log_entry<S>(
     store: &mut S,
     cursor: &CanvasPersistenceCursor,
     committed: &CanvasCommittedMutation,
@@ -515,12 +579,14 @@ where
 {
     match editor.prepare_gesture_commit()? {
         Some(prepared) => {
-            if prepared.committed().diff().is_empty() {
-                editor.apply_prepared_gesture_commit(prepared);
+            let committed = prepared.committed().clone();
+            if committed.diff().is_empty() {
+                editor.apply_prepared_gesture_store_change(prepared);
                 return Ok(());
             }
-            append_prepared_log_entry(store, cursor, prepared.committed())?;
-            editor.apply_prepared_gesture_commit(prepared);
+            append_committed_log_entry(store, cursor, &committed)?;
+            let change = editor.apply_prepared_gesture_store_change(prepared);
+            debug_assert!(change.is_some());
             cursor.advance();
         }
         None => {

@@ -63,7 +63,7 @@ impl CanvasCommittedMutation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CanvasPreparedMutation {
+pub struct CanvasPreparedMutation {
     document: CanvasDocument,
     committed: CanvasCommittedMutation,
 }
@@ -73,7 +73,7 @@ impl CanvasPreparedMutation {
         &self.committed
     }
 
-    pub fn apply_to(self, document: &mut CanvasDocument) -> CanvasCommittedMutation {
+    pub(crate) fn apply_to(self, document: &mut CanvasDocument) -> CanvasCommittedMutation {
         *document = self.document;
         self.committed
     }

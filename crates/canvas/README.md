@@ -26,6 +26,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   queries. Its runtime query module keeps final filtering, ordering, stale-record suppression, and
   precise hit testing inside canvas-owned code; future R-tree, tile, or GPU-assisted indexes should
   act as coarse candidate providers.
+- `CanvasStore` owns the canonical document, runtime cache, history, edge router, kind registry, and
+  committed change feed. No-op and failed mutations do not advance history or notify listeners.
 - `CanvasGeometryFacts` centralizes record bounds, handle positions, route paths, edge bounds,
   hit areas, endpoint picking, previews, and paint fallback geometry.
 - `CanvasKindRegistry` lets applications register node, edge, and shape kind policy bundles for
@@ -33,8 +35,8 @@ command, query, tool, and persistence boundaries over early feature breadth.
   records.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
-- `CanvasEditor` owns document mutation, undo/redo, selection, gestures, runtime cache sync, edge
-  router policy, and kind registry policy behind explicit methods.
+- `CanvasEditor` is the ergonomic editing facade over `CanvasStore` plus viewport, selection, and
+  tool-session state. Durable document changes still pass through the store mutation path.
 - `CanvasEditor` exposes command methods for delete, copy, cut, paste, duplicate, undo, redo, and
   z-order changes so applications do not need to mutate document collections directly.
 - `CanvasTransformHandle` and `CanvasResizeHandle` describe selected-record resize affordances in
@@ -206,9 +208,10 @@ parent-relative transforms yet.
 
 ## Edit Through Commands
 
-Applications should route product editing actions through `CanvasEditor` methods. The editor keeps
-selection pruning, undo/redo, runtime cache updates, kind validation, and future persistence hooks
-behind one mutation boundary.
+Applications should route product editing actions through `CanvasEditor` methods. The editor
+delegates durable document mutation, undo/redo, runtime cache updates, kind validation, and committed
+change notification to `CanvasStore`, while keeping viewport, selection, and active tool-session
+state editor-scoped for now.
 Copy, cut, paste, and duplicate preserve internal edges plus internal parent/group relations when
 both relationship endpoints are included in the clipboard payload; relationships to records outside
 the payload are intentionally omitted.
@@ -240,6 +243,11 @@ The mutation journal is the fact source for those committed mutations: it prepar
 transaction against a draft, validates the result, derives the inverse transaction, and records the
 actual semantic diff. It also reports committed relation changes, so parent/group updates and
 relations pruned by record deletion are observable without re-diffing full snapshots.
+`CanvasStore` wraps each non-empty committed mutation in a `CanvasStoreChange` with source metadata,
+history effect, and post-commit document/runtime snapshots. Store listeners are synchronous and only
+observe fully applied changes. Failed transactions, empty transactions, transient gesture updates,
+and relation-order-only no-ops do not notify listeners or push history. `CanvasEditor::listen`
+delegates to the same store feed for editor-backed applications.
 
 ```rust
 use open_gpui_canvas::{
@@ -638,11 +646,9 @@ The default crate ships only the persistence contract and an in-memory store.
 
 ```rust
 use open_gpui_canvas::{
-    CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor,
+    CanvasCheckpoint, CanvasDocument, CanvasNode, CanvasPersistenceCursor, CanvasStore,
     CanvasPersistenceStore, CanvasTransaction, DocumentCommand, MemoryCanvasPersistenceStore,
-    apply_persistent_tool_intents, apply_persistent_transaction, handle_persistent_event,
-    load_canvas_document, redo_persistent_transaction, save_canvas_checkpoint,
-    undo_persistent_transaction,
+    apply_persistent_store_transaction, load_canvas_document, save_canvas_store_checkpoint,
 };
 
 let document = CanvasDocument::default();
@@ -652,10 +658,10 @@ store.save_checkpoint(CanvasCheckpoint::new(1, &document)).unwrap();
 let restored = load_canvas_document(&store).unwrap();
 assert_eq!(restored.node_count(), 0);
 
-let mut editor = open_gpui_canvas::CanvasEditor::new(restored);
+let mut canvas_store = CanvasStore::new(restored);
 let mut cursor = CanvasPersistenceCursor::new(1);
-apply_persistent_transaction(
-    &mut editor,
+apply_persistent_store_transaction(
+    &mut canvas_store,
     &mut store,
     &mut cursor,
     CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
@@ -666,13 +672,17 @@ apply_persistent_transaction(
 )
 .unwrap();
 
-save_canvas_checkpoint(&editor, &mut store, &cursor).unwrap();
+save_canvas_store_checkpoint(&canvas_store, &mut store, &cursor).unwrap();
 ```
 
-When an editor is attached to a store, call `undo_persistent_transaction` and
+When an editor is attached to a persistence store, call `undo_persistent_transaction` and
 `redo_persistent_transaction` instead of `CanvasEditor::undo` / `CanvasEditor::redo`. Those helpers
 append the document-changing transaction before mutating the editor, so store failures do not leave
 the in-memory document ahead of the replay log.
+Non-editor adapters can call `apply_persistent_store_transaction`,
+`undo_persistent_store_transaction`, `redo_persistent_store_transaction`, and
+`save_canvas_store_checkpoint` directly on `CanvasStore`; the editor helpers are thin wrappers that
+also prune editor selection after a committed document change.
 
 For byte-oriented stores, wrap a `CanvasPersistenceByteStore` with
 `CanvasPersistenceByteStoreAdapter`. The default `CanvasJsonPersistenceCodec` writes an explicit
@@ -698,10 +708,12 @@ store
 For tool reducers, use `apply_persistent_tool_intents` so recorded transactions enter the log and
 custom tool output stays on the intent surface. The editor owns gesture lifecycle and turns
 selected built-in tool events into internal effects itself. New log entries written by the
-persistence helpers are created from committed mutations, so their record operation batches
-describe actual document effects and their relation operation batches describe actual parent/group
-structural changes. `CanvasLogEntry::from_replay_transaction` is reserved for replaying or testing
-older transaction-only logs where only command intent is available; those entries are marked
+persistence helpers are created from the same committed mutations that become `CanvasStoreChange`
+facts, so their record operation batches describe actual document effects and their relation
+operation batches describe actual parent/group structural changes.
+`CanvasLogEntry::from_committed_mutation` is the durable committed-fact constructor;
+`CanvasLogEntry::from_replay_transaction` is reserved for replaying or testing older
+transaction-only logs where only command intent is available. Those legacy entries are marked
 `LegacyReplayTransaction` and do not expose committed record or relation operations.
 Older committed logs that contain only some committed operation facts are marked
 `PartialCommittedMutation`; adapters should treat missing batches as unavailable facts, not as

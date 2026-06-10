@@ -3,9 +3,9 @@ use crate::{
     CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
     CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId,
     CanvasRecordKind, CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError,
-    CanvasSelection, CanvasShape, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent,
-    CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError,
-    EdgeId, NodeId, PointerButton, ShapeId,
+    CanvasSelection, CanvasShape, CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId,
+    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
+    DocumentError, EdgeId, NodeId, PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
     tool::CanvasToolEffect,
 };
@@ -716,6 +716,39 @@ fn persistent_transaction_appends_successful_editor_transaction() {
 }
 
 #[test]
+fn persistent_store_transaction_returns_store_change_and_logs_committed_fact() {
+    let mut canvas_store = CanvasStore::default();
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let transaction = CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+        "a",
+        point(px(0.0), px(0.0)),
+        size(px(10.0), px(10.0)),
+    )));
+
+    let change =
+        apply_persistent_store_transaction(&mut canvas_store, &mut store, &mut cursor, transaction)
+            .unwrap()
+            .unwrap();
+
+    assert!(change.document().contains_node(&NodeId::from("a")));
+    assert!(canvas_store.document().contains_node(&NodeId::from("a")));
+    assert_eq!(canvas_store.history().undo_depth(), 1);
+    assert_eq!(cursor.sequence(), 1);
+    assert_eq!(store.log_entries().len(), 1);
+    assert_eq!(
+        store.log_entries()[0]
+            .committed_record_operations()
+            .unwrap()
+            .operations
+            .iter()
+            .map(|operation| operation.id())
+            .collect::<Vec<_>>(),
+        vec![CanvasRecordId::Node(NodeId::from("a"))]
+    );
+}
+
+#[test]
 fn persistent_transaction_skips_empty_transactions() {
     let mut editor = CanvasEditor::default();
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -906,6 +939,62 @@ fn persistent_transaction_does_not_mutate_editor_when_store_fails() {
 }
 
 #[test]
+fn persistent_store_transaction_does_not_apply_when_log_append_fails() {
+    #[derive(Debug, Eq, PartialEq)]
+    struct StoreFailure;
+
+    impl fmt::Display for StoreFailure {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("store failure")
+        }
+    }
+
+    struct FailingAppendStore;
+
+    impl CanvasPersistenceStore for FailingAppendStore {
+        type Error = StoreFailure;
+
+        fn load_checkpoint(&self) -> Result<Option<CanvasCheckpoint>, Self::Error> {
+            Ok(None)
+        }
+
+        fn save_checkpoint(&mut self, _: CanvasCheckpoint) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn append_log_entry(&mut self, _: CanvasLogEntry) -> Result<(), Self::Error> {
+            Err(StoreFailure)
+        }
+
+        fn load_log_entries(&self, _: u64) -> Result<Vec<CanvasLogEntry>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        fn compact_log_entries(&mut self, _: u64) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    let mut canvas_store = CanvasStore::default();
+    let mut store = FailingAppendStore;
+    let mut cursor = CanvasPersistenceCursor::default();
+    let transaction = CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
+        "a",
+        point(px(0.0), px(0.0)),
+        size(px(10.0), px(10.0)),
+    )));
+
+    let err =
+        apply_persistent_store_transaction(&mut canvas_store, &mut store, &mut cursor, transaction)
+            .unwrap_err();
+
+    assert_eq!(err, CanvasPersistenceError::Store(StoreFailure));
+    assert_eq!(cursor.sequence(), 0);
+    assert_eq!(canvas_store.document().node_count(), 0);
+    assert_eq!(canvas_store.history().undo_depth(), 0);
+}
+
+#[test]
 fn persistent_undo_logs_inverse_transaction_before_mutation() {
     let mut editor = CanvasEditor::default();
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -969,6 +1058,57 @@ fn persistent_redo_logs_redo_transaction_before_mutation() {
 
     let restored = load_canvas_document(&store).unwrap();
     assert!(restored.contains_node(&NodeId::from("a")));
+}
+
+#[test]
+fn persistent_store_undo_and_redo_return_store_changes() {
+    let mut canvas_store = CanvasStore::default();
+    let mut store = MemoryCanvasPersistenceStore::default();
+    let mut cursor = CanvasPersistenceCursor::default();
+    let node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
+
+    apply_persistent_store_transaction(
+        &mut canvas_store,
+        &mut store,
+        &mut cursor,
+        CanvasTransaction::single(DocumentCommand::InsertNode(node.clone())),
+    )
+    .unwrap()
+    .unwrap();
+
+    let undo_change = undo_persistent_store_transaction(&mut canvas_store, &mut store, &mut cursor)
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        undo_change
+            .diff()
+            .removed
+            .contains(&CanvasRecordId::Node(NodeId::from("a")))
+    );
+    assert!(!canvas_store.document().contains_node(&NodeId::from("a")));
+    assert_eq!(canvas_store.history().undo_depth(), 0);
+    assert_eq!(canvas_store.history().redo_depth(), 1);
+    assert_eq!(cursor.sequence(), 2);
+
+    let redo_change = redo_persistent_store_transaction(&mut canvas_store, &mut store, &mut cursor)
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        redo_change
+            .diff()
+            .inserted
+            .contains(&CanvasRecordId::Node(NodeId::from("a")))
+    );
+    assert_eq!(
+        canvas_store.document().node(&NodeId::from("a")),
+        Some(&node)
+    );
+    assert_eq!(canvas_store.history().undo_depth(), 1);
+    assert_eq!(canvas_store.history().redo_depth(), 0);
+    assert_eq!(cursor.sequence(), 3);
+    assert_eq!(store.log_entries().len(), 3);
 }
 
 #[test]

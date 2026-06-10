@@ -167,10 +167,10 @@ impl SelectToolStateMachine {
         }
 
         let hit = editor
-            .runtime
+            .runtime()
             .precise_hit_test_with_kind_registry(
-                editor.document.as_ref(),
-                editor.kind_registry.as_ref(),
+                editor.document(),
+                editor.kind_registry(),
                 document_position,
                 HitOptions::default(),
             )
@@ -278,7 +278,7 @@ impl SelectToolStateMachine {
         let mut commands = Vec::new();
         for id in node_ids {
             let mut node = editor
-                .document
+                .document()
                 .node(id)
                 .ok_or_else(|| DocumentError::MissingNode(id.clone()))?
                 .clone();
@@ -287,7 +287,7 @@ impl SelectToolStateMachine {
         }
         for id in shape_ids {
             let mut shape = editor
-                .document
+                .document()
                 .shape(id)
                 .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
                 .clone();

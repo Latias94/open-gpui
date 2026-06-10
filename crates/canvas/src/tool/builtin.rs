@@ -132,7 +132,7 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                         "{}->{}:{}",
                         source.node_id,
                         target.node_id,
-                        editor.document.edge_count()
+                        editor.document().edge_count()
                     ));
                     effects.push(CanvasToolEffect::ApplyTransaction(
                         CanvasTransaction::single(DocumentCommand::InsertEdge(CanvasEdge::new(
