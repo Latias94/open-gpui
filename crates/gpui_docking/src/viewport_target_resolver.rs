@@ -72,25 +72,7 @@ pub(crate) fn choose_viewport_target(
 ) -> Option<DockViewportTargetHit> {
     hits.into_iter()
         .enumerate()
-        .min_by_key(|(index, hit)| {
-            let window_id = hit.window_id();
-            (
-                context
-                    .hovered_window()
-                    .map(|hovered| usize::from(hovered != window_id))
-                    .unwrap_or(1),
-                context
-                    .active_window()
-                    .map(|active| usize::from(active != window_id))
-                    .unwrap_or(1),
-                context
-                    .window_stack()
-                    .iter()
-                    .position(|stacked| *stacked == window_id)
-                    .unwrap_or(usize::MAX),
-                *index,
-            )
-        })
+        .min_by_key(|(index, hit)| context.priority_for_window(hit.window_id(), *index))
         .map(|(_, hit)| hit)
 }
 
