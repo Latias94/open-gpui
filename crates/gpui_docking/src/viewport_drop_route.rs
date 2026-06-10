@@ -1,7 +1,9 @@
+#[cfg(test)]
+use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportHit, DockViewportPlatformSignals,
-    DockViewportTargetContext, DockViewportTearOffRequest,
+    DockViewportTearOffRequest,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 
@@ -36,28 +38,10 @@ pub(crate) struct DockViewportDropRouteRequest {
     pub(crate) payload: DockViewportDropPayload,
     pub(crate) release_position: Point<Pixels>,
     pub(crate) suggested_window_bounds: Option<WindowBounds>,
-    pub(crate) target_context: DockViewportTargetContext,
+    pub(crate) platform_signals: DockViewportPlatformSignals,
 }
 
 impl DockViewportDropRouteRequest {
-    pub(crate) fn new(
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        target_context: DockViewportTargetContext,
-    ) -> Self {
-        Self {
-            source_space: source_space.into(),
-            source_tabs,
-            payload,
-            release_position,
-            suggested_window_bounds,
-            target_context,
-        }
-    }
-
     pub(crate) fn from_platform_signals(
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,
@@ -66,13 +50,32 @@ impl DockViewportDropRouteRequest {
         suggested_window_bounds: Option<WindowBounds>,
         platform_signals: DockViewportPlatformSignals,
     ) -> Self {
-        Self::new(
+        Self {
+            source_space: source_space.into(),
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            platform_signals,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_target_context(
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: DockViewportTargetContext,
+    ) -> Self {
+        Self::from_platform_signals(
             source_space,
             source_tabs,
             payload,
             release_position,
             suggested_window_bounds,
-            platform_signals.target_context(),
+            DockViewportPlatformSignals::from_target_context(target_context),
         )
     }
 }
@@ -83,8 +86,9 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         policy: &DockPolicy,
     ) -> DockViewportDropRoute {
+        let target_context = request.platform_signals.target_context();
         if let Some(candidate) =
-            self.resolve_viewport_target(request.release_position, &request.target_context)
+            self.resolve_viewport_target(request.release_position, &target_context)
         {
             if candidate.space == request.source_space {
                 return DockViewportDropRoute::Local {
@@ -130,7 +134,7 @@ impl DockViewportAdapter {
         policy: &DockPolicy,
         target_context: DockViewportTargetContext,
     ) -> DockViewportDropRoute {
-        let request = DockViewportDropRouteRequest::new(
+        let request = DockViewportDropRouteRequest::from_target_context(
             source_space,
             source_tabs,
             payload,

@@ -360,7 +360,7 @@ impl DockViewportRuntimeHandle {
         target_context: DockViewportTargetContext,
         cx: &App,
     ) -> DockViewportDropRoute {
-        let request = DockViewportDropRouteRequest::new(
+        let request = DockViewportDropRouteRequest::from_target_context(
             source_space,
             source_tabs,
             payload,

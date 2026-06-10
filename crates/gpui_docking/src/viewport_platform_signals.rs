@@ -39,8 +39,21 @@ impl DockViewportPlatformSignals {
     }
 
     /// Converts the platform snapshot into the pure resolver context.
-    pub(crate) fn target_context(self) -> DockViewportTargetContext {
-        self.into()
+    pub(crate) fn target_context(&self) -> DockViewportTargetContext {
+        DockViewportTargetContext {
+            hovered_window: self.hovered_window,
+            active_window: self.active_window,
+            window_stack: self.window_stack.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
+        Self {
+            hovered_window: target_context.hovered_window,
+            active_window: target_context.active_window,
+            window_stack: target_context.window_stack,
+        }
     }
 }
 
