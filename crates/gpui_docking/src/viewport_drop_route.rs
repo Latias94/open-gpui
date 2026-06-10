@@ -65,34 +65,22 @@ impl DockViewportDropRouteCommit {
         request: &DockViewportDropRouteRequest,
         route: DockViewportDropRoute,
     ) -> Self {
-        Self::from_source_facts(
-            request.source_space.clone(),
-            request.source_tabs,
-            request.payload.clone(),
-            route,
-        )
-    }
-
-    fn from_source_facts(
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
-    ) -> Self {
         match route {
             DockViewportDropRoute::Local { host_position } => Self::Local {
-                source_space,
-                source_tabs,
-                payload,
+                source_space: request.source_space.clone(),
+                source_tabs: request.source_tabs,
+                payload: request.payload.clone(),
                 host_position,
             },
             DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
-                source_space,
-                source_tabs,
-                payload,
+                source_space: request.source_space.clone(),
+                source_tabs: request.source_tabs,
+                payload: request.payload.clone(),
                 target,
             },
-            DockViewportDropRoute::TearOff(request) => Self::TearOff(request),
+            DockViewportDropRoute::TearOff(_) => {
+                Self::TearOff(tear_off_request_from_route_request(request))
+            }
             DockViewportDropRoute::Rejected(error) => Self::Rejected(error),
         }
     }
@@ -160,13 +148,7 @@ impl DockViewportAdapter {
             return DockViewportDropRoute::Rejected(reason);
         }
 
-        DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
-            source_space: request.source_space.clone(),
-            source_tabs: request.source_tabs,
-            payload: request.payload.clone(),
-            release_position: request.release_position,
-            suggested_window_bounds: request.suggested_window_bounds,
-        })
+        DockViewportDropRoute::TearOff(tear_off_request_from_route_request(request))
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
@@ -195,6 +177,18 @@ impl DockViewportAdapter {
             target_context,
         );
         self.resolve_payload_drop_route(&request, policy)
+    }
+}
+
+fn tear_off_request_from_route_request(
+    request: &DockViewportDropRouteRequest,
+) -> DockViewportTearOffRequest {
+    DockViewportTearOffRequest {
+        source_space: request.source_space.clone(),
+        source_tabs: request.source_tabs,
+        payload: request.payload.clone(),
+        release_position: request.release_position,
+        suggested_window_bounds: request.suggested_window_bounds,
     }
 }
 
@@ -314,6 +308,41 @@ mod tests {
                 DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+                source_space: source,
+                source_tabs,
+                payload: DockViewportDropPayload::Item(item),
+                release_position,
+                suggested_window_bounds: Some(suggested_window_bounds),
+            })
+        );
+    }
+
+    #[test]
+    fn drop_route_commit_derives_tear_off_request_from_route_request() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let release_position = point(px(900.0), px(900.0));
+        let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            release_position,
+            Some(suggested_window_bounds),
+            DockViewportTargetContext::new(),
+        );
+        let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+            source_space: space("other"),
+            source_tabs,
+            payload: DockViewportDropPayload::Tabs,
+            release_position: point(px(1.0), px(2.0)),
+            suggested_window_bounds: None,
+        });
+
+        assert_eq!(
+            DockViewportDropRouteCommit::from_route_request(&request, mismatched_route),
+            DockViewportDropRouteCommit::TearOff(DockViewportTearOffRequest {
                 source_space: source,
                 source_tabs,
                 payload: DockViewportDropPayload::Item(item),
