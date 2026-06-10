@@ -255,9 +255,7 @@ impl DockViewportRuntime {
         host_position: Point<Pixels>,
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
-        let Some(window) = self.adapter.window_for_space(&space) else {
-            return None;
-        };
+        let window = self.adapter.window_for_space(&space)?;
         let current_identity = DockViewportIdentity::new(space.clone(), window.window_id());
         if !current_identity.matches(&space, window_id) {
             return None;

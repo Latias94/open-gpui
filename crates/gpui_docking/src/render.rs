@@ -107,10 +107,10 @@ impl Render for DockHost {
             host = host.bg(rgb(0xf7f8fa));
         }
 
-        if let Some(frame_slot) = viewport_host_scene_frame.as_ref() {
-            if let Some(probe) = self.render_viewport_host_scene_probe(frame_slot) {
-                host = host.child(probe);
-            }
+        if let Some(frame_slot) = viewport_host_scene_frame.as_ref()
+            && let Some(probe) = self.render_viewport_host_scene_probe(frame_slot)
+        {
+            host = host.child(probe);
         }
 
         if let Some(root) = session.root() {
