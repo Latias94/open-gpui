@@ -1,7 +1,7 @@
 use crate::mutation::CanvasMutationJournal;
 use crate::{
-    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasRecordId, CanvasTransaction,
-    DocumentCommand, DocumentError,
+    CanvasCommittedMutation, CanvasDocument, CanvasKindRegistry, CanvasRecordId,
+    CanvasRecordRelation, CanvasTransaction, DocumentCommand, DocumentError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -137,7 +137,9 @@ fn append_relation_commands(
     }
 
     for relation in previous.relations().groups() {
-        if !target.relations().contains_group_relation(relation)
+        if !target
+            .relations()
+            .contains_relation(&CanvasRecordRelation::Group(relation.clone()))
             && document_contains_record(target, &relation.group)
             && document_contains_record(target, &relation.member)
         {
@@ -149,7 +151,10 @@ fn append_relation_commands(
     }
 
     for relation in target.relations().groups() {
-        if !previous.relations().contains_group_relation(relation) {
+        if !previous
+            .relations()
+            .contains_relation(&CanvasRecordRelation::Group(relation.clone()))
+        {
             commands.push(DocumentCommand::AddRecordToGroup {
                 group: relation.group.clone(),
                 member: relation.member.clone(),

@@ -182,7 +182,7 @@ fn relation_changes_from_diff(
     }
 
     for relation in previous.groups() {
-        if !current.contains_group_relation(relation) {
+        if !current.contains_relation(&CanvasRecordRelation::Group(relation.clone())) {
             changes.push(CanvasRelationChange::Delete(CanvasRecordRelation::Group(
                 relation.clone(),
             )));
@@ -190,7 +190,7 @@ fn relation_changes_from_diff(
     }
 
     for relation in current.groups() {
-        if !previous.contains_group_relation(relation) {
+        if !previous.contains_relation(&CanvasRecordRelation::Group(relation.clone())) {
             changes.push(CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
                 relation.clone(),
             )));

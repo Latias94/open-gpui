@@ -73,19 +73,19 @@ impl CanvasClipboardPayload {
         }
 
         let copied_record_ids = copied_record_ids(&nodes, &edges, &shapes);
-        let mut relations = CanvasRecordRelations::default();
+        let mut relations = CanvasRecordRelations::builder();
         for relation in document.relations().parents() {
             if copied_record_ids.contains(&relation.child)
                 && copied_record_ids.contains(&relation.parent)
             {
-                relations.set_parent(relation.child.clone(), relation.parent.clone());
+                relations.add_parent(relation.child.clone(), relation.parent.clone());
             }
         }
         for relation in document.relations().groups() {
             if copied_record_ids.contains(&relation.group)
                 && copied_record_ids.contains(&relation.member)
             {
-                relations.add_to_group(relation.group.clone(), relation.member.clone());
+                relations.add_group_member(relation.group.clone(), relation.member.clone());
             }
         }
 
@@ -94,7 +94,7 @@ impl CanvasClipboardPayload {
             edges,
             shapes,
             selection: payload_selection,
-            relations,
+            relations: relations.build(),
         }
     }
 

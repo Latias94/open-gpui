@@ -213,6 +213,12 @@ deletion, so persistence, undo/redo, runtime sync, and future CRDT adapters see 
 structural facts. This slice does not implement group editing tools, frame layout, clipping, or
 parent-relative transforms yet.
 
+`CanvasRecordRelation` is the unified relation record vocabulary for parent and group membership
+facts. `CanvasRecordRelationsBuilder` is the construction path for clipboard payloads, imports, and
+fixtures that need to assemble a relation set without treating each relation as an editor mutation.
+Future edge bindings, frame containment, or layout ownership should extend this relationship layer
+as first-class records rather than hiding cross-record structure in `CanvasValue`.
+
 ## Edit Through Commands
 
 Applications should route product editing actions through `CanvasEditor` methods. The editor

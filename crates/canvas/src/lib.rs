@@ -35,8 +35,8 @@ mod transform;
 
 pub use changes::{
     CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
-    CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
-    CanvasRelationOperation, CanvasRelationOperationBatch,
+    CanvasRecordOperationBatch, CanvasRelationChange, CanvasRelationOperation,
+    CanvasRelationOperationBatch,
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
@@ -93,7 +93,10 @@ pub use persistence::{
     redo_persistent_transaction, replay_canvas_log, save_canvas_checkpoint,
     save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
-pub use relations::{CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelations};
+pub use relations::{
+    CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelation,
+    CanvasRecordRelationKind, CanvasRecordRelations, CanvasRecordRelationsBuilder,
+};
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,

@@ -245,6 +245,12 @@ frame, group, mind-map hierarchy, parent extent, layout ownership, export, and C
 shared relationship fact source without committing the first release to group editing tools,
 clipping, parent-relative transforms, or z-order semantics for nested records.
 
+`CanvasRecordRelation` and `CanvasRecordRelationKind` live with the relation model rather than the
+change-feed module. Change logs, clipboard construction, gesture diffs, and mutation journals all
+consume the same relation record vocabulary. Future binding records should extend this relationship
+family as first-class structural facts only when a concrete edge-binding, frame-containment, or
+layout-ownership feature defines their mutation and inverse semantics.
+
 Kind-specific behavior is registry-driven rather than stored as hidden document state.
 `CanvasKindRegistry::open` leaves unknown kinds untouched, preserving imported and
 application-defined records. Applications that need stronger contracts can register node, edge, or
