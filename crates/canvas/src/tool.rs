@@ -2681,20 +2681,17 @@ mod tests {
 
     #[test]
     fn canvas_transform_handles_follow_selected_record_bounds() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "node",
                 point(px(10.0), px(20.0)),
                 size(px(100.0), px(80.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(200.0), px(40.0)), size(px(50.0), px(30.0))),
             ))
-            .unwrap();
+            .build();
         let mut selection = CanvasSelection::default();
         selection.nodes.insert(NodeId::from("node"));
         selection.shapes.insert(ShapeId::from("shape"));
@@ -2722,8 +2719,7 @@ mod tests {
         let mut node =
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
         node.kind = "wide".to_string();
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut selection = CanvasSelection::default();
         selection.nodes.insert(NodeId::from("node"));
         let mut registry = CanvasKindRegistry::open();
@@ -2748,14 +2744,13 @@ mod tests {
 
     #[test]
     fn select_tool_resizes_selected_node_with_one_undo_entry() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "node",
                 point(px(10.0), px(20.0)),
                 size(px(100.0), px(80.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("node"));
 
@@ -2802,8 +2797,7 @@ mod tests {
         let mut node =
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
         node.kind = "min-resize".to_string();
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("min-resize", minimum_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
@@ -2842,8 +2836,7 @@ mod tests {
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
         node.kind = "reject-resize".to_string();
         let original = node.clone();
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("reject-resize", reject_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
@@ -2889,13 +2882,12 @@ mod tests {
 
     #[test]
     fn select_tool_cancel_restores_resize_baseline() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_shape(CanvasShape::new(
+        let document = document_fixture()
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .session
@@ -2941,28 +2933,25 @@ mod tests {
 
     #[test]
     fn select_tool_box_selects_intersecting_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "inside",
-                point(px(10.0), px(10.0)),
-                size(px(20.0), px(20.0)),
-            ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "outside",
-                point(px(200.0), px(200.0)),
-                size(px(20.0), px(20.0)),
-            ))
-            .unwrap();
         let mut locked = CanvasNode::new(
             "locked",
             point(px(15.0), px(15.0)),
             size(px(20.0), px(20.0)),
         );
         locked.locked = true;
-        document.insert_node(locked).unwrap();
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "inside",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(200.0), px(200.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(locked)
+            .build();
         let mut editor = CanvasEditor::new(document);
 
         editor
@@ -3001,21 +2990,18 @@ mod tests {
 
     #[test]
     fn select_tool_cancel_restores_selection_after_box_select() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "base",
                 point(px(200.0), px(200.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "inside",
                 point(px(10.0), px(10.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("base"));
 
@@ -3061,27 +3047,22 @@ mod tests {
 
     #[test]
     fn translating_selected_record_moves_node_and_shape_selection() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(200.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(400.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("a"));
         editor.session.selection.nodes.insert(NodeId::from("b"));
@@ -3134,14 +3115,13 @@ mod tests {
 
     #[test]
     fn translating_selected_node_with_shift_locks_to_dominant_axis() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("a"));
 
@@ -3196,21 +3176,18 @@ mod tests {
 
     #[test]
     fn translating_selected_node_snaps_to_nearby_alignment() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "active",
                 point(px(0.0), px(0.0)),
                 size(px(40.0), px(40.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "target",
                 point(px(100.0), px(0.0)),
                 size(px(40.0), px(40.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .session
@@ -3257,28 +3234,23 @@ mod tests {
 
     #[test]
     fn select_tool_shift_box_adds_to_base_selection_without_accumulating() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "base",
                 point(px(200.0), px(200.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "inside",
                 point(px(10.0), px(10.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "outside",
                 point(px(100.0), px(100.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("base"));
 
@@ -3331,21 +3303,20 @@ mod tests {
 
     #[test]
     fn translating_selected_nodes_skips_locked_nodes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "free",
-                point(px(0.0), px(0.0)),
-                size(px(100.0), px(100.0)),
-            ))
-            .unwrap();
         let mut locked = CanvasNode::new(
             "locked",
             point(px(200.0), px(0.0)),
             size(px(100.0), px(100.0)),
         );
         locked.locked = true;
-        document.insert_node(locked).unwrap();
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "free",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(locked)
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("free"));
         editor
