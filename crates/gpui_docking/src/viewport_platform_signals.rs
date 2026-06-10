@@ -5,11 +5,11 @@ use open_gpui::{AnyWindowHandle, App, Window, WindowId};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportPlatformSignals {
     /// Window that produced the route event, when known.
-    pub(crate) event_window: Option<WindowId>,
+    event_window: Option<WindowId>,
     /// Platform-active window, when known.
-    pub(crate) active_window: Option<WindowId>,
+    active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
-    pub(crate) window_stack: Vec<WindowId>,
+    window_stack: Vec<WindowId>,
 }
 
 impl DockViewportPlatformSignals {

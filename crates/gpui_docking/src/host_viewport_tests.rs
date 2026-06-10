@@ -112,14 +112,24 @@ fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppCont
     zeta_window
         .update(cx, |_, window, _| window.activate_window())
         .expect("zeta window should be live");
-    let context = alpha_window
+    let (context, expected_window_stack) = alpha_window
         .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+            let expected_window_stack = app
+                .window_stack()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|window| window.window_id())
+                .collect::<Vec<_>>();
+            (
+                DockViewportPlatformSignals::from_window(window, app).target_context(),
+                expected_window_stack,
+            )
         })
         .expect("alpha window should be live");
 
     assert_eq!(context.event_window(), Some(alpha_handle.window_id()));
     assert_eq!(context.active_window(), Some(zeta_handle.window_id()));
+    assert_eq!(context.window_stack(), expected_window_stack.as_slice());
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
