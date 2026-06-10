@@ -57,6 +57,48 @@ impl<'a> DockViewportDropRouteRequest<'a> {
     }
 }
 
+/// All facts needed to resolve and commit one rendered drop release.
+#[derive(Debug, Clone)]
+pub(crate) struct DockViewportDropCommitRequest<'a> {
+    pub(crate) source_space: DockSpaceId,
+    pub(crate) source_tabs: DockNodeId,
+    pub(crate) payload: DockViewportDropPayload,
+    pub(crate) release_position: Point<Pixels>,
+    pub(crate) suggested_window_bounds: Option<WindowBounds>,
+    pub(crate) target_context: &'a DockViewportTargetContext,
+}
+
+impl<'a> DockViewportDropCommitRequest<'a> {
+    pub(crate) fn new(
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        target_context: &'a DockViewportTargetContext,
+    ) -> Self {
+        Self {
+            source_space: source_space.into(),
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            target_context,
+        }
+    }
+
+    pub(crate) fn route_request(&self) -> DockViewportDropRouteRequest<'a> {
+        DockViewportDropRouteRequest::new(
+            self.source_space.clone(),
+            self.source_tabs,
+            self.payload.clone(),
+            self.release_position,
+            self.suggested_window_bounds,
+            self.target_context,
+        )
+    }
+}
+
 impl DockViewportAdapter {
     pub(crate) fn resolve_payload_drop_route(
         &self,

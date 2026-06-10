@@ -1,5 +1,6 @@
 use crate::{
-    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportTargetContext,
+    DockHost, DockViewportDropCommitRequest, DockViewportDropPayload, DockViewportDropRouteRequest,
+    DockViewportTargetContext,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
 };
@@ -68,15 +69,16 @@ impl DockHost {
         let runtime = self.viewport_runtime()?.clone();
         let release_position = window_screen_position(window, release_position);
         let viewport_payload = viewport_payload(payload);
-        let result = runtime.commit_payload_drop_from_screen_with_context(
+        let target_context = DockViewportTargetContext::from_window(window, cx);
+        let request = DockViewportDropCommitRequest::new(
             payload.source_space.clone(),
             payload.source_tabs,
             viewport_payload,
             release_position,
             None,
-            &DockViewportTargetContext::from_window(window, cx),
-            cx,
+            &target_context,
         );
+        let result = runtime.commit_payload_drop_from_screen(request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 }

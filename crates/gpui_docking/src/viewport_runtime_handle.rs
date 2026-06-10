@@ -1,10 +1,12 @@
+#[cfg(test)]
+use crate::DockViewportTargetContext;
 use crate::{
     DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTargetContext,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropCommitRequest,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
+    DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact, viewport_runtime::DockViewportReusableWindow,
@@ -342,6 +344,20 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Resolves and commits a rendered payload release from a screen-space point.
+    pub(crate) fn commit_payload_drop_from_screen(
+        &self,
+        request: DockViewportDropCommitRequest<'_>,
+        cx: &mut App,
+    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        let source_space = request.source_space.clone();
+        let source_tabs = request.source_tabs;
+        let payload = request.payload.clone();
+        let route = self.resolve_payload_drop_route(request.route_request(), cx);
+        self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
+    }
+
+    /// Resolves and commits a rendered payload release from a screen-space point.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_payload_drop_from_screen_with_context(
         &self,
@@ -353,17 +369,15 @@ impl DockViewportRuntimeHandle {
         target_context: &DockViewportTargetContext,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let source_space = source_space.into();
-        let request = DockViewportDropRouteRequest::new(
-            source_space.clone(),
+        let request = DockViewportDropCommitRequest::new(
+            source_space,
             source_tabs,
-            payload.clone(),
+            payload,
             release_position,
             suggested_window_bounds,
             target_context,
         );
-        let route = self.resolve_payload_drop_route(request, cx);
-        self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
+        self.commit_payload_drop_from_screen(request, cx)
     }
 
     /// Handles a GPUI window-closed notification and applies close policies that mutate graph.
