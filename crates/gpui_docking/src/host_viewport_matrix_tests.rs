@@ -2,11 +2,15 @@ use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportDropPayload, DockViewportDropRouteOutcome, DockViewportRouteTarget,
     DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, SplitAxis,
+    debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockRootDropTarget},
     host_test_support::*,
 };
-use open_gpui::{AppContext as _, TestAppContext, WindowBounds, point, px};
+use open_gpui::{
+    AppContext as _, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext,
+    WindowBounds, point, px,
+};
 
 #[derive(Clone, Copy)]
 enum MatrixPayload {
@@ -58,7 +62,22 @@ impl MatrixPayload {
 fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_targets(
     cx: &mut TestAppContext,
 ) {
-    let cases = [
+    for case in matrix_cases() {
+        run_source_only_release_case(cx, case);
+    }
+}
+
+#[open_gpui::test]
+fn target_hover_known_viewport_release_matrix_commits_payloads_to_rendered_targets(
+    cx: &mut TestAppContext,
+) {
+    for case in matrix_cases() {
+        run_target_hover_release_case(cx, case);
+    }
+}
+
+fn matrix_cases() -> [MatrixCase; 6] {
+    [
         MatrixCase {
             name: "item to leaf center",
             payload: MatrixPayload::Item,
@@ -89,11 +108,7 @@ fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_target
             payload: MatrixPayload::Tabs,
             target: MatrixTarget::EmptySpace,
         },
-    ];
-
-    for case in cases {
-        run_source_only_release_case(cx, case);
-    }
+    ]
 }
 
 fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
@@ -207,6 +222,82 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         case.name,
         runtime.runtime_status().last_route
     );
+
+    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+}
+
+fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
+    let source_space = DockSpaceId::from(format!("hover source:{}", case.name));
+    let target_space = DockSpaceId::from(format!("hover target:{}", case.name));
+    let (graph, nodes) = matrix_graph(&source_space, &target_space, case);
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace.register_panel_view(item("d"), "Panel D", test_view(cx, "D"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
+
+    let source_window = source_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut source_visual = VisualTestContext::from_window(source_opened.window, cx);
+    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let start = source_drag_start(&mut source_visual, &source_host, case, &nodes);
+    let threshold = point(start.x + px(24.0), start.y);
+    let target_position = target_hover_position(&mut target_visual, &target_host, case, &nodes);
+
+    source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    target_visual.simulate_mouse_move(target_position, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+
+    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let preview = selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview)
+        .unwrap_or_else(|| panic!("{}: target hover should render drop preview", case.name));
+    let preview_bounds = debug_bounds(&mut target_visual, &preview);
+    assert!(
+        preview_bounds.size.width > px(0.0) && preview_bounds.size.height > px(0.0),
+        "{}: target hover preview should have visible bounds",
+        case.name
+    );
+    assert_known_viewport_route(&runtime, &target_space, target_position, case.name);
+
+    target_visual.simulate_mouse_up(target_position, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
@@ -339,6 +430,102 @@ fn push_target_scene_facts(
             point(px(210.0), px(120.0))
         }
     }
+}
+
+fn source_drag_start(
+    visual: &mut VisualTestContext,
+    host: &open_gpui::Entity<crate::DockHost>,
+    case: MatrixCase,
+    nodes: &MatrixNodes,
+) -> Point<Pixels> {
+    match case.payload {
+        MatrixPayload::Item => {
+            let source_tab = selector_for(
+                visual,
+                host,
+                DockDebugRegion::Tab {
+                    tabs: nodes.source_tabs,
+                    item: item("a"),
+                },
+            )
+            .unwrap_or_else(|| panic!("{}: source tab selector should be emitted", case.name));
+            debug_bounds(visual, &source_tab).center()
+        }
+        MatrixPayload::Tabs => {
+            let source_tabs = selector_for(
+                visual,
+                host,
+                DockDebugRegion::Tabs {
+                    node: nodes.source_tabs,
+                },
+            )
+            .unwrap_or_else(|| panic!("{}: source tabs selector should be emitted", case.name));
+            let source_bounds = debug_bounds(visual, &source_tabs);
+            point(
+                source_bounds.origin.x + source_bounds.size.width - px(8.0),
+                source_bounds.origin.y + px(12.0),
+            )
+        }
+    }
+}
+
+fn target_hover_position(
+    visual: &mut VisualTestContext,
+    host: &open_gpui::Entity<crate::DockHost>,
+    case: MatrixCase,
+    nodes: &MatrixNodes,
+) -> Point<Pixels> {
+    match case.target {
+        MatrixTarget::LeafCenter => {
+            let target_tabs = nodes
+                .target_tabs
+                .expect("leaf case should have target tabs");
+            let selector = selector_for(visual, host, DockDebugRegion::Tabs { node: target_tabs })
+                .unwrap_or_else(|| panic!("{}: target tabs selector should be emitted", case.name));
+            debug_bounds(visual, &selector).center()
+        }
+        MatrixTarget::RootEdge => {
+            let root = nodes.target_root.expect("root-edge case should have root");
+            let selector = selector_for(visual, host, DockDebugRegion::Split { node: root })
+                .unwrap_or_else(|| {
+                    panic!("{}: target split selector should be emitted", case.name)
+                });
+            let bounds = debug_bounds(visual, &selector);
+            point(
+                bounds.origin.x + bounds.size.width - px(2.0),
+                bounds.center().y,
+            )
+        }
+        MatrixTarget::EmptySpace => {
+            let selector =
+                selector_for(visual, host, DockDebugRegion::EmptySpace).unwrap_or_else(|| {
+                    panic!("{}: empty target selector should be emitted", case.name)
+                });
+            debug_bounds(visual, &selector).center()
+        }
+    }
+}
+
+fn assert_known_viewport_route(
+    runtime: &DockViewportRuntimeHandle,
+    target_space: &DockSpaceId,
+    host_position: Point<Pixels>,
+    case_name: &str,
+) {
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_route
+                .as_ref()
+                .map(|record| &record.target),
+            Some(DockViewportRouteTarget::KnownViewport { space, host_position: routed_position, .. })
+                if space == target_space && *routed_position == host_position
+        ),
+        "{}: hover/release should route to target viewport, got {:?}",
+        case_name,
+        runtime.runtime_status().last_route
+    );
 }
 
 fn assert_case_graph(
