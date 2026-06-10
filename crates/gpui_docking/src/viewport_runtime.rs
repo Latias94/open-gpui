@@ -551,14 +551,14 @@ impl DockViewportRuntime {
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     pub(crate) fn resolve_payload_drop_route(
         &mut self,
-        request: DockViewportDropRouteRequest<'_>,
+        request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportDropRoute {
         let source_space = request.source_space.clone();
         let source_tabs = request.source_tabs;
         let payload_record = request.payload.clone();
         let policy = self.controller.read(cx).workspace().policy().to_owned();
-        let route = self.adapter.resolve_payload_drop_route(&request, &policy);
+        let route = self.adapter.resolve_payload_drop_route(request, &policy);
         self.status
             .record_route(source_space, source_tabs, payload_record, &route);
         route

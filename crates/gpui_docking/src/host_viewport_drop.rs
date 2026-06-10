@@ -1,6 +1,5 @@
 use crate::{
-    DockHost, DockViewportDropCommitRequest, DockViewportDropPayload, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals,
+    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
 };
@@ -50,9 +49,9 @@ impl DockHost {
             viewport_payload(payload),
             window_screen_position(window, position),
             None,
-            &target_context,
+            target_context,
         );
-        let route = runtime.resolve_payload_drop_route(request, cx);
+        let route = runtime.resolve_payload_drop_route(&request, cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
                 .update_drop_route_preview(&route, position),
@@ -70,15 +69,15 @@ impl DockHost {
         let release_position = window_screen_position(window, release_position);
         let viewport_payload = viewport_payload(payload);
         let target_context = DockViewportPlatformSignals::from_window(window, cx).target_context();
-        let request = DockViewportDropCommitRequest::new(
+        let request = DockViewportDropRouteRequest::new(
             payload.source_space.clone(),
             payload.source_tabs,
             viewport_payload,
             release_position,
             None,
-            &target_context,
+            target_context,
         );
-        let result = runtime.commit_payload_drop_from_screen(request, cx);
+        let result = runtime.commit_payload_drop_from_screen(&request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 }

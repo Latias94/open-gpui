@@ -30,23 +30,23 @@ pub(crate) enum DockViewportDropRoute {
 
 /// All platform and payload facts needed to route one rendered drop release.
 #[derive(Debug, Clone)]
-pub(crate) struct DockViewportDropRouteRequest<'a> {
+pub(crate) struct DockViewportDropRouteRequest {
     pub(crate) source_space: DockSpaceId,
     pub(crate) source_tabs: DockNodeId,
     pub(crate) payload: DockViewportDropPayload,
     pub(crate) release_position: Point<Pixels>,
     pub(crate) suggested_window_bounds: Option<WindowBounds>,
-    pub(crate) target_context: &'a DockViewportTargetContext,
+    pub(crate) target_context: DockViewportTargetContext,
 }
 
-impl<'a> DockViewportDropRouteRequest<'a> {
+impl DockViewportDropRouteRequest {
     pub(crate) fn new(
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
-        target_context: &'a DockViewportTargetContext,
+        target_context: DockViewportTargetContext,
     ) -> Self {
         Self {
             source_space: source_space.into(),
@@ -56,59 +56,17 @@ impl<'a> DockViewportDropRouteRequest<'a> {
             suggested_window_bounds,
             target_context,
         }
-    }
-}
-
-/// All facts needed to resolve and commit one rendered drop release.
-#[derive(Debug, Clone)]
-pub(crate) struct DockViewportDropCommitRequest<'a> {
-    pub(crate) source_space: DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
-    pub(crate) payload: DockViewportDropPayload,
-    pub(crate) release_position: Point<Pixels>,
-    pub(crate) suggested_window_bounds: Option<WindowBounds>,
-    pub(crate) target_context: &'a DockViewportTargetContext,
-}
-
-impl<'a> DockViewportDropCommitRequest<'a> {
-    pub(crate) fn new(
-        source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-        target_context: &'a DockViewportTargetContext,
-    ) -> Self {
-        Self {
-            source_space: source_space.into(),
-            source_tabs,
-            payload,
-            release_position,
-            suggested_window_bounds,
-            target_context,
-        }
-    }
-
-    pub(crate) fn route_request(&self) -> DockViewportDropRouteRequest<'a> {
-        DockViewportDropRouteRequest::new(
-            self.source_space.clone(),
-            self.source_tabs,
-            self.payload.clone(),
-            self.release_position,
-            self.suggested_window_bounds,
-            self.target_context,
-        )
     }
 }
 
 impl DockViewportAdapter {
     pub(crate) fn resolve_payload_drop_route(
         &self,
-        request: &DockViewportDropRouteRequest<'_>,
+        request: &DockViewportDropRouteRequest,
         policy: &DockPolicy,
     ) -> DockViewportDropRoute {
         if let Some(candidate) =
-            self.resolve_viewport_target(request.release_position, request.target_context)
+            self.resolve_viewport_target(request.release_position, &request.target_context)
         {
             if candidate.space == request.source_space {
                 return DockViewportDropRoute::Local {
@@ -152,7 +110,7 @@ impl DockViewportAdapter {
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
         policy: &DockPolicy,
-        target_context: &DockViewportTargetContext,
+        target_context: DockViewportTargetContext,
     ) -> DockViewportDropRoute {
         let request = DockViewportDropRouteRequest::new(
             source_space,
@@ -197,7 +155,7 @@ mod tests {
                 point(px(115.0), px(225.0)),
                 None,
                 &DockPolicy::default(),
-                &DockViewportTargetContext::new(),
+                DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::Local {
                 space: main,
@@ -233,7 +191,7 @@ mod tests {
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
-            &DockViewportTargetContext::new().with_active_window(zeta_window),
+            DockViewportTargetContext::new().with_active_window(zeta_window),
         );
 
         assert_eq!(
@@ -265,7 +223,7 @@ mod tests {
                 release_position,
                 Some(suggested_window_bounds),
                 &DockPolicy::default(),
-                &DockViewportTargetContext::new(),
+                DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled)
         );
@@ -280,7 +238,7 @@ mod tests {
                 release_position,
                 Some(suggested_window_bounds),
                 &policy,
-                &DockViewportTargetContext::new(),
+                DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
                 source_space: source,

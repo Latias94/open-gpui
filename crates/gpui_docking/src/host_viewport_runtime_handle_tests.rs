@@ -432,7 +432,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
-            &DockViewportPlatformSignals::from_app(app)
+            DockViewportPlatformSignals::from_app(app)
                 .with_hovered_window(opened.window)
                 .target_context(),
             app,
@@ -487,7 +487,7 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            &DockViewportTargetContext::new(),
+            DockViewportTargetContext::new(),
             app,
         )
     });
@@ -522,7 +522,7 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            &DockViewportTargetContext::new(),
+            DockViewportTargetContext::new(),
             app,
         )
     });
@@ -582,7 +582,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
                 DockViewportDropPayload::Item(item("a")),
                 release_position,
                 Some(suggested_window_bounds),
-                &DockViewportTargetContext::new(),
+                DockViewportTargetContext::new(),
                 app,
             );
             runtime.commit_payload_drop_route_with_outcome(
@@ -679,7 +679,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
                 DockViewportDropPayload::Tabs,
                 release_position,
                 Some(suggested_window_bounds),
-                &DockViewportTargetContext::new(),
+                DockViewportTargetContext::new(),
                 app,
             );
             runtime.commit_payload_drop_route_with_outcome(
@@ -800,7 +800,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
-            &DockViewportPlatformSignals::from_app(app)
+            DockViewportPlatformSignals::from_app(app)
                 .with_hovered_window(opened.window)
                 .target_context(),
             app,
@@ -922,7 +922,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            &DockViewportPlatformSignals::from_app(app)
+            DockViewportPlatformSignals::from_app(app)
                 .with_hovered_window(opened.window)
                 .target_context(),
             app,
@@ -1469,7 +1469,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
-            &source_release_context,
+            source_release_context,
             app,
         )
     });
@@ -1747,7 +1747,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),
             None,
-            &DockViewportPlatformSignals::from_app(app)
+            DockViewportPlatformSignals::from_app(app)
                 .with_hovered_window(opened.window)
                 .target_context(),
             app,
@@ -1900,7 +1900,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
-            &source_release_context,
+            source_release_context,
             app,
         )
     });

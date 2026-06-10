@@ -2,13 +2,12 @@
 use crate::DockViewportTargetContext;
 use crate::{
     DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropCommitRequest,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
-    DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_runtime::DockViewportReusableWindow,
@@ -340,7 +339,7 @@ impl DockViewportRuntimeHandle {
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     pub(crate) fn resolve_payload_drop_route(
         &self,
-        request: DockViewportDropRouteRequest<'_>,
+        request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportDropRoute {
         self.runtime
@@ -358,7 +357,7 @@ impl DockViewportRuntimeHandle {
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
-        target_context: &DockViewportTargetContext,
+        target_context: DockViewportTargetContext,
         cx: &App,
     ) -> DockViewportDropRoute {
         let request = DockViewportDropRouteRequest::new(
@@ -369,19 +368,19 @@ impl DockViewportRuntimeHandle {
             suggested_window_bounds,
             target_context,
         );
-        self.resolve_payload_drop_route(request, cx)
+        self.resolve_payload_drop_route(&request, cx)
     }
 
     /// Resolves and commits a rendered payload release from a screen-space point.
     pub(crate) fn commit_payload_drop_from_screen(
         &self,
-        request: DockViewportDropCommitRequest<'_>,
+        request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let source_space = request.source_space.clone();
         let source_tabs = request.source_tabs;
         let payload = request.payload.clone();
-        let route = self.resolve_payload_drop_route(request.route_request(), cx);
+        let route = self.resolve_payload_drop_route(request, cx);
         self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
     }
 
@@ -395,10 +394,10 @@ impl DockViewportRuntimeHandle {
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
-        target_context: &DockViewportTargetContext,
+        target_context: DockViewportTargetContext,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let request = DockViewportDropCommitRequest::new(
+        let request = DockViewportDropRouteRequest::new(
             source_space,
             source_tabs,
             payload,
@@ -406,7 +405,7 @@ impl DockViewportRuntimeHandle {
             suggested_window_bounds,
             target_context,
         );
-        self.commit_payload_drop_from_screen(request, cx)
+        self.commit_payload_drop_from_screen(&request, cx)
     }
 
     /// Handles a GPUI window-closed notification and applies close policies that mutate graph.

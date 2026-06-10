@@ -222,7 +222,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
             case.payload.drop_payload(),
             release_screen_position,
             None,
-            &source_release_context,
+            source_release_context,
             app,
         )
     });
