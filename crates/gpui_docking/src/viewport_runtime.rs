@@ -47,10 +47,17 @@ pub(crate) struct DockViewportRuntime {
     status: DockViewportRuntimeStatus,
 }
 
+#[derive(Debug)]
 pub(crate) struct DockViewportPreparedTearOffDrop {
     pub(crate) request: DockViewportTearOffRequest,
     pub(crate) target_space: DockSpaceId,
     pub(crate) options: WindowOptions,
+}
+
+#[derive(Debug)]
+pub(crate) enum DockViewportTearOffCommitPreparation {
+    Noop(DockViewportDropRouteOutcome),
+    Prepared(DockViewportPreparedTearOffDrop),
 }
 
 fn install_should_close_hook(
@@ -420,6 +427,27 @@ impl DockViewportRuntime {
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
+        match self.prepare_tear_off_drop_route_commit(request, cx)? {
+            DockViewportTearOffCommitPreparation::Noop(outcome) => Ok(outcome),
+            DockViewportTearOffCommitPreparation::Prepared(prepared) => self
+                .open_tear_off_viewport(
+                    prepared.request,
+                    prepared.target_space,
+                    prepared.options,
+                    cx,
+                )
+                .map(DockViewportDropRouteOutcome::TearOff)
+                .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
+                    message: error.to_string(),
+                }),
+        }
+    }
+
+    pub(crate) fn prepare_tear_off_drop_route_commit(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        cx: &mut App,
+    ) -> Result<DockViewportTearOffCommitPreparation, DockActionApplyError> {
         self.validate_payload_drag_session(request.drag_session())?;
         if let Some(outcome) = self.single_viewport_outside_release_noop(
             request.source_space(),
@@ -427,20 +455,12 @@ impl DockViewportRuntime {
             request.payload(),
             cx,
         ) {
-            return Ok(outcome);
+            return Ok(DockViewportTearOffCommitPreparation::Noop(outcome));
         }
 
-        let prepared = self.prepare_tear_off_drop_route(request, cx)?;
-        self.open_tear_off_viewport(
-            prepared.request,
-            prepared.target_space,
-            prepared.options,
-            cx,
-        )
-        .map(DockViewportDropRouteOutcome::TearOff)
-        .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
-            message: error.to_string(),
-        })
+        Ok(DockViewportTearOffCommitPreparation::Prepared(
+            self.prepare_tear_off_drop_route(request, cx)?,
+        ))
     }
 
     pub(crate) fn prepare_tear_off_drop_route(

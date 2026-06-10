@@ -10,7 +10,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
-    viewport_runtime::DockViewportReusableWindow,
+    viewport_runtime::{DockViewportReusableWindow, DockViewportTearOffCommitPreparation},
 };
 #[cfg(test)]
 use crate::{
@@ -293,18 +293,14 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
-            runtime.validate_payload_drag_session(request.drag_session())?;
-            if let Some(outcome) = runtime.single_viewport_outside_release_noop(
-                request.source_space(),
-                request.source_tabs(),
-                request.payload(),
-                cx,
-            ) {
-                let result = Ok(outcome);
-                runtime.record_drop_route_result(&result);
-                return result;
+            match runtime.prepare_tear_off_drop_route_commit(request, cx)? {
+                DockViewportTearOffCommitPreparation::Noop(outcome) => {
+                    let result = Ok(outcome);
+                    runtime.record_drop_route_result(&result);
+                    return result;
+                }
+                DockViewportTearOffCommitPreparation::Prepared(prepared) => prepared,
             }
-            runtime.prepare_tear_off_drop_route(request, cx)?
         };
 
         let result = self

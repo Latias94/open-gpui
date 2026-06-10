@@ -128,9 +128,7 @@ impl DockViewportDropRouteCommit {
                     host_position,
                 ))
             }
-            DockViewportDropRoute::TearOff(_) => {
-                Self::TearOff(tear_off_request_from_route_request(request))
-            }
+            DockViewportDropRoute::TearOff(_) => Self::TearOff(request.tear_off_request()),
             DockViewportDropRoute::Rejected(error) => Self::Rejected(error),
         }
     }
@@ -192,6 +190,17 @@ impl DockViewportDropRouteRequest {
         self.platform_signals.target_context()
     }
 
+    pub(crate) fn tear_off_request(&self) -> DockViewportTearOffRequest {
+        DockViewportTearOffRequest::new(
+            self.source_space().clone(),
+            self.source_tabs(),
+            self.payload().clone(),
+            self.release_position(),
+            self.suggested_window_bounds(),
+        )
+        .with_drag_session(self.drag_session().cloned())
+    }
+
     #[cfg(test)]
     pub(crate) fn from_target_context(
         source_space: impl Into<DockSpaceId>,
@@ -235,7 +244,7 @@ impl DockViewportAdapter {
             return DockViewportDropRoute::Rejected(reason);
         }
 
-        DockViewportDropRoute::TearOff(tear_off_request_from_route_request(request))
+        DockViewportDropRoute::TearOff(request.tear_off_request())
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
@@ -265,19 +274,6 @@ impl DockViewportAdapter {
         );
         self.resolve_payload_drop_route(&request, policy)
     }
-}
-
-fn tear_off_request_from_route_request(
-    request: &DockViewportDropRouteRequest,
-) -> DockViewportTearOffRequest {
-    DockViewportTearOffRequest::new(
-        request.source_space().clone(),
-        request.source_tabs(),
-        request.payload().clone(),
-        request.release_position(),
-        request.suggested_window_bounds(),
-    )
-    .with_drag_session(request.drag_session().cloned())
 }
 
 #[cfg(test)]
