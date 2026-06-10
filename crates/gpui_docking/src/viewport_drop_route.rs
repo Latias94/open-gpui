@@ -37,6 +37,77 @@ pub(crate) struct DockViewportDropRouteRequest {
     pub(crate) platform_signals: DockViewportPlatformSignals,
 }
 
+/// Commit-time facts for a resolved viewport drop route.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockViewportDropRouteCommit {
+    /// Commit a route back into the source viewport host.
+    Local {
+        source_space: DockSpaceId,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        host_position: Point<Pixels>,
+    },
+    /// Commit a route into another registered viewport.
+    KnownViewport {
+        source_space: DockSpaceId,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        target: DockViewportTargetHit,
+    },
+    /// Open and commit into a new platform viewport.
+    TearOff(DockViewportTearOffRequest),
+    /// Reject the commit for the same policy reason as routing.
+    Rejected(DockPolicyError),
+}
+
+impl DockViewportDropRouteCommit {
+    pub(crate) fn from_route_request(
+        request: &DockViewportDropRouteRequest,
+        route: DockViewportDropRoute,
+    ) -> Self {
+        Self::from_source_facts(
+            request.source_space.clone(),
+            request.source_tabs,
+            request.payload.clone(),
+            route,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        route: DockViewportDropRoute,
+    ) -> Self {
+        Self::from_source_facts(source_space.into(), source_tabs, payload, route)
+    }
+
+    fn from_source_facts(
+        source_space: DockSpaceId,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        route: DockViewportDropRoute,
+    ) -> Self {
+        match route {
+            DockViewportDropRoute::Local { host_position } => Self::Local {
+                source_space,
+                source_tabs,
+                payload,
+                host_position,
+            },
+            DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
+                source_space,
+                source_tabs,
+                payload,
+                target,
+            },
+            DockViewportDropRoute::TearOff(request) => Self::TearOff(request),
+            DockViewportDropRoute::Rejected(error) => Self::Rejected(error),
+        }
+    }
+}
+
 impl DockViewportDropRouteRequest {
     pub(crate) fn from_platform_signals(
         source_space: impl Into<DockSpaceId>,

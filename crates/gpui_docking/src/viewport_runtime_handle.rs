@@ -1,17 +1,19 @@
 use crate::{
-    DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockActionApplyError, DockController, DockHost, DockSpaceId, DockViewportCloseOutcome,
+    DockViewportClosePolicy, DockViewportDropRoute, DockViewportDropRouteCommit,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drop_runtime::DockHostDropSceneFact,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_runtime::DockViewportReusableWindow,
 };
 #[cfg(test)]
-use crate::{DockViewportPlatformSignals, DockViewportTargetContext};
+use crate::{
+    DockNodeId, DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetContext,
+};
 use open_gpui::{
     App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription, WindowBounds,
     WindowId, WindowOptions,
@@ -259,19 +261,18 @@ impl DockViewportRuntimeHandle {
 
     pub(crate) fn commit_payload_drop_route_with_outcome(
         &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
+        commit: DockViewportDropRouteCommit,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        if let DockViewportDropRoute::TearOff(request) = route {
-            return self.commit_tear_off_drop_route(request, cx);
+        match commit {
+            DockViewportDropRouteCommit::TearOff(request) => {
+                self.commit_tear_off_drop_route(request, cx)
+            }
+            commit => self
+                .runtime
+                .borrow_mut()
+                .commit_payload_drop_route_with_outcome(commit, cx),
         }
-
-        self.runtime
-            .borrow_mut()
-            .commit_payload_drop_route_with_outcome(source_space, source_tabs, payload, route, cx)
     }
 
     fn commit_tear_off_drop_route(
@@ -394,11 +395,9 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let source_space = request.source_space.clone();
-        let source_tabs = request.source_tabs;
-        let payload = request.payload.clone();
         let route = self.resolve_payload_drop_route(request, cx);
-        self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
+        let commit = DockViewportDropRouteCommit::from_route_request(request, route);
+        self.commit_payload_drop_route_with_outcome(commit, cx)
     }
 
     /// Resolves and commits a rendered payload release from platform signal snapshots in tests.

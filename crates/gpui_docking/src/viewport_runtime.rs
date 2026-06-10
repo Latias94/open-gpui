@@ -2,11 +2,11 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
     DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteCommit,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError, DockViewportRestoreOutcome,
+    DockViewportRuntimeHandle, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
@@ -274,14 +274,10 @@ impl DockViewportRuntime {
 
     pub(crate) fn commit_payload_drop_route_with_outcome(
         &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: crate::DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
+        commit: DockViewportDropRouteCommit,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result =
-            self.commit_payload_drop_route_inner(source_space, source_tabs, payload, route, cx);
+        let result = self.commit_payload_drop_route_inner(commit, cx);
         self.status.record_drop_result(&result);
         result
     }
@@ -299,23 +295,33 @@ impl DockViewportRuntime {
 
     fn commit_payload_drop_route_inner(
         &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: crate::DockNodeId,
-        payload: DockViewportDropPayload,
-        route: DockViewportDropRoute,
+        commit: DockViewportDropRouteCommit,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let target_space = match route {
-            DockViewportDropRoute::Local { host_position } => {
-                self.resolve_route_target(source_space, host_position, cx)?
+        let (source_space, source_tabs, payload, target_space) = match commit {
+            DockViewportDropRouteCommit::Local {
+                source_space,
+                source_tabs,
+                payload,
+                host_position,
+            } => {
+                let target_space = self.resolve_route_target(&source_space, host_position, cx)?;
+                (source_space, source_tabs, payload, target_space)
             }
-            DockViewportDropRoute::KnownViewport { target } => {
-                self.resolve_route_target(&target.space, target.host_position, cx)?
+            DockViewportDropRouteCommit::KnownViewport {
+                source_space,
+                source_tabs,
+                payload,
+                target,
+            } => {
+                let target_space =
+                    self.resolve_route_target(&target.space, target.host_position, cx)?;
+                (source_space, source_tabs, payload, target_space)
             }
-            DockViewportDropRoute::TearOff(request) => {
+            DockViewportDropRouteCommit::TearOff(request) => {
                 return self.commit_tear_off_drop_route(request, cx);
             }
-            DockViewportDropRoute::Rejected(error) => return Err(error.into()),
+            DockViewportDropRouteCommit::Rejected(error) => return Err(error.into()),
         };
 
         let (target_space, target) = target_space;
@@ -323,7 +329,7 @@ impl DockViewportRuntime {
         let action = self.controller.update(cx, |controller, cx| {
             let outcome =
                 controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
-                    source_space,
+                    source_space: &source_space,
                     payload: payload.as_workspace_payload(source_tabs),
                     target_space: &target_space,
                     target,
