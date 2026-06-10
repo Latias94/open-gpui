@@ -234,7 +234,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
             case.name
         );
     };
-    assert_eq!(action.action, DockActionOutcome::Changed, "{}", case.name);
+    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
     let status = runtime.runtime_status();
     let target = &status
         .last_route

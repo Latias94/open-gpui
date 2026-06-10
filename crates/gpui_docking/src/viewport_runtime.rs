@@ -332,7 +332,7 @@ impl DockViewportRuntime {
         })?;
         let activation = self.activate_viewport_for_space(&target_space, focus_item, cx);
         Ok(DockViewportDropRouteOutcome::Action(
-            DockViewportDropActionOutcome { action, activation },
+            DockViewportDropActionOutcome::new(action, activation),
         ))
     }
 
@@ -445,10 +445,7 @@ impl DockViewportRuntime {
         }
 
         Some(DockViewportDropRouteOutcome::Action(
-            DockViewportDropActionOutcome {
-                action: DockActionOutcome::Unchanged,
-                activation: None,
-            },
+            DockViewportDropActionOutcome::new(DockActionOutcome::Unchanged, None),
         ))
     }
 
@@ -724,11 +721,11 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Option<DockViewportActivationTarget> {
         match self.reusable_window_for_space(target_space, cx) {
-            DockViewportReusableWindow::Reused(window) => Some(DockViewportActivationTarget {
-                space: target_space.clone(),
+            DockViewportReusableWindow::Reused(window) => Some(DockViewportActivationTarget::new(
+                target_space.clone(),
                 window,
                 focus_item,
-            }),
+            )),
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
         }
     }

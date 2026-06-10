@@ -35,9 +35,9 @@ impl DockHostInteractionOutcome {
         let changed = self.changed();
         let should_notify = self.should_notify();
         if let Some(activation) = self.activation_target() {
-            let activation_space = activation.space;
-            let focus_item = activation.focus_item;
-            let _ = activation.window.update(cx, move |view, window, cx| {
+            let activation_space = activation.space().clone();
+            let focus_item = activation.focus_item().cloned();
+            let _ = activation.window().update(cx, move |view, window, cx| {
                 window.activate_window();
                 if let Some(focus_item) = focus_item
                     && let Ok(host) = view.downcast::<DockHost>()
@@ -133,26 +133,26 @@ mod tests {
     #[test]
     fn routed_drop_outcome_preserves_viewport_side_effects() {
         let window = handle(1);
-        let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome {
-            action: DockActionOutcome::Changed,
-            activation: Some(DockViewportActivationTarget {
-                space: space(),
+        let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome::new(
+            DockActionOutcome::Changed,
+            Some(DockViewportActivationTarget::new(
+                space(),
                 window,
-                focus_item: Some(DockItemId::from("a")),
-            }),
-        });
+                Some(DockItemId::from("a")),
+            )),
+        ));
         let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed.clone()));
 
         assert!(outcome.changed());
         assert_eq!(outcome.routed_drop_outcome(), Some(&routed));
         assert_eq!(
-            outcome.activation_target().map(|target| target.window),
+            outcome.activation_target().map(|target| target.window()),
             Some(window)
         );
         assert_eq!(
             outcome
                 .activation_target()
-                .and_then(|target| target.focus_item),
+                .and_then(|target| target.focus_item().cloned()),
             Some(DockItemId::from("a"))
         );
     }

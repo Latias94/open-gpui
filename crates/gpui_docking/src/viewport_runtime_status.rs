@@ -268,7 +268,7 @@ impl DockViewportDropOutcomeRecord {
         match result {
             Ok(DockViewportDropRouteOutcome::Action(outcome)) => Self {
                 kind: DockViewportDropOutcomeKind::Action,
-                action: Some(outcome.action),
+                action: Some(outcome.action()),
                 error: None,
             },
             Ok(DockViewportDropRouteOutcome::TearOff(outcome)) => {
@@ -311,9 +311,9 @@ impl DockViewportDropOutcomeRecord {
 impl From<&DockViewportActivationTarget> for DockViewportActivationRecord {
     fn from(target: &DockViewportActivationTarget) -> Self {
         Self {
-            space: target.space.clone(),
-            window_id: target.window.window_id(),
-            focus_item: target.focus_item.clone(),
+            space: target.space().clone(),
+            window_id: target.window().window_id(),
+            focus_item: target.focus_item().cloned(),
         }
     }
 }

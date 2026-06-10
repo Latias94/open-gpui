@@ -308,34 +308,77 @@ pub(crate) enum DockViewportDropRouteOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportDropActionOutcome {
     /// Graph transaction outcome.
-    pub(crate) action: DockActionOutcome,
+    action: DockActionOutcome,
     /// Runtime viewport that should become active after the drop, when known.
-    pub(crate) activation: Option<DockViewportActivationTarget>,
+    activation: Option<DockViewportActivationTarget>,
+}
+
+impl DockViewportDropActionOutcome {
+    pub(crate) fn new(
+        action: DockActionOutcome,
+        activation: Option<DockViewportActivationTarget>,
+    ) -> Self {
+        Self { action, activation }
+    }
+
+    pub(crate) fn action(&self) -> DockActionOutcome {
+        self.action
+    }
+
+    pub(crate) fn activation(&self) -> Option<&DockViewportActivationTarget> {
+        self.activation.as_ref()
+    }
 }
 
 /// Runtime viewport activation target selected by a successful drop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportActivationTarget {
     /// Logical dock space to activate.
-    pub(crate) space: DockSpaceId,
+    space: DockSpaceId,
     /// GPUI window rendering the logical dock space.
-    pub(crate) window: AnyWindowHandle,
+    window: AnyWindowHandle,
     /// Active panel item that should receive focus after the window is active.
-    pub(crate) focus_item: Option<DockItemId>,
+    focus_item: Option<DockItemId>,
+}
+
+impl DockViewportActivationTarget {
+    pub(crate) fn new(
+        space: impl Into<DockSpaceId>,
+        window: impl Into<AnyWindowHandle>,
+        focus_item: Option<DockItemId>,
+    ) -> Self {
+        Self {
+            space: space.into(),
+            window: window.into(),
+            focus_item,
+        }
+    }
+
+    pub(crate) fn space(&self) -> &DockSpaceId {
+        &self.space
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.window
+    }
+
+    pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
+        self.focus_item.as_ref()
+    }
 }
 
 impl DockViewportDropRouteOutcome {
     /// Returns the runtime viewport that should be activated after the drop, when known.
     pub(crate) fn activation_target(&self) -> Option<DockViewportActivationTarget> {
         match self {
-            DockViewportDropRouteOutcome::Action(outcome) => outcome.activation.clone(),
+            DockViewportDropRouteOutcome::Action(outcome) => outcome.activation().cloned(),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
-            )) => Some(DockViewportActivationTarget {
-                space: completed.pending().target_space().clone(),
-                window: completed.registration().window,
-                focus_item: completed.pending().focus_item().cloned(),
-            }),
+            )) => Some(DockViewportActivationTarget::new(
+                completed.pending().target_space().clone(),
+                completed.registration().window,
+                completed.pending().focus_item().cloned(),
+            )),
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::Duplicate(_)
                 | DockViewportTearOffOpenOutcome::Cancelled(_)
@@ -346,7 +389,7 @@ impl DockViewportDropRouteOutcome {
 
     pub(crate) fn action_result(&self) -> Result<DockActionOutcome, DockActionApplyError> {
         match self {
-            DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action),
+            DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action()),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
             )) => Ok(completed.action()),

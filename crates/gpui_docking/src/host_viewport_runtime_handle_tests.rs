@@ -578,7 +578,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
     };
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
-        activation.as_ref().map(|target| target.window),
+        activation.as_ref().map(|target| target.window()),
         Some(completed.registration().window),
         "tear-off completion should surface the new viewport activation target"
     );
@@ -673,7 +673,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     };
     assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
-        activation.as_ref().map(|target| target.window),
+        activation.as_ref().map(|target| target.window()),
         Some(completed.registration().window),
         "stack tear-off completion should surface the new viewport activation target"
     );
@@ -905,20 +905,16 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     let DockViewportDropRouteOutcome::Action(action) = result.expect("route should commit") else {
         panic!("known viewport drop should produce a normal action outcome");
     };
-    assert_eq!(action.action, crate::DockActionOutcome::Changed);
+    assert_eq!(action.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
-        action
-            .activation
-            .as_ref()
-            .map(|activation| activation.window),
+        action.activation().map(|activation| activation.window()),
         Some(opened.window),
         "known viewport drop should request activation of the destination window"
     );
     assert_eq!(
         action
-            .activation
-            .as_ref()
-            .and_then(|activation| activation.focus_item.clone()),
+            .activation()
+            .and_then(|activation| activation.focus_item().cloned()),
         Some(item("a")),
         "known viewport drop should request focus for the moved item"
     );
@@ -1445,7 +1441,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         .expect("dock-back should route to the target viewport")
         .target;
     assert_eq!(target.space(), Some(&target_space));
-    assert_eq!(action.action, crate::DockActionOutcome::Changed);
+    assert_eq!(action.action(), crate::DockActionOutcome::Changed);
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller
             .graph()
@@ -1858,7 +1854,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     else {
         panic!("root-edge viewport drop should resolve to a normal action");
     };
-    assert_eq!(action.action, crate::DockActionOutcome::Changed);
+    assert_eq!(action.action(), crate::DockActionOutcome::Changed);
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Split { children, .. } = controller
             .graph()
