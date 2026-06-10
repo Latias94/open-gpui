@@ -526,6 +526,7 @@ fn nonnegative_pixel_to_i64(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{EdgeId, HandleId};
     use open_gpui::{point, px, size};
     use serde_json::json;
@@ -693,7 +694,6 @@ mod tests {
 
     #[test]
     fn exports_json_canvas_nodes_by_z_index() {
-        let mut document = CanvasDocument::default();
         let mut front = CanvasNode::new(
             "front",
             point(px(100.0), px(0.0)),
@@ -707,8 +707,7 @@ mod tests {
         back.z_index = -1;
         back.data.insert(LABEL_FIELD.to_string(), json!("Back"));
 
-        document.insert_node(front).unwrap();
-        document.insert_node(back).unwrap();
+        let document = document_fixture().node(front).node(back).build();
 
         let json_canvas = JsonCanvas::from_document(&document).unwrap();
 
@@ -720,7 +719,6 @@ mod tests {
 
     #[test]
     fn exports_json_canvas_edge_sides_from_handles() {
-        let mut document = CanvasDocument::default();
         let mut source = CanvasNode::new(
             "source",
             point(px(0.0), px(0.0)),
@@ -744,8 +742,7 @@ mod tests {
             point(px(0.0), px(50.0)),
         ));
 
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let mut document = document_fixture().node(source).node(target).build();
         let mut edge = CanvasEdge::new(
             "edge",
             CanvasEndpoint::new("source", Some("json_canvas:right")),
@@ -845,10 +842,9 @@ mod tests {
 
     #[test]
     fn rejects_exporting_incomplete_json_canvas_nodes() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         node.kind = TEXT_NODE_TYPE.to_string();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let err = JsonCanvas::from_document(&document).unwrap_err();
 
