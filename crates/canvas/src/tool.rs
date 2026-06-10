@@ -3389,21 +3389,18 @@ mod tests {
 
     #[test]
     fn connect_tool_creates_edge_between_nodes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(200.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.set_tool(CanvasTool::Connect).unwrap();
 
@@ -3434,18 +3431,17 @@ mod tests {
 
     #[test]
     fn connect_tool_ignores_locked_endpoints() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut locked =
+            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
+        locked.locked = true;
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        let mut locked =
-            CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
-        locked.locked = true;
-        document.insert_node(locked).unwrap();
+            .node(locked)
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.set_tool(CanvasTool::Connect).unwrap();
 
@@ -3483,9 +3479,7 @@ mod tests {
         target_handle.role = HandleRole::Target;
         target.handles.push(target_handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let mut editor = CanvasEditor::new(document);
         editor.set_tool(CanvasTool::Connect).unwrap();
 
@@ -3519,9 +3513,7 @@ mod tests {
         source.handles.push(target_only);
         let target = CanvasNode::new("b", point(px(200.0), px(0.0)), size(px(100.0), px(100.0)));
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let mut editor = CanvasEditor::new(document);
         editor.set_tool(CanvasTool::Connect).unwrap();
 
@@ -3560,9 +3552,7 @@ mod tests {
         invalid_target_handle.role = HandleRole::Source;
         target.handles.push(invalid_target_handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let mut editor = CanvasEditor::new(document);
         editor.set_tool(CanvasTool::Connect).unwrap();
 
