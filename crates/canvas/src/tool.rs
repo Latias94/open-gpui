@@ -3578,14 +3578,13 @@ mod tests {
 
     #[test]
     fn custom_tool_reducer_applies_effects_through_editor() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "anchor",
                 point(px(100.0), px(50.0)),
                 size(px(80.0), px(80.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
         editor.set_tool(CanvasTool::custom("stamp")).unwrap();
@@ -3627,14 +3626,13 @@ mod tests {
 
     #[test]
     fn custom_tool_entry_uses_builtin_tools_without_calling_custom_reducer() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "n1",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let mut tool = StampTool::default();
 
@@ -3664,14 +3662,13 @@ mod tests {
 
     #[test]
     fn tool_registry_dispatches_registered_custom_tool() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "anchor",
                 point(px(100.0), px(50.0)),
                 size(px(80.0), px(80.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
         editor.set_tool(CanvasTool::custom("stamp")).unwrap();
@@ -3735,14 +3732,13 @@ mod tests {
 
     #[test]
     fn tool_registry_entry_uses_builtin_tools_without_registered_reducer() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "n1",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let mut registry = CanvasToolRegistry::new();
 
@@ -4039,8 +4035,7 @@ mod tests {
         let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         note.kind = "note".to_string();
         note.data.insert("title".to_string(), json!(false));
-        let mut document = CanvasDocument::default();
-        document.insert_node(note).unwrap();
+        let document = document_fixture().node(note).build();
         let mut editor = CanvasEditor::new(document);
 
         let mut registry = CanvasKindRegistry::open();
@@ -4229,20 +4224,17 @@ mod tests {
 
     #[test]
     fn gesture_commit_records_relation_updates() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "frame",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
         let mut editor = CanvasEditor::new(document);
@@ -4272,14 +4264,13 @@ mod tests {
 
     #[test]
     fn empty_gesture_commit_does_not_push_history() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
 
         editor
@@ -4514,34 +4505,27 @@ mod tests {
 
     #[test]
     fn tool_effects_update_selection_incrementally() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(200.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
 
         editor
@@ -4656,29 +4640,23 @@ mod tests {
     }
 
     fn connected_edge_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     struct VerticalDetourRouter;
