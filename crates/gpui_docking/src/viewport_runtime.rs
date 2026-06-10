@@ -184,15 +184,16 @@ impl DockViewportRuntime {
             .snapshot(&space)
             .and_then(|snapshot| snapshot.display_id);
         let changed = self.update_viewport_snapshot(&space, display_id, window_bounds, host_bounds);
-        self.host_scenes
+        let registration = self
+            .host_scenes
             .register(DockViewportHostSceneSnapshot::new(
                 space,
                 window_id,
                 window_bounds,
                 host_bounds,
                 host_position,
-            ))
-            || changed
+            ));
+        registration.changed || changed
     }
 
     pub(crate) fn push_viewport_host_scene_fact(

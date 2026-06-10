@@ -6,12 +6,26 @@ use crate::{
 use open_gpui::{Bounds, Pixels, Point, WindowBounds, WindowId, point};
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportHostSceneFrame {
+    pub(crate) space: DockSpaceId,
+    pub(crate) window_id: WindowId,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportHostSceneRegistration {
+    pub(crate) changed: bool,
+    pub(crate) frame: DockViewportHostSceneFrame,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) space: DockSpaceId,
     pub(crate) window_id: WindowId,
     pub(crate) window_bounds: WindowBounds,
     pub(crate) host_bounds: Bounds<Pixels>,
+    generation: u64,
     scene: DockHostDropScene,
 }
 
@@ -32,7 +46,24 @@ impl DockViewportHostSceneSnapshot {
             window_id,
             window_bounds,
             host_bounds,
+            generation: 0,
             scene: DockHostDropScene::new(window_position),
+        }
+    }
+
+    fn same_content_as(&self, other: &Self) -> bool {
+        self.space == other.space
+            && self.window_id == other.window_id
+            && self.window_bounds == other.window_bounds
+            && self.host_bounds == other.host_bounds
+            && self.scene == other.scene
+    }
+
+    fn frame(&self) -> DockViewportHostSceneFrame {
+        DockViewportHostSceneFrame {
+            space: self.space.clone(),
+            window_id: self.window_id,
+            generation: self.generation,
         }
     }
 
@@ -53,16 +84,23 @@ impl DockViewportHostSceneSnapshot {
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportHostSceneRegistry {
     scenes: BTreeMap<DockSpaceId, DockViewportHostSceneSnapshot>,
+    next_generation: u64,
 }
 
 impl DockViewportHostSceneRegistry {
-    pub(crate) fn register(&mut self, snapshot: DockViewportHostSceneSnapshot) -> bool {
+    pub(crate) fn register(
+        &mut self,
+        mut snapshot: DockViewportHostSceneSnapshot,
+    ) -> DockViewportHostSceneRegistration {
         let changed = self
             .scenes
             .get(&snapshot.space)
-            .is_none_or(|existing| existing != &snapshot);
+            .is_none_or(|existing| !existing.same_content_as(&snapshot));
+        self.next_generation = self.next_generation.wrapping_add(1);
+        snapshot.generation = self.next_generation;
+        let frame = snapshot.frame();
         self.scenes.insert(snapshot.space.clone(), snapshot);
-        changed
+        DockViewportHostSceneRegistration { changed, frame }
     }
 
     pub(crate) fn push_fact(
@@ -71,15 +109,37 @@ impl DockViewportHostSceneRegistry {
         window_id: WindowId,
         fact: DockHostDropSceneFact,
     ) -> bool {
-        let Some(scene) = self.scenes.get_mut(space) else {
+        let Some(frame) = self.current_frame(space, window_id) else {
             return false;
         };
-        if scene.window_id != window_id {
+        self.push_frame_fact(&frame, fact)
+    }
+
+    pub(crate) fn push_frame_fact(
+        &mut self,
+        frame: &DockViewportHostSceneFrame,
+        fact: DockHostDropSceneFact,
+    ) -> bool {
+        let Some(scene) = self.scenes.get_mut(&frame.space) else {
+            return false;
+        };
+        if scene.window_id != frame.window_id || scene.generation != frame.generation {
             return false;
         }
-
         scene.push_fact(fact);
         true
+    }
+
+    fn current_frame(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockViewportHostSceneFrame> {
+        let scene = self.scenes.get(space)?;
+        if scene.window_id != window_id {
+            return None;
+        }
+        Some(scene.frame())
     }
 
     pub(crate) fn resolve(
@@ -111,5 +171,78 @@ impl DockViewportHostSceneRegistry {
     pub(crate) fn unregister_window(&mut self, window_id: WindowId) {
         self.scenes
             .retain(|_, snapshot| snapshot.window_id != window_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockPolicy,
+        drop_target::{DockEmptySpaceDropTarget, DockResolvedDropTargetKind},
+        viewport_test_support::{bounds, space},
+    };
+    use open_gpui::{WindowBounds, WindowId, point, px};
+
+    #[test]
+    fn host_scene_frame_rejects_facts_from_stale_generation() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+
+        let first = registry.register(snapshot(space.clone(), window_id)).frame;
+        assert!(registry.push_frame_fact(&first, empty_space_fact(space.clone())));
+        assert_empty_space_target(&registry, &space);
+
+        let second = registry.register(snapshot(space.clone(), window_id)).frame;
+        assert!(!registry.push_frame_fact(&first, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .resolve(&space, point(px(10.0), px(10.0)), &DockPolicy::default())
+                .is_none(),
+            "new frame should start without stale facts from the previous generation"
+        );
+
+        assert!(registry.push_frame_fact(&second, empty_space_fact(space.clone())));
+        assert_empty_space_target(&registry, &space);
+    }
+
+    fn snapshot(space: DockSpaceId, window_id: WindowId) -> DockViewportHostSceneSnapshot {
+        DockViewportHostSceneSnapshot::new(
+            space,
+            window_id,
+            WindowBounds::Windowed(bounds(0.0, 0.0, 200.0, 120.0)),
+            bounds(0.0, 0.0, 200.0, 120.0),
+            point(px(10.0), px(10.0)),
+        )
+    }
+
+    fn empty_space_fact(space: DockSpaceId) -> DockHostDropSceneFact {
+        DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+            space,
+            bounds: bounds(0.0, 0.0, 200.0, 120.0),
+        })
+    }
+
+    fn assert_empty_space_target(
+        registry: &DockViewportHostSceneRegistry,
+        expected_space: &DockSpaceId,
+    ) {
+        let target = registry
+            .resolve(
+                expected_space,
+                point(px(10.0), px(10.0)),
+                &DockPolicy::default(),
+            )
+            .expect("empty space fact should resolve");
+        assert!(
+            matches!(
+                target.kind,
+                DockResolvedDropTargetKind::EmptyDockSpace { ref space }
+                    if space == expected_space
+            ),
+            "expected empty-space target, got {:?}",
+            target
+        );
     }
 }
