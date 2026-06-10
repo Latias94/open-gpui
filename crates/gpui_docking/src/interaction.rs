@@ -123,6 +123,30 @@ pub(crate) enum DockOutsideReleasePollDecision {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockRenderedOutsideReleaseRequest {
+    viewport_runtime_available: bool,
+    payload: Option<DockDragPayload>,
+    target_space: DockSpaceId,
+    release_position: Point<Pixels>,
+}
+
+impl DockRenderedOutsideReleaseRequest {
+    pub(crate) fn new(
+        viewport_runtime_available: bool,
+        payload: Option<DockDragPayload>,
+        target_space: DockSpaceId,
+        release_position: Point<Pixels>,
+    ) -> Self {
+        Self {
+            viewport_runtime_available,
+            payload,
+            target_space,
+            release_position,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockRenderedOutsideReleaseDecision {
     Inactive,
     CommitRelease(DockPayloadDropRelease),
@@ -329,23 +353,20 @@ impl DockInteractionRuntime {
 
     pub(crate) fn rendered_outside_release(
         &self,
-        viewport_runtime_available: bool,
-        payload: Option<DockDragPayload>,
-        target_space: DockSpaceId,
-        release_position: Point<Pixels>,
+        request: DockRenderedOutsideReleaseRequest,
     ) -> DockRenderedOutsideReleaseDecision {
-        if !viewport_runtime_available {
+        if !request.viewport_runtime_available {
             return DockRenderedOutsideReleaseDecision::Inactive;
         }
 
-        let Some(payload) = payload else {
+        let Some(payload) = request.payload else {
             return DockRenderedOutsideReleaseDecision::Inactive;
         };
 
         DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
             payload,
-            target_space,
-            release_position,
+            request.target_space,
+            request.release_position,
         ))
     }
 
@@ -419,6 +440,18 @@ mod tests {
         )
     }
 
+    fn rendered_request(
+        viewport_runtime_available: bool,
+        payload: Option<DockDragPayload>,
+    ) -> DockRenderedOutsideReleaseRequest {
+        DockRenderedOutsideReleaseRequest::new(
+            viewport_runtime_available,
+            payload,
+            DockSpaceId::from("target"),
+            point(px(120.0), px(80.0)),
+        )
+    }
+
     #[test]
     fn payload_drop_release_carries_payload_target_and_position() {
         let payload = item_payload("a", "Panel A");
@@ -441,25 +474,15 @@ mod tests {
         let release_position = point(px(120.0), px(80.0));
 
         assert_eq!(
-            runtime.rendered_outside_release(
-                false,
-                Some(payload.clone()),
-                target_space.clone(),
-                release_position,
-            ),
+            runtime.rendered_outside_release(rendered_request(false, Some(payload.clone()))),
             DockRenderedOutsideReleaseDecision::Inactive
         );
         assert_eq!(
-            runtime.rendered_outside_release(true, None, target_space.clone(), release_position),
+            runtime.rendered_outside_release(rendered_request(true, None)),
             DockRenderedOutsideReleaseDecision::Inactive
         );
         assert_eq!(
-            runtime.rendered_outside_release(
-                true,
-                Some(payload.clone()),
-                target_space.clone(),
-                release_position,
-            ),
+            runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
             DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
                 payload,
                 target_space,
