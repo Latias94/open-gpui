@@ -168,6 +168,8 @@ mod host_test_support;
 #[cfg(test)]
 mod host_tests;
 #[cfg(test)]
+mod host_viewport_matrix_tests;
+#[cfg(test)]
 mod host_viewport_runtime_handle_tests;
 #[cfg(test)]
 mod host_viewport_runtime_tests;
