@@ -309,8 +309,8 @@ impl DockViewportRuntime {
             DockViewportDropRoute::Local { host_position } => {
                 self.resolve_route_target(source_space, host_position, cx)?
             }
-            DockViewportDropRoute::KnownViewport { hit, .. } => {
-                self.resolve_route_target(&hit.space, hit.host_position, cx)?
+            DockViewportDropRoute::KnownViewport { target } => {
+                self.resolve_route_target(&target.space, target.host_position, cx)?
             }
             DockViewportDropRoute::TearOff(request) => {
                 return self.commit_tear_off_drop_route(

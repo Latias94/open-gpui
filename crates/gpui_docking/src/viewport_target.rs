@@ -1,5 +1,5 @@
 use crate::{
-    DockViewportAdapter, DockViewportHitCandidate, DockViewportTargetContext,
+    DockViewportAdapter, DockViewportTargetContext, DockViewportTargetHit,
     viewport_target_resolver::choose_viewport_target,
 };
 use open_gpui::{Pixels, Point};
@@ -10,18 +10,18 @@ impl DockViewportAdapter {
         &self,
         position: Point<Pixels>,
         context: &DockViewportTargetContext,
-    ) -> Option<DockViewportHitCandidate> {
+    ) -> Option<DockViewportTargetHit> {
         let hits = self.viewport_hits(position);
         choose_viewport_target(hits, context)
     }
 
-    fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportHitCandidate> {
+    fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportTargetHit> {
         self.spaces()
             .into_iter()
             .filter_map(|space| {
                 let window = self.snapshot(&space)?.window;
                 let host_position = self.screen_to_host(&space, position)?;
-                Some(DockViewportHitCandidate {
+                Some(DockViewportTargetHit {
                     space,
                     window,
                     host_position,

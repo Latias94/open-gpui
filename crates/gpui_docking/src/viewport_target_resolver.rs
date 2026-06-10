@@ -10,9 +10,9 @@ pub(crate) struct DockViewportHit {
     pub(crate) host_position: Point<Pixels>,
 }
 
-/// A viewport hit with the runtime window that produced it.
+/// A registered viewport hit with the runtime window that owns it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockViewportHitCandidate {
+pub(crate) struct DockViewportTargetHit {
     /// Logical dock space that contains the point.
     pub(crate) space: DockSpaceId,
     /// GPUI window currently rendering the logical dock space.
@@ -21,7 +21,8 @@ pub(crate) struct DockViewportHitCandidate {
     pub(crate) host_position: Point<Pixels>,
 }
 
-impl DockViewportHitCandidate {
+impl DockViewportTargetHit {
+    #[cfg(test)]
     pub(crate) fn into_hit(self) -> DockViewportHit {
         DockViewportHit {
             space: self.space,
@@ -31,9 +32,9 @@ impl DockViewportHitCandidate {
 }
 
 pub(crate) fn choose_viewport_target(
-    hits: Vec<DockViewportHitCandidate>,
+    hits: Vec<DockViewportTargetHit>,
     context: &DockViewportTargetContext,
-) -> Option<DockViewportHitCandidate> {
+) -> Option<DockViewportTargetHit> {
     hits.into_iter()
         .enumerate()
         .min_by_key(|(index, hit)| {
@@ -64,8 +65,8 @@ mod tests {
     use crate::viewport_test_support::{handle, space};
     use open_gpui::{point, px};
 
-    fn candidate(space: &str, window: AnyWindowHandle) -> DockViewportHitCandidate {
-        DockViewportHitCandidate {
+    fn candidate(space: &str, window: AnyWindowHandle) -> DockViewportTargetHit {
+        DockViewportTargetHit {
             space: self::space(space),
             window,
             host_position: point(px(5.0), px(5.0)),

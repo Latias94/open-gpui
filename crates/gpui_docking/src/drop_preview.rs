@@ -100,7 +100,7 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockNodeId, DockViewportDropPayload, DockViewportHit, DockViewportTearOffRequest,
+        DockNodeId, DockViewportDropPayload, DockViewportTargetHit, DockViewportTearOffRequest,
         drop_target::{DockDropResolveSource, DockResolvedDropTarget},
         viewport_test_support::{handle, item, space},
     };
@@ -111,11 +111,11 @@ mod tests {
     fn known_viewport_route_preview_uses_host_pointer_anchor() {
         let preview = DockDropPreview::from_viewport_route(
             &DockViewportDropRoute::KnownViewport {
-                hit: DockViewportHit {
+                target: DockViewportTargetHit {
                     space: space("target"),
+                    window: handle(7),
                     host_position: point(px(300.0), px(20.0)),
                 },
-                window: handle(7),
             },
             point(px(40.0), px(50.0)),
         )

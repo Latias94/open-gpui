@@ -2,10 +2,10 @@
 use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportHit, DockViewportPlatformSignals,
+    DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
     DockViewportTearOffRequest,
 };
-use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
+use open_gpui::{Pixels, Point, WindowBounds};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,10 +17,8 @@ pub(crate) enum DockViewportDropRoute {
     },
     /// The release landed inside another registered viewport.
     KnownViewport {
-        /// Destination viewport hit.
-        hit: DockViewportHit,
-        /// Runtime window that owns the destination host.
-        window: AnyWindowHandle,
+        /// Destination viewport hit and its owning runtime window.
+        target: DockViewportTargetHit,
     },
     /// The release landed outside all registered viewports and may open a new platform viewport.
     TearOff(DockViewportTearOffRequest),
@@ -94,11 +92,7 @@ impl DockViewportAdapter {
                 };
             }
 
-            let window = candidate.window;
-            return DockViewportDropRoute::KnownViewport {
-                hit: candidate.into_hit(),
-                window,
-            };
+            return DockViewportDropRoute::KnownViewport { target: candidate };
         }
 
         if let Err(reason) = policy.validate_platform_viewports() {
@@ -215,11 +209,11 @@ mod tests {
         assert_eq!(
             route,
             DockViewportDropRoute::KnownViewport {
-                hit: DockViewportHit {
+                target: DockViewportTargetHit {
                     space: zeta,
+                    window: zeta_window,
                     host_position: point(px(20.0), px(40.0)),
                 },
-                window: zeta_window,
             }
         );
     }
