@@ -123,12 +123,12 @@ fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppCont
     let DockViewportTearOffOpenOutcome::Completed(completed) = outcome else {
         panic!("tear-off should complete after opening a viewport");
     };
-    assert_eq!(completed.action, DockActionOutcome::Changed);
-    assert_eq!(completed.pending.target_space(), &detached_space);
+    assert_eq!(completed.action(), DockActionOutcome::Changed);
+    assert_eq!(completed.pending().target_space(), &detached_space);
     assert_eq!(runtime.pending_tear_off_len(), 0);
     assert_eq!(
         runtime.adapter().window_for_space(&detached_space),
-        Some(completed.registration.window)
+        Some(completed.registration().window)
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -254,7 +254,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_closes_before_window_creat
         panic!("completion should cancel when the source item is gone");
     };
     assert_eq!(
-        cancelled.reason,
+        cancelled.reason(),
         DockViewportTearOffCancelReason::SourceMissing
     );
     assert_eq!(runtime.pending_tear_off_len(), 0);
@@ -334,7 +334,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
         panic!("completion should cancel when the source item moved");
     };
     assert_eq!(
-        cancelled.reason,
+        cancelled.reason(),
         DockViewportTearOffCancelReason::SourceMoved
     );
     assert_eq!(runtime.pending_tear_off_len(), 0);
@@ -381,7 +381,10 @@ fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
     let expired = runtime.expire_tear_off_requests_at(DockViewportTearOffTick::new(602));
 
     assert_eq!(expired.len(), 1);
-    assert_eq!(expired[0].reason, DockViewportTearOffCancelReason::Expired);
+    assert_eq!(
+        expired[0].reason(),
+        DockViewportTearOffCancelReason::Expired
+    );
     assert_eq!(runtime.pending_tear_off_len(), 0);
     assert!(runtime.adapter().spaces().is_empty());
     cx.read_entity(&controller, |controller, _| {
@@ -437,7 +440,7 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
         panic!("non-empty destination space should fail the tear-off move transaction");
     };
     assert_eq!(
-        failure.error,
+        failure.error().clone(),
         DockActionApplyError::Graph(DockGraphMutationError::TargetSpaceNotEmpty {
             space: detached_space.clone()
         })

@@ -182,31 +182,96 @@ pub enum DockViewportTearOffCancelReason {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffCancelled {
     /// Pending request that was removed.
-    pub(crate) pending: DockViewportTearOffPending,
+    pending: DockViewportTearOffPending,
     /// Reason the request was removed before commit.
-    pub(crate) reason: DockViewportTearOffCancelReason,
+    reason: DockViewportTearOffCancelReason,
+}
+
+impl DockViewportTearOffCancelled {
+    pub(crate) fn new(
+        pending: DockViewportTearOffPending,
+        reason: DockViewportTearOffCancelReason,
+    ) -> Self {
+        Self { pending, reason }
+    }
+
+    pub(crate) fn pending(&self) -> &DockViewportTearOffPending {
+        &self.pending
+    }
+
+    pub(crate) fn reason(&self) -> DockViewportTearOffCancelReason {
+        self.reason
+    }
 }
 
 /// Completed tear-off request after viewport registration and graph move commit.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffCompleted {
     /// Pending request that completed.
-    pub(crate) pending: DockViewportTearOffPending,
+    pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome.
-    pub(crate) registration: crate::DockViewportRegisterOutcome,
+    registration: crate::DockViewportRegisterOutcome,
     /// Graph transaction outcome.
-    pub(crate) action: crate::DockActionOutcome,
+    action: crate::DockActionOutcome,
+}
+
+impl DockViewportTearOffCompleted {
+    pub(crate) fn new(
+        pending: DockViewportTearOffPending,
+        registration: crate::DockViewportRegisterOutcome,
+        action: crate::DockActionOutcome,
+    ) -> Self {
+        Self {
+            pending,
+            registration,
+            action,
+        }
+    }
+
+    pub(crate) fn pending(&self) -> &DockViewportTearOffPending {
+        &self.pending
+    }
+
+    pub(crate) fn registration(&self) -> &crate::DockViewportRegisterOutcome {
+        &self.registration
+    }
+
+    pub(crate) fn action(&self) -> crate::DockActionOutcome {
+        self.action
+    }
 }
 
 /// Tear-off request whose viewport opened but graph commit failed afterward.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffCommitFailure {
     /// Pending request that reached commit.
-    pub(crate) pending: DockViewportTearOffPending,
+    pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome before cleanup.
-    pub(crate) registration: crate::DockViewportRegisterOutcome,
+    registration: crate::DockViewportRegisterOutcome,
     /// Commit error returned by the docking workspace.
-    pub(crate) error: crate::DockActionApplyError,
+    error: crate::DockActionApplyError,
+}
+
+impl DockViewportTearOffCommitFailure {
+    pub(crate) fn new(
+        pending: DockViewportTearOffPending,
+        registration: crate::DockViewportRegisterOutcome,
+        error: crate::DockActionApplyError,
+    ) -> Self {
+        Self {
+            pending,
+            registration,
+            error,
+        }
+    }
+
+    pub(crate) fn pending(&self) -> &DockViewportTearOffPending {
+        &self.pending
+    }
+
+    pub(crate) fn error(&self) -> &crate::DockActionApplyError {
+        &self.error
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -267,9 +332,9 @@ impl DockViewportDropRouteOutcome {
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
             )) => Some(DockViewportActivationTarget {
-                space: completed.pending.target_space().clone(),
-                window: completed.registration.window,
-                focus_item: completed.pending.focus_item().cloned(),
+                space: completed.pending().target_space().clone(),
+                window: completed.registration().window,
+                focus_item: completed.pending().focus_item().cloned(),
             }),
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::Duplicate(_)
@@ -284,14 +349,14 @@ impl DockViewportDropRouteOutcome {
             DockViewportDropRouteOutcome::Action(outcome) => Ok(outcome.action),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
-            )) => Ok(completed.action),
+            )) => Ok(completed.action()),
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Duplicate(_))
             | DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Cancelled(_)) => {
                 Ok(DockActionOutcome::Unchanged)
             }
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::CommitFailed(failure),
-            ) => Err(failure.error.clone()),
+            ) => Err(failure.error().clone()),
         }
     }
 }
@@ -373,7 +438,7 @@ impl DockViewportTearOffMachine {
     ) -> Option<DockViewportTearOffCancelled> {
         self.pending_by_key
             .remove(key)
-            .map(|pending| DockViewportTearOffCancelled { pending, reason })
+            .map(|pending| DockViewportTearOffCancelled::new(pending, reason))
     }
 
     pub(crate) fn expire(
@@ -515,7 +580,10 @@ mod tests {
         let expired = machine.expire(DockViewportTearOffTick::new(602));
 
         assert_eq!(expired.len(), 1);
-        assert_eq!(expired[0].reason, DockViewportTearOffCancelReason::Expired);
+        assert_eq!(
+            expired[0].reason(),
+            DockViewportTearOffCancelReason::Expired
+        );
         assert_eq!(machine.len(), 0);
     }
 }

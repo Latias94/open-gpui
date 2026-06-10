@@ -619,22 +619,18 @@ impl DockViewportRuntime {
                 let _ = registration
                     .window
                     .update(cx, |_, window, _| window.activate_window());
-                DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted {
+                DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted::new(
                     pending,
                     registration,
                     action,
-                })
+                ))
             }
             Err(error) => {
                 self.adapter.unregister_space(pending.target_space());
                 self.host_scenes.unregister_space(pending.target_space());
                 self.close_gate.sync_adapter(&self.adapter);
                 DockViewportTearOffCompletionOutcome::CommitFailed(
-                    DockViewportTearOffCommitFailure {
-                        pending,
-                        registration,
-                        error,
-                    },
+                    DockViewportTearOffCommitFailure::new(pending, registration, error),
                 )
             }
         }
@@ -705,10 +701,9 @@ impl DockViewportRuntime {
                         DockViewportTearOffCancelReason::SourceMoved
                     }
                 };
-                DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled {
-                    pending,
-                    reason,
-                })
+                DockViewportTearOffOpenOutcome::Cancelled(DockViewportTearOffCancelled::new(
+                    pending, reason,
+                ))
             }
             DockViewportTearOffCompletionOutcome::CommitFailed(failure) => {
                 DockViewportTearOffOpenOutcome::CommitFailed(failure)

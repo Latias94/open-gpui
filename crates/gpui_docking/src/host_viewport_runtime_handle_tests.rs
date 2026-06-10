@@ -357,11 +357,11 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
     let DockViewportTearOffOpenOutcome::Completed(completed) = outcome else {
         panic!("tear-off should complete through the handle");
     };
-    assert_eq!(completed.pending.target_space(), &detached_space);
+    assert_eq!(completed.pending().target_space(), &detached_space);
     assert_eq!(runtime.borrow().pending_tear_off_len(), 0);
     assert_eq!(
         runtime.borrow().adapter().window_for_space(&detached_space),
-        Some(completed.registration.window)
+        Some(completed.registration().window)
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -576,33 +576,33 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
     else {
         panic!("tear-off route should open a viewport and complete the move");
     };
-    assert_eq!(completed.action, crate::DockActionOutcome::Changed);
+    assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
         activation.as_ref().map(|target| target.window),
-        Some(completed.registration.window),
+        Some(completed.registration().window),
         "tear-off completion should surface the new viewport activation target"
     );
     assert_eq!(
-        completed.pending.request().release_position(),
+        completed.pending().request().release_position(),
         release_position
     );
     assert_eq!(
-        completed.pending.request().suggested_window_bounds(),
+        completed.pending().request().suggested_window_bounds(),
         Some(suggested_window_bounds)
     );
     assert_eq!(
-        completed.pending.target_space().as_str(),
+        completed.pending().target_space().as_str(),
         "source:tear-off:a:0"
     );
     assert_eq!(
         runtime
             .borrow()
             .adapter()
-            .window_for_space(completed.pending.target_space()),
-        Some(completed.registration.window)
+            .window_for_space(completed.pending().target_space()),
+        Some(completed.registration().window)
     );
     let opened_window = completed
-        .registration
+        .registration()
         .window
         .downcast::<crate::DockHost>()
         .expect("tear-off viewport should render DockHost");
@@ -623,7 +623,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
         assert_eq!(
             controller
                 .graph()
-                .collect_items_in_space(completed.pending.target_space()),
+                .collect_items_in_space(completed.pending().target_space()),
             vec![item("a")]
         );
     });
@@ -671,18 +671,18 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     else {
         panic!("stack tear-off route should open a viewport and complete the move");
     };
-    assert_eq!(completed.action, crate::DockActionOutcome::Changed);
+    assert_eq!(completed.action(), crate::DockActionOutcome::Changed);
     assert_eq!(
         activation.as_ref().map(|target| target.window),
-        Some(completed.registration.window),
+        Some(completed.registration().window),
         "stack tear-off completion should surface the new viewport activation target"
     );
     assert_eq!(
-        completed.pending.target_space().as_str(),
+        completed.pending().target_space().as_str(),
         "source:tear-off:tabs:0"
     );
     let opened_window = completed
-        .registration
+        .registration()
         .window
         .downcast::<crate::DockHost>()
         .expect("stack tear-off viewport should render DockHost");
@@ -704,7 +704,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
         );
         let detached_root = controller
             .graph()
-            .root(completed.pending.target_space())
+            .root(completed.pending().target_space())
             .expect("detached stack should become the target root");
         let DockNode::Tabs { items, active } = controller
             .graph()
