@@ -160,7 +160,7 @@ impl DockViewportRuntimeStatus {
             source_space: source_space.clone(),
             source_tabs,
             payload: DockViewportPayloadRecord::from_payload(&payload),
-            target: DockViewportRouteTarget::from_route(route),
+            target: DockViewportRouteTarget::from_route(&source_space, route),
         });
     }
 
@@ -194,13 +194,10 @@ impl DockViewportRuntimeStatus {
 }
 
 impl DockViewportRouteTarget {
-    fn from_route(route: &DockViewportDropRoute) -> Self {
+    fn from_route(source_space: &DockSpaceId, route: &DockViewportDropRoute) -> Self {
         match route {
-            DockViewportDropRoute::Local {
-                space,
-                host_position,
-            } => Self::Local {
-                space: space.clone(),
+            DockViewportDropRoute::Local { host_position } => Self::Local {
+                space: source_space.clone(),
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { hit, window } => Self::KnownViewport {
@@ -330,9 +327,8 @@ mod tests {
     use slotmap::Key;
 
     #[test]
-    fn route_record_uses_local_route_space_as_target_identity() {
+    fn route_record_derives_local_target_identity_from_source() {
         let source = DockSpaceId::from("source");
-        let target = DockSpaceId::from("target");
         let host_position = point(px(12.0), px(34.0));
         let mut status = DockViewportRuntimeStatus::default();
 
@@ -340,10 +336,7 @@ mod tests {
             source.clone(),
             DockNodeId::null(),
             DockViewportDropPayload::Tabs,
-            &DockViewportDropRoute::Local {
-                space: target.clone(),
-                host_position,
-            },
+            &DockViewportDropRoute::Local { host_position },
         );
 
         let route = status
@@ -357,9 +350,9 @@ mod tests {
                 DockViewportRouteTarget::Local {
                     space,
                     host_position: recorded_position,
-                } if space == &target && *recorded_position == host_position
+                } if space == &source && *recorded_position == host_position
             ),
-            "local route target should come from the route itself, got {:?}",
+            "local route target should be the recorded source, got {:?}",
             route.target
         );
     }

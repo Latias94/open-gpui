@@ -38,8 +38,8 @@
 //! Runtime-opened windows install a should-close hook so [`DockViewportClosePolicy::Prevent`] can
 //! veto platform closes before cleanup runs. Persist [`DockLayout`] and
 //! [`DockViewportPlacementLayout`] separately: layout restores logical dock spaces, while placement
-//! restores platform-window hints for the runtime adapter. Cross-window drops derive active,
-//! hovered, and front-to-back window arbitration from GPUI runtime signals inside the crate.
+//! restores platform-window hints for the runtime adapter. Cross-window drops derive event-window,
+//! active-window, and front-to-back window arbitration from GPUI runtime signals inside the crate.
 //! Panel close/reopen flows should use [`DockController::close_item`],
 //! [`DockController::open_item`], [`DockWorkspace::close_item`], or [`DockWorkspace::open_item`]:
 //! close removes the item from the graph while the panel catalog remains available, and reopen

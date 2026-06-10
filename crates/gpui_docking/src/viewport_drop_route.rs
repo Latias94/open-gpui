@@ -12,8 +12,6 @@ use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 pub(crate) enum DockViewportDropRoute {
     /// The release is still in the source viewport, so the source host should commit locally.
     Local {
-        /// Source viewport space that owns the local target.
-        space: DockSpaceId,
         /// Local host position for the release.
         host_position: Point<Pixels>,
     },
@@ -92,7 +90,6 @@ impl DockViewportAdapter {
         {
             if candidate.space == request.source_space {
                 return DockViewportDropRoute::Local {
-                    space: candidate.space,
                     host_position: candidate.host_position,
                 };
             }
@@ -180,7 +177,6 @@ mod tests {
                 DockViewportTargetContext::new(),
             ),
             DockViewportDropRoute::Local {
-                space: main,
                 host_position: point(px(5.0), px(5.0)),
             }
         );
