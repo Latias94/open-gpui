@@ -2496,9 +2496,7 @@ mod tests {
             size(px(100.0), px(100.0)),
         );
         front.z_index = 2;
-        let mut document = CanvasDocument::default();
-        document.insert_node(back).unwrap();
-        document.insert_node(front).unwrap();
+        let document = document_fixture().node(back).node(front).build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("back"));
 
@@ -2545,9 +2543,7 @@ mod tests {
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         );
         front.z_index = 10;
-        let mut document = CanvasDocument::default();
-        document.insert_node(back).unwrap();
-        document.insert_shape(front).unwrap();
+        let document = document_fixture().node(back).shape(front).build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("back"));
 
@@ -2588,9 +2584,7 @@ mod tests {
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         );
         front.z_index = 0;
-        let mut document = CanvasDocument::default();
-        document.insert_node(back).unwrap();
-        document.insert_shape(front).unwrap();
+        let document = document_fixture().node(back).shape(front).build();
         let mut editor = CanvasEditor::new(document);
         editor
             .session
@@ -2646,11 +2640,12 @@ mod tests {
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         );
         top.z_index = 3;
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
-        document.insert_shape(shape).unwrap();
-        document.insert_shape(top).unwrap();
-        document.insert_edge(edge).unwrap();
+        let document = document_fixture()
+            .node(node)
+            .shape(shape)
+            .shape(top)
+            .edge(edge)
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("node"));
         editor.session.selection.edges.insert(EdgeId::from("edge"));
