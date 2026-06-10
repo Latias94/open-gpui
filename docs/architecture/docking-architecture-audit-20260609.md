@@ -125,6 +125,8 @@ Native dogfood:
   windows using GPUI test mouse events and public selector strings. This keeps the example from
   drifting while physical native-window drag dogfood remains the final proof for backend pixel and
   event delivery.
+- `docs/verification.md` now carries the manual native-window dogfood checklist so the final
+  physical verification run has a stable command and acceptance path.
 
 Test locality:
 
@@ -144,9 +146,13 @@ Test locality:
   Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
   until a reliable platform primitive is available.
 - macOS build, native-launch smoke, and TestApp-level rendered cross-window drag have been verified
-  for `examples/docking-native`. A local `x86_64-pc-windows-msvc` cross-check is still blocked by
-  the absence of the MSVC `lib.exe` toolchain, so Windows backend verification needs a
-  Windows/MSVC environment or CI job.
+  for `examples/docking-native`. The repository's Windows workflow already checks the verification
+  gate, `xtask`, `open-gpui-windows --all-features`, and the shared WGPU font-kit path on a
+  Windows runner; `xtask verify` also compile-checks `examples/docking-native` through
+  `cargo check --workspace`. However, the current local `x86_64-pc-windows-msvc` cross-check is
+  still blocked by the absence of the MSVC `lib.exe` toolchain, and the newly added
+  docking-native rendered test step still needs a remote Windows result for this branch. Physical
+  native-window dogfood remains manual proof beyond CI.
 - Add richer product behavior through the existing seams: route-preview polish, focus restoration,
   accessibility behavior, and broader backend coverage for outside-window release polling.
 - Continue splitting future viewport or graph code only when the extracted module passes the

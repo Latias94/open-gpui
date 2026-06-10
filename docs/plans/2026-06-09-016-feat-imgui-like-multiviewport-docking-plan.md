@@ -591,7 +591,12 @@ example focused on the usable docking surface rather than explanatory text.
 
 **Verification:** The native example builds, its public-surface tests drive rendered GPUI
 cross-window tab and stack drags through runtime-opened viewports, and manual dogfood can still
-cover every physical native-window P0 acceptance path from this plan.
+cover every physical native-window P0 acceptance path from this plan. The root workspace includes
+`examples/docking-native`, and `xtask verify` compile-checks it through `cargo check --workspace`,
+while the Windows CI gate now includes a dedicated docking-native rendered test step. The current
+branch still needs a remote Windows CI result for that step, and CI still cannot replace physical
+native-window dogfood evidence. The manual native dogfood checklist lives in
+`docs/verification.md`.
 
 ### U8. Documentation And Deletion Pass
 
@@ -680,6 +685,14 @@ should make the runtime path easy while keeping single-window hosts lightweight.
   plus host-local polling. The remaining risk is backend coverage and correctness: unsupported
   platforms return `None`, so native dogfood must verify that fallback behavior remains explicit
   instead of silently claiming tear-off completion.
+- The repository has a Windows CI route for `cargo run -p xtask -- verify`,
+  `cargo nextest run -p xtask`, `cargo check -p open-gpui-windows --all-features --locked`, and
+  the shared WGPU check. Because `xtask verify` includes `cargo check --workspace`, it
+  compile-checks `examples/docking-native`, and the workflow now runs
+  `cargo nextest run -p open-gpui-docking-native --no-fail-fast` on Windows. This plan should stay
+  active until the current branch has a passing remote Windows result for that step and a documented
+  Windows/MSVC or macOS physical native-window manual run of the `docs/verification.md` dogfood
+  checklist for the product paths CI cannot exercise.
 - Storing host entities in runtime would be acceptable runtime state, but it must stay separate
   from `DockViewportAdapter`'s serializable placement snapshots and from `DockGraph`.
 - Whole-stack drag can invalidate source tabs while a drag is active. Stack transactions need
