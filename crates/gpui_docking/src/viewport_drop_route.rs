@@ -242,13 +242,13 @@ impl DockViewportAdapter {
 fn tear_off_request_from_route_request(
     request: &DockViewportDropRouteRequest,
 ) -> DockViewportTearOffRequest {
-    DockViewportTearOffRequest {
-        source_space: request.source_space().clone(),
-        source_tabs: request.source_tabs(),
-        payload: request.payload().clone(),
-        release_position: request.release_position(),
-        suggested_window_bounds: request.suggested_window_bounds(),
-    }
+    DockViewportTearOffRequest::new(
+        request.source_space().clone(),
+        request.source_tabs(),
+        request.payload().clone(),
+        request.release_position(),
+        request.suggested_window_bounds(),
+    )
 }
 
 #[cfg(test)]
@@ -362,13 +362,13 @@ mod tests {
                 &policy,
                 DockViewportTargetContext::new(),
             ),
-            DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
-                source_space: source,
+            DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
+                source,
                 source_tabs,
-                payload: DockViewportDropPayload::Item(item),
+                DockViewportDropPayload::Item(item),
                 release_position,
-                suggested_window_bounds: Some(suggested_window_bounds),
-            })
+                Some(suggested_window_bounds),
+            ))
         );
     }
 
@@ -441,23 +441,23 @@ mod tests {
             Some(suggested_window_bounds),
             DockViewportTargetContext::new(),
         );
-        let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
-            source_space: space("other"),
+        let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
+            space("other"),
             source_tabs,
-            payload: DockViewportDropPayload::Tabs,
-            release_position: point(px(1.0), px(2.0)),
-            suggested_window_bounds: None,
-        });
+            DockViewportDropPayload::Tabs,
+            point(px(1.0), px(2.0)),
+            None,
+        ));
 
         assert_eq!(
             DockViewportDropRouteCommit::from_route_request(&request, mismatched_route),
-            DockViewportDropRouteCommit::TearOff(DockViewportTearOffRequest {
-                source_space: source,
+            DockViewportDropRouteCommit::TearOff(DockViewportTearOffRequest::new(
+                source,
                 source_tabs,
-                payload: DockViewportDropPayload::Item(item),
+                DockViewportDropPayload::Item(item),
                 release_position,
-                suggested_window_bounds: Some(suggested_window_bounds),
-            })
+                Some(suggested_window_bounds),
+            ))
         );
     }
 }

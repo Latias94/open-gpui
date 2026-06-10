@@ -358,9 +358,9 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         if let Some(outcome) = self.single_viewport_outside_release_noop(
-            &request.source_space,
-            request.source_tabs,
-            &request.payload,
+            request.source_space(),
+            request.source_tabs(),
+            request.payload(),
             cx,
         ) {
             return Ok(outcome);
@@ -386,35 +386,35 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportPreparedTearOffDrop, DockActionApplyError> {
         {
             let graph = self.controller.read(cx).graph();
-            match &request.payload {
+            match request.payload() {
                 DockViewportDropPayload::Item(item) => {
                     if graph
-                        .find_item_in_space(&request.source_space, item)
-                        .is_none_or(|(tabs, _)| tabs != request.source_tabs)
+                        .find_item_in_space(request.source_space(), item)
+                        .is_none_or(|(tabs, _)| tabs != request.source_tabs())
                     {
                         return Err(DockActionApplyError::ItemNotInTabs {
-                            tabs: request.source_tabs,
+                            tabs: request.source_tabs(),
                             item: item.clone(),
                         });
                     }
                 }
                 DockViewportDropPayload::Tabs => {
                     if graph
-                        .root_for_node_in_space(&request.source_space, request.source_tabs)
+                        .root_for_node_in_space(request.source_space(), request.source_tabs())
                         .is_none()
                     {
                         return Err(tear_off_payload_mismatch(
-                            &request.source_space,
-                            request.source_tabs,
+                            request.source_space(),
+                            request.source_tabs(),
                         ));
                     }
                     if !matches!(
-                        graph.node(request.source_tabs),
+                        graph.node(request.source_tabs()),
                         Some(DockNode::Tabs { items, .. }) if !items.is_empty()
                     ) {
                         return Err(tear_off_payload_mismatch(
-                            &request.source_space,
-                            request.source_tabs,
+                            request.source_space(),
+                            request.source_tabs(),
                         ));
                     }
                 }
@@ -489,8 +489,8 @@ impl DockViewportRuntime {
         let tick = self.next_tear_off_tick();
         DockSpaceId::new(format!(
             "{}:tear-off:{}:{}",
-            request.source_space,
-            request.payload.label(),
+            request.source_space(),
+            request.payload().label(),
             tick.as_u64()
         ))
     }
@@ -499,9 +499,9 @@ impl DockViewportRuntime {
         &self,
         request: &DockViewportTearOffRequest,
     ) -> WindowOptions {
-        let window_bounds = request.suggested_window_bounds.unwrap_or_else(|| {
+        let window_bounds = request.suggested_window_bounds().unwrap_or_else(|| {
             WindowBounds::Windowed(Bounds::new(
-                request.release_position,
+                request.release_position(),
                 size(px(360.0), px(240.0)),
             ))
         });
@@ -652,9 +652,7 @@ impl DockViewportRuntime {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let key = request
-            .payload
-            .key(&request.source_space, request.source_tabs);
+        let key = request.key();
         let begin = self.begin_tear_off_request(request, target_space, cx);
         let pending = match begin {
             DockViewportTearOffBeginOutcome::Pending(pending) => pending,
@@ -745,7 +743,7 @@ impl DockViewportRuntime {
         request: &DockViewportTearOffRequest,
         cx: &App,
     ) -> Option<DockItemId> {
-        self.focus_item_for_payload(&request.payload, request.source_tabs, cx)
+        self.focus_item_for_payload(request.payload(), request.source_tabs(), cx)
     }
 
     fn focus_item_for_payload(
@@ -913,11 +911,11 @@ impl DockViewportRuntime {
         cx: &App,
     ) -> DockViewportTearOffSourceStatus {
         let graph = self.controller.read(cx).graph();
-        match &pending.request.payload {
+        match pending.request.payload() {
             DockViewportDropPayload::Item(item) => graph
-                .find_item_in_space(&pending.request.source_space, item)
+                .find_item_in_space(pending.request.source_space(), item)
                 .map(|(tabs, _)| {
-                    if tabs == pending.request.source_tabs {
+                    if tabs == pending.request.source_tabs() {
                         DockViewportTearOffSourceStatus::Ready
                     } else {
                         DockViewportTearOffSourceStatus::Moved
@@ -931,12 +929,12 @@ impl DockViewportRuntime {
                     }
                 }),
             DockViewportDropPayload::Tabs => {
-                let source_tabs = pending.request.source_tabs;
+                let source_tabs = pending.request.source_tabs();
                 let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
                     return DockViewportTearOffSourceStatus::Missing;
                 };
                 if graph
-                    .root_for_node_in_space(&pending.request.source_space, source_tabs)
+                    .root_for_node_in_space(pending.request.source_space(), source_tabs)
                     .is_some()
                     && !items.is_empty()
                 {
@@ -954,15 +952,15 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.controller.update(cx, |controller, cx| {
-            let outcome = match &pending.request.payload {
+            let outcome = match pending.request.payload() {
                 DockViewportDropPayload::Item(item) => controller.commit_item_to_empty_dock_space(
-                    &pending.request.source_space,
+                    pending.request.source_space(),
                     item,
                     &pending.target_space,
                 ),
                 DockViewportDropPayload::Tabs => controller.commit_tabs_to_empty_dock_space(
-                    &pending.request.source_space,
-                    pending.request.source_tabs,
+                    pending.request.source_space(),
+                    pending.request.source_tabs(),
                     &pending.target_space,
                 ),
             };

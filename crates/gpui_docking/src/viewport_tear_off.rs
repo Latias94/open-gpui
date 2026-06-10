@@ -53,15 +53,57 @@ impl DockViewportDropPayload {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffRequest {
     /// Source dock space containing the dragged payload.
-    pub(crate) source_space: DockSpaceId,
+    source_space: DockSpaceId,
     /// Source tabs node where the drag started.
-    pub(crate) source_tabs: DockNodeId,
+    source_tabs: DockNodeId,
     /// Payload being torn off.
-    pub(crate) payload: DockViewportDropPayload,
+    payload: DockViewportDropPayload,
     /// Release position in screen coordinates.
-    pub(crate) release_position: Point<Pixels>,
+    release_position: Point<Pixels>,
     /// Suggested platform window bounds for the new viewport, when known.
-    pub(crate) suggested_window_bounds: Option<WindowBounds>,
+    suggested_window_bounds: Option<WindowBounds>,
+}
+
+impl DockViewportTearOffRequest {
+    pub(crate) fn new(
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+    ) -> Self {
+        Self {
+            source_space: source_space.into(),
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+        }
+    }
+
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        &self.source_space
+    }
+
+    pub(crate) fn source_tabs(&self) -> DockNodeId {
+        self.source_tabs
+    }
+
+    pub(crate) fn payload(&self) -> &DockViewportDropPayload {
+        &self.payload
+    }
+
+    pub(crate) fn release_position(&self) -> Point<Pixels> {
+        self.release_position
+    }
+
+    pub(crate) fn suggested_window_bounds(&self) -> Option<WindowBounds> {
+        self.suggested_window_bounds
+    }
+
+    pub(crate) fn key(&self) -> DockViewportTearOffKey {
+        self.payload.key(&self.source_space, self.source_tabs)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -296,9 +338,7 @@ impl DockViewportTearOffMachine {
         now: DockViewportTearOffTick,
     ) -> DockViewportTearOffBeginOutcome {
         self.expire(now);
-        let key = request
-            .payload
-            .key(&request.source_space, request.source_tabs);
+        let key = request.key();
         if let Some(pending) = self.pending_by_key.get(&key) {
             return DockViewportTearOffBeginOutcome::Duplicate(pending.clone());
         }
@@ -379,13 +419,13 @@ mod tests {
     #[test]
     fn tear_off_machine_deduplicates_pending_items() {
         let mut machine = DockViewportTearOffMachine::default();
-        let request = DockViewportTearOffRequest {
-            source_space: space("main"),
-            source_tabs: DockNodeId::null(),
-            payload: DockViewportDropPayload::Item(item("a")),
-            release_position: point(px(900.0), px(900.0)),
-            suggested_window_bounds: None,
-        };
+        let request = DockViewportTearOffRequest::new(
+            space("main"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(900.0), px(900.0)),
+            None,
+        );
 
         let first = machine.begin(
             request.clone(),
@@ -412,13 +452,13 @@ mod tests {
     fn tear_off_machine_deduplicates_pending_tab_stacks() {
         let mut machine = DockViewportTearOffMachine::default();
         let source = space("main");
-        let request = DockViewportTearOffRequest {
-            source_space: source.clone(),
-            source_tabs: DockNodeId::null(),
-            payload: DockViewportDropPayload::Tabs,
-            release_position: point(px(900.0), px(900.0)),
-            suggested_window_bounds: None,
-        };
+        let request = DockViewportTearOffRequest::new(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            point(px(900.0), px(900.0)),
+            None,
+        );
 
         let first = machine.begin(
             request.clone(),
@@ -437,7 +477,7 @@ mod tests {
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
             panic!("second stack begin should be idempotent");
         };
-        assert_eq!(existing.request.source_space, source);
+        assert_eq!(existing.request.source_space(), &source);
         assert_eq!(existing.target_space, space("detached"));
         assert_eq!(machine.len(), 1);
     }
@@ -445,13 +485,13 @@ mod tests {
     #[test]
     fn tear_off_machine_expires_stale_pending_requests() {
         let mut machine = DockViewportTearOffMachine::default();
-        let request = DockViewportTearOffRequest {
-            source_space: space("main"),
-            source_tabs: DockNodeId::null(),
-            payload: DockViewportDropPayload::Item(item("a")),
-            release_position: point(px(900.0), px(900.0)),
-            suggested_window_bounds: None,
-        };
+        let request = DockViewportTearOffRequest::new(
+            space("main"),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(900.0), px(900.0)),
+            None,
+        );
 
         machine.begin(
             request,

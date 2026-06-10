@@ -132,13 +132,13 @@ mod tests {
         let source_tabs = DockNodeId::null();
         let release_position = point(px(900.0), px(700.0));
         let preview = DockDropPreview::from_viewport_route(
-            &DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
+            &DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
                 source_space,
                 source_tabs,
-                payload: DockViewportDropPayload::Item(item("a")),
+                DockViewportDropPayload::Item(item("a")),
                 release_position,
-                suggested_window_bounds: None,
-            }),
+                None,
+            )),
             point(px(100.0), px(120.0)),
         )
         .expect("tear-off route should produce a preview");

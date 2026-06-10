@@ -22,13 +22,13 @@ fn tear_off_request(
     source_tabs: DockNodeId,
     item: DockItemId,
 ) -> DockViewportTearOffRequest {
-    DockViewportTearOffRequest {
+    DockViewportTearOffRequest::new(
         source_space,
         source_tabs,
-        payload: DockViewportDropPayload::Item(item),
-        release_position: point(px(900.0), px(900.0)),
-        suggested_window_bounds: None,
-    }
+        DockViewportDropPayload::Item(item),
+        point(px(900.0), px(900.0)),
+        None,
+    )
 }
 
 fn leaf_host_scene_fact(root: DockNodeId, target_tabs: DockNodeId) -> DockHostDropSceneFact {
@@ -517,19 +517,14 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             app,
         )
     });
-    assert!(matches!(
-        tear_off,
-        DockViewportDropRoute::TearOff(DockViewportTearOffRequest {
-            source_space: routed_source,
-            source_tabs: routed_tabs,
-            payload: DockViewportDropPayload::Item(routed_item),
-            release_position: routed_position,
-            suggested_window_bounds: None,
-        }) if routed_source == source_space
-            && routed_tabs == source_tabs
-            && routed_item == item("a")
-            && routed_position == release_position
-    ));
+    let DockViewportDropRoute::TearOff(request) = tear_off else {
+        panic!("allowed workspace policy should resolve an outside release as tear-off");
+    };
+    assert_eq!(request.source_space(), &source_space);
+    assert_eq!(request.source_tabs(), source_tabs);
+    assert_eq!(request.payload(), &DockViewportDropPayload::Item(item("a")));
+    assert_eq!(request.release_position(), release_position);
+    assert_eq!(request.suggested_window_bounds(), None);
     let status = runtime.runtime_status();
     let target = &status
         .last_route
@@ -587,9 +582,12 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
         Some(completed.registration.window),
         "tear-off completion should surface the new viewport activation target"
     );
-    assert_eq!(completed.pending.request.release_position, release_position);
     assert_eq!(
-        completed.pending.request.suggested_window_bounds,
+        completed.pending.request.release_position(),
+        release_position
+    );
+    assert_eq!(
+        completed.pending.request.suggested_window_bounds(),
         Some(suggested_window_bounds)
     );
     assert_eq!(

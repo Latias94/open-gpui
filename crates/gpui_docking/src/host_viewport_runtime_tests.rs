@@ -23,13 +23,13 @@ fn tear_off_request(
     source_tabs: crate::DockNodeId,
     item: DockItemId,
 ) -> DockViewportTearOffRequest {
-    DockViewportTearOffRequest {
+    DockViewportTearOffRequest::new(
         source_space,
         source_tabs,
-        payload: DockViewportDropPayload::Item(item),
-        release_position: point(px(900.0), px(900.0)),
-        suggested_window_bounds: None,
-    }
+        DockViewportDropPayload::Item(item),
+        point(px(900.0), px(900.0)),
+        None,
+    )
 }
 
 fn item_tear_off_key(

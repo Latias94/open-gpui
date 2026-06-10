@@ -162,9 +162,7 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
-        let key = request
-            .payload
-            .key(&request.source_space, request.source_tabs);
+        let key = request.key();
         let pending = {
             let mut runtime = self.runtime.borrow_mut();
             match runtime.begin_tear_off_request(request, target_space, cx) {
@@ -283,9 +281,9 @@ impl DockViewportRuntimeHandle {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
             if let Some(outcome) = runtime.single_viewport_outside_release_noop(
-                &request.source_space,
-                request.source_tabs,
-                &request.payload,
+                request.source_space(),
+                request.source_tabs(),
+                request.payload(),
                 cx,
             ) {
                 let result = Ok(outcome);
