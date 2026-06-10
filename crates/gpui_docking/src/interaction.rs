@@ -57,19 +57,20 @@ pub(crate) struct DockOutsideReleasePollSession {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPayloadDropRelease {
     payload: DockDragPayload,
-    target_space: DockSpaceId,
+    /// Host space that observed the release; runtime routing may choose a different target.
+    host_space: DockSpaceId,
     release_position: Point<Pixels>,
 }
 
 impl DockPayloadDropRelease {
     pub(crate) fn new(
         payload: DockDragPayload,
-        target_space: DockSpaceId,
+        host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
         Self {
             payload,
-            target_space,
+            host_space,
             release_position,
         }
     }
@@ -78,8 +79,8 @@ impl DockPayloadDropRelease {
         &self.payload
     }
 
-    pub(crate) fn target_space(&self) -> &DockSpaceId {
-        &self.target_space
+    pub(crate) fn host_space(&self) -> &DockSpaceId {
+        &self.host_space
     }
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {
@@ -92,7 +93,8 @@ pub(crate) struct DockOutsideReleasePollRequest {
     session: DockOutsideReleasePollSession,
     payload: Option<DockDragPayload>,
     left_button_pressed: Option<bool>,
-    target_space: DockSpaceId,
+    /// Host space that owns the polling window.
+    host_space: DockSpaceId,
     release_position: Point<Pixels>,
 }
 
@@ -101,14 +103,14 @@ impl DockOutsideReleasePollRequest {
         session: DockOutsideReleasePollSession,
         payload: Option<DockDragPayload>,
         left_button_pressed: Option<bool>,
-        target_space: DockSpaceId,
+        host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
         Self {
             session,
             payload,
             left_button_pressed,
-            target_space,
+            host_space,
             release_position,
         }
     }
@@ -126,7 +128,8 @@ pub(crate) enum DockOutsideReleasePollDecision {
 pub(crate) struct DockRenderedOutsideReleaseRequest {
     viewport_runtime_available: bool,
     payload: Option<DockDragPayload>,
-    target_space: DockSpaceId,
+    /// Host space that observed the rendered mouse-up outside event.
+    host_space: DockSpaceId,
     release_position: Point<Pixels>,
 }
 
@@ -134,13 +137,13 @@ impl DockRenderedOutsideReleaseRequest {
     pub(crate) fn new(
         viewport_runtime_available: bool,
         payload: Option<DockDragPayload>,
-        target_space: DockSpaceId,
+        host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
         Self {
             viewport_runtime_available,
             payload,
-            target_space,
+            host_space,
             release_position,
         }
     }
@@ -340,7 +343,7 @@ impl DockInteractionRuntime {
                 self.finish_outside_release_poll(session);
                 DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::new(
                     payload,
-                    request.target_space,
+                    request.host_space,
                     request.release_position,
                 ))
             }
@@ -365,7 +368,7 @@ impl DockInteractionRuntime {
 
         DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
             payload,
-            request.target_space,
+            request.host_space,
             request.release_position,
         ))
     }
@@ -435,7 +438,7 @@ mod tests {
             session.clone(),
             payload,
             left_button_pressed,
-            DockSpaceId::from("target"),
+            DockSpaceId::from("host"),
             point(px(120.0), px(80.0)),
         )
     }
@@ -447,22 +450,22 @@ mod tests {
         DockRenderedOutsideReleaseRequest::new(
             viewport_runtime_available,
             payload,
-            DockSpaceId::from("target"),
+            DockSpaceId::from("host"),
             point(px(120.0), px(80.0)),
         )
     }
 
     #[test]
-    fn payload_drop_release_carries_payload_target_and_position() {
+    fn payload_drop_release_carries_payload_host_and_position() {
         let payload = item_payload("a", "Panel A");
-        let target_space = DockSpaceId::from("target");
+        let host_space = DockSpaceId::from("host");
         let release_position = point(px(120.0), px(80.0));
 
         let release =
-            DockPayloadDropRelease::new(payload.clone(), target_space.clone(), release_position);
+            DockPayloadDropRelease::new(payload.clone(), host_space.clone(), release_position);
 
         assert_eq!(release.payload(), &payload);
-        assert_eq!(release.target_space(), &target_space);
+        assert_eq!(release.host_space(), &host_space);
         assert_eq!(release.release_position(), release_position);
     }
 
@@ -470,7 +473,7 @@ mod tests {
     fn rendered_outside_release_requires_viewport_runtime_and_payload() {
         let runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
-        let target_space = DockSpaceId::from("target");
+        let host_space = DockSpaceId::from("host");
         let release_position = point(px(120.0), px(80.0));
 
         assert_eq!(
@@ -485,7 +488,7 @@ mod tests {
             runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
             DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
                 payload,
-                target_space,
+                host_space,
                 release_position,
             ))
         );
@@ -679,7 +682,7 @@ mod tests {
             )),
             DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::new(
                 payload,
-                DockSpaceId::from("target"),
+                DockSpaceId::from("host"),
                 point(px(120.0), px(80.0)),
             ))
         );

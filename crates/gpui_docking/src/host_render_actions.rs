@@ -26,13 +26,13 @@ impl DockHost {
     pub(crate) fn drop_payload_from_render(
         &mut self,
         payload: &DockDragPayload,
-        target_space: DockSpaceId,
+        host_space: DockSpaceId,
         release_position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         self.drop_payload_release_from_render(
-            DockPayloadDropRelease::new(payload.clone(), target_space, release_position),
+            DockPayloadDropRelease::new(payload.clone(), host_space, release_position),
             window,
             cx,
         )

@@ -144,7 +144,7 @@ impl DockHost {
                 DockWorkspacePayloadDropRequest {
                     source_space: &payload.source_space,
                     payload: workspace_payload(payload),
-                    target_space: release.target_space(),
+                    target_space: release.host_space(),
                     target,
                 },
                 cx,

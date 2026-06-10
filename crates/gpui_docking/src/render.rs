@@ -26,8 +26,8 @@ impl Render for DockHost {
         self.clear_debug_selectors();
         let session = self.render_session(cx);
         self.focus_pending_panel_from_render(&session, window, cx);
-        let drop_target_space = session.space().clone();
-        let outside_drop_target_space = session.space().clone();
+        let drop_host_space = session.space().clone();
+        let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame =
             self.viewport_runtime().map(|_| Rc::new(RefCell::new(None)));
 
@@ -62,7 +62,7 @@ impl Render for DockHost {
                     this.drop_payload_release_from_render(
                         DockPayloadDropRelease::new(
                             payload.clone(),
-                            drop_target_space.clone(),
+                            drop_host_space.clone(),
                             window.mouse_position(),
                         ),
                         window,
@@ -76,7 +76,7 @@ impl Render for DockHost {
                     let request = DockRenderedOutsideReleaseRequest::new(
                         this.viewport_runtime().is_some(),
                         cx.active_drag_value::<DockDragPayload>().cloned(),
-                        outside_drop_target_space.clone(),
+                        outside_release_host_space.clone(),
                         event.position,
                     );
                     match this.interaction().rendered_outside_release(request) {
