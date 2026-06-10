@@ -35,8 +35,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   records.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
-- `CanvasEditor` is the ergonomic editing facade over `CanvasStore` plus viewport, selection, and
-  tool-session state. Durable document changes still pass through the store mutation path.
+- `CanvasEditor` is the ergonomic editing facade over `CanvasStore` plus a crate-private
+  `CanvasEditorSession`. Durable document changes pass through the store mutation path; viewport,
+  selection, active tool state, and gesture baselines stay in the ephemeral session boundary.
 - `CanvasEditor` exposes command methods for delete, copy, cut, paste, duplicate, undo, redo, and
   z-order changes so applications do not need to mutate document collections directly.
 - `CanvasTransformHandle` and `CanvasResizeHandle` describe selected-record resize affordances in
@@ -51,9 +52,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasInputMapper::key_down_event` lets focus-owning widgets dispatch keyboard input without a
   canvas-local bounds mapper; the native smoke example forwards Delete, Backspace, and Escape this
   way.
-- Built-in tool state machines keep their gesture effects inside `CanvasEditor`, while
-  `CanvasToolIntent` is the public custom-tool vocabulary for document, selection, viewport, and
-  tool-mode changes.
+- Built-in tool state machines read through a crate-private reducer context and emit effects that
+  the editor routes through store or session paths. `CanvasToolIntent` remains the public
+  custom-tool vocabulary for document, selection, viewport, and tool-mode changes.
 - The built-in select tool supports shift-click selection toggling through the same selection
   semantics exposed to custom tools as intents.
 - The built-in select tool also supports shift-drag additive marquee selection, seeded from the
@@ -210,8 +211,8 @@ parent-relative transforms yet.
 
 Applications should route product editing actions through `CanvasEditor` methods. The editor
 delegates durable document mutation, undo/redo, runtime cache updates, kind validation, and committed
-change notification to `CanvasStore`, while keeping viewport, selection, and active tool-session
-state editor-scoped for now.
+change notification to `CanvasStore`, while viewport, selection, active tool state, and gesture
+baselines live in its crate-private `CanvasEditorSession`.
 Copy, cut, paste, and duplicate preserve internal edges plus internal parent/group relations when
 both relationship endpoints are included in the clipboard payload; relationships to records outside
 the payload are intentionally omitted.
@@ -559,8 +560,9 @@ rendering work through visible-record culling instead of per-record GPUI element
 
 Custom tools read editor state through `CanvasToolContext` and return `CanvasToolIntent` values.
 They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cache updates,
-persistence, and future CRDT translation keep passing through one mutation path. Built-in gesture
-state stays inside the editor. For continuous interactions such as dragging or resizing, return
+persistence, and future CRDT translation keep passing through one mutation path. Built-in reducer
+state stays behind the crate-private session/reducer context rather than becoming part of the
+custom-tool API. For continuous interactions such as dragging or resizing, return
 `BeginTransientTransaction`, one or more `UpdateTransientTransaction` intents, and then
 `CommitTransientTransaction` or `CancelTransientTransaction`; the editor coalesces those updates
 into one undo entry and persistence log entry.

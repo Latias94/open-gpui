@@ -24,6 +24,7 @@ mod routing;
 mod runtime;
 mod runtime_query;
 mod schema;
+mod session;
 mod snap;
 mod spatial_cache;
 mod store;

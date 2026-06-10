@@ -706,6 +706,64 @@ mod tests {
     }
 
     #[test]
+    fn paint_model_from_editor_keeps_an_immutable_session_snapshot() {
+        let mut document = CanvasDocument::default();
+        document
+            .insert_node(CanvasNode::new(
+                "selected",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(20.0)),
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let viewport = CanvasViewport::new(point(px(5.0), px(-3.0)), 1.5).unwrap();
+        editor.set_viewport(viewport);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("selected"),
+            )))
+            .unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Selecting {
+                origin: point(px(0.0), px(0.0)),
+                current: point(px(20.0), px(20.0)),
+                selection_mode: CanvasSelectionMode::Replace,
+                base_selection: CanvasSelection::default(),
+            }))
+            .unwrap();
+
+        let snapshot = CanvasPaintModel::from(&editor);
+
+        editor.set_viewport(CanvasViewport::default());
+        editor
+            .apply_tool_effect(CanvasToolEffect::ClearSelection)
+            .unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Idle))
+            .unwrap();
+
+        assert_eq!(snapshot.viewport(), viewport);
+        assert!(
+            snapshot
+                .interaction()
+                .selection()
+                .contains_node(&crate::NodeId::from("selected"))
+        );
+        assert!(matches!(
+            snapshot.interaction().tool_state(),
+            ToolState::Selecting { .. }
+        ));
+
+        let new_snapshot = CanvasPaintModel::from(&editor);
+        assert_eq!(new_snapshot.viewport(), CanvasViewport::default());
+        assert!(new_snapshot.interaction().selection().is_empty());
+        assert!(matches!(
+            new_snapshot.interaction().tool_state(),
+            ToolState::Idle
+        ));
+    }
+
+    #[test]
     fn selected_records_add_transform_handles_to_paint_frame() {
         let mut document = CanvasDocument::default();
         document

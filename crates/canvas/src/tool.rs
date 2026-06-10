@@ -1,7 +1,8 @@
-use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
+use crate::gesture::CanvasPreparedGestureCommit;
 use crate::layer::{
     CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
 };
+use crate::session::{CanvasEditorSession, CanvasEditorSessionSnapshot, CanvasSessionEffect};
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
@@ -477,6 +478,273 @@ impl CanvasToolContext<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct CanvasToolReducerContext<'a> {
+    document: &'a CanvasDocument,
+    viewport: CanvasViewport,
+    state: &'a ToolState,
+    runtime: &'a CanvasRuntime,
+    edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
+    kind_registry: &'a CanvasKindRegistry,
+    selection: &'a CanvasSelection,
+}
+
+impl CanvasToolReducerContext<'_> {
+    pub(crate) fn document(&self) -> &CanvasDocument {
+        self.document
+    }
+
+    pub(crate) fn viewport(&self) -> CanvasViewport {
+        self.viewport
+    }
+
+    pub(crate) fn state(&self) -> &ToolState {
+        self.state
+    }
+
+    pub(crate) fn selection(&self) -> &CanvasSelection {
+        self.selection
+    }
+
+    pub(crate) fn runtime(&self) -> &CanvasRuntime {
+        self.runtime
+    }
+
+    pub(crate) fn kind_registry(&self) -> &CanvasKindRegistry {
+        self.kind_registry
+    }
+
+    pub(crate) fn delete_selection_transaction(&self) -> CanvasTransaction {
+        let node_ids = self
+            .selection
+            .selected_nodes()
+            .filter(|id| self.document.node(*id).is_some_and(|node| !node.locked))
+            .cloned()
+            .collect::<IndexSet<_>>();
+
+        let mut commands = Vec::new();
+
+        for id in self.selection.selected_edges() {
+            let Some(edge) = self.document.edge(id) else {
+                continue;
+            };
+            if edge.locked
+                || node_ids.contains(&edge.source.node_id)
+                || node_ids.contains(&edge.target.node_id)
+            {
+                continue;
+            }
+
+            commands.push(DocumentCommand::RemoveEdge(id.clone()));
+        }
+
+        commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
+
+        for id in self.selection.selected_shapes() {
+            let Some(shape) = self.document.shape(id) else {
+                continue;
+            };
+            if shape.locked {
+                continue;
+            }
+
+            commands.push(DocumentCommand::RemoveShape(id.clone()));
+        }
+
+        CanvasTransaction::new(commands)
+    }
+
+    pub(crate) fn translatable_selection_ids(
+        &self,
+        selection: &CanvasSelection,
+    ) -> (Vec<NodeId>, Vec<ShapeId>) {
+        let node_ids = selection
+            .selected_nodes()
+            .filter(|id| self.document.node(id).is_some_and(|node| !node.locked))
+            .cloned()
+            .collect();
+        let shape_ids = selection
+            .selected_shapes()
+            .filter(|id| self.document.shape(id).is_some_and(|shape| !shape.locked))
+            .cloned()
+            .collect();
+
+        (node_ids, shape_ids)
+    }
+
+    pub(crate) fn transform_handle_at(
+        &self,
+        point: Point<Pixels>,
+    ) -> Option<CanvasTransformHandle> {
+        canvas_transform_handles(
+            self.document,
+            self.selection,
+            self.viewport,
+            Some(self.kind_registry),
+        )
+        .into_iter()
+        .rev()
+        .find(|handle| handle.document_bounds.contains(&point))
+    }
+
+    pub(crate) fn resizable_selection_ids(&self) -> (Vec<NodeId>, Vec<ShapeId>) {
+        let node_ids = self
+            .selection
+            .selected_nodes()
+            .filter_map(|id| self.document.node(id))
+            .filter(|node| !node.locked && !node.hidden)
+            .map(|node| node.id.clone())
+            .collect();
+        let shape_ids = self
+            .selection
+            .selected_shapes()
+            .filter_map(|id| self.document.shape(id))
+            .filter(|shape| !shape.locked && !shape.hidden)
+            .map(|shape| shape.id.clone())
+            .collect();
+
+        (node_ids, shape_ids)
+    }
+
+    pub(crate) fn snap_delta_for_translation(
+        &self,
+        delta: Point<Pixels>,
+        node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
+    ) -> crate::snap::CanvasSnapResult {
+        let mut selection = CanvasSelection::default();
+        for id in node_ids {
+            selection.insert_node(id.clone());
+        }
+        for id in shape_ids {
+            selection.insert_shape(id.clone());
+        }
+        snap_delta_for_selection(
+            self.document,
+            &selection,
+            delta,
+            DEFAULT_SNAP_THRESHOLD,
+            Some(self.kind_registry),
+        )
+    }
+
+    pub(crate) fn snap_delta_for_resize(
+        &self,
+        handle: CanvasResizeHandle,
+        delta: Point<Pixels>,
+        node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
+    ) -> crate::snap::CanvasSnapResult {
+        let mut selection = CanvasSelection::default();
+        for id in node_ids {
+            selection.insert_node(id.clone());
+        }
+        for id in shape_ids {
+            selection.insert_shape(id.clone());
+        }
+        snap_delta_for_resize_selection(
+            self.document,
+            &selection,
+            handle,
+            delta,
+            DEFAULT_SNAP_THRESHOLD,
+            Some(self.kind_registry),
+        )
+    }
+
+    pub(crate) fn node_endpoint_at(
+        &self,
+        point: Point<Pixels>,
+        role: CanvasConnectionEndpointRole,
+    ) -> Option<CanvasEndpoint> {
+        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
+            self.document,
+            self.edge_router,
+            Some(self.kind_registry),
+        );
+        let records =
+            self.runtime
+                .precise_hit_test_with_facts(facts, point, connection_hit_options());
+        facts.connection_endpoint_at(records, role)
+    }
+
+    pub(crate) fn resize_selection_transaction(
+        &self,
+        handle: CanvasResizeHandle,
+        delta: Point<Pixels>,
+        node_ids: &[NodeId],
+        shape_ids: &[ShapeId],
+    ) -> Result<CanvasTransaction, DocumentError> {
+        if delta.x == Pixels::ZERO && delta.y == Pixels::ZERO {
+            return Ok(CanvasTransaction::default());
+        }
+
+        let mut commands = Vec::new();
+        for id in node_ids {
+            let Some(node) = self.document.node(id) else {
+                continue;
+            };
+            if node.locked {
+                continue;
+            }
+            let mut node = node.clone();
+            let proposed = resize_bounds_by_handle(node.bounds(), handle, delta);
+            let bounds = self.kind_registry.resize_node_bounds(&node, proposed)?;
+            node.position = bounds.origin;
+            node.size = bounds.size;
+            commands.push(DocumentCommand::UpdateNode(node));
+        }
+
+        for id in shape_ids {
+            let Some(shape) = self.document.shape(id) else {
+                continue;
+            };
+            if shape.locked {
+                continue;
+            }
+            let mut shape = shape.clone();
+            let proposed = resize_bounds_by_handle(shape.bounds, handle, delta);
+            shape.bounds = self.kind_registry.resize_shape_bounds(&shape, proposed)?;
+            commands.push(DocumentCommand::UpdateShape(shape));
+        }
+
+        Ok(CanvasTransaction::new(commands))
+    }
+
+    pub(crate) fn selection_for_intersections_with_mode(
+        &self,
+        bounds: Bounds<Pixels>,
+        mode: CanvasSelectionMode,
+        base_selection: &CanvasSelection,
+    ) -> CanvasSelection {
+        let selection = self.selection_for_intersections(bounds);
+        match mode {
+            CanvasSelectionMode::Replace => selection,
+            CanvasSelectionMode::Add => {
+                let mut combined = base_selection.clone();
+                combined.extend_selection(selection);
+                combined
+            }
+        }
+    }
+
+    fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
+        let mut selection = CanvasSelection::default();
+        for record in self
+            .runtime
+            .query_with_options(bounds, HitOptions::default())
+        {
+            match &record.target {
+                HitTarget::Node(_) | HitTarget::Edge(_) | HitTarget::Shape(_) => {
+                    selection.insert_target(record.target.clone());
+                }
+                HitTarget::Handle { .. } => {}
+            }
+        }
+        selection
+    }
+}
+
 pub trait CanvasToolReducer {
     fn handle_event(
         &mut self,
@@ -646,11 +914,7 @@ impl CanvasHistory {
 
 pub struct CanvasEditor {
     store: CanvasStore,
-    viewport: CanvasViewport,
-    tool: CanvasTool,
-    state: ToolState,
-    selection: CanvasSelection,
-    gesture: Option<CanvasGestureSession>,
+    session: CanvasEditorSession,
 }
 
 impl Default for CanvasEditor {
@@ -670,11 +934,7 @@ impl CanvasEditor {
     {
         Self {
             store: CanvasStore::new_with_router(document, edge_router),
-            viewport: CanvasViewport::default(),
-            tool: CanvasTool::Select,
-            state: ToolState::Idle,
-            selection: CanvasSelection::default(),
-            gesture: None,
+            session: CanvasEditorSession::default(),
         }
     }
 
@@ -703,11 +963,7 @@ impl CanvasEditor {
                 edge_router,
                 kind_registry,
             )?,
-            viewport: CanvasViewport::default(),
-            tool: CanvasTool::Select,
-            state: ToolState::Idle,
-            selection: CanvasSelection::default(),
-            gesture: None,
+            session: CanvasEditorSession::default(),
         })
     }
 
@@ -727,15 +983,15 @@ impl CanvasEditor {
     }
 
     pub fn viewport(&self) -> CanvasViewport {
-        self.viewport
+        self.session.viewport()
     }
 
     pub fn tool(&self) -> &CanvasTool {
-        &self.tool
+        self.session.tool()
     }
 
     pub(crate) fn state(&self) -> &ToolState {
-        &self.state
+        self.session.state()
     }
 
     pub fn runtime(&self) -> &CanvasRuntime {
@@ -754,6 +1010,10 @@ impl CanvasEditor {
         self.store.kind_registry_snapshot()
     }
 
+    pub(crate) fn session_snapshot(&self) -> CanvasEditorSessionSnapshot {
+        self.session.snapshot()
+    }
+
     pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
         self.store.edge_router()
     }
@@ -763,7 +1023,7 @@ impl CanvasEditor {
     }
 
     pub fn selection(&self) -> &CanvasSelection {
-        &self.selection
+        self.session.selection()
     }
 
     pub fn history(&self) -> &CanvasHistory {
@@ -796,7 +1056,8 @@ impl CanvasEditor {
 
     pub(crate) fn retain_selection_for_current_document(&mut self) {
         let document = self.store.document_snapshot();
-        self.selection.retain_document(document.as_ref());
+        self.session
+            .retain_selection_for_document(document.as_ref());
     }
 
     pub fn apply_transaction(
@@ -844,37 +1105,32 @@ impl CanvasEditor {
             CanvasToolEffect::SetTool(tool) => {
                 self.set_tool(tool)?;
             }
-            CanvasToolEffect::SetSelection(mut selection) => {
-                selection.retain_document(self.document());
-                self.selection = selection;
+            CanvasToolEffect::SetSelection(selection) => {
+                self.apply_session_effect(CanvasSessionEffect::SetSelection(selection));
             }
             CanvasToolEffect::ReplaceSelection(target) => {
-                self.selection.replace_with(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::ReplaceSelection(target));
             }
             CanvasToolEffect::AddSelection(target) => {
-                self.selection.insert_target(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::AddSelection(target));
             }
             CanvasToolEffect::RemoveSelection(target) => {
-                self.selection.remove_target(&target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::RemoveSelection(target));
             }
             CanvasToolEffect::ToggleSelection(target) => {
-                self.selection.toggle_target(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::ToggleSelection(target));
             }
             CanvasToolEffect::ClearSelection => {
-                self.selection.clear();
+                self.apply_session_effect(CanvasSessionEffect::ClearSelection);
             }
             CanvasToolEffect::SetState(state) => {
-                self.state = state;
+                self.apply_session_effect(CanvasSessionEffect::SetState(state));
             }
             CanvasToolEffect::PanViewport(delta) => {
-                self.viewport.pan_by(delta);
+                self.apply_session_effect(CanvasSessionEffect::PanViewport(delta));
             }
             CanvasToolEffect::SetViewport(viewport) => {
-                self.viewport = viewport;
+                self.apply_session_effect(CanvasSessionEffect::SetViewport(viewport));
             }
         }
 
@@ -884,17 +1140,15 @@ impl CanvasEditor {
     pub(crate) fn prepare_gesture_commit(
         &self,
     ) -> Result<Option<CanvasPreparedGestureCommit>, DocumentError> {
-        let Some(gesture) = &self.gesture else {
-            return Ok(None);
-        };
-        gesture.prepare_commit_with_kind_registry(self.document(), self.kind_registry())
+        self.session
+            .prepare_gesture_commit(self.document(), self.kind_registry())
     }
 
     pub(crate) fn apply_prepared_gesture_store_change(
         &mut self,
         prepared: CanvasPreparedGestureCommit,
     ) -> Option<CanvasStoreChange> {
-        self.gesture = None;
+        self.session.clear_gesture();
         let change = self.store.apply_prepared_gesture_commit(prepared)?;
         self.retain_selection_for_current_document();
         Some(change)
@@ -909,6 +1163,11 @@ impl CanvasEditor {
         }
 
         Ok(())
+    }
+
+    fn apply_session_effect(&mut self, effect: CanvasSessionEffect) {
+        let document = self.store.document_snapshot();
+        self.session.apply_effect(effect, document.as_ref());
     }
 
     pub fn apply_tool_intent(&mut self, intent: CanvasToolIntent) -> Result<(), DocumentError> {
@@ -931,34 +1190,29 @@ impl CanvasEditor {
             CanvasToolIntent::SetTool(tool) => {
                 self.set_tool(tool)?;
             }
-            CanvasToolIntent::SetSelection(mut selection) => {
-                selection.retain_document(self.document());
-                self.selection = selection;
+            CanvasToolIntent::SetSelection(selection) => {
+                self.apply_session_effect(CanvasSessionEffect::SetSelection(selection));
             }
             CanvasToolIntent::ReplaceSelection(target) => {
-                self.selection.replace_with(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::ReplaceSelection(target));
             }
             CanvasToolIntent::AddSelection(target) => {
-                self.selection.insert_target(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::AddSelection(target));
             }
             CanvasToolIntent::RemoveSelection(target) => {
-                self.selection.remove_target(&target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::RemoveSelection(target));
             }
             CanvasToolIntent::ToggleSelection(target) => {
-                self.selection.toggle_target(target);
-                self.retain_selection_for_current_document();
+                self.apply_session_effect(CanvasSessionEffect::ToggleSelection(target));
             }
             CanvasToolIntent::ClearSelection => {
-                self.selection.clear();
+                self.apply_session_effect(CanvasSessionEffect::ClearSelection);
             }
             CanvasToolIntent::PanViewport(delta) => {
-                self.viewport.pan_by(delta);
+                self.apply_session_effect(CanvasSessionEffect::PanViewport(delta));
             }
             CanvasToolIntent::SetViewport(viewport) => {
-                self.viewport = viewport;
+                self.apply_session_effect(CanvasSessionEffect::SetViewport(viewport));
             }
         }
 
@@ -1012,36 +1266,48 @@ impl CanvasEditor {
         kind_registry: CanvasKindRegistry,
     ) -> Result<(), DocumentError> {
         self.store.set_kind_registry(kind_registry)?;
-        self.retain_selection_for_current_document();
-        self.gesture = None;
+        let document = self.store.document_snapshot();
+        self.session
+            .reset_for_kind_registry_change(document.as_ref());
         Ok(())
     }
 
     pub fn set_tool(&mut self, tool: CanvasTool) -> Result<(), DocumentError> {
         self.cancel_gesture()?;
-        self.tool = tool;
-        self.state = ToolState::Idle;
+        self.session.set_tool(tool);
         Ok(())
     }
 
     pub fn set_viewport(&mut self, viewport: CanvasViewport) {
-        self.viewport = viewport;
+        self.session.set_viewport(viewport);
     }
 
     pub fn is_tool_state_idle(&self) -> bool {
-        matches!(self.state, ToolState::Idle)
+        matches!(self.state(), ToolState::Idle)
     }
 
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
         CanvasToolContext {
             document: self.document(),
-            viewport: &self.viewport,
-            tool: &self.tool,
+            viewport: &self.session.viewport,
+            tool: self.tool(),
             runtime: self.runtime(),
             edge_router: self.edge_router(),
             kind_registry: self.kind_registry(),
-            selection: &self.selection,
+            selection: self.selection(),
             history: self.history(),
+        }
+    }
+
+    pub(crate) fn reducer_context(&self) -> CanvasToolReducerContext<'_> {
+        CanvasToolReducerContext {
+            document: self.document(),
+            viewport: self.viewport(),
+            state: self.state(),
+            runtime: self.runtime(),
+            edge_router: self.edge_router(),
+            kind_registry: self.kind_registry(),
+            selection: self.selection(),
         }
     }
 
@@ -1062,7 +1328,7 @@ impl CanvasEditor {
 
     pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
         let payload =
-            CanvasClipboardPayload::from_document_selection(self.document(), &self.selection);
+            CanvasClipboardPayload::from_document_selection(self.document(), self.selection());
         (!payload.is_empty()).then_some(payload)
     }
 
@@ -1107,10 +1373,10 @@ impl CanvasEditor {
         &self,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        let Some(tool) = BuiltInCanvasTool::from_canvas_tool(&self.tool) else {
+        let Some(tool) = BuiltInCanvasTool::from_canvas_tool(self.tool()) else {
             return Ok(Vec::new());
         };
-        tool.handle_event(self, event)
+        tool.handle_event(self.reducer_context(), event)
     }
 
     pub fn handle_event_with_custom_tool<T>(
@@ -1121,7 +1387,7 @@ impl CanvasEditor {
     where
         T: CanvasToolReducer + ?Sized,
     {
-        if BuiltInCanvasTool::from_canvas_tool(&self.tool).is_some() {
+        if BuiltInCanvasTool::from_canvas_tool(self.tool()).is_some() {
             let effects = self.event_effects(event)?;
             self.apply_tool_effects(effects)
         } else {
@@ -1135,7 +1401,7 @@ impl CanvasEditor {
         event: CanvasEvent,
         registry: &mut CanvasToolRegistry,
     ) -> Result<(), CanvasToolRegistryError> {
-        if let Some(tool_id) = self.tool.custom_id().cloned() {
+        if let Some(tool_id) = self.tool().custom_id().cloned() {
             let reducer = registry
                 .reducer_mut(&tool_id)
                 .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
@@ -1149,121 +1415,9 @@ impl CanvasEditor {
         Ok(())
     }
 
-    fn translatable_selection_ids(
-        &self,
-        selection: &CanvasSelection,
-    ) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let node_ids = selection
-            .selected_nodes()
-            .filter(|id| self.document().node(id).is_some_and(|node| !node.locked))
-            .cloned()
-            .collect();
-        let shape_ids = selection
-            .selected_shapes()
-            .filter(|id| self.document().shape(id).is_some_and(|shape| !shape.locked))
-            .cloned()
-            .collect();
-
-        (node_ids, shape_ids)
-    }
-
-    fn transform_handle_at(&self, point: Point<Pixels>) -> Option<CanvasTransformHandle> {
-        canvas_transform_handles(
-            self.document(),
-            &self.selection,
-            self.viewport,
-            Some(self.kind_registry()),
-        )
-        .into_iter()
-        .rev()
-        .find(|handle| handle.document_bounds.contains(&point))
-    }
-
-    fn resizable_selection_ids(&self) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let node_ids = self
-            .selection
-            .selected_nodes()
-            .filter_map(|id| self.document().node(id))
-            .filter(|node| !node.locked && !node.hidden)
-            .map(|node| node.id.clone())
-            .collect();
-        let shape_ids = self
-            .selection
-            .selected_shapes()
-            .filter_map(|id| self.document().shape(id))
-            .filter(|shape| !shape.locked && !shape.hidden)
-            .map(|shape| shape.id.clone())
-            .collect();
-
-        (node_ids, shape_ids)
-    }
-
-    fn snap_delta_for_translation(
-        &self,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> crate::snap::CanvasSnapResult {
-        let mut selection = CanvasSelection::default();
-        for id in node_ids {
-            selection.insert_node(id.clone());
-        }
-        for id in shape_ids {
-            selection.insert_shape(id.clone());
-        }
-        snap_delta_for_selection(
-            self.document(),
-            &selection,
-            delta,
-            DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry()),
-        )
-    }
-
-    fn snap_delta_for_resize(
-        &self,
-        handle: CanvasResizeHandle,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> crate::snap::CanvasSnapResult {
-        let mut selection = CanvasSelection::default();
-        for id in node_ids {
-            selection.insert_node(id.clone());
-        }
-        for id in shape_ids {
-            selection.insert_shape(id.clone());
-        }
-        snap_delta_for_resize_selection(
-            self.document(),
-            &selection,
-            handle,
-            delta,
-            DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry()),
-        )
-    }
-
-    fn node_endpoint_at(
-        &self,
-        point: Point<Pixels>,
-        role: CanvasConnectionEndpointRole,
-    ) -> Option<CanvasEndpoint> {
-        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
-            self.document(),
-            self.edge_router(),
-            Some(self.kind_registry()),
-        );
-        let records =
-            self.runtime()
-                .precise_hit_test_with_facts(facts, point, connection_hit_options());
-        facts.connection_endpoint_at(records, role)
-    }
-
     fn begin_gesture(&mut self) {
-        if self.gesture.is_none() {
-            self.gesture = Some(CanvasGestureSession::begin(self.document()));
-        }
+        let document = self.store.document_snapshot();
+        self.session.begin_gesture(document.as_ref());
     }
 
     fn update_gesture(
@@ -1274,13 +1428,11 @@ impl CanvasEditor {
             return Ok(CanvasDocumentDiff::default());
         }
 
-        let implicit_gesture = self
-            .gesture
-            .is_none()
-            .then(|| CanvasGestureSession::begin(self.document()));
+        let document = self.store.document_snapshot();
+        let implicit_gesture = self.session.begin_implicit_gesture(document.as_ref());
         let diff = self.apply_transient_transaction(transaction)?;
         if let Some(gesture) = implicit_gesture {
-            self.gesture = Some(gesture);
+            self.session.install_implicit_gesture(gesture);
         }
         Ok(diff)
     }
@@ -1298,7 +1450,7 @@ impl CanvasEditor {
 
     fn commit_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
         let Some(prepared) = self.prepare_gesture_commit()? else {
-            self.gesture = None;
+            self.session.clear_gesture();
             return Ok(CanvasDocumentDiff::default());
         };
         let Some(change) = self.apply_prepared_gesture_store_change(prepared) else {
@@ -1308,96 +1460,16 @@ impl CanvasEditor {
     }
 
     fn cancel_gesture(&mut self) -> Result<CanvasDocumentDiff, DocumentError> {
-        let Some(gesture) = self.gesture.as_ref() else {
+        let Some(transaction) = self.session.cancel_gesture_transaction(self.document()) else {
             return Ok(CanvasDocumentDiff::default());
         };
-        let transaction = gesture.cancel_transaction(self.document());
         let diff = self.apply_transient_transaction(transaction)?;
-        self.gesture = None;
+        self.session.clear_gesture();
         Ok(diff)
     }
 
     fn delete_selection_transaction(&self) -> CanvasTransaction {
-        let node_ids = self
-            .selection
-            .selected_nodes()
-            .filter(|id| self.document().node(*id).is_some_and(|node| !node.locked))
-            .cloned()
-            .collect::<IndexSet<_>>();
-
-        let mut commands = Vec::new();
-
-        for id in self.selection.selected_edges() {
-            let Some(edge) = self.document().edge(id) else {
-                continue;
-            };
-            if edge.locked
-                || node_ids.contains(&edge.source.node_id)
-                || node_ids.contains(&edge.target.node_id)
-            {
-                continue;
-            }
-
-            commands.push(DocumentCommand::RemoveEdge(id.clone()));
-        }
-
-        commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
-
-        for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document().shape(id) else {
-                continue;
-            };
-            if shape.locked {
-                continue;
-            }
-
-            commands.push(DocumentCommand::RemoveShape(id.clone()));
-        }
-
-        CanvasTransaction::new(commands)
-    }
-
-    fn resize_selection_transaction(
-        &self,
-        handle: CanvasResizeHandle,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> Result<CanvasTransaction, DocumentError> {
-        if delta.x == Pixels::ZERO && delta.y == Pixels::ZERO {
-            return Ok(CanvasTransaction::default());
-        }
-
-        let mut commands = Vec::new();
-        for id in node_ids {
-            let Some(node) = self.document().node(id) else {
-                continue;
-            };
-            if node.locked {
-                continue;
-            }
-            let mut node = node.clone();
-            let proposed = resize_bounds_by_handle(node.bounds(), handle, delta);
-            let bounds = self.kind_registry().resize_node_bounds(&node, proposed)?;
-            node.position = bounds.origin;
-            node.size = bounds.size;
-            commands.push(DocumentCommand::UpdateNode(node));
-        }
-
-        for id in shape_ids {
-            let Some(shape) = self.document().shape(id) else {
-                continue;
-            };
-            if shape.locked {
-                continue;
-            }
-            let mut shape = shape.clone();
-            let proposed = resize_bounds_by_handle(shape.bounds, handle, delta);
-            shape.bounds = self.kind_registry().resize_shape_bounds(&shape, proposed)?;
-            commands.push(DocumentCommand::UpdateShape(shape));
-        }
-
-        Ok(CanvasTransaction::new(commands))
+        self.reducer_context().delete_selection_transaction()
     }
 
     fn apply_paste_transaction(
@@ -1409,9 +1481,9 @@ impl CanvasEditor {
         }
 
         self.apply_transaction(pasted.transaction)?;
-        let mut selection = pasted.selection;
-        selection.retain_document(self.document());
-        self.selection = selection;
+        let document = self.store.document_snapshot();
+        self.session
+            .set_selection(pasted.selection, document.as_ref());
         Ok(true)
     }
 
@@ -1434,7 +1506,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Node(node.id.clone()),
                 z_index: node.z_index,
                 ordinal,
-                selected: self.selection.contains_node(&node.id) && !node.locked,
+                selected: self.selection().contains_node(&node.id) && !node.locked,
             };
             ordinal += 1;
             record
@@ -1444,7 +1516,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Shape(shape.id.clone()),
                 z_index: shape.z_index,
                 ordinal,
-                selected: self.selection.contains_shape(&shape.id) && !shape.locked,
+                selected: self.selection().contains_shape(&shape.id) && !shape.locked,
             };
             ordinal += 1;
             record
@@ -1454,7 +1526,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Edge(edge.id.clone()),
                 z_index: edge.z_index,
                 ordinal,
-                selected: self.selection.contains_edge(&edge.id) && !edge.locked,
+                selected: self.selection().contains_edge(&edge.id) && !edge.locked,
             };
             ordinal += 1;
             record
@@ -1484,39 +1556,6 @@ impl CanvasEditor {
                 let mut shape = self.document().shape(id)?.clone();
                 shape.z_index = z_index;
                 Some(DocumentCommand::UpdateShape(shape))
-            }
-        }
-    }
-
-    fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
-        let mut selection = CanvasSelection::default();
-        for record in self
-            .runtime()
-            .query_with_options(bounds, HitOptions::default())
-        {
-            match &record.target {
-                HitTarget::Node(_) | HitTarget::Edge(_) | HitTarget::Shape(_) => {
-                    selection.insert_target(record.target.clone());
-                }
-                HitTarget::Handle { .. } => {}
-            }
-        }
-        selection
-    }
-
-    fn selection_for_intersections_with_mode(
-        &self,
-        bounds: Bounds<Pixels>,
-        mode: CanvasSelectionMode,
-        base_selection: &CanvasSelection,
-    ) -> CanvasSelection {
-        let selection = self.selection_for_intersections(bounds);
-        match mode {
-            CanvasSelectionMode::Replace => selection,
-            CanvasSelectionMode::Add => {
-                let mut combined = base_selection.clone();
-                combined.extend_selection(selection);
-                combined
             }
         }
     }
@@ -1776,10 +1815,16 @@ mod tests {
         let node = editor.document().node(&NodeId::from("n1")).unwrap();
         assert_eq!(node.position, point(px(10.0), px(15.0)));
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("n1")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
         assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
@@ -1827,7 +1872,13 @@ mod tests {
         let shape = editor.document().shape(&ShapeId::from("shape")).unwrap();
         assert_eq!(shape.bounds.origin, point(px(20.0), px(15.0)));
         assert_eq!(
-            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![ShapeId::from("shape")]
         );
         assert_eq!(editor.history().undo_depth(), 1);
@@ -1870,7 +1921,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
         assert_eq!(
             editor
                 .document()
@@ -1901,7 +1952,7 @@ mod tests {
                 modifiers: CanvasKeyModifiers::default(),
             })
             .unwrap();
-        assert!(!editor.selection.is_empty());
+        assert!(!editor.session.selection.is_empty());
 
         editor
             .handle_event(CanvasEvent::PointerUp {
@@ -1918,7 +1969,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
     }
 
     #[test]
@@ -1932,7 +1983,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("base"));
+        editor.session.selection.nodes.insert(NodeId::from("base"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -1942,15 +1993,21 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
 
         editor.handle_event(CanvasEvent::Cancel).unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("base")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
     }
 
     #[test]
@@ -1964,12 +2021,12 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("base"));
+        editor.session.selection.nodes.insert(NodeId::from("base"));
 
         editor.handle_event(CanvasEvent::Cancel).unwrap();
 
-        assert!(editor.selection.is_empty());
-        assert_eq!(editor.state, ToolState::Idle);
+        assert!(editor.session.selection.is_empty());
+        assert_eq!(editor.session.state, ToolState::Idle);
         assert_eq!(editor.history().undo_depth(), 0);
     }
 
@@ -1991,7 +2048,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2005,10 +2062,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a"), NodeId::from("b")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
         assert_eq!(editor.history().undo_depth(), 0);
 
         editor
@@ -2023,10 +2086,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
         assert_eq!(editor.history().undo_depth(), 0);
     }
 
@@ -2049,7 +2118,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
         assert!(
             editor
                 .runtime()
@@ -2080,7 +2149,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a")]
         );
     }
@@ -2116,9 +2191,13 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
-        editor.selection.edges.insert(EdgeId::from("a-b"));
-        editor.selection.shapes.insert(ShapeId::from("shape"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.edges.insert(EdgeId::from("a-b"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
 
         editor
             .handle_event(CanvasEvent::KeyDown {
@@ -2132,7 +2211,7 @@ mod tests {
         assert!(editor.document().contains_node(&NodeId::from("b")));
         assert!(editor.document().edge_count() == 0);
         assert!(editor.document().shape_count() == 0);
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
         assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(editor.undo().unwrap());
@@ -2179,9 +2258,18 @@ mod tests {
         locked_shape.locked = true;
         document.insert_shape(locked_shape).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("locked-node"));
-        editor.selection.edges.insert(EdgeId::from("locked-edge"));
         editor
+            .session
+            .selection
+            .nodes
+            .insert(NodeId::from("locked-node"));
+        editor
+            .session
+            .selection
+            .edges
+            .insert(EdgeId::from("locked-edge"));
+        editor
+            .session
             .selection
             .shapes
             .insert(ShapeId::from("locked-shape"));
@@ -2269,9 +2357,13 @@ mod tests {
             ]))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
-        editor.selection.nodes.insert(NodeId::from("b"));
-        editor.selection.shapes.insert(ShapeId::from("frame"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
 
         assert!(
             editor
@@ -2301,15 +2393,33 @@ mod tests {
             point(px(20.0), px(30.0))
         );
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a-copy"), NodeId::from("b-copy")]
         );
         assert_eq!(
-            editor.selection.edges.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .edges
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![EdgeId::from("a-b-copy")]
         );
         assert_eq!(
-            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![ShapeId::from("frame-copy")]
         );
         let copied_node = CanvasRecordId::Node(NodeId::from("a-copy"));
@@ -2362,13 +2472,17 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
-        editor.selection.shapes.insert(ShapeId::from("shape"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
 
         let payload = editor.cut_selection().unwrap().unwrap();
         assert!(!editor.document().contains_node(&NodeId::from("a")));
         assert!(!editor.document().contains_shape(&ShapeId::from("shape")));
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
         assert_eq!(editor.history().undo_depth(), 1);
 
         assert!(
@@ -2383,11 +2497,23 @@ mod tests {
                 .contains_shape(&ShapeId::from("shape-copy"))
         );
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a-copy")]
         );
         assert_eq!(
-            editor.selection.shapes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![ShapeId::from("shape-copy")]
         );
         assert_eq!(editor.history().undo_depth(), 2);
@@ -2407,7 +2533,7 @@ mod tests {
         document.insert_node(back).unwrap();
         document.insert_node(front).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("back"));
+        editor.session.selection.nodes.insert(NodeId::from("back"));
 
         assert!(
             editor
@@ -2456,7 +2582,7 @@ mod tests {
         document.insert_node(back).unwrap();
         document.insert_shape(front).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("back"));
+        editor.session.selection.nodes.insert(NodeId::from("back"));
 
         assert!(
             editor
@@ -2499,7 +2625,11 @@ mod tests {
         document.insert_node(back).unwrap();
         document.insert_shape(front).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.shapes.insert(ShapeId::from("front"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("front"));
 
         assert!(
             editor
@@ -2555,8 +2685,8 @@ mod tests {
         document.insert_shape(top).unwrap();
         document.insert_edge(edge).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("node"));
-        editor.selection.edges.insert(EdgeId::from("edge"));
+        editor.session.selection.nodes.insert(NodeId::from("node"));
+        editor.session.selection.edges.insert(EdgeId::from("edge"));
 
         assert!(
             editor
@@ -2665,7 +2795,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("node"));
+        editor.session.selection.nodes.insert(NodeId::from("node"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2692,7 +2822,7 @@ mod tests {
         assert_eq!(node.position, point(px(10.0), px(20.0)));
         assert_eq!(node.size, size(px(120.0), px(105.0)));
         assert_eq!(editor.history().undo_depth(), 1);
-        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(matches!(editor.session.state, ToolState::Idle));
         assert!(
             editor
                 .runtime()
@@ -2715,7 +2845,7 @@ mod tests {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("min-resize", minimum_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
-        editor.selection.nodes.insert(NodeId::from("node"));
+        editor.session.selection.nodes.insert(NodeId::from("node"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2755,7 +2885,7 @@ mod tests {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("reject-resize", reject_resize_node_kind());
         let mut editor = CanvasEditor::try_new_with_kind_registry(document, registry).unwrap();
-        editor.selection.nodes.insert(NodeId::from("node"));
+        editor.session.selection.nodes.insert(NodeId::from("node"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2805,7 +2935,11 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.shapes.insert(ShapeId::from("shape"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2840,7 +2974,7 @@ mod tests {
             Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0)))
         );
         assert_eq!(editor.history().undo_depth(), 0);
-        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(matches!(editor.session.state, ToolState::Idle));
     }
 
     #[test]
@@ -2891,10 +3025,16 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("inside")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
     }
 
     #[test]
@@ -2915,7 +3055,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("base"));
+        editor.session.selection.nodes.insert(NodeId::from("base"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -2932,17 +3072,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("inside")]
         );
 
         editor.handle_event(CanvasEvent::Cancel).unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("base")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
     }
 
     #[test]
@@ -2969,9 +3121,13 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
-        editor.selection.nodes.insert(NodeId::from("b"));
-        editor.selection.shapes.insert(ShapeId::from("shape"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3025,7 +3181,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3094,7 +3250,11 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("active"));
+        editor
+            .session
+            .selection
+            .nodes
+            .insert(NodeId::from("active"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3119,7 +3279,7 @@ mod tests {
             point(px(100.0), px(0.0))
         );
         assert!(matches!(
-            &editor.state,
+            &editor.session.state,
             ToolState::Translating { snap_guides, .. } if !snap_guides.is_empty()
         ));
 
@@ -3158,7 +3318,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("base"));
+        editor.session.selection.nodes.insert(NodeId::from("base"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3178,7 +3338,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("base"), NodeId::from("inside")]
         );
 
@@ -3190,7 +3356,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("base")]
         );
     }
@@ -3213,8 +3385,12 @@ mod tests {
         locked.locked = true;
         document.insert_node(locked).unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.selection.nodes.insert(NodeId::from("free"));
-        editor.selection.nodes.insert(NodeId::from("locked"));
+        editor.session.selection.nodes.insert(NodeId::from("free"));
+        editor
+            .session
+            .selection
+            .nodes
+            .insert(NodeId::from("locked"));
 
         editor
             .handle_event(CanvasEvent::PointerDown {
@@ -3275,7 +3451,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(editor.viewport.origin, point(px(-10.0), px(-15.0)));
+        assert_eq!(editor.session.viewport.origin, point(px(-10.0), px(-15.0)));
     }
 
     #[test]
@@ -3431,7 +3607,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(matches!(editor.session.state, ToolState::Idle));
         assert!(editor.document().edge_count() == 0);
         assert_eq!(editor.history().undo_depth(), 0);
     }
@@ -3472,7 +3648,7 @@ mod tests {
             })
             .unwrap();
 
-        assert!(matches!(editor.state, ToolState::Idle));
+        assert!(matches!(editor.session.state, ToolState::Idle));
         assert!(editor.document().edge_count() == 0);
         assert_eq!(editor.history().undo_depth(), 0);
     }
@@ -3488,7 +3664,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        editor.session.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
         editor.set_tool(CanvasTool::custom("stamp")).unwrap();
         let mut tool = StampTool::default();
 
@@ -3511,10 +3687,16 @@ mod tests {
         assert_eq!(stamped.position, point(px(110.0), px(55.0)));
         assert_eq!(editor.history().undo_depth(), 1);
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("stamp-1")]
         );
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.state, ToolState::Idle);
 
         assert!(editor.undo().unwrap());
         assert!(!editor.document().contains_node(&NodeId::from("stamp-1")));
@@ -3546,7 +3728,13 @@ mod tests {
 
         assert_eq!(tool.calls, 0);
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("n1")]
         );
     }
@@ -3562,7 +3750,7 @@ mod tests {
             ))
             .unwrap();
         let mut editor = CanvasEditor::new(document);
-        editor.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
+        editor.session.viewport = CanvasViewport::new(point(px(100.0), px(50.0)), 2.0).unwrap();
         editor.set_tool(CanvasTool::custom("stamp")).unwrap();
         let mut registry = CanvasToolRegistry::new();
 
@@ -3647,7 +3835,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("n1")]
         );
     }
@@ -3655,7 +3849,7 @@ mod tests {
     #[test]
     fn set_tool_effect_switches_tool_and_resets_state() {
         let mut editor = CanvasEditor::default();
-        editor.state = ToolState::Pointing {
+        editor.session.state = ToolState::Pointing {
             origin: point(px(10.0), px(20.0)),
             selection_mode: CanvasSelectionMode::Replace,
             base_selection: CanvasSelection::default(),
@@ -3665,8 +3859,8 @@ mod tests {
             .apply_tool_effect(CanvasToolEffect::SetTool(CanvasTool::custom("stamp")))
             .unwrap();
 
-        assert_eq!(editor.tool, CanvasTool::custom("stamp"));
-        assert_eq!(editor.state, ToolState::Idle);
+        assert_eq!(editor.session.tool, CanvasTool::custom("stamp"));
+        assert_eq!(editor.session.state, ToolState::Idle);
     }
 
     #[test]
@@ -4375,18 +4569,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            editor.selection.nodes.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![NodeId::from("a")]
         );
         assert_eq!(
-            editor.state,
+            editor.session.state,
             ToolState::Pointing {
                 origin: point(px(10.0), px(20.0)),
                 selection_mode: CanvasSelectionMode::Replace,
                 base_selection: CanvasSelection::default(),
             }
         );
-        assert_eq!(editor.viewport.origin, point(px(5.0), px(-3.0)));
+        assert_eq!(editor.session.viewport.origin, point(px(5.0), px(-3.0)));
     }
 
     #[test]
@@ -4432,10 +4632,16 @@ mod tests {
             ])
             .unwrap();
 
-        assert!(editor.selection.nodes.is_empty());
-        assert!(editor.selection.shapes.is_empty());
+        assert!(editor.session.selection.nodes.is_empty());
+        assert!(editor.session.selection.shapes.is_empty());
         assert_eq!(
-            editor.selection.edges.iter().cloned().collect::<Vec<_>>(),
+            editor
+                .session
+                .selection
+                .edges
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![EdgeId::from("a-b")]
         );
     }
@@ -4450,13 +4656,13 @@ mod tests {
                 size(px(100.0), px(100.0)),
             )))
             .unwrap();
-        editor.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("a"));
 
         editor
             .apply(DocumentCommand::RemoveNode(NodeId::from("a")))
             .unwrap();
 
-        assert!(editor.selection.is_empty());
+        assert!(editor.session.selection.is_empty());
     }
 
     #[test]

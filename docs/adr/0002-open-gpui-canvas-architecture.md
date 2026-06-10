@@ -100,9 +100,9 @@ focus-owning element through `canvas_editor_key_down_event` or
 element rather than the paint callback. `CanvasInputMapper` converts window-space GPUI events into
 canvas-local `CanvasEvent` values, while mutation remains in the application-owned editor. Delete,
 Backspace, and Escape use the same reducer path as application-owned keyboard integrations.
-The editor is a facade over `CanvasStore` for durable document changes; viewport, selection, and
-active tool-session state remain editor-scoped session state until a dedicated scoped-record plan
-exists.
+The editor is a facade over `CanvasStore` for durable document changes and a crate-private
+`CanvasEditorSession` for ephemeral interaction state. Viewport, selection, active tool state, and
+gesture baselines stay behind that session boundary until a dedicated scoped-record plan exists.
 
 Interaction feedback is also snapshot-based. `CanvasPaintModel` carries a `CanvasPaintInteraction`
 copy of selection and the editor's internal tool-session state, `CanvasPaintFrame` marks selected
@@ -126,11 +126,12 @@ Connection preview rendering uses the same target-picking semantics to snap to v
 endpoints while leaving invalid handles as ordinary pointer positions.
 
 The first tool extensibility boundary is an effect layer rather than a trait plugin system.
-Built-in tools compute `CanvasToolEffect` values and `CanvasEditor` applies those effects through
-one facade. Recorded transactions, undo/redo, gesture commits, runtime-cache synchronization, and
-kind-registry validation delegate to `CanvasStore`; selection, viewport, and tool-state changes stay
-editor-scoped session state. This keeps the enum-based MVP simple while giving custom tools and
-future CRDT adapters a stable mutation vocabulary.
+Built-in tools read a crate-private reducer context, compute `CanvasToolEffect` values, and
+`CanvasEditor` applies those effects through one facade. Recorded transactions, undo/redo, gesture
+commits, runtime-cache synchronization, and kind-registry validation delegate to `CanvasStore`;
+selection, viewport, and tool-state changes route through `CanvasEditorSession`. This keeps the
+enum-based MVP simple while giving custom tools and future CRDT adapters a stable mutation
+vocabulary.
 Selection effects include replace, add, remove, toggle, set, and clear operations. This keeps
 multi-select behavior available to custom tools and future modifier-key interactions without
 requiring each tool to mutate `CanvasSelection` directly.
@@ -179,6 +180,7 @@ flowchart TD
     App[Application] --> Widget[GPUI Canvas Widget]
     Widget --> Editor[CanvasEditor]
     Editor --> CanvasStore[CanvasStore]
+    Editor --> Session[CanvasEditorSession]
     App --> Persist[CanvasPersistenceStore]
     App --> Registry[Kind Registry]
     Registry --> Editor

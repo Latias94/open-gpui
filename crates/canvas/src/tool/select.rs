@@ -5,10 +5,10 @@ pub(super) struct SelectToolStateMachine;
 impl SelectToolStateMachine {
     pub(super) fn handle_event(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        let effects = match (&editor.state, event) {
+        let effects = match (context.state(), event) {
             (
                 ToolState::Idle,
                 CanvasEvent::KeyDown {
@@ -16,7 +16,7 @@ impl SelectToolStateMachine {
                     ..
                 },
             ) => {
-                let transaction = editor.delete_selection_transaction();
+                let transaction = context.delete_selection_transaction();
                 if transaction.is_empty() {
                     Vec::new()
                 } else {
@@ -24,7 +24,7 @@ impl SelectToolStateMachine {
                 }
             }
             (ToolState::Idle, CanvasEvent::Cancel) => {
-                if editor.selection.is_empty() {
+                if context.selection().is_empty() {
                     Vec::new()
                 } else {
                     vec![CanvasToolEffect::ClearSelection]
@@ -38,7 +38,7 @@ impl SelectToolStateMachine {
                     modifiers,
                     ..
                 },
-            ) => self.handle_idle_pointer_down(editor, position, modifiers)?,
+            ) => self.handle_idle_pointer_down(context, position, modifiers)?,
             (
                 ToolState::Translating {
                     last,
@@ -53,7 +53,7 @@ impl SelectToolStateMachine {
                     modifiers,
                 },
             ) => self.handle_translating_pointer_move(
-                editor,
+                context,
                 position,
                 modifiers,
                 *origin,
@@ -73,7 +73,7 @@ impl SelectToolStateMachine {
                 },
                 CanvasEvent::PointerMove { position, .. },
             ) => self.handle_resizing_pointer_move(
-                editor, position, *origin, *last, *handle, node_ids, shape_ids,
+                context, position, *origin, *last, *handle, node_ids, shape_ids,
             )?,
             (
                 ToolState::Pointing {
@@ -83,7 +83,7 @@ impl SelectToolStateMachine {
                 },
                 CanvasEvent::PointerMove { position, .. },
             ) => self.handle_pointing_pointer_move(
-                editor,
+                context,
                 position,
                 *origin,
                 *selection_mode,
@@ -98,7 +98,7 @@ impl SelectToolStateMachine {
                 },
                 CanvasEvent::PointerMove { position, .. },
             ) => self.handle_pointing_pointer_move(
-                editor,
+                context,
                 position,
                 *origin,
                 *selection_mode,
@@ -146,13 +146,13 @@ impl SelectToolStateMachine {
 
     fn handle_idle_pointer_down(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         position: Point<Pixels>,
         modifiers: CanvasKeyModifiers,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        let document_position = editor.viewport.view_to_document(position);
-        if let Some(handle) = editor.transform_handle_at(document_position) {
-            let (node_ids, shape_ids) = editor.resizable_selection_ids();
+        let document_position = context.viewport().view_to_document(position);
+        if let Some(handle) = context.transform_handle_at(document_position) {
+            let (node_ids, shape_ids) = context.resizable_selection_ids();
             return Ok(vec![
                 CanvasToolEffect::BeginGesture,
                 CanvasToolEffect::SetState(ToolState::Resizing {
@@ -166,11 +166,11 @@ impl SelectToolStateMachine {
             ]);
         }
 
-        let hit = editor
+        let hit = context
             .runtime()
             .precise_hit_test_with_kind_registry(
-                editor.document(),
-                editor.kind_registry(),
+                context.document(),
+                context.kind_registry(),
                 document_position,
                 HitOptions::default(),
             )
@@ -185,7 +185,7 @@ impl SelectToolStateMachine {
 
         Ok(match hit {
             Some(target @ (HitTarget::Node(_) | HitTarget::Shape(_))) => {
-                self.begin_translation_from_hit(editor, document_position, target)
+                self.begin_translation_from_hit(context, document_position, target)
             }
             Some(target) => {
                 vec![
@@ -193,25 +193,25 @@ impl SelectToolStateMachine {
                     CanvasToolEffect::SetState(ToolState::Pointing {
                         origin: document_position,
                         selection_mode: CanvasSelectionMode::Replace,
-                        base_selection: editor.selection.clone(),
+                        base_selection: context.selection().clone(),
                     }),
                 ]
             }
-            None => self.begin_blank_pointing(editor, document_position, modifiers),
+            None => self.begin_blank_pointing(context, document_position, modifiers),
         })
     }
 
     fn begin_translation_from_hit(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         document_position: Point<Pixels>,
         target: HitTarget,
     ) -> Vec<CanvasToolEffect> {
-        let mut selection = editor.selection.clone();
+        let mut selection = context.selection().clone();
         if !selection.contains_target(&target) {
             selection.replace_with(target);
         }
-        let (node_ids, shape_ids) = editor.translatable_selection_ids(&selection);
+        let (node_ids, shape_ids) = context.translatable_selection_ids(&selection);
         vec![
             CanvasToolEffect::BeginGesture,
             CanvasToolEffect::SetSelection(selection),
@@ -228,7 +228,7 @@ impl SelectToolStateMachine {
 
     fn begin_blank_pointing(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         document_position: Point<Pixels>,
         modifiers: CanvasKeyModifiers,
     ) -> Vec<CanvasToolEffect> {
@@ -244,7 +244,7 @@ impl SelectToolStateMachine {
         effects.push(CanvasToolEffect::SetState(ToolState::Pointing {
             origin: document_position,
             selection_mode,
-            base_selection: editor.selection.clone(),
+            base_selection: context.selection().clone(),
         }));
         effects
     }
@@ -252,7 +252,7 @@ impl SelectToolStateMachine {
     #[allow(clippy::too_many_arguments)]
     fn handle_translating_pointer_move(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         position: Point<Pixels>,
         modifiers: CanvasKeyModifiers,
         origin: Point<Pixels>,
@@ -261,7 +261,7 @@ impl SelectToolStateMachine {
         node_ids: &[NodeId],
         shape_ids: &[ShapeId],
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        let document_position = editor.viewport.view_to_document(position);
+        let document_position = context.viewport().view_to_document(position);
         let constraint_axis = if modifiers.shift {
             Some(
                 constraint_axis.unwrap_or_else(|| drag_constraint_axis(document_position - origin)),
@@ -273,11 +273,11 @@ impl SelectToolStateMachine {
             .map(|axis| constrained_drag_position(origin, document_position, axis))
             .unwrap_or(document_position);
         let raw_delta = document_position - last;
-        let snap = editor.snap_delta_for_translation(raw_delta, node_ids, shape_ids);
+        let snap = context.snap_delta_for_translation(raw_delta, node_ids, shape_ids);
         let delta = snap.delta;
         let mut commands = Vec::new();
         for id in node_ids {
-            let mut node = editor
+            let mut node = context
                 .document()
                 .node(id)
                 .ok_or_else(|| DocumentError::MissingNode(id.clone()))?
@@ -286,7 +286,7 @@ impl SelectToolStateMachine {
             commands.push(DocumentCommand::UpdateNode(node));
         }
         for id in shape_ids {
-            let mut shape = editor
+            let mut shape = context
                 .document()
                 .shape(id)
                 .ok_or_else(|| DocumentError::MissingShape(id.clone()))?
@@ -310,7 +310,7 @@ impl SelectToolStateMachine {
 
     fn handle_resizing_pointer_move(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         position: Point<Pixels>,
         origin: Point<Pixels>,
         last: Point<Pixels>,
@@ -318,12 +318,12 @@ impl SelectToolStateMachine {
         node_ids: &[NodeId],
         shape_ids: &[ShapeId],
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        let document_position = editor.viewport.view_to_document(position);
+        let document_position = context.viewport().view_to_document(position);
         let raw_delta = document_position - last;
-        let snap = editor.snap_delta_for_resize(handle, raw_delta, node_ids, shape_ids);
+        let snap = context.snap_delta_for_resize(handle, raw_delta, node_ids, shape_ids);
         let delta = snap.delta;
         let transaction =
-            editor.resize_selection_transaction(handle, delta, node_ids, shape_ids)?;
+            context.resize_selection_transaction(handle, delta, node_ids, shape_ids)?;
 
         Ok(vec![
             CanvasToolEffect::UpdateGesture(transaction),
@@ -340,16 +340,16 @@ impl SelectToolStateMachine {
 
     fn handle_pointing_pointer_move(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         position: Point<Pixels>,
         origin: Point<Pixels>,
         selection_mode: CanvasSelectionMode,
         base_selection: &CanvasSelection,
     ) -> Vec<CanvasToolEffect> {
-        let document_position = editor.viewport.view_to_document(position);
+        let document_position = context.viewport().view_to_document(position);
         let bounds = selection_bounds(origin, document_position);
         vec![
-            CanvasToolEffect::SetSelection(editor.selection_for_intersections_with_mode(
+            CanvasToolEffect::SetSelection(context.selection_for_intersections_with_mode(
                 bounds,
                 selection_mode,
                 base_selection,

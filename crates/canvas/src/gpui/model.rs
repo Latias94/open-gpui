@@ -102,13 +102,14 @@ impl CanvasPaintModel {
 
 impl From<&CanvasEditor> for CanvasPaintModel {
     fn from(editor: &CanvasEditor) -> Self {
+        let session = editor.session_snapshot();
         Self {
             document: editor.document_snapshot(),
             runtime: editor.runtime_snapshot(),
             kind_registry: editor.kind_registry_snapshot(),
-            viewport: editor.viewport(),
-            interaction: CanvasPaintInteraction::new(editor.selection().clone())
-                .with_internal_tool_state(editor.state().clone()),
+            viewport: session.viewport,
+            interaction: CanvasPaintInteraction::new(session.selection)
+                .with_internal_tool_state(session.state),
         }
     }
 }
