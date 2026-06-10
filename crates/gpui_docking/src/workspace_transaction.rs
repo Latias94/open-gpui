@@ -413,10 +413,7 @@ mod tests {
                 item: &item("a"),
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::KnownViewport {
-                    hit: DockViewportHit {
-                        space: secondary.clone(),
-                        host_position: point(px(5.0), px(5.0)),
-                    },
+                    hit: DockViewportHit::new(secondary.clone(), point(px(5.0), px(5.0))),
                 }),
             })
             .expect_err("known viewport requires local target resolution");

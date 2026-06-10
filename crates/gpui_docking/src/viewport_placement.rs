@@ -206,10 +206,7 @@ mod tests {
                     &DockViewportTargetContext::new()
                 )
                 .map(|target| target.into_hit()),
-            Some(DockViewportHit {
-                space: secondary,
-                host_position: point(px(5.0), px(5.0)),
-            })
+            Some(DockViewportHit::new(secondary, point(px(5.0), px(5.0))))
         );
     }
 

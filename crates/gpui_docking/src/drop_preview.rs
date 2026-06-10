@@ -27,7 +27,7 @@ impl DockDropPreview {
         let (kind, bounds) = match &target.kind {
             DockResolvedDropTargetKind::KnownViewport { hit } => (
                 DockDropPreviewKind::KnownViewportRoute,
-                route_bounds(hit.host_position),
+                route_bounds(hit.host_position()),
             ),
             DockResolvedDropTargetKind::TearOffCandidate {
                 release_position, ..

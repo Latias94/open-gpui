@@ -929,10 +929,7 @@ mod tests {
 
     #[test]
     fn viewport_hit_resolves_to_known_viewport_with_host_position() {
-        let hit = DockViewportHit {
-            space: DockSpaceId::from("secondary"),
-            host_position: point(px(12.0), px(18.0)),
-        };
+        let hit = DockViewportHit::new(DockSpaceId::from("secondary"), point(px(12.0), px(18.0)));
         let target = resolve_layout_drop(DockDropResolverInput {
             known_viewport: Some(hit.clone()),
             ..DockDropResolverInput::new(point(px(900.0), px(700.0)), &policy())

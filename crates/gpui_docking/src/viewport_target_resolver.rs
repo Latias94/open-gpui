@@ -5,9 +5,23 @@ use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportHit {
     /// Logical dock space that contains the point.
-    pub(crate) space: DockSpaceId,
+    space: DockSpaceId,
     /// Point relative to the dock host bounds.
-    pub(crate) host_position: Point<Pixels>,
+    host_position: Point<Pixels>,
+}
+
+impl DockViewportHit {
+    #[cfg(test)]
+    pub(crate) fn new(space: impl Into<DockSpaceId>, host_position: Point<Pixels>) -> Self {
+        Self {
+            space: space.into(),
+            host_position,
+        }
+    }
+
+    pub(crate) fn host_position(&self) -> Point<Pixels> {
+        self.host_position
+    }
 }
 
 /// A registered viewport hit with the runtime window that owns it.
@@ -48,10 +62,7 @@ impl DockViewportTargetHit {
 
     #[cfg(test)]
     pub(crate) fn into_hit(self) -> DockViewportHit {
-        DockViewportHit {
-            space: self.space,
-            host_position: self.host_position,
-        }
+        DockViewportHit::new(self.space, self.host_position)
     }
 }
 

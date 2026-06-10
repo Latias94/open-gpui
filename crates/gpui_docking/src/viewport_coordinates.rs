@@ -111,10 +111,7 @@ mod tests {
                     &DockViewportTargetContext::new()
                 )
                 .map(|target| target.into_hit()),
-            Some(DockViewportHit {
-                space: main.clone(),
-                host_position: point(px(5.0), px(5.0)),
-            })
+            Some(DockViewportHit::new(main.clone(), point(px(5.0), px(5.0))))
         );
         assert!(
             adapter
