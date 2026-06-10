@@ -39,6 +39,7 @@ impl DockViewportPlatformSignals {
     }
 
     /// Converts the platform snapshot into the pure resolver context.
+    #[cfg(test)]
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
         DockViewportTargetContext::from_window_signals(
             self.hovered_window,
