@@ -76,6 +76,7 @@ impl Render for DockHost {
                     let request = DockRenderedOutsideReleaseRequest::new(
                         this.viewport_runtime().is_some(),
                         cx.active_drag_value::<DockDragPayload>().cloned(),
+                        cx.mouse_button_is_pressed(MouseButton::Left),
                         outside_release_host_space.clone(),
                         event.position,
                     );
