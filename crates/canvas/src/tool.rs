@@ -2153,34 +2153,27 @@ mod tests {
 
     #[test]
     fn select_tool_delete_key_removes_selected_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(200.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("a"));
         editor.session.selection.edges.insert(EdgeId::from("a-b"));
@@ -2213,41 +2206,38 @@ mod tests {
 
     #[test]
     fn select_tool_delete_key_skips_locked_selected_records() {
-        let mut document = CanvasDocument::default();
         let mut locked_node = CanvasNode::new(
             "locked-node",
             point(px(0.0), px(0.0)),
             size(px(100.0), px(100.0)),
         );
         locked_node.locked = true;
-        document.insert_node(locked_node).unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "a",
-                point(px(200.0), px(0.0)),
-                size(px(100.0), px(100.0)),
-            ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "b",
-                point(px(400.0), px(0.0)),
-                size(px(100.0), px(100.0)),
-            ))
-            .unwrap();
         let mut locked_edge = CanvasEdge::new(
             "locked-edge",
             CanvasEndpoint::new("a", None::<&str>),
             CanvasEndpoint::new("b", None::<&str>),
         );
         locked_edge.locked = true;
-        document.insert_edge(locked_edge).unwrap();
         let mut locked_shape = CanvasShape::new(
             "locked-shape",
             Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
         );
         locked_shape.locked = true;
-        document.insert_shape(locked_shape).unwrap();
+        let document = document_fixture()
+            .node(locked_node)
+            .node(CanvasNode::new(
+                "a",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(400.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(locked_edge)
+            .shape(locked_shape)
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .session
@@ -2293,48 +2283,37 @@ mod tests {
 
     #[test]
     fn editor_duplicate_selection_remaps_internal_edges_and_selects_paste() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(200.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "outside",
                 point(px(400.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-outside",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("outside", None::<&str>),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "frame",
                 Bounds::new(point(px(-20.0), px(-20.0)), size(px(360.0), px(160.0))),
             ))
-            .unwrap();
+            .build();
         document
             .apply_transaction(CanvasTransaction::new([
                 DocumentCommand::SetRecordParent {
@@ -2448,20 +2427,17 @@ mod tests {
 
     #[test]
     fn editor_cut_and_paste_selection_use_command_path() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor.session.selection.nodes.insert(NodeId::from("a"));
         editor
