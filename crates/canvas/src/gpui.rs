@@ -33,6 +33,7 @@ mod tests {
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
+        test_support::document_fixture,
         tool::{CanvasToolEffect, ToolState},
     };
     use open_gpui::{
@@ -42,21 +43,18 @@ mod tests {
 
     #[test]
     fn collect_visible_records_culls_and_transforms_bounds() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "inside",
                 point(px(60.0), px(10.0)),
                 size(px(20.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "outside",
                 point(px(200.0), px(10.0)),
                 size(px(20.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         let model = CanvasPaintModel::new(
             document,
             CanvasViewport::new(point(px(50.0), px(0.0)), 2.0).unwrap(),
@@ -108,8 +106,7 @@ mod tests {
     fn collect_visible_records_keeps_locked_records_visible() {
         let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(20.0), px(20.0)));
         node.locked = true;
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let model = CanvasPaintModel::new(document, CanvasViewport::default());
 
         let frame = collect_visible_records(
@@ -131,8 +128,7 @@ mod tests {
         let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(40.0), px(40.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(40.0), px(20.0))));
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let model = CanvasPaintModel::new(document, CanvasViewport::default());
         let canvas_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
 
@@ -228,10 +224,9 @@ mod tests {
 
     #[test]
     fn paint_model_uses_kind_registry_bounds_in_frame_records() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("wide", point(px(10.0), px(10.0)), size(px(20.0), px(20.0)));
         node.kind = "wide".to_string();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::default(),
@@ -258,20 +253,18 @@ mod tests {
 
     #[test]
     fn paint_frame_carries_kind_label_metadata_for_nodes_and_shapes() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new(
             "painted",
             point(px(10.0), px(20.0)),
             size(px(100.0), px(80.0)),
         );
         node.kind = "painted-node".to_string();
-        document.insert_node(node).unwrap();
         let mut shape = CanvasShape::new(
             "shape",
             Bounds::new(point(px(150.0), px(20.0)), size(px(90.0), px(70.0))),
         );
         shape.kind = "painted-shape".to_string();
-        document.insert_shape(shape).unwrap();
+        let document = document_fixture().node(node).shape(shape).build();
         let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::new(point(px(10.0), px(10.0)), 2.0).unwrap(),
@@ -317,14 +310,13 @@ mod tests {
 
     #[test]
     fn prepared_frame_preserves_snapshot_when_no_labels_are_visible() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "plain",
                 point(px(10.0), px(20.0)),
                 size(px(100.0), px(80.0)),
             ))
-            .unwrap();
+            .build();
         let model = CanvasPaintModel::new(document, CanvasViewport::default());
         let frame = collect_visible_records(
             &model,
@@ -378,41 +370,38 @@ mod tests {
 
     #[test]
     fn paint_style_uses_record_style_then_kind_fallback_then_theme() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new(
             "painted",
             point(px(0.0), px(0.0)),
             size(px(100.0), px(80.0)),
         );
         node.kind = "painted-node".to_string();
-        document.insert_node(node).unwrap();
         let mut shape = CanvasShape::new(
             "shape",
             Bounds::new(point(px(120.0), px(0.0)), size(px(100.0), px(80.0))),
         );
         shape.kind = "painted-shape".to_string();
-        document.insert_shape(shape).unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "source",
-                point(px(0.0), px(160.0)),
-                size(px(100.0), px(80.0)),
-            ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "target",
-                point(px(180.0), px(160.0)),
-                size(px(100.0), px(80.0)),
-            ))
-            .unwrap();
         let mut edge = CanvasEdge::new(
             "edge",
             CanvasEndpoint::new("source", None::<&str>),
             CanvasEndpoint::new("target", None::<&str>),
         );
         edge.kind = "painted-edge".to_string();
-        document.insert_edge(edge).unwrap();
+        let document = document_fixture()
+            .node(node)
+            .shape(shape)
+            .node(CanvasNode::new(
+                "source",
+                point(px(0.0), px(160.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .node(CanvasNode::new(
+                "target",
+                point(px(180.0), px(160.0)),
+                size(px(100.0), px(80.0)),
+            ))
+            .edge(edge)
+            .build();
         let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::default(),
@@ -495,21 +484,18 @@ mod tests {
 
     #[test]
     fn selected_records_are_marked_in_paint_frame() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "selected",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "plain",
                 point(px(70.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
@@ -558,11 +544,12 @@ mod tests {
         );
         shape.z_index = 4;
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(selected).unwrap();
-        document.insert_node(locked).unwrap();
-        document.insert_node(hidden).unwrap();
-        document.insert_shape(shape).unwrap();
+        let document = document_fixture()
+            .node(selected)
+            .node(locked)
+            .node(hidden)
+            .shape(shape)
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effects([
@@ -623,10 +610,9 @@ mod tests {
 
     #[test]
     fn widget_overlay_bounds_come_from_paint_frame_geometry() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("wide", point(px(10.0), px(10.0)), size(px(20.0), px(20.0)));
         node.kind = "wide".to_string();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut editor =
             CanvasEditor::try_new_with_kind_registry(document, geometry_registry()).unwrap();
         editor
@@ -663,14 +649,13 @@ mod tests {
 
     #[test]
     fn paint_model_from_editor_keeps_an_immutable_editor_snapshot() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "stable",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let snapshot = CanvasPaintModel::from(&editor);
 
@@ -707,14 +692,13 @@ mod tests {
 
     #[test]
     fn paint_model_from_editor_keeps_an_immutable_session_snapshot() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "selected",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         let viewport = CanvasViewport::new(point(px(5.0), px(-3.0)), 1.5).unwrap();
         editor.set_viewport(viewport);
@@ -765,14 +749,13 @@ mod tests {
 
     #[test]
     fn selected_records_add_transform_handles_to_paint_frame() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "selected",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
@@ -797,14 +780,13 @@ mod tests {
 
     #[test]
     fn translating_state_adds_snap_guides_to_paint_frame() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "selected",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut selection = CanvasSelection::default();
         selection.insert_node(crate::NodeId::from("selected"));
         let model = CanvasPaintModel::new(
@@ -846,14 +828,13 @@ mod tests {
 
     #[test]
     fn interaction_feedback_can_be_disabled() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "selected",
                 point(px(10.0), px(10.0)),
                 size(px(40.0), px(20.0)),
             ))
-            .unwrap();
+            .build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effects([
@@ -884,7 +865,7 @@ mod tests {
     #[test]
     fn selecting_state_adds_selection_bounds_feedback() {
         let model = CanvasPaintModel::new(
-            CanvasDocument::default(),
+            document_fixture().build(),
             CanvasViewport::new(point(px(10.0), px(20.0)), 2.0).unwrap(),
         )
         .with_interaction(CanvasPaintInteraction::default().with_internal_tool_state(
@@ -920,8 +901,7 @@ mod tests {
         );
         node.handles
             .push(CanvasHandle::new("out", point(px(100.0), px(40.0))));
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
@@ -962,9 +942,7 @@ mod tests {
         target_handle.role = HandleRole::Target;
         target.handles.push(target_handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let model = CanvasPaintModel::new_with_kind_registry(
             document,
             CanvasViewport::default(),
@@ -1012,9 +990,7 @@ mod tests {
         target_handle.role = HandleRole::Target;
         target.handles.push(target_handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
@@ -1059,9 +1035,7 @@ mod tests {
         invalid_target_handle.role = HandleRole::Source;
         target.handles.push(invalid_target_handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let document = document_fixture().node(source).node(target).build();
         let mut editor = CanvasEditor::new(document);
         editor
             .apply_tool_effect(CanvasToolEffect::SetState(ToolState::Connecting {
@@ -1313,47 +1287,39 @@ mod tests {
     }
 
     fn large_grid_document(columns: usize, rows: usize) -> CanvasDocument {
-        let mut document = CanvasDocument::default();
+        let mut fixture = document_fixture();
 
         for row in 0..rows {
             for column in 0..columns {
-                document
-                    .insert_node(CanvasNode::new(
-                        format!("node-{row}-{column}"),
-                        point(px(column as f32 * 160.0), px(row as f32 * 120.0)),
-                        size(px(96.0), px(56.0)),
-                    ))
-                    .unwrap();
+                fixture.add_node(CanvasNode::new(
+                    format!("node-{row}-{column}"),
+                    point(px(column as f32 * 160.0), px(row as f32 * 120.0)),
+                    size(px(96.0), px(56.0)),
+                ));
             }
         }
 
-        document
+        fixture.build()
     }
 
     fn connected_edge_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn geometry_registry() -> CanvasKindRegistry {
