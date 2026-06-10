@@ -89,19 +89,42 @@ impl DockOutsideReleasePollSession {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockPayloadDropRelease {
     payload: DockDragPayload,
+    origin: DockPayloadDropReleaseOrigin,
     /// Host space that observed the release; runtime routing may choose a different target.
     host_space: DockSpaceId,
     release_position: Point<Pixels>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockPayloadDropReleaseOrigin {
+    /// Release was observed by the host/window under the dragged payload.
+    HoveredHost,
+    /// Release was observed by the source host after pointer capture or outside-window polling.
+    SourceOnly,
+}
+
 impl DockPayloadDropRelease {
-    pub(crate) fn new(
+    pub(crate) fn hovered_host(
         payload: DockDragPayload,
         host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
         Self {
             payload,
+            origin: DockPayloadDropReleaseOrigin::HoveredHost,
+            host_space,
+            release_position,
+        }
+    }
+
+    pub(crate) fn source_only(
+        payload: DockDragPayload,
+        host_space: DockSpaceId,
+        release_position: Point<Pixels>,
+    ) -> Self {
+        Self {
+            payload,
+            origin: DockPayloadDropReleaseOrigin::SourceOnly,
             host_space,
             release_position,
         }
@@ -109,6 +132,10 @@ impl DockPayloadDropRelease {
 
     pub(crate) fn payload(&self) -> &DockDragPayload {
         &self.payload
+    }
+
+    pub(crate) fn origin(&self) -> DockPayloadDropReleaseOrigin {
+        self.origin
     }
 
     pub(crate) fn host_space(&self) -> &DockSpaceId {
@@ -391,7 +418,7 @@ impl DockInteractionRuntime {
             Some(true) => DockOutsideReleasePollDecision::Continue,
             Some(false) => {
                 self.finish_outside_release_poll(session);
-                DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::new(
+                DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::source_only(
                     payload,
                     request.host_space,
                     request.release_position,
@@ -429,7 +456,7 @@ impl DockInteractionRuntime {
         }
 
         self.cancel_outside_release_poll();
-        DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+        DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
             payload,
             request.host_space,
             request.release_position,
@@ -533,12 +560,29 @@ mod tests {
         let host_space = DockSpaceId::from("host");
         let release_position = point(px(120.0), px(80.0));
 
-        let release =
-            DockPayloadDropRelease::new(payload.clone(), host_space.clone(), release_position);
+        let release = DockPayloadDropRelease::hovered_host(
+            payload.clone(),
+            host_space.clone(),
+            release_position,
+        );
 
         assert_eq!(release.payload(), &payload);
+        assert_eq!(release.origin(), DockPayloadDropReleaseOrigin::HoveredHost);
         assert_eq!(release.host_space(), &host_space);
         assert_eq!(release.release_position(), release_position);
+
+        let source_only = DockPayloadDropRelease::source_only(
+            payload.clone(),
+            host_space.clone(),
+            release_position,
+        );
+        assert_eq!(source_only.payload(), &payload);
+        assert_eq!(
+            source_only.origin(),
+            DockPayloadDropReleaseOrigin::SourceOnly
+        );
+        assert_eq!(source_only.host_space(), &host_space);
+        assert_eq!(source_only.release_position(), release_position);
     }
 
     #[test]
@@ -558,7 +602,7 @@ mod tests {
         );
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
                 payload,
                 host_space,
                 release_position,
@@ -576,7 +620,7 @@ mod tests {
 
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
                 payload,
                 DockSpaceId::from("host"),
                 point(px(120.0), px(80.0)),
@@ -620,7 +664,7 @@ mod tests {
         );
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(active_payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
                 active_payload,
                 DockSpaceId::from("host"),
                 point(px(120.0), px(80.0)),
@@ -656,7 +700,7 @@ mod tests {
                 Some(payload.clone()),
                 Some(false),
             )),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::new(
+            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
                 payload,
                 DockSpaceId::from("host"),
                 point(px(120.0), px(80.0)),
@@ -854,7 +898,7 @@ mod tests {
                 Some(payload.clone()),
                 Some(false)
             )),
-            DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::new(
+            DockOutsideReleasePollDecision::CommitRelease(DockPayloadDropRelease::source_only(
                 payload,
                 DockSpaceId::from("host"),
                 point(px(120.0), px(80.0)),

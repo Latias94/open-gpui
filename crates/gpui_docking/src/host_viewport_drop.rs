@@ -2,6 +2,7 @@ use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
+    interaction::DockPayloadDropReleaseOrigin,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window, point};
 
@@ -47,7 +48,13 @@ impl DockHost {
             );
         };
 
-        let request = viewport_drop_route_request_from_host(payload, position, window, cx);
+        let request = viewport_drop_route_request_from_host(
+            payload,
+            position,
+            window,
+            cx,
+            DockPayloadDropReleaseOrigin::HoveredHost,
+        );
         let route = runtime.resolve_payload_drop_route(&request, cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
@@ -58,12 +65,14 @@ impl DockHost {
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
         payload: &DockDragPayload,
+        origin: DockPayloadDropReleaseOrigin,
         release_position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        let request = viewport_drop_route_request_from_host(payload, release_position, window, cx);
+        let request =
+            viewport_drop_route_request_from_host(payload, release_position, window, cx, origin);
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
@@ -74,14 +83,21 @@ fn viewport_drop_route_request_from_host(
     host_position: Point<Pixels>,
     window: &Window,
     cx: &Context<DockHost>,
+    origin: DockPayloadDropReleaseOrigin,
 ) -> DockViewportDropRouteRequest {
+    let platform_signals = match origin {
+        DockPayloadDropReleaseOrigin::HoveredHost => {
+            DockViewportPlatformSignals::from_hovered_window(window, cx)
+        }
+        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
+    };
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
         payload.source_tabs,
         viewport_payload(payload),
         window_screen_position(window, host_position),
         None,
-        DockViewportPlatformSignals::from_window(window, cx),
+        platform_signals,
     )
 }
 

@@ -60,7 +60,7 @@ impl Render for DockHost {
             .on_drop(
                 cx.listener(move |this, payload: &DockDragPayload, window, cx| {
                     this.drop_payload_release_from_render(
-                        DockPayloadDropRelease::new(
+                        DockPayloadDropRelease::hovered_host(
                             payload.clone(),
                             drop_host_space.clone(),
                             window.mouse_position(),

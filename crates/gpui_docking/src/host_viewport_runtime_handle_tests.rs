@@ -432,7 +432,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
             app,
         )
     });
@@ -773,7 +773,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
         );
         let route = runtime.resolve_payload_drop_route(&request, app);
         assert!(
@@ -852,8 +852,8 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         .expect("source viewport should be activatable before drop");
     let before_drop_context = opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app).target_context()
         })
         .expect("target window should be live");
     assert_eq!(
@@ -889,7 +889,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
             app,
         );
         let status = runtime.runtime_status();
@@ -942,8 +942,8 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     );
     let after_drop_context = source_opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app).target_context()
         })
         .expect("source window should be live");
     assert_eq!(
@@ -1073,8 +1073,8 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
 
     let after_drop_context = source_opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app).target_context()
         })
         .expect("source window should be live");
     assert_eq!(
@@ -1404,9 +1404,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app)
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source window should still be live");
     // TestPlatform normalizes runtime-opened window origins to zero. Override only the source
     // snapshot so this models a native detached window releasing over main, not over itself.
@@ -1698,7 +1696,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),
             None,
-            DockViewportPlatformSignals::from_app(app).with_event_window(opened.window()),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
         );
         let route = runtime.resolve_payload_drop_route(&request, app);
         let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
@@ -1825,9 +1823,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app)
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source window should still be live");
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),

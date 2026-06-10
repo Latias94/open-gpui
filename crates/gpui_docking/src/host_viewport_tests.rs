@@ -78,7 +78,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppContext) {
+fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let (alpha_graph, _alpha_root) = tabs_graph(&["a"], 0);
@@ -113,7 +113,7 @@ fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppCont
         .update(cx, |_, window, _| window.activate_window())
         .expect("zeta window should be live");
     let (context, expected_window_stack) = alpha_window
-        .update(cx, |_, window, app| {
+        .update(cx, |_, _, app| {
             let expected_window_stack = app
                 .window_stack()
                 .unwrap_or_default()
@@ -121,21 +121,34 @@ fn viewport_platform_signals_from_window_marks_event_window(cx: &mut TestAppCont
                 .map(|window| window.window_id())
                 .collect::<Vec<_>>();
             (
-                DockViewportPlatformSignals::from_window(window, app).target_context(),
+                DockViewportPlatformSignals::from_app(app).target_context(),
                 expected_window_stack,
             )
         })
         .expect("alpha window should be live");
 
-    assert_eq!(context.event_window(), Some(alpha_handle.window_id()));
+    assert_eq!(context.hovered_window(), None);
     assert_eq!(context.active_window(), Some(zeta_handle.window_id()));
     assert_eq!(context.window_stack(), expected_window_stack.as_slice());
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
             .map(|target| target.space().clone()),
+        Some(zeta_space.clone()),
+        "active window should arbitrate overlapping hits when no hovered window is known"
+    );
+
+    let hovered_context = cx.update(|app| {
+        DockViewportPlatformSignals::from_app(app)
+            .with_hovered_window(alpha_handle)
+            .target_context()
+    });
+    assert_eq!(
+        adapter
+            .resolve_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
+            .map(|target| target.space().clone()),
         Some(alpha_space),
-        "current event window should win viewport arbitration"
+        "explicit hovered window should win viewport arbitration"
     );
 }
 

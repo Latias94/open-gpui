@@ -32,7 +32,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.drop_payload_release_from_render(
-            DockPayloadDropRelease::new(payload.clone(), host_space, release_position),
+            DockPayloadDropRelease::hovered_host(payload.clone(), host_space, release_position),
             window,
             cx,
         )

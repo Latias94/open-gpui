@@ -737,7 +737,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
         DockViewportDropPayload::Item(item("a")),
         point(px(220.0), px(200.0)),
         None,
-        DockViewportTargetContext::new().with_event_window(old_window),
+        DockViewportTargetContext::new().with_hovered_window(old_window),
     );
     let stale_commit = DockViewportDropRouteCommit::from_route_request(
         &request,

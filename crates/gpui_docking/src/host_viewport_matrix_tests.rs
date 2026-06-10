@@ -258,9 +258,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app)
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
     let result = cx.update(|app| {

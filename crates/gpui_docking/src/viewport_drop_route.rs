@@ -337,6 +337,50 @@ mod tests {
     }
 
     #[test]
+    fn source_only_overlap_route_uses_active_window_without_hovered_source() {
+        let source = space("source");
+        let target = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.register_viewport(target.clone(), target_window);
+
+        for space in [&source, &target] {
+            adapter.update_snapshot(
+                space,
+                None,
+                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let route = adapter.resolve_payload_drop_route_with_context(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(120.0), px(140.0)),
+            None,
+            &DockPolicy::default(),
+            DockViewportTargetContext::new()
+                .with_active_window(target_window)
+                .with_window_stack([target_window, source_window]),
+        );
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::new(
+                    target,
+                    target_window,
+                    point(px(20.0), px(40.0)),
+                ),
+            },
+            "source-only routes must not treat the source event window as hovered"
+        );
+    }
+
+    #[test]
     fn drop_route_outside_all_viewports_uses_tear_off_policy() {
         let source = space("source");
         let source_tabs = DockNodeId::null();
