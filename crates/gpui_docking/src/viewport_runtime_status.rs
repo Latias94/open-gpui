@@ -156,10 +156,10 @@ impl DockViewportRuntimeStatus {
         route: &DockViewportDropRoute,
     ) {
         self.last_route = Some(DockViewportRouteRecord {
-            source_space: request.source_space.clone(),
-            source_tabs: request.source_tabs,
-            payload: DockViewportPayloadRecord::from_payload(&request.payload),
-            target: DockViewportRouteTarget::from_route(&request.source_space, route),
+            source_space: request.source_space().clone(),
+            source_tabs: request.source_tabs(),
+            payload: DockViewportPayloadRecord::from_payload(request.payload()),
+            target: DockViewportRouteTarget::from_route(request.source_space(), route),
         });
     }
 

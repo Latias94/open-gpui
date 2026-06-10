@@ -1,4 +1,3 @@
-#[cfg(test)]
 use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
@@ -29,12 +28,12 @@ pub(crate) enum DockViewportDropRoute {
 /// All platform and payload facts needed to route one rendered drop release.
 #[derive(Debug, Clone)]
 pub(crate) struct DockViewportDropRouteRequest {
-    pub(crate) source_space: DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
-    pub(crate) payload: DockViewportDropPayload,
-    pub(crate) release_position: Point<Pixels>,
-    pub(crate) suggested_window_bounds: Option<WindowBounds>,
-    pub(crate) platform_signals: DockViewportPlatformSignals,
+    source_space: DockSpaceId,
+    source_tabs: DockNodeId,
+    payload: DockViewportDropPayload,
+    release_position: Point<Pixels>,
+    suggested_window_bounds: Option<WindowBounds>,
+    platform_signals: DockViewportPlatformSignals,
 }
 
 /// Commit-time facts for a resolved viewport drop route.
@@ -65,9 +64,9 @@ impl DockViewportDropWorkspaceCommit {
         host_position: Point<Pixels>,
     ) -> Self {
         Self {
-            source_space: request.source_space.clone(),
-            source_tabs: request.source_tabs,
-            payload: request.payload.clone(),
+            source_space: request.source_space().clone(),
+            source_tabs: request.source_tabs(),
+            payload: request.payload().clone(),
             target_space,
             host_position,
         }
@@ -101,7 +100,7 @@ impl DockViewportDropRouteCommit {
             DockViewportDropRoute::Local { host_position } => {
                 Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
                     request,
-                    request.source_space.clone(),
+                    request.source_space().clone(),
                     host_position,
                 ))
             }
@@ -141,6 +140,30 @@ impl DockViewportDropRouteRequest {
         }
     }
 
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        &self.source_space
+    }
+
+    pub(crate) fn source_tabs(&self) -> DockNodeId {
+        self.source_tabs
+    }
+
+    pub(crate) fn payload(&self) -> &DockViewportDropPayload {
+        &self.payload
+    }
+
+    pub(crate) fn release_position(&self) -> Point<Pixels> {
+        self.release_position
+    }
+
+    pub(crate) fn suggested_window_bounds(&self) -> Option<WindowBounds> {
+        self.suggested_window_bounds
+    }
+
+    pub(crate) fn target_context(&self) -> DockViewportTargetContext {
+        self.platform_signals.target_context()
+    }
+
     #[cfg(test)]
     pub(crate) fn from_target_context(
         source_space: impl Into<DockSpaceId>,
@@ -167,11 +190,11 @@ impl DockViewportAdapter {
         request: &DockViewportDropRouteRequest,
         policy: &DockPolicy,
     ) -> DockViewportDropRoute {
-        let target_context = request.platform_signals.target_context();
+        let target_context = request.target_context();
         if let Some(candidate) =
-            self.resolve_viewport_target(request.release_position, &target_context)
+            self.resolve_viewport_target(request.release_position(), &target_context)
         {
-            if candidate.space() == &request.source_space {
+            if candidate.space() == request.source_space() {
                 return DockViewportDropRoute::Local {
                     host_position: candidate.host_position(),
                 };
@@ -220,11 +243,11 @@ fn tear_off_request_from_route_request(
     request: &DockViewportDropRouteRequest,
 ) -> DockViewportTearOffRequest {
     DockViewportTearOffRequest {
-        source_space: request.source_space.clone(),
-        source_tabs: request.source_tabs,
-        payload: request.payload.clone(),
-        release_position: request.release_position,
-        suggested_window_bounds: request.suggested_window_bounds,
+        source_space: request.source_space().clone(),
+        source_tabs: request.source_tabs(),
+        payload: request.payload().clone(),
+        release_position: request.release_position(),
+        suggested_window_bounds: request.suggested_window_bounds(),
     }
 }
 
