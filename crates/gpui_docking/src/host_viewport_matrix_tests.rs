@@ -208,21 +208,21 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         target_bounds.get_bounds().origin.x + host_position.x,
         target_bounds.get_bounds().origin.y + host_position.y,
     );
-    let source_release_context = source_opened
+    let source_release_signals = source_opened
         .window
         .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+            DockViewportPlatformSignals::from_window(window, app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_context(
+        runtime.commit_payload_drop_from_screen_with_platform_signals(
             source_space.clone(),
             nodes.source_tabs,
             case.payload.drop_payload(),
             release_screen_position,
             None,
-            source_release_context,
+            source_release_signals,
             app,
         )
     });

@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::DockViewportTargetContext;
 use crate::{
     DockActionApplyError, DockController, DockHost, DockNodeId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropPayload,
@@ -12,6 +10,8 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_runtime::DockViewportReusableWindow,
 };
+#[cfg(test)]
+use crate::{DockViewportPlatformSignals, DockViewportTargetContext};
 use open_gpui::{
     App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription, WindowBounds,
     WindowId, WindowOptions,
@@ -371,6 +371,30 @@ impl DockViewportRuntimeHandle {
         self.resolve_payload_drop_route(&request, cx)
     }
 
+    /// Resolves a rendered payload release from platform signal snapshots in tests.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve_payload_drop_route_with_platform_signals(
+        &self,
+        source_space: impl Into<DockSpaceId>,
+        source_tabs: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        platform_signals: DockViewportPlatformSignals,
+        cx: &App,
+    ) -> DockViewportDropRoute {
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source_space,
+            source_tabs,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            platform_signals,
+        );
+        self.resolve_payload_drop_route(&request, cx)
+    }
+
     /// Resolves and commits a rendered payload release from a screen-space point.
     pub(crate) fn commit_payload_drop_from_screen(
         &self,
@@ -384,26 +408,26 @@ impl DockViewportRuntimeHandle {
         self.commit_payload_drop_route_with_outcome(&source_space, source_tabs, payload, route, cx)
     }
 
-    /// Resolves and commits a rendered payload release from a screen-space point.
+    /// Resolves and commits a rendered payload release from platform signal snapshots in tests.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn commit_payload_drop_from_screen_with_context(
+    pub(crate) fn commit_payload_drop_from_screen_with_platform_signals(
         &self,
         source_space: impl Into<DockSpaceId>,
         source_tabs: DockNodeId,
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
-        target_context: DockViewportTargetContext,
+        platform_signals: DockViewportPlatformSignals,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let request = DockViewportDropRouteRequest::new(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space,
             source_tabs,
             payload,
             release_position,
             suggested_window_bounds,
-            target_context,
+            platform_signals,
         );
         self.commit_payload_drop_from_screen(&request, cx)
     }

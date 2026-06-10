@@ -426,15 +426,13 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     );
 
     let route = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_context(
+        runtime.resolve_payload_drop_route_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
-            DockViewportPlatformSignals::from_app(app)
-                .with_hovered_window(opened.window)
-                .target_context(),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
             app,
         )
     });
@@ -794,15 +792,13 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
         target_window_bounds.get_bounds().origin.y + px(100.0),
     );
     let result = cx.update(|app| {
-        let route = runtime.resolve_payload_drop_route_with_context(
+        let route = runtime.resolve_payload_drop_route_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             target_point,
             None,
-            DockViewportPlatformSignals::from_app(app)
-                .with_hovered_window(opened.window)
-                .target_context(),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
             app,
         );
         assert!(
@@ -916,15 +912,13 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         let release_position = runtime
             .last_host_scene_screen_position(&target_space)
             .expect("target scene should expose a screen position");
-        let result = runtime.commit_payload_drop_from_screen_with_context(
+        let result = runtime.commit_payload_drop_from_screen_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
-            DockViewportPlatformSignals::from_app(app)
-                .with_hovered_window(opened.window)
-                .target_context(),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
             app,
         );
         assert!(
@@ -1446,10 +1440,10 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         target_window_bounds.origin.x + target_position.x,
         target_window_bounds.origin.y + target_position.y,
     );
-    let source_release_context = source_opened
+    let source_release_signals = source_opened
         .window
         .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+            DockViewportPlatformSignals::from_window(window, app)
         })
         .expect("source window should still be live");
     // TestPlatform normalizes runtime-opened window origins to zero. Override only the source
@@ -1463,13 +1457,13 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     ));
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_context(
+        runtime.commit_payload_drop_from_screen_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
-            source_release_context,
+            source_release_signals,
             app,
         )
     });
@@ -1739,7 +1733,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
     ));
 
     let result = cx.update(|app| {
-        let route = runtime.resolve_payload_drop_route_with_context(
+        let route = runtime.resolve_payload_drop_route_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Tabs,
@@ -1747,9 +1741,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .last_host_scene_screen_position(&target_space)
                 .expect("target scene should expose a screen position"),
             None,
-            DockViewportPlatformSignals::from_app(app)
-                .with_hovered_window(opened.window)
-                .target_context(),
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window),
             app,
         );
         runtime
@@ -1879,10 +1871,10 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         target_window_bounds.origin.x + target_host_position.x,
         target_window_bounds.origin.y + target_host_position.y,
     );
-    let source_release_context = source_opened
+    let source_release_signals = source_opened
         .window
         .update(cx, |_, window, app| {
-            DockViewportPlatformSignals::from_window(window, app).target_context()
+            DockViewportPlatformSignals::from_window(window, app)
         })
         .expect("source window should still be live");
     assert!(runtime.begin_viewport_host_scene(
@@ -1894,13 +1886,13 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     ));
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_context(
+        runtime.commit_payload_drop_from_screen_with_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
-            source_release_context,
+            source_release_signals,
             app,
         )
     });
