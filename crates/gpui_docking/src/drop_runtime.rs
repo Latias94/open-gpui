@@ -196,7 +196,7 @@ impl DockDropRuntime {
     }
 
     #[cfg(test)]
-    fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
+    pub(crate) fn resolved_target(&self) -> Option<&DockResolvedDropTarget> {
         self.resolution.as_ref().and_then(resolution_target)
     }
 }

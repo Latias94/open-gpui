@@ -35,6 +35,7 @@ impl DockHost {
     pub(crate) fn update_leaf_drop_scene_from_render(
         &mut self,
         payload: &DockDragPayload,
+        root: DockNodeId,
         target_tabs: DockNodeId,
         bounds: Bounds<Pixels>,
         position: Point<Pixels>,
@@ -44,6 +45,7 @@ impl DockHost {
     ) -> bool {
         self.update_leaf_drop_scene_interaction(
             payload,
+            root,
             target_tabs,
             bounds,
             position,

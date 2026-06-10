@@ -293,6 +293,18 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().last_host_scene_screen_position(space)
     }
 
+    #[cfg(test)]
+    pub(crate) fn resolve_host_scene_target(
+        &self,
+        space: &DockSpaceId,
+        host_position: Point<Pixels>,
+        cx: &App,
+    ) -> Option<crate::drop_target::DockResolvedDropTarget> {
+        self.runtime
+            .borrow()
+            .resolve_host_scene_target(space, host_position, cx)
+    }
+
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_payload_drop_route_with_context(

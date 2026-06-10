@@ -4,7 +4,7 @@ use crate::{
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropPreviewKind},
     drop_runtime::DockHostDropSceneFact,
-    drop_target::{DockEmptySpaceDropTarget, DockRootDropTarget},
+    drop_scene_fact,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -171,7 +171,7 @@ impl DockHost {
                 },
             ));
         if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            DockHostDropSceneFact::Root(DockRootDropTarget { root, bounds })
+            drop_scene_fact::root(root, bounds)
         }) {
             root_container = root_container.child(probe);
         }
@@ -212,7 +212,7 @@ impl DockHost {
                 },
             ));
         if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget { space, bounds })
+            drop_scene_fact::empty_space(space, bounds)
         }) {
             empty = empty.child(probe);
         }
@@ -251,7 +251,7 @@ impl DockHost {
                 },
             ));
         if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget { space, bounds })
+            drop_scene_fact::empty_space(space, bounds)
         }) {
             empty = empty.child(probe);
         }

@@ -2,8 +2,7 @@ use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPreview},
-    drop_runtime::DockHostDropSceneFact,
-    drop_target::DockFloatingTitleBarDropTarget,
+    drop_scene_fact,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -128,12 +127,7 @@ impl DockHost {
 
         if let Some(target_tabs) = floating_tabs {
             if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |title_bounds| {
-                DockHostDropSceneFact::FloatingTitleBar(DockFloatingTitleBarDropTarget {
-                    floating,
-                    target_tabs,
-                    title_bounds,
-                    preview_bounds: bounds,
-                })
+                drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
             }) {
                 handle = handle.child(probe);
             }

@@ -189,6 +189,12 @@ impl DockHostRenderSession {
             .is_some_and(|central| self.subtree_contains(central, node_id))
     }
 
+    pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> DockNodeId {
+        self.root
+            .filter(|root| self.subtree_contains(*root, tabs))
+            .unwrap_or(tabs)
+    }
+
     pub(crate) fn central_child_index(&self, children: &[DockNodeId]) -> Option<usize> {
         let central = self.central_node?;
         children

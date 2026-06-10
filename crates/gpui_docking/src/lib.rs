@@ -88,6 +88,7 @@ mod dock_op_fixture_tests;
 mod drag;
 mod drop_preview;
 mod drop_runtime;
+mod drop_scene_fact;
 mod drop_target;
 mod geometry;
 mod graph;

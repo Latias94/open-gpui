@@ -1,7 +1,9 @@
 use crate::{
     DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
-    DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, SplitAxis,
-    debug::DockDebugRegion, host_test_support::*,
+    DockViewportRuntimeHandle, DockViewportTargetContext, DockWorkspace, DropZone, SplitAxis,
+    debug::DockDebugRegion,
+    drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+    host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -431,6 +433,146 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
         preview_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
     );
+}
+
+#[open_gpui::test]
+fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAppContext) {
+    let (graph, root, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        target_bounds.center().y,
+    );
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let _visual = VisualTestContext::from_window(window.into(), cx);
+
+    let target = cx
+        .read_entity(&host, |host, _| {
+            host.interaction().resolved_drop_target().cloned()
+        })
+        .expect("root edge should resolve before release");
+    assert_eq!(target.source, DockDropResolveSource::RootEdge);
+    assert!(matches!(
+        target.kind,
+        DockResolvedDropTargetKind::RootEdge {
+            root: matched_root,
+            leaf_tabs,
+            zone: DropZone::Right,
+        } if matched_root == root && leaf_tabs == right_tabs
+    ));
+}
+
+#[open_gpui::test]
+fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, primary_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(crate::DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(40.0, 48.0, 220.0, 140.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let (window, host, mut visual) = open_workspace(cx, workspace, size(px(420.0), px(260.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("c"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_tabs = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tabs {
+            node: floating_tabs,
+        },
+    )
+    .expect("floating tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let threshold = point(start.x + px(24.0), start.y);
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(2.0),
+        target_bounds.center().y,
+    );
+
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let _visual = VisualTestContext::from_window(window.into(), cx);
+
+    let target = cx
+        .read_entity(&host, |host, _| {
+            host.interaction().resolved_drop_target().cloned()
+        })
+        .expect("floating leaf should resolve before release");
+    assert_eq!(target.source, DockDropResolveSource::InnerEdge);
+    assert!(matches!(
+        target.kind,
+        DockResolvedDropTargetKind::InnerEdge {
+            root: matched_root,
+            target_tabs,
+            zone: DropZone::Right,
+        } if matched_root == floating_tabs && target_tabs == floating_tabs
+    ));
 }
 
 #[open_gpui::test]

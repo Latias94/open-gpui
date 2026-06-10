@@ -2,8 +2,7 @@ use crate::{
     DockHost, DockItemId, DockNodeId,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPreview},
-    drop_runtime::DockHostDropSceneFact,
-    drop_target::{DockLeafDropTarget, DockTabLabelDropTarget},
+    drop_scene_fact,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
 };
 use open_gpui::{
@@ -31,6 +30,7 @@ impl DockHost {
         let active = active.min(items.len().saturating_sub(1));
         let active_item = items[active].clone();
         let is_central = session.is_central_tabs(node);
+        let drop_root = session.drop_root_for_tabs(node);
         let stack_title = if items.len() == 1 {
             session.panel_title(&active_item)
         } else {
@@ -54,6 +54,7 @@ impl DockHost {
                     let payload = event.drag(cx).clone();
                     this.update_leaf_drop_scene_from_render(
                         &payload,
+                        drop_root,
                         node,
                         event.bounds,
                         event.event.position,
@@ -64,12 +65,7 @@ impl DockHost {
                 },
             ));
         if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
-                root: node,
-                target_tabs: node,
-                bounds,
-                is_central,
-            })
+            drop_scene_fact::leaf(drop_root, node, bounds, is_central)
         }) {
             tabs = tabs.child(probe);
         }
@@ -161,12 +157,7 @@ impl DockHost {
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });
             if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
-                DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
-                    target_tabs: node,
-                    target_index,
-                    bounds,
-                    is_central,
-                })
+                drop_scene_fact::tab_label(node, target_index, bounds, is_central)
             }) {
                 tab = tab.child(probe);
             }
