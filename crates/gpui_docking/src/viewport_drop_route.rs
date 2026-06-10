@@ -40,24 +40,56 @@ pub(crate) struct DockViewportDropRouteRequest {
 /// Commit-time facts for a resolved viewport drop route.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockViewportDropRouteCommit {
-    /// Commit a route back into the source viewport host.
-    Local {
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        host_position: Point<Pixels>,
-    },
-    /// Commit a route into another registered viewport.
-    KnownViewport {
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
-        target: DockViewportTargetHit,
-    },
+    /// Commit a route into an already registered viewport host scene.
+    Workspace(DockViewportDropWorkspaceCommit),
     /// Open and commit into a new platform viewport.
     TearOff(DockViewportTearOffRequest),
     /// Reject the commit for the same policy reason as routing.
     Rejected(DockPolicyError),
+}
+
+/// Commit facts for a drop route that lands in an existing viewport workspace.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportDropWorkspaceCommit {
+    source_space: DockSpaceId,
+    source_tabs: DockNodeId,
+    payload: DockViewportDropPayload,
+    target_space: DockSpaceId,
+    host_position: Point<Pixels>,
+}
+
+impl DockViewportDropWorkspaceCommit {
+    fn from_request_target(
+        request: &DockViewportDropRouteRequest,
+        target_space: DockSpaceId,
+        host_position: Point<Pixels>,
+    ) -> Self {
+        Self {
+            source_space: request.source_space.clone(),
+            source_tabs: request.source_tabs,
+            payload: request.payload.clone(),
+            target_space,
+            host_position,
+        }
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        DockSpaceId,
+        DockNodeId,
+        DockViewportDropPayload,
+        DockSpaceId,
+        Point<Pixels>,
+    ) {
+        (
+            self.source_space,
+            self.source_tabs,
+            self.payload,
+            self.target_space,
+            self.host_position,
+        )
+    }
 }
 
 impl DockViewportDropRouteCommit {
@@ -66,18 +98,22 @@ impl DockViewportDropRouteCommit {
         route: DockViewportDropRoute,
     ) -> Self {
         match route {
-            DockViewportDropRoute::Local { host_position } => Self::Local {
-                source_space: request.source_space.clone(),
-                source_tabs: request.source_tabs,
-                payload: request.payload.clone(),
-                host_position,
-            },
-            DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
-                source_space: request.source_space.clone(),
-                source_tabs: request.source_tabs,
-                payload: request.payload.clone(),
-                target,
-            },
+            DockViewportDropRoute::Local { host_position } => {
+                Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
+                    request,
+                    request.source_space.clone(),
+                    host_position,
+                ))
+            }
+            DockViewportDropRoute::KnownViewport { target } => {
+                let target_space = target.space().clone();
+                let host_position = target.host_position();
+                Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
+                    request,
+                    target_space,
+                    host_position,
+                ))
+            }
             DockViewportDropRoute::TearOff(_) => {
                 Self::TearOff(tear_off_request_from_route_request(request))
             }
@@ -311,6 +347,60 @@ mod tests {
                 suggested_window_bounds: Some(suggested_window_bounds),
             })
         );
+    }
+
+    #[test]
+    fn drop_route_commit_derives_workspace_target_from_local_and_known_routes() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            point(px(900.0), px(900.0)),
+            None,
+            DockViewportTargetContext::new(),
+        );
+        let local_position = point(px(5.0), px(7.0));
+
+        let DockViewportDropRouteCommit::Workspace(local) =
+            DockViewportDropRouteCommit::from_route_request(
+                &request,
+                DockViewportDropRoute::Local {
+                    host_position: local_position,
+                },
+            )
+        else {
+            panic!("local route should derive a workspace commit");
+        };
+        let (recorded_source, recorded_tabs, payload, target_space, host_position) =
+            local.into_parts();
+        assert_eq!(recorded_source, source);
+        assert_eq!(recorded_tabs, source_tabs);
+        assert_eq!(payload, DockViewportDropPayload::Item(item.clone()));
+        assert_eq!(target_space, recorded_source);
+        assert_eq!(host_position, local_position);
+
+        let target = space("target");
+        let known_position = point(px(12.0), px(34.0));
+        let DockViewportDropRouteCommit::Workspace(known) =
+            DockViewportDropRouteCommit::from_route_request(
+                &request,
+                DockViewportDropRoute::KnownViewport {
+                    target: DockViewportTargetHit::new(target.clone(), handle(9), known_position),
+                },
+            )
+        else {
+            panic!("known viewport route should derive a workspace commit");
+        };
+        let (recorded_source, recorded_tabs, payload, target_space, host_position) =
+            known.into_parts();
+        assert_eq!(recorded_source, source);
+        assert_eq!(recorded_tabs, source_tabs);
+        assert_eq!(payload, DockViewportDropPayload::Item(item));
+        assert_eq!(target_space, target);
+        assert_eq!(host_position, known_position);
     }
 
     #[test]

@@ -299,23 +299,10 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let (source_space, source_tabs, payload, target_space) = match commit {
-            DockViewportDropRouteCommit::Local {
-                source_space,
-                source_tabs,
-                payload,
-                host_position,
-            } => {
-                let target_space = self.resolve_route_target(&source_space, host_position, cx)?;
-                (source_space, source_tabs, payload, target_space)
-            }
-            DockViewportDropRouteCommit::KnownViewport {
-                source_space,
-                source_tabs,
-                payload,
-                target,
-            } => {
-                let target_space =
-                    self.resolve_route_target(target.space(), target.host_position(), cx)?;
+            DockViewportDropRouteCommit::Workspace(commit) => {
+                let (source_space, source_tabs, payload, route_space, host_position) =
+                    commit.into_parts();
+                let target_space = self.resolve_route_target(&route_space, host_position, cx)?;
                 (source_space, source_tabs, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {
