@@ -124,7 +124,7 @@ fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppCont
         panic!("tear-off should complete after opening a viewport");
     };
     assert_eq!(completed.action, DockActionOutcome::Changed);
-    assert_eq!(completed.pending.target_space, detached_space);
+    assert_eq!(completed.pending.target_space(), &detached_space);
     assert_eq!(runtime.pending_tear_off_len(), 0);
     assert_eq!(
         runtime.adapter().window_for_space(&detached_space),
@@ -176,7 +176,7 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
     let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
         panic!("duplicate request should not create a second pending entry");
     };
-    assert_eq!(existing.target_space, detached_space);
+    assert_eq!(existing.target_space(), &detached_space);
     assert_eq!(runtime.pending_tear_off_len(), 1);
     assert!(runtime.adapter().spaces().is_empty());
 

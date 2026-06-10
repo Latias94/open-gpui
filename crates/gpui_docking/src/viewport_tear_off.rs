@@ -132,16 +132,28 @@ impl DockViewportTearOffTick {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffPending {
     /// Original release request that started the transaction.
-    pub(crate) request: DockViewportTearOffRequest,
+    request: DockViewportTearOffRequest,
     /// Empty logical dock space that will receive the torn-off payload.
-    pub(crate) target_space: DockSpaceId,
+    target_space: DockSpaceId,
     /// Panel item that should receive GPUI focus after the tear-off completes.
-    pub(crate) focus_item: Option<DockItemId>,
+    focus_item: Option<DockItemId>,
     requested_at: DockViewportTearOffTick,
     expires_after_ticks: u64,
 }
 
 impl DockViewportTearOffPending {
+    pub(crate) fn request(&self) -> &DockViewportTearOffRequest {
+        &self.request
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
+    }
+
+    pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
+        self.focus_item.as_ref()
+    }
+
     pub(crate) fn is_expired_at(&self, now: DockViewportTearOffTick) -> bool {
         now.age_since(self.requested_at) > self.expires_after_ticks
     }
@@ -255,9 +267,9 @@ impl DockViewportDropRouteOutcome {
             DockViewportDropRouteOutcome::TearOff(DockViewportTearOffOpenOutcome::Completed(
                 completed,
             )) => Some(DockViewportActivationTarget {
-                space: completed.pending.target_space.clone(),
+                space: completed.pending.target_space().clone(),
                 window: completed.registration.window,
-                focus_item: completed.pending.focus_item.clone(),
+                focus_item: completed.pending.focus_item().cloned(),
             }),
             DockViewportDropRouteOutcome::TearOff(
                 DockViewportTearOffOpenOutcome::Duplicate(_)
@@ -444,7 +456,7 @@ mod tests {
         let DockViewportTearOffBeginOutcome::Duplicate(existing) = second else {
             panic!("second begin should be idempotent");
         };
-        assert_eq!(existing.target_space, space("detached"));
+        assert_eq!(existing.target_space(), &space("detached"));
         assert_eq!(machine.len(), 1);
     }
 
@@ -478,7 +490,7 @@ mod tests {
             panic!("second stack begin should be idempotent");
         };
         assert_eq!(existing.request.source_space(), &source);
-        assert_eq!(existing.target_space, space("detached"));
+        assert_eq!(existing.target_space(), &space("detached"));
         assert_eq!(machine.len(), 1);
     }
 

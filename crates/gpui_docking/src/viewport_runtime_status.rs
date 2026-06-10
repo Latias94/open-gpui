@@ -321,42 +321,53 @@ impl From<&DockViewportActivationTarget> for DockViewportActivationRecord {
 impl DockViewportTearOffRecord {
     fn from_outcome(outcome: &DockViewportTearOffOpenOutcome) -> Self {
         match outcome {
-            DockViewportTearOffOpenOutcome::Completed(completed) => Self {
-                kind: DockViewportTearOffOutcomeKind::Completed,
-                source_space: completed.pending.request.source_space().clone(),
-                target_space: completed.pending.target_space.clone(),
-                payload: DockViewportPayloadRecord::from_payload(
-                    completed.pending.request.payload(),
-                ),
-                cancel_reason: None,
-                error: None,
-            },
-            DockViewportTearOffOpenOutcome::Duplicate(pending) => Self {
-                kind: DockViewportTearOffOutcomeKind::Duplicate,
-                source_space: pending.request.source_space().clone(),
-                target_space: pending.target_space.clone(),
-                payload: DockViewportPayloadRecord::from_payload(pending.request.payload()),
-                cancel_reason: None,
-                error: None,
-            },
-            DockViewportTearOffOpenOutcome::Cancelled(cancelled) => Self {
-                kind: DockViewportTearOffOutcomeKind::Cancelled,
-                source_space: cancelled.pending.request.source_space().clone(),
-                target_space: cancelled.pending.target_space.clone(),
-                payload: DockViewportPayloadRecord::from_payload(
-                    cancelled.pending.request.payload(),
-                ),
-                cancel_reason: Some(cancelled.reason),
-                error: None,
-            },
-            DockViewportTearOffOpenOutcome::CommitFailed(failure) => Self {
-                kind: DockViewportTearOffOutcomeKind::CommitFailed,
-                source_space: failure.pending.request.source_space().clone(),
-                target_space: failure.pending.target_space.clone(),
-                payload: DockViewportPayloadRecord::from_payload(failure.pending.request.payload()),
-                cancel_reason: None,
-                error: Some(failure.error.clone()),
-            },
+            DockViewportTearOffOpenOutcome::Completed(completed) => {
+                let pending = &completed.pending;
+                let request = pending.request();
+                Self {
+                    kind: DockViewportTearOffOutcomeKind::Completed,
+                    source_space: request.source_space().clone(),
+                    target_space: pending.target_space().clone(),
+                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
+                    cancel_reason: None,
+                    error: None,
+                }
+            }
+            DockViewportTearOffOpenOutcome::Duplicate(pending) => {
+                let request = pending.request();
+                Self {
+                    kind: DockViewportTearOffOutcomeKind::Duplicate,
+                    source_space: request.source_space().clone(),
+                    target_space: pending.target_space().clone(),
+                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
+                    cancel_reason: None,
+                    error: None,
+                }
+            }
+            DockViewportTearOffOpenOutcome::Cancelled(cancelled) => {
+                let pending = &cancelled.pending;
+                let request = pending.request();
+                Self {
+                    kind: DockViewportTearOffOutcomeKind::Cancelled,
+                    source_space: request.source_space().clone(),
+                    target_space: pending.target_space().clone(),
+                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
+                    cancel_reason: Some(cancelled.reason),
+                    error: None,
+                }
+            }
+            DockViewportTearOffOpenOutcome::CommitFailed(failure) => {
+                let pending = &failure.pending;
+                let request = pending.request();
+                Self {
+                    kind: DockViewportTearOffOutcomeKind::CommitFailed,
+                    source_space: request.source_space().clone(),
+                    target_space: pending.target_space().clone(),
+                    payload: DockViewportPayloadRecord::from_payload(request.payload()),
+                    cancel_reason: None,
+                    error: Some(failure.error.clone()),
+                }
+            }
         }
     }
 }

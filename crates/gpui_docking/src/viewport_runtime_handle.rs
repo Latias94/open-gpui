@@ -175,7 +175,7 @@ impl DockViewportRuntimeHandle {
             }
         };
 
-        let opened = match self.open_viewport(pending.target_space.clone(), options, cx) {
+        let opened = match self.open_viewport(pending.target_space().clone(), options, cx) {
             Ok(opened) => opened,
             Err(error) => {
                 self.runtime

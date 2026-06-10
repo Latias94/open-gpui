@@ -612,7 +612,7 @@ impl DockViewportRuntime {
 
         let registration = self
             .adapter
-            .register_viewport_with_outcome(pending.target_space.clone(), window);
+            .register_viewport_with_outcome(pending.target_space().clone(), window);
         self.close_gate.sync_adapter(&self.adapter);
         match self.commit_tear_off_move(&pending, cx) {
             Ok(action) => {
@@ -626,8 +626,8 @@ impl DockViewportRuntime {
                 })
             }
             Err(error) => {
-                self.adapter.unregister_space(&pending.target_space);
-                self.host_scenes.unregister_space(&pending.target_space);
+                self.adapter.unregister_space(pending.target_space());
+                self.host_scenes.unregister_space(pending.target_space());
                 self.close_gate.sync_adapter(&self.adapter);
                 DockViewportTearOffCompletionOutcome::CommitFailed(
                     DockViewportTearOffCommitFailure {
@@ -663,7 +663,7 @@ impl DockViewportRuntime {
             }
         };
 
-        let opened = match self.open_viewport(pending.target_space.clone(), options, cx) {
+        let opened = match self.open_viewport(pending.target_space().clone(), options, cx) {
             Ok(opened) => opened,
             Err(error) => {
                 self.tear_off
@@ -689,11 +689,11 @@ impl DockViewportRuntime {
                 DockViewportTearOffOpenOutcome::Completed(completed)
             }
             DockViewportTearOffCompletionOutcome::Cancelled(cancelled) => {
-                self.discard_tear_off_target(&pending.target_space);
+                self.discard_tear_off_target(pending.target_space());
                 DockViewportTearOffOpenOutcome::Cancelled(cancelled)
             }
             DockViewportTearOffCompletionOutcome::MissingPending { .. } => {
-                self.discard_tear_off_target(&pending.target_space);
+                self.discard_tear_off_target(pending.target_space());
                 let reason = match self.tear_off_source_status(&pending, cx) {
                     DockViewportTearOffSourceStatus::Ready => {
                         DockViewportTearOffCancelReason::Cancelled
@@ -911,11 +911,12 @@ impl DockViewportRuntime {
         cx: &App,
     ) -> DockViewportTearOffSourceStatus {
         let graph = self.controller.read(cx).graph();
-        match pending.request.payload() {
+        let request = pending.request();
+        match request.payload() {
             DockViewportDropPayload::Item(item) => graph
-                .find_item_in_space(pending.request.source_space(), item)
+                .find_item_in_space(request.source_space(), item)
                 .map(|(tabs, _)| {
-                    if tabs == pending.request.source_tabs() {
+                    if tabs == request.source_tabs() {
                         DockViewportTearOffSourceStatus::Ready
                     } else {
                         DockViewportTearOffSourceStatus::Moved
@@ -929,12 +930,12 @@ impl DockViewportRuntime {
                     }
                 }),
             DockViewportDropPayload::Tabs => {
-                let source_tabs = pending.request.source_tabs();
+                let source_tabs = request.source_tabs();
                 let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
                     return DockViewportTearOffSourceStatus::Missing;
                 };
                 if graph
-                    .root_for_node_in_space(pending.request.source_space(), source_tabs)
+                    .root_for_node_in_space(request.source_space(), source_tabs)
                     .is_some()
                     && !items.is_empty()
                 {
@@ -952,16 +953,17 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.controller.update(cx, |controller, cx| {
-            let outcome = match pending.request.payload() {
+            let request = pending.request();
+            let outcome = match request.payload() {
                 DockViewportDropPayload::Item(item) => controller.commit_item_to_empty_dock_space(
-                    pending.request.source_space(),
+                    request.source_space(),
                     item,
-                    &pending.target_space,
+                    pending.target_space(),
                 ),
                 DockViewportDropPayload::Tabs => controller.commit_tabs_to_empty_dock_space(
-                    pending.request.source_space(),
-                    pending.request.source_tabs(),
-                    &pending.target_space,
+                    request.source_space(),
+                    request.source_tabs(),
+                    pending.target_space(),
                 ),
             };
             if outcome
