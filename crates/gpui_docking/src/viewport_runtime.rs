@@ -304,9 +304,10 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let target_space = match route {
-            DockViewportDropRoute::Local { host_position } => {
-                self.resolve_route_target(source_space, host_position, cx)?
-            }
+            DockViewportDropRoute::Local {
+                space,
+                host_position,
+            } => self.resolve_route_target(&space, host_position, cx)?,
             DockViewportDropRoute::KnownViewport { hit, .. } => {
                 self.resolve_route_target(&hit.space, hit.host_position, cx)?
             }

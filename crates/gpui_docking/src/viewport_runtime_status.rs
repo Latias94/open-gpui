@@ -160,7 +160,7 @@ impl DockViewportRuntimeStatus {
             source_space: source_space.clone(),
             source_tabs,
             payload: DockViewportPayloadRecord::from_payload(&payload),
-            target: DockViewportRouteTarget::from_route(source_space, route),
+            target: DockViewportRouteTarget::from_route(route),
         });
     }
 
@@ -194,10 +194,13 @@ impl DockViewportRuntimeStatus {
 }
 
 impl DockViewportRouteTarget {
-    fn from_route(source_space: DockSpaceId, route: &DockViewportDropRoute) -> Self {
+    fn from_route(route: &DockViewportDropRoute) -> Self {
         match route {
-            DockViewportDropRoute::Local { host_position } => Self::Local {
-                space: source_space,
+            DockViewportDropRoute::Local {
+                space,
+                host_position,
+            } => Self::Local {
+                space: space.clone(),
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { hit, window } => Self::KnownViewport {
@@ -317,5 +320,47 @@ impl DockViewportTearOffRecord {
                 error: Some(failure.error.clone()),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use open_gpui::{point, px};
+    use slotmap::Key;
+
+    #[test]
+    fn route_record_uses_local_route_space_as_target_identity() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let host_position = point(px(12.0), px(34.0));
+        let mut status = DockViewportRuntimeStatus::default();
+
+        status.record_route(
+            source.clone(),
+            DockNodeId::null(),
+            DockViewportDropPayload::Tabs,
+            &DockViewportDropRoute::Local {
+                space: target.clone(),
+                host_position,
+            },
+        );
+
+        let route = status
+            .last_route
+            .as_ref()
+            .expect("route record should be captured");
+        assert_eq!(route.source_space, source);
+        assert!(
+            matches!(
+                &route.target,
+                DockViewportRouteTarget::Local {
+                    space,
+                    host_position: recorded_position,
+                } if space == &target && *recorded_position == host_position
+            ),
+            "local route target should come from the route itself, got {:?}",
+            route.target
+        );
     }
 }
