@@ -313,13 +313,7 @@ impl DockViewportRuntime {
                 self.resolve_route_target(&target.space, target.host_position, cx)?
             }
             DockViewportDropRoute::TearOff(request) => {
-                return self.commit_tear_off_drop_route(
-                    source_space,
-                    source_tabs,
-                    payload,
-                    request,
-                    cx,
-                );
+                return self.commit_tear_off_drop_route(request, cx);
             }
             DockViewportDropRoute::Rejected(error) => return Err(error.into()),
         };
@@ -367,20 +361,19 @@ impl DockViewportRuntime {
 
     pub(crate) fn commit_tear_off_drop_route(
         &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: crate::DockNodeId,
-        payload: DockViewportDropPayload,
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        if let Some(outcome) =
-            self.single_viewport_outside_release_noop(source_space, source_tabs, &payload, cx)
-        {
+        if let Some(outcome) = self.single_viewport_outside_release_noop(
+            &request.source_space,
+            request.source_tabs,
+            &request.payload,
+            cx,
+        ) {
             return Ok(outcome);
         }
 
-        let prepared =
-            self.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?;
+        let prepared = self.prepare_tear_off_drop_route(request, cx)?;
         self.open_tear_off_viewport(
             prepared.request,
             prepared.target_space,
@@ -395,45 +388,41 @@ impl DockViewportRuntime {
 
     pub(crate) fn prepare_tear_off_drop_route(
         &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: crate::DockNodeId,
-        payload: DockViewportDropPayload,
         request: DockViewportTearOffRequest,
         cx: &App,
     ) -> Result<DockViewportPreparedTearOffDrop, DockActionApplyError> {
-        if request.source_space != *source_space
-            || request.source_tabs != source_tabs
-            || request.payload != payload
-        {
-            return Err(tear_off_payload_mismatch(source_space, source_tabs));
-        }
-
         {
             let graph = self.controller.read(cx).graph();
-            match &payload {
+            match &request.payload {
                 DockViewportDropPayload::Item(item) => {
                     if graph
-                        .find_item_in_space(source_space, item)
-                        .is_none_or(|(tabs, _)| tabs != source_tabs)
+                        .find_item_in_space(&request.source_space, item)
+                        .is_none_or(|(tabs, _)| tabs != request.source_tabs)
                     {
                         return Err(DockActionApplyError::ItemNotInTabs {
-                            tabs: source_tabs,
+                            tabs: request.source_tabs,
                             item: item.clone(),
                         });
                     }
                 }
                 DockViewportDropPayload::Tabs => {
                     if graph
-                        .root_for_node_in_space(source_space, source_tabs)
+                        .root_for_node_in_space(&request.source_space, request.source_tabs)
                         .is_none()
                     {
-                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                        return Err(tear_off_payload_mismatch(
+                            &request.source_space,
+                            request.source_tabs,
+                        ));
                     }
                     if !matches!(
-                        graph.node(source_tabs),
+                        graph.node(request.source_tabs),
                         Some(DockNode::Tabs { items, .. }) if !items.is_empty()
                     ) {
-                        return Err(tear_off_payload_mismatch(source_space, source_tabs));
+                        return Err(tear_off_payload_mismatch(
+                            &request.source_space,
+                            request.source_tabs,
+                        ));
                     }
                 }
             }

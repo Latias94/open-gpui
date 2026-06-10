@@ -266,13 +266,7 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         if let DockViewportDropRoute::TearOff(request) = route {
-            return self.commit_tear_off_drop_route(
-                source_space,
-                source_tabs,
-                payload,
-                request,
-                cx,
-            );
+            return self.commit_tear_off_drop_route(request, cx);
         }
 
         self.runtime
@@ -282,25 +276,22 @@ impl DockViewportRuntimeHandle {
 
     fn commit_tear_off_drop_route(
         &self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
         request: DockViewportTearOffRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
             if let Some(outcome) = runtime.single_viewport_outside_release_noop(
-                source_space,
-                source_tabs,
-                &payload,
+                &request.source_space,
+                request.source_tabs,
+                &request.payload,
                 cx,
             ) {
                 let result = Ok(outcome);
                 runtime.record_drop_route_result(&result);
                 return result;
             }
-            runtime.prepare_tear_off_drop_route(source_space, source_tabs, payload, request, cx)?
+            runtime.prepare_tear_off_drop_route(request, cx)?
         };
 
         let result = self
