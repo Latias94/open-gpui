@@ -542,7 +542,7 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
     );
 
     let cleanup = runtime.handle_window_closed(opened.window().window_id());
-    assert_eq!(cleanup.status, DockViewportCloseStatus::Closed);
+    assert_eq!(cleanup.status(), DockViewportCloseStatus::Closed);
     assert_eq!(runtime.adapter().window_for_space(&secondary_space), None);
     assert_eq!(
         runtime
@@ -590,7 +590,7 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
 
     let outcome = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
 
-    assert_eq!(outcome.status, DockViewportCloseStatus::MergedBack);
+    assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
     assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, active } = controller
@@ -662,7 +662,7 @@ fn viewport_runtime_window_closed_cleans_mapping_after_prevent_policy(cx: &mut T
 
     let outcome = runtime.handle_window_closed(window.window_id());
 
-    assert_eq!(outcome.status, DockViewportCloseStatus::Closed);
-    assert_eq!(outcome.space, Some(secondary_space.clone()));
+    assert_eq!(outcome.status(), DockViewportCloseStatus::Closed);
+    assert_eq!(outcome.space(), Some(&secondary_space));
     assert_eq!(runtime.adapter().window_for_space(&secondary_space), None);
 }

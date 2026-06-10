@@ -774,15 +774,16 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
         let close_policy = self.close_policy();
-        let mut outcome = self.handle_window_closed(window_id);
-        let Some(source_space) = outcome.space.clone() else {
+        let outcome = self.handle_window_closed(window_id);
+        let Some(source_space) = outcome.space().cloned() else {
             return outcome;
         };
         let DockViewportClosePolicy::MergeBack { target_space } = close_policy else {
             return outcome;
         };
 
-        outcome.status = self.merge_closed_space_back(&source_space, &target_space, cx);
+        let outcome =
+            outcome.with_status(self.merge_closed_space_back(&source_space, &target_space, cx));
         self.status.record_close(&outcome);
         outcome
     }

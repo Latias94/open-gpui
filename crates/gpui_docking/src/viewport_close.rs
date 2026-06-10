@@ -25,11 +25,45 @@ pub enum DockViewportClosePolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockViewportCloseOutcome {
     /// Logical dock space that was associated with the closed window, when known.
-    pub space: Option<DockSpaceId>,
+    space: Option<DockSpaceId>,
     /// GPUI window id received from the close callback.
-    pub window_id: WindowId,
+    window_id: WindowId,
     /// How the close request resolved.
-    pub status: DockViewportCloseStatus,
+    status: DockViewportCloseStatus,
+}
+
+impl DockViewportCloseOutcome {
+    pub(crate) fn new(
+        space: Option<DockSpaceId>,
+        window_id: WindowId,
+        status: DockViewportCloseStatus,
+    ) -> Self {
+        Self {
+            space,
+            window_id,
+            status,
+        }
+    }
+
+    pub(crate) fn with_status(mut self, status: DockViewportCloseStatus) -> Self {
+        self.status = status;
+        self
+    }
+
+    /// Logical dock space that was associated with the closed window, when known.
+    pub fn space(&self) -> Option<&DockSpaceId> {
+        self.space.as_ref()
+    }
+
+    /// GPUI window id received from the close callback.
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /// How the close request resolved.
+    pub fn status(&self) -> DockViewportCloseStatus {
+        self.status
+    }
 }
 
 /// How a close request resolved.
@@ -147,17 +181,13 @@ impl DockViewportAdapter {
         if let Some(outcome) =
             self.unregister_window_id(window_id, DockViewportUnregisterReason::Closed)
         {
-            DockViewportCloseOutcome {
-                space: Some(outcome.space),
+            DockViewportCloseOutcome::new(
+                Some(outcome.space),
                 window_id,
-                status: DockViewportCloseStatus::Closed,
-            }
+                DockViewportCloseStatus::Closed,
+            )
         } else {
-            DockViewportCloseOutcome {
-                space: None,
-                window_id,
-                status: DockViewportCloseStatus::UnknownWindow,
-            }
+            DockViewportCloseOutcome::new(None, window_id, DockViewportCloseStatus::UnknownWindow)
         }
     }
 }
@@ -215,11 +245,11 @@ mod tests {
         let outcome = adapter.handle_window_closed(window.window_id());
         assert_eq!(
             outcome,
-            DockViewportCloseOutcome {
-                space: Some(main.clone()),
-                window_id: window.window_id(),
-                status: DockViewportCloseStatus::Closed,
-            }
+            DockViewportCloseOutcome::new(
+                Some(main.clone()),
+                window.window_id(),
+                DockViewportCloseStatus::Closed
+            )
         );
         assert!(adapter.spaces().is_empty());
         assert!(
@@ -243,11 +273,7 @@ mod tests {
 
         assert_eq!(
             adapter.handle_window_closed(unknown),
-            DockViewportCloseOutcome {
-                space: None,
-                window_id: unknown,
-                status: DockViewportCloseStatus::UnknownWindow,
-            }
+            DockViewportCloseOutcome::new(None, unknown, DockViewportCloseStatus::UnknownWindow)
         );
     }
 
@@ -260,11 +286,7 @@ mod tests {
 
         assert_eq!(
             adapter.handle_window_closed(window_id),
-            DockViewportCloseOutcome {
-                space: None,
-                window_id,
-                status: DockViewportCloseStatus::UnknownWindow,
-            }
+            DockViewportCloseOutcome::new(None, window_id, DockViewportCloseStatus::UnknownWindow)
         );
         assert_eq!(adapter.space_for_window_id(window_id), None);
         assert!(adapter.spaces().is_empty());
@@ -284,14 +306,14 @@ mod tests {
             DockViewportClosePolicy::RetainLayout
         );
 
-        let close = DockViewportCloseOutcome {
-            space: Some(main.clone()),
-            window_id: window.window_id(),
-            status: DockViewportCloseStatus::Closed,
-        };
-        assert_eq!(close.space, Some(main.clone()));
-        assert_eq!(close.window_id, window.window_id());
-        assert_eq!(close.status, DockViewportCloseStatus::Closed);
+        let close = DockViewportCloseOutcome::new(
+            Some(main.clone()),
+            window.window_id(),
+            DockViewportCloseStatus::Closed,
+        );
+        assert_eq!(close.space(), Some(&main));
+        assert_eq!(close.window_id(), window.window_id());
+        assert_eq!(close.status(), DockViewportCloseStatus::Closed);
 
         let unregister = DockViewportUnregisterOutcome {
             space: main,
