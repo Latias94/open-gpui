@@ -1286,6 +1286,142 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
 }
 
 #[open_gpui::test]
+fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppContext) {
+    let target_space = DockSpaceId::from("main");
+    let source_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(target_space.clone(), target_tabs);
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_window = target_opened
+        .window
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    cx.run_until_parked();
+
+    let mut target_visual = VisualTestContext::from_window(target_opened.window, cx);
+    let target_tabs_selector = selector_for(
+        &target_visual,
+        &target_host,
+        DockDebugRegion::Tabs { node: target_tabs },
+    )
+    .expect("target tabs selector should be emitted");
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&target_space)
+            .is_some(),
+        "ordinary target viewport render should publish a runtime host scene"
+    );
+    let target_position = debug_bounds(&mut target_visual, &target_tabs_selector).center();
+    let target_window_bounds = target_opened
+        .window
+        .update(cx, |_, window, _| window.window_bounds())
+        .expect("target window should still be live")
+        .get_bounds();
+    let release_screen_position = point(
+        target_window_bounds.origin.x + target_position.x,
+        target_window_bounds.origin.y + target_position.y,
+    );
+    let source_release_context = source_opened
+        .window
+        .update(cx, |_, window, app| {
+            DockViewportTargetContext::from_window(window, app)
+        })
+        .expect("source window should still be live");
+    // TestPlatform normalizes runtime-opened window origins to zero. Override only the source
+    // snapshot so this models a native detached window releasing over main, not over itself.
+    assert!(runtime.begin_viewport_host_scene(
+        source_space.clone(),
+        source_opened.window.window_id(),
+        WindowBounds::Windowed(floating_bounds(520.0, 0.0, 360.0, 220.0)),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(0.0), px(0.0)),
+    ));
+
+    let result = cx.update(|app| {
+        runtime.commit_payload_drop_from_screen_with_context(
+            source_space.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item("a")),
+            release_screen_position,
+            None,
+            &source_release_context,
+            app,
+        )
+    });
+
+    let DockViewportDropRouteOutcome::Action(action) = result.expect("dock-back should commit")
+    else {
+        panic!("dock-back should resolve to a normal action");
+    };
+    assert!(
+        matches!(
+            runtime
+                .runtime_status()
+                .last_route
+                .as_ref()
+                .map(|record| &record.target),
+            Some(DockViewportRouteTarget::KnownViewport { space, .. }) if space == &target_space
+        ),
+        "dock-back should route to the target viewport, got {:?}",
+        runtime.runtime_status().last_route
+    );
+    assert_eq!(action.action, crate::DockActionOutcome::Changed);
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(*active, 1);
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            Vec::<DockItemId>::new(),
+            "source viewport should be emptied by a successful dock-back"
+        );
+    });
+}
+
+#[open_gpui::test]
 fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");

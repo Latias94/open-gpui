@@ -3,11 +3,14 @@ use crate::{
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropPreviewKind},
+    drop_runtime::DockHostDropSceneFact,
+    drop_target::{DockEmptySpaceDropTarget, DockRootDropTarget},
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
-    AnyElement, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
-    ParentElement, Render, Rgba, Styled, Window, black, div, rgb, rgba,
+    AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
+    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
+    px, rgb, rgba,
 };
 
 impl Render for DockHost {
@@ -82,6 +85,10 @@ impl Render for DockHost {
             host = host.bg(rgb(0xf7f8fa));
         }
 
+        if let Some(probe) = self.render_viewport_host_scene_probe() {
+            host = host.child(probe);
+        }
+
         if let Some(root) = session.root() {
             host = host.child(self.render_root_node(root, &session, cx));
         } else if session.empty_central_passthrough() {
@@ -145,7 +152,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let root_child = self.render_node(root, session, cx);
-        div()
+        let mut root_container = div()
             .relative()
             .flex()
             .size_full()
@@ -162,9 +169,13 @@ impl DockHost {
                         cx,
                     );
                 },
-            ))
-            .child(root_child)
-            .into_any_element()
+            ));
+        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
+            DockHostDropSceneFact::Root(DockRootDropTarget { root, bounds })
+        }) {
+            root_container = root_container.child(probe);
+        }
+        root_container.child(root_child).into_any_element()
     }
 
     fn render_empty_space(
@@ -176,9 +187,11 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty", session.selector_prefix()),
         );
-        div()
+        let space = session.space().clone();
+        let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
+            .relative()
             .flex()
             .size_full()
             .items_center()
@@ -197,7 +210,13 @@ impl DockHost {
                         cx,
                     );
                 },
-            ))
+            ));
+        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget { space, bounds })
+        }) {
+            empty = empty.child(probe);
+        }
+        empty
             .child(session.empty_message().to_string())
             .into_any_element()
     }
@@ -211,9 +230,11 @@ impl DockHost {
             DockDebugRegion::EmptySpace,
             format!("{}:empty-central", session.selector_prefix()),
         );
-        div()
+        let space = session.space().clone();
+        let mut empty = div()
             .id(selector.clone())
             .debug_selector(move || selector)
+            .relative()
             .flex()
             .size_full()
             .bg(rgba(0x00000000))
@@ -228,8 +249,13 @@ impl DockHost {
                         cx,
                     );
                 },
-            ))
-            .into_any_element()
+            ));
+        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget { space, bounds })
+        }) {
+            empty = empty.child(probe);
+        }
+        empty.into_any_element()
     }
 
     pub(crate) fn render_missing_node(
@@ -286,6 +312,63 @@ impl DockHost {
                 .border_color(border)
                 .bg(background)
                 .into_any_element(),
+        )
+    }
+
+    /// Publishes viewport bounds during prepaint so cross-window releases can resolve even when
+    /// the target window did not receive the drag-move event.
+    pub(crate) fn render_viewport_host_scene_probe(&self) -> Option<AnyElement> {
+        let runtime = self.viewport_runtime()?.clone();
+        let space = self.space().clone();
+        Some(
+            canvas(
+                move |bounds, window, _| {
+                    let mouse_position = window.mouse_position();
+                    let host_position = point(
+                        mouse_position.x - bounds.origin.x,
+                        mouse_position.y - bounds.origin.y,
+                    );
+                    runtime.begin_viewport_host_scene(
+                        space,
+                        window.window_handle().window_id(),
+                        window.window_bounds(),
+                        bounds,
+                        host_position,
+                    );
+                },
+                |_, _, _, _| (),
+            )
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .into_any_element(),
+        )
+    }
+
+    /// Publishes target bounds during prepaint for runtime-routed drops.
+    pub(crate) fn render_viewport_drop_scene_fact_probe(
+        &self,
+        fact_for_bounds: impl FnOnce(Bounds<Pixels>) -> DockHostDropSceneFact + 'static,
+    ) -> Option<AnyElement> {
+        let runtime = self.viewport_runtime()?.clone();
+        let space = self.space().clone();
+        Some(
+            canvas(
+                move |bounds, window, _| {
+                    runtime.push_viewport_host_scene_fact(
+                        &space,
+                        window.window_handle().window_id(),
+                        fact_for_bounds(bounds),
+                    );
+                },
+                |_, _, _, _| (),
+            )
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .into_any_element(),
         )
     }
 }

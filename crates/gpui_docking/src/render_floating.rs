@@ -2,6 +2,8 @@ use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPreview},
+    drop_runtime::DockHostDropSceneFact,
+    drop_target::DockFloatingTitleBarDropTarget,
     host_render_session::DockHostRenderSession,
 };
 use open_gpui::{
@@ -108,7 +110,7 @@ impl DockHost {
         let entity = cx.entity();
         let floating_tabs = session.first_tabs_in_subtree(floating);
 
-        let handle = div()
+        let mut handle = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -125,6 +127,16 @@ impl DockHost {
             .cursor_pointer();
 
         if let Some(target_tabs) = floating_tabs {
+            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |title_bounds| {
+                DockHostDropSceneFact::FloatingTitleBar(DockFloatingTitleBarDropTarget {
+                    floating,
+                    target_tabs,
+                    title_bounds,
+                    preview_bounds: bounds,
+                })
+            }) {
+                handle = handle.child(probe);
+            }
             let payload = DockDragPayload::new_tabs(space.clone(), target_tabs, title.clone());
             let drag_entity = entity.clone();
             let drag_space = space.clone();

@@ -2,6 +2,8 @@ use crate::{
     DockHost, DockItemId, DockNodeId,
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPreview},
+    drop_runtime::DockHostDropSceneFact,
+    drop_target::{DockLeafDropTarget, DockTabLabelDropTarget},
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
 };
 use open_gpui::{
@@ -36,7 +38,7 @@ impl DockHost {
         };
         let stack_payload = DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
 
-        let tabs = div()
+        let mut tabs = div()
             .id(selector.clone())
             .debug_selector(move || selector)
             .relative()
@@ -61,6 +63,16 @@ impl DockHost {
                     );
                 },
             ));
+        if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: node,
+                target_tabs: node,
+                bounds,
+                is_central,
+            })
+        }) {
+            tabs = tabs.child(probe);
+        }
 
         let mut tab_bar = div()
             .id(format!(
@@ -102,6 +114,7 @@ impl DockHost {
             let mut tab = div()
                 .id(selector.clone())
                 .debug_selector(move || selector)
+                .relative()
                 .flex()
                 .flex_row()
                 .flex_none()
@@ -146,8 +159,18 @@ impl DockHost {
                 ))
                 .on_drag(payload, |payload, _, _, cx| {
                     cx.new(|_| DockDragPreview::new(payload.title()))
+                });
+            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(move |bounds| {
+                DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
+                    target_tabs: node,
+                    target_index,
+                    bounds,
+                    is_central,
                 })
-                .child(title);
+            }) {
+                tab = tab.child(probe);
+            }
+            tab = tab.child(title);
             if session.panel_is_closable(&item) {
                 let close_selector = self.record_debug_selector(
                     DockDebugRegion::TabClose {

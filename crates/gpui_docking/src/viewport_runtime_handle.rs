@@ -131,6 +131,9 @@ impl DockViewportRuntimeHandle {
                     .handle_window_should_close(window_id)
                     .allows_close()
             });
+            // The first render can happen before the runtime mapping is registered. Refresh once so
+            // render-time viewport probes can publish into the registered mapping.
+            window.refresh();
         }) {
             self.runtime
                 .borrow_mut()
