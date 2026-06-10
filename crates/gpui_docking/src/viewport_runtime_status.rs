@@ -1,8 +1,9 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTarget, DockViewportCloseOutcome, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportShouldCloseOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome,
+    DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome,
 };
 use open_gpui::{Pixels, Point, WindowId};
 
@@ -151,16 +152,14 @@ pub enum DockViewportTearOffOutcomeKind {
 impl DockViewportRuntimeStatus {
     pub(crate) fn record_route(
         &mut self,
-        source_space: DockSpaceId,
-        source_tabs: DockNodeId,
-        payload: DockViewportDropPayload,
+        request: &DockViewportDropRouteRequest,
         route: &DockViewportDropRoute,
     ) {
         self.last_route = Some(DockViewportRouteRecord {
-            source_space: source_space.clone(),
-            source_tabs,
-            payload: DockViewportPayloadRecord::from_payload(&payload),
-            target: DockViewportRouteTarget::from_route(&source_space, route),
+            source_space: request.source_space.clone(),
+            source_tabs: request.source_tabs,
+            payload: DockViewportPayloadRecord::from_payload(&request.payload),
+            target: DockViewportRouteTarget::from_route(&request.source_space, route),
         });
     }
 
@@ -332,12 +331,16 @@ mod tests {
         let host_position = point(px(12.0), px(34.0));
         let mut status = DockViewportRuntimeStatus::default();
 
-        status.record_route(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source.clone(),
             DockNodeId::null(),
             DockViewportDropPayload::Tabs,
-            &DockViewportDropRoute::Local { host_position },
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default(),
         );
+
+        status.record_route(&request, &DockViewportDropRoute::Local { host_position });
 
         let route = status
             .last_route
