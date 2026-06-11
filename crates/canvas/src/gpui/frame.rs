@@ -2,9 +2,10 @@ use super::model::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme};
 use super::style::{parse_color, positive_pixels};
 use crate::tool::ToolState;
 use crate::{
-    CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRoutePath, CanvasRouteSegment,
-    CanvasSelection, CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget,
-    CanvasViewport, HitOptions, HitTarget, canvas_transform_handles, connection_hit_options,
+    CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId, CanvasRecordScope,
+    CanvasRecordScopeOptions, CanvasRoutePath, CanvasRouteSegment, CanvasSelection, CanvasSnapAxis,
+    CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions,
+    HitTarget, canvas_transform_handles, connection_hit_options, selection_record_scope,
 };
 use open_gpui::{Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine};
 
@@ -80,6 +81,7 @@ pub struct CanvasPaintRecord {
     pub hidden: bool,
     pub locked: bool,
     pub selected: bool,
+    pub structurally_selected: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -213,6 +215,16 @@ pub fn collect_visible_records(
         include_handles: options.include_handles,
         margin: Pixels::ZERO,
     };
+    let structural_selection = options
+        .include_interaction_feedback
+        .then(|| {
+            selection_record_scope(
+                model.document.as_ref(),
+                model.interaction.selection(),
+                CanvasRecordScopeOptions::structural_with_internal_edges(),
+            )
+        })
+        .unwrap_or_default();
     let records = model
         .runtime
         .query_with_options(visible_document_bounds, hit_options)
@@ -230,6 +242,10 @@ pub fn collect_visible_records(
                 locked: record.locked,
                 selected: options.include_interaction_feedback
                     && target_is_selected(&record.target, model.interaction.selection()),
+                structurally_selected: target_is_in_record_scope(
+                    &record.target,
+                    &structural_selection,
+                ),
             }
         })
         .collect();
@@ -408,6 +424,23 @@ fn connection_preview_target_position(
 
 fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
     selection.contains_target(target)
+}
+
+fn target_is_in_record_scope(target: &HitTarget, scope: &CanvasRecordScope) -> bool {
+    let Some(record_id) = record_id_for_target(target) else {
+        return false;
+    };
+
+    scope.contains(&record_id)
+}
+
+fn record_id_for_target(target: &HitTarget) -> Option<CanvasRecordId> {
+    match target {
+        HitTarget::Node(id) => Some(CanvasRecordId::Node(id.clone())),
+        HitTarget::Edge(id) => Some(CanvasRecordId::Edge(id.clone())),
+        HitTarget::Shape(id) => Some(CanvasRecordId::Shape(id.clone())),
+        HitTarget::Handle { .. } => None,
+    }
 }
 
 fn record_requests_widget_overlay(

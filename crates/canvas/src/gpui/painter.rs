@@ -89,7 +89,7 @@ pub fn paint_canvas_frame(
     }
 
     for record in &frame.frame.records {
-        if !record.selected {
+        if !record_has_selection_feedback(record) {
             continue;
         }
 
@@ -168,6 +168,10 @@ pub fn paint_canvas_frame(
             theme.handle_corner_radius,
         );
     }
+}
+
+fn record_has_selection_feedback(record: &CanvasPaintRecord) -> bool {
+    record.selected || record.structurally_selected
 }
 
 fn selection_corner_radius(record: &CanvasPaintRecord, theme: CanvasPaintTheme) -> Pixels {
