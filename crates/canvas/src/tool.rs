@@ -1330,17 +1330,6 @@ impl CanvasEditor {
         self.apply_editor_action(intent.into())
     }
 
-    pub fn apply_tool_intents(
-        &mut self,
-        intents: impl IntoIterator<Item = CanvasToolIntent>,
-    ) -> Result<(), DocumentError> {
-        for intent in intents {
-            self.apply_tool_intent(intent)?;
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn apply_custom_tool_intent(
         &mut self,
         intent: CanvasToolIntent,
