@@ -499,7 +499,11 @@ impl DockHost {
                     let Some(frame) = frame_slot.borrow().as_ref().cloned() else {
                         return;
                     };
-                    runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds));
+                    if let Some(next_frame) =
+                        runtime.push_viewport_host_scene_frame_fact(&frame, fact_for_bounds(bounds))
+                    {
+                        *frame_slot.borrow_mut() = Some(next_frame);
+                    }
                 },
                 |_, _, _, _| (),
             )

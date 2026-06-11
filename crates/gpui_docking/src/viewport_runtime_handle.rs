@@ -1,13 +1,12 @@
 use crate::{
     DockActionApplyError, DockController, DockHost, DockSpaceId, DockViewportActivationTarget,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
-    DockViewportDropRouteCommit, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
-    DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
-    DockViewportRestoreOutcome, DockViewportRoutedDropPreview, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockViewportWindowFacts,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteCommit,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRoutedDropPreview,
+    DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -16,7 +15,8 @@ use crate::{
 };
 #[cfg(test)]
 use crate::{
-    DockNodeId, DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetContext,
+    DockNodeId, DockViewportDropPayload, DockViewportDropRoute, DockViewportPlatformSignals,
+    DockViewportTargetContext,
 };
 #[cfg(test)]
 use open_gpui::WindowBounds;
@@ -68,6 +68,31 @@ fn apply_viewport_activation(activation: Option<DockViewportActivationTarget>, c
     });
 }
 
+fn install_should_close_hook(
+    runtime: DockViewportRuntimeHandle,
+    window: AnyWindowHandle,
+    cx: &mut App,
+    refresh: bool,
+) -> Result<()> {
+    window.update(cx, move |_, window, cx| {
+        let window_id = window.window_handle().window_id();
+        window.on_window_should_close(cx, move |_, cx| {
+            runtime
+                .handle_window_should_close_with_app(window_id, cx)
+                .allows_close()
+        });
+        if refresh {
+            // The first render can happen before the runtime mapping is registered. Refresh once so
+            // render-time viewport probes can publish into the registered mapping.
+            window.refresh();
+        }
+    })
+}
+
+fn close_window_quietly(window: AnyWindowHandle, cx: &mut App) {
+    let _ = window.update(cx, |_, window, _| window.remove_window());
+}
+
 impl DockViewportRuntimeHandle {
     /// Creates a handle around a runtime with the default close policy.
     pub fn new(controller: Entity<DockController>) -> Self {
@@ -105,6 +130,7 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().runtime_status()
     }
 
+    #[cfg(test)]
     pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
         self.runtime.borrow().last_hovered_window()
     }
@@ -175,6 +201,7 @@ impl DockViewportRuntimeHandle {
             .reusable_window_for_space(&space, cx)
         {
             DockViewportReusableWindow::Reused(window) => {
+                install_should_close_hook(self.clone(), window, cx, false)?;
                 return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
@@ -200,21 +227,11 @@ impl DockViewportRuntimeHandle {
             .borrow_mut()
             .register_opened_viewport(space.clone(), window);
 
-        let close_runtime = self.clone();
-        if let Err(error) = window.update(cx, move |_, window, cx| {
-            let window_id = window.window_handle().window_id();
-            window.on_window_should_close(cx, move |_, cx| {
-                close_runtime
-                    .handle_window_should_close_with_app(window_id, cx)
-                    .allows_close()
-            });
-            // The first render can happen before the runtime mapping is registered. Refresh once so
-            // render-time viewport probes can publish into the registered mapping.
-            window.refresh();
-        }) {
+        if let Err(error) = install_should_close_hook(self.clone(), window, cx, true) {
             self.runtime
                 .borrow_mut()
                 .discard_failed_opened_viewport(window.window_id());
+            close_window_quietly(window, cx);
             return Err(error);
         }
 
@@ -242,6 +259,20 @@ impl DockViewportRuntimeHandle {
             }
         };
 
+        if self.is_viewport_open(pending.target_space()) {
+            self.runtime
+                .borrow_mut()
+                .cancel_tear_off_request(&key, DockViewportTearOffCancelReason::Cancelled);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "tear-off target space {} is already open",
+                    pending.target_space()
+                ),
+            )
+            .into());
+        }
+
         let opened = match self.open_viewport(pending.target_space().clone(), options, cx) {
             Ok(opened) => opened,
             Err(error) => {
@@ -252,10 +283,16 @@ impl DockViewportRuntimeHandle {
             }
         };
 
-        let mut runtime = self.runtime.borrow_mut();
-        let completion = runtime.complete_tear_off_viewport(&key, opened.window(), cx);
-        let outcome = runtime.finish_tear_off_open(pending, completion, cx);
-        runtime.record_tear_off_outcome(&outcome);
+        let outcome = {
+            let mut runtime = self.runtime.borrow_mut();
+            let completion = runtime.complete_tear_off_viewport(&key, opened.window(), cx);
+            let outcome = runtime.finish_tear_off_open(pending, completion, cx);
+            runtime.record_tear_off_outcome(&outcome);
+            outcome
+        };
+        if !matches!(outcome, DockViewportTearOffOpenOutcome::Completed(_)) {
+            close_window_quietly(opened.window(), cx);
+        }
         Ok(outcome)
     }
 
@@ -310,7 +347,7 @@ impl DockViewportRuntimeHandle {
         &self,
         frame: &DockViewportHostSceneFrame,
         fact: DockHostDropSceneFact,
-    ) -> bool {
+    ) -> Option<DockViewportHostSceneFrame> {
         self.runtime
             .borrow_mut()
             .push_viewport_host_scene_frame_fact(frame, fact)
@@ -390,6 +427,7 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    #[cfg(test)]
     pub(crate) fn resolve_payload_drop_route(
         &self,
         request: &DockViewportDropRouteRequest,

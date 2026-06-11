@@ -1,4 +1,4 @@
-use crate::{DockViewportAdapter, DockViewportClosePolicy, DockWorkspace};
+use crate::{DockViewportAdapter, DockViewportClosePolicy};
 use open_gpui::WindowId;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -36,28 +36,13 @@ impl DockViewportCloseGate {
             .collect();
     }
 
+    #[cfg(test)]
     pub(crate) fn should_allow_close(&self, window_id: WindowId) -> bool {
         if !self.window_spaces.borrow().contains_key(&window_id) {
             return true;
         }
 
         !matches!(self.close_policy(), DockViewportClosePolicy::Prevent)
-    }
-
-    pub(crate) fn should_allow_close_with_workspace(
-        &self,
-        window_id: WindowId,
-        workspace: &DockWorkspace,
-    ) -> bool {
-        let Some(space) = self.window_spaces.borrow().get(&window_id).cloned() else {
-            return true;
-        };
-
-        match self.close_policy() {
-            DockViewportClosePolicy::Prevent => false,
-            DockViewportClosePolicy::RetainLayout => workspace.validate_close_space(&space).is_ok(),
-            DockViewportClosePolicy::MergeBack { .. } => true,
-        }
     }
 }
 

@@ -152,10 +152,14 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         )
         .expect("first scene frame should register")
         .frame;
-    assert!(runtime.push_viewport_host_scene_frame_fact(
-        &first,
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
+    assert!(
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &first,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_some()
+    );
 
     let second = runtime
         .begin_viewport_host_scene_frame(
@@ -168,16 +172,22 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         .expect("second scene frame should register")
         .frame;
     assert!(
-        !runtime.push_viewport_host_scene_frame_fact(
-            &first,
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ),
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &first,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_none(),
         "facts captured by an older render frame must not populate a newer scene"
     );
-    assert!(runtime.push_viewport_host_scene_frame_fact(
-        &second,
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
+    assert!(
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &second,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_some()
+    );
 }
 
 #[open_gpui::test]

@@ -1,9 +1,9 @@
 use crate::{
     DockController, DockGraph, DockHost, DockLayoutRect, DockNode, DockSpaceId,
     DockViewportAdapter, DockViewportOpenStatus, DockViewportPlacement,
-    DockViewportPlacementLayout, DockViewportPlatformSignals, DockViewportWindowBounds,
-    DockViewportWindowFacts, DockViewportWindowState, DockWorkspace, debug::DockDebugRegion,
-    host_test_support::*,
+    DockViewportPlacementLayout, DockViewportPlatformSignals, DockViewportRuntimeHandle,
+    DockViewportWindowBounds, DockViewportWindowFacts, DockViewportWindowState, DockWorkspace,
+    debug::DockDebugRegion, host_test_support::*,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px,
@@ -11,7 +11,7 @@ use open_gpui::{
 };
 
 #[open_gpui::test]
-fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
+fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
@@ -30,12 +30,11 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let mut adapter = DockViewportAdapter::new();
+    let runtime = DockViewportRuntimeHandle::new(controller);
 
     let opened = cx
         .update(|app| {
-            adapter.open_viewport(
-                controller.clone(),
+            runtime.open_viewport(
                 secondary_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
@@ -45,7 +44,10 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     assert_eq!(opened.space(), &secondary_space);
     assert_eq!(opened.status(), DockViewportOpenStatus::Opened);
     assert_eq!(
-        adapter.window_for_space(&secondary_space),
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
         Some(opened.window())
     );
 
@@ -65,8 +67,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 
     let reused = cx
         .update(|app| {
-            adapter.open_viewport(
-                controller.clone(),
+            runtime.open_viewport(
                 secondary_space.clone(),
                 viewport_window_options(480.0, 260.0),
                 app,
@@ -75,7 +76,7 @@ fn viewport_adapter_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
         .expect("live secondary viewport should be reused");
     assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
     assert_eq!(reused.window(), opened.window());
-    assert_eq!(adapter.spaces().len(), 1);
+    assert_eq!(runtime.registered_viewport_spaces().len(), 1);
 }
 
 #[open_gpui::test]
@@ -155,7 +156,7 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
 }
 
 #[open_gpui::test]
-fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) {
+fn viewport_runtime_handle_opens_with_saved_placement_options(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
@@ -167,7 +168,7 @@ fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) 
     let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let mut adapter = DockViewportAdapter::new();
+    let runtime = DockViewportRuntimeHandle::new(controller);
     let saved_window_bounds = WindowBounds::Windowed(floating_bounds(80.0, 90.0, 420.0, 260.0));
     let placement = DockViewportPlacementLayout::new(vec![DockViewportPlacement {
         space: secondary_space.clone(),
@@ -185,7 +186,7 @@ fn viewport_adapter_opens_with_saved_placement_options(cx: &mut TestAppContext) 
             let options = placement
                 .window_options_for_space(&secondary_space, fallback_options)
                 .expect("saved placement should produce window options");
-            adapter.open_viewport(controller.clone(), secondary_space.clone(), options, app)
+            runtime.open_viewport(secondary_space.clone(), options, app)
         })
         .expect("secondary viewport should open with saved placement");
 

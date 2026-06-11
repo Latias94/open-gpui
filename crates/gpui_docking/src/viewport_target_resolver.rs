@@ -2,6 +2,7 @@ use crate::{DockSpaceId, DockViewportTargetContext};
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowId};
 
 /// Result of resolving a screen point into a registered dock viewport.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportHit {
     /// Logical dock space that contains the point.
@@ -10,17 +11,13 @@ pub(crate) struct DockViewportHit {
     host_position: Point<Pixels>,
 }
 
+#[cfg(test)]
 impl DockViewportHit {
-    #[cfg(test)]
     pub(crate) fn new(space: impl Into<DockSpaceId>, host_position: Point<Pixels>) -> Self {
         Self {
             space: space.into(),
             host_position,
         }
-    }
-
-    pub(crate) fn host_position(&self) -> Point<Pixels> {
-        self.host_position
     }
 }
 

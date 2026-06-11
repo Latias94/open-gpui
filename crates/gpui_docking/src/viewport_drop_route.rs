@@ -3,7 +3,7 @@ use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
     DockViewportTearOffRequest, drag::DockDragPayload, drop_target::DockResolvedDropTarget,
-    interaction::DockRuntimeDragSession,
+    interaction::DockRuntimeDragSession, viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
 
@@ -72,10 +72,6 @@ impl DockViewportResolvedDropRoute {
     pub(crate) fn drag_session_id(&self) -> Option<u64> {
         self.commit.drag_session_id()
     }
-
-    pub(crate) fn into_route(self) -> DockViewportDropRoute {
-        self.route
-    }
 }
 
 /// Commit facts for a drop route that lands in an existing viewport workspace.
@@ -88,7 +84,14 @@ pub(crate) struct DockViewportDropWorkspaceCommit {
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     host_position: Point<Pixels>,
-    resolved_target: Option<DockResolvedDropTarget>,
+    resolved_target: Option<DockViewportCachedDropTarget>,
+}
+
+/// Preview target cached from a concrete host scene frame.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportCachedDropTarget {
+    frame: DockViewportHostSceneFrame,
+    target: DockResolvedDropTarget,
 }
 
 impl DockViewportDropWorkspaceCommit {
@@ -97,7 +100,7 @@ impl DockViewportDropWorkspaceCommit {
         target_space: DockSpaceId,
         target_window_id: Option<WindowId>,
         host_position: Point<Pixels>,
-        resolved_target: Option<DockResolvedDropTarget>,
+        resolved_target: Option<DockViewportCachedDropTarget>,
     ) -> Self {
         Self {
             source_space: request.source_space().clone(),
@@ -120,7 +123,7 @@ impl DockViewportDropWorkspaceCommit {
         DockSpaceId,
         Option<WindowId>,
         Point<Pixels>,
-        Option<DockResolvedDropTarget>,
+        Option<DockViewportCachedDropTarget>,
     ) {
         (
             self.source_space,
@@ -152,12 +155,31 @@ impl DockViewportDropWorkspaceCommit {
         Some((
             &self.target_space,
             self.target_window_id?,
-            self.resolved_target.as_ref()?,
+            self.resolved_target.as_ref()?.target(),
         ))
     }
 }
 
+impl DockViewportCachedDropTarget {
+    pub(crate) fn new(frame: DockViewportHostSceneFrame, target: DockResolvedDropTarget) -> Self {
+        Self { frame, target }
+    }
+
+    pub(crate) fn frame(&self) -> &DockViewportHostSceneFrame {
+        &self.frame
+    }
+
+    pub(crate) fn into_target(self) -> DockResolvedDropTarget {
+        self.target
+    }
+
+    fn target(&self) -> &DockResolvedDropTarget {
+        &self.target
+    }
+}
+
 impl DockViewportDropRouteCommit {
+    #[cfg(test)]
     pub(crate) fn from_route_request(
         request: &DockViewportDropRouteRequest,
         route: DockViewportDropRoute,
@@ -168,7 +190,7 @@ impl DockViewportDropRouteCommit {
     pub(crate) fn from_route_request_with_resolved_target(
         request: &DockViewportDropRouteRequest,
         route: DockViewportDropRoute,
-        resolved_target: Option<DockResolvedDropTarget>,
+        resolved_target: Option<DockViewportCachedDropTarget>,
     ) -> Self {
         match route {
             DockViewportDropRoute::Local { host_position } => Self::Workspace(

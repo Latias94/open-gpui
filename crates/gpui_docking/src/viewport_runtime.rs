@@ -1,10 +1,10 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockGraphMutationError, DockItemId,
-    DockNode, DockPolicy, DockSpaceId, DockViewportActivationTarget, DockViewportAdapter,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
-    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteCommit, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportIdentity, DockViewportOpenOutcome, DockViewportPlacementLayout,
+    DockNode, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportActivationTarget,
+    DockViewportAdapter, DockViewportCloseOutcome, DockViewportClosePolicy,
+    DockViewportCloseStatus, DockViewportDropActionOutcome, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportIdentity, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
     DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
@@ -17,20 +17,20 @@ use crate::{
     drag::DockDragPayload,
     drop_preview::DockDropPreview,
     drop_runtime::DockHostDropSceneFact,
-    drop_target::DockResolvedDropTarget,
+    drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     interaction::DockRuntimeDragSession,
     viewport_close_gate::DockViewportCloseGate,
     viewport_drop_scene::{
         DockViewportHostSceneFrame, DockViewportHostSceneRegistration,
         DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot,
     },
+    workspace_move_validation::dock_target_validator,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
-    AnyWindowHandle, App, Bounds, Entity, Pixels, Point, Result, WindowBounds, WindowId,
-    WindowOptions, point, px, size,
+    AnyWindowHandle, App, Bounds, Entity, Pixels, Point, WindowBounds, WindowId, WindowOptions,
+    point, px, size,
 };
-use std::rc::Rc;
 
 const DEFAULT_TEAR_OFF_WINDOW_SIZE: open_gpui::Size<Pixels> = size(px(360.0), px(240.0));
 const DEFAULT_TEAR_OFF_CURSOR_OFFSET: Point<Pixels> = point(px(24.0), px(18.0));
@@ -60,6 +60,11 @@ pub(crate) struct DockViewportRuntime {
 struct DockViewportLastHoveredWindow {
     window_id: WindowId,
     drag_session_id: Option<u64>,
+}
+
+enum DockViewportWorkspaceRouteTarget {
+    Valid(Option<crate::DockViewportCachedDropTarget>),
+    Rejected(DockPolicyError),
 }
 
 impl DockViewportLastHoveredWindow {
@@ -121,15 +126,16 @@ pub(crate) enum DockViewportTearOffCommitPreparation {
     Prepared(Box<DockViewportPreparedTearOffDrop>),
 }
 
-fn install_should_close_hook(
-    window: AnyWindowHandle,
-    cx: &mut App,
-    should_close: Rc<dyn Fn(WindowId, &App) -> bool>,
-) -> Result<()> {
-    let window_id = window.window_id();
-    window.update(cx, move |_, window, cx| {
-        window.on_window_should_close(cx, move |_, cx| should_close(window_id, cx));
-    })
+fn cached_route_target(
+    frame: DockViewportHostSceneFrame,
+    resolution: DockDropResolution,
+) -> Result<crate::DockViewportCachedDropTarget, DockPolicyError> {
+    match resolution {
+        DockDropResolution::Valid(target) => {
+            Ok(crate::DockViewportCachedDropTarget::new(frame, target))
+        }
+        DockDropResolution::Rejected(rejection) => Err(rejection.reason),
+    }
 }
 
 fn push_unique_window(windows: &mut Vec<AnyWindowHandle>, window: Option<AnyWindowHandle>) {
@@ -260,6 +266,7 @@ impl DockViewportRuntime {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
         self.last_hovered_window.map(|hovered| hovered.window_id)
     }
@@ -316,24 +323,6 @@ impl DockViewportRuntime {
     /// Replaces the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
     pub(crate) fn set_close_policy(&mut self, close_policy: DockViewportClosePolicy) {
         self.close_gate.set_close_policy(close_policy);
-    }
-
-    /// Opens or reuses a controller-backed viewport window for a logical dock space.
-    ///
-    /// Runtime-opened windows install a GPUI should-close hook so
-    /// [`DockViewportClosePolicy::Prevent`] can veto a platform close before
-    /// [`Self::handle_window_closed`] performs post-close cleanup.
-    pub(crate) fn open_viewport(
-        &mut self,
-        space: impl Into<DockSpaceId>,
-        options: WindowOptions,
-        cx: &mut App,
-    ) -> Result<DockViewportOpenOutcome> {
-        let close_gate = self.close_gate.clone();
-        let controller = self.controller.clone();
-        self.open_viewport_with_should_close(space, options, cx, move |window_id, cx| {
-            close_gate.should_allow_close_with_workspace(window_id, controller.read(cx).workspace())
-        })
     }
 
     #[cfg(test)]
@@ -415,7 +404,7 @@ impl DockViewportRuntime {
         &mut self,
         frame: &DockViewportHostSceneFrame,
         fact: DockHostDropSceneFact,
-    ) -> bool {
+    ) -> Option<DockViewportHostSceneFrame> {
         self.host_scenes.push_frame_fact(frame, fact)
     }
 
@@ -567,19 +556,34 @@ impl DockViewportRuntime {
                     host_position,
                     resolved_target,
                 ) = commit.into_parts();
-                let target_space = match resolved_target {
-                    Some(target) => (route_space, target),
+                let target_space = match resolved_target
+                    .filter(|target| target.frame().is_current_in(&self.host_scenes))
+                {
+                    Some(target) => self.validate_cached_route_target(
+                        &route_space,
+                        target.into_target(),
+                        &payload,
+                        source_tabs,
+                        cx,
+                    )?,
                     None => self.resolve_route_target(
                         &route_space,
                         target_window_id,
                         host_position,
+                        &payload,
+                        source_tabs,
                         cx,
                     )?,
                 };
                 (source_space, source_tabs, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {
-                return self.commit_tear_off_drop_route(request, cx);
+                self.validate_payload_drag_session(request.drag_session())?;
+                return Err(DockActionApplyError::TearOffViewportOpenFailed {
+                    message:
+                        "tear-off viewport commits must be opened through DockViewportRuntimeHandle"
+                            .to_string(),
+                });
             }
             DockViewportDropRouteCommit::Rejected(error) => return Err(error.into()),
         };
@@ -609,43 +613,58 @@ impl DockViewportRuntime {
         ))
     }
 
+    fn validate_cached_route_target(
+        &self,
+        target_space: &DockSpaceId,
+        target: DockResolvedDropTarget,
+        payload: &DockViewportDropPayload,
+        source_tabs: DockNodeId,
+        cx: &App,
+    ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
+        let controller = self.controller.read(cx);
+        let workspace = controller.workspace();
+        let policy = workspace.policy().clone();
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(payload, source_tabs);
+        let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
+        match validate_resolved_drop_target(target, &policy, Some(&target_validator)) {
+            DockDropResolution::Valid(target) => Ok((target_space.clone(), target)),
+            DockDropResolution::Rejected(rejection) => {
+                Err(DockActionApplyError::Policy(rejection.reason))
+            }
+        }
+    }
+
     fn resolve_route_target(
         &self,
         target_space: &DockSpaceId,
         target_window_id: Option<WindowId>,
         host_position: Point<Pixels>,
+        payload: &DockViewportDropPayload,
+        source_tabs: DockNodeId,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
-        let policy = self.controller.read(cx).workspace().policy().clone();
-        let Some(target) = self.host_scenes.resolve_for_window(
+        let controller = self.controller.read(cx);
+        let workspace = controller.workspace();
+        let policy = workspace.policy().clone();
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(payload, source_tabs);
+        let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
+        let Some((_, resolution)) = self.host_scenes.resolve_frame_for_window(
             target_space,
             target_window_id,
             host_position,
             &policy,
+            Some(&target_validator),
         ) else {
             return Err(DockActionApplyError::DropTargetUnavailable);
         };
-        Ok((target_space.clone(), target))
-    }
-
-    pub(crate) fn commit_tear_off_drop_route(
-        &mut self,
-        request: DockViewportTearOffRequest,
-        cx: &mut App,
-    ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        match self.prepare_tear_off_drop_route_commit(request, cx)? {
-            DockViewportTearOffCommitPreparation::Prepared(prepared) => {
-                let prepared = *prepared;
-                self.open_tear_off_viewport(
-                    prepared.request,
-                    prepared.target_space,
-                    prepared.options,
-                    cx,
-                )
-                .map(DockViewportDropRouteOutcome::tear_off)
-                .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
-                    message: error.to_string(),
-                })
+        match resolution {
+            crate::drop_target::DockDropResolution::Valid(target) => {
+                Ok((target_space.clone(), target))
+            }
+            crate::drop_target::DockDropResolution::Rejected(rejection) => {
+                Err(DockActionApplyError::Policy(rejection.reason))
             }
         }
     }
@@ -728,7 +747,7 @@ impl DockViewportRuntime {
             }
         }
 
-        let target_space = self.next_tear_off_space(&request);
+        let target_space = self.next_tear_off_space(&request, cx);
         let options = self.tear_off_window_options(&request);
         Ok(DockViewportPreparedTearOffDrop {
             request,
@@ -740,14 +759,27 @@ impl DockViewportRuntime {
     pub(crate) fn next_tear_off_space(
         &mut self,
         request: &DockViewportTearOffRequest,
+        cx: &App,
     ) -> DockSpaceId {
-        let tick = self.next_tear_off_tick();
-        DockSpaceId::new(format!(
-            "{}:tear-off:{}:{}",
-            request.source_space(),
-            request.payload().label(),
-            tick.as_u64()
-        ))
+        loop {
+            let tick = self.next_tear_off_tick();
+            let space = DockSpaceId::new(format!(
+                "{}:tear-off:{}:{}",
+                request.source_space(),
+                request.payload().label(),
+                tick.as_u64()
+            ));
+            let graph_has_space = self
+                .controller
+                .read(cx)
+                .graph()
+                .spaces()
+                .iter()
+                .any(|known| known == &space);
+            if !graph_has_space && self.adapter.window_for_space(&space).is_none() {
+                return space;
+            }
+        }
     }
 
     pub(crate) fn tear_off_window_options(
@@ -784,13 +816,15 @@ impl DockViewportRuntime {
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
+    #[cfg(test)]
     pub(crate) fn resolve_payload_drop_route(
         &mut self,
         request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportDropRoute {
         self.resolve_payload_drop_route_with_commit(request, cx)
-            .into_route()
+            .route()
+            .clone()
     }
 
     /// Resolves a rendered payload release into route and commit facts from one snapshot.
@@ -799,10 +833,27 @@ impl DockViewportRuntime {
         request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportResolvedDropRoute {
-        let policy = self.controller.read(cx).workspace().policy().to_owned();
-        let route = self.adapter.resolve_payload_drop_route(request, &policy);
+        let controller = self.controller.read(cx);
+        let workspace = controller.workspace();
+        let policy = workspace.policy().to_owned();
+        let mut route = self.adapter.resolve_payload_drop_route(request, &policy);
+        let payload_classes = workspace
+            .payload_dock_classes_for_viewport_payload(request.payload(), request.source_tabs());
+        let resolved_target = match self.resolved_workspace_target_for_route(
+            &route,
+            request,
+            &policy,
+            &payload_classes,
+        ) {
+            DockViewportWorkspaceRouteTarget::Valid(target) => target,
+            DockViewportWorkspaceRouteTarget::Rejected(error) => {
+                if matches!(route, DockViewportDropRoute::KnownViewport { .. }) {
+                    route = DockViewportDropRoute::Rejected(error);
+                }
+                None
+            }
+        };
         self.status.record_route(request, &route);
-        let resolved_target = self.resolved_workspace_target_for_route(&route, request, &policy);
         let commit = DockViewportDropRouteCommit::from_route_request_with_resolved_target(
             request,
             route.clone(),
@@ -816,21 +867,44 @@ impl DockViewportRuntime {
         route: &DockViewportDropRoute,
         request: &DockViewportDropRouteRequest,
         policy: &DockPolicy,
-    ) -> Option<DockResolvedDropTarget> {
+        payload_classes: &crate::workspace_move_validation::DockPayloadDockClasses,
+    ) -> DockViewportWorkspaceRouteTarget {
         match route {
-            DockViewportDropRoute::Local { host_position } => self.host_scenes.resolve_for_window(
-                request.source_space(),
-                None,
-                *host_position,
-                policy,
-            ),
-            DockViewportDropRoute::KnownViewport { target } => self.host_scenes.resolve_for_window(
-                target.space(),
-                Some(target.window_id()),
-                target.host_position(),
-                policy,
-            ),
-            DockViewportDropRoute::TearOff(_) | DockViewportDropRoute::Rejected(_) => None,
+            DockViewportDropRoute::Local { host_position } => {
+                let target_validator =
+                    dock_target_validator(request.source_space(), payload_classes, policy);
+                let resolved = self
+                    .host_scenes
+                    .resolve_frame_for_window(
+                        request.source_space(),
+                        None,
+                        *host_position,
+                        policy,
+                        Some(&target_validator),
+                    )
+                    .map(|(frame, resolution)| cached_route_target(frame, resolution));
+                DockViewportWorkspaceRouteTarget::Valid(resolved.and_then(Result::ok))
+            }
+            DockViewportDropRoute::KnownViewport { target } => {
+                let target_validator =
+                    dock_target_validator(target.space(), payload_classes, policy);
+                let Some((frame, resolution)) = self.host_scenes.resolve_frame_for_window(
+                    target.space(),
+                    Some(target.window_id()),
+                    target.host_position(),
+                    policy,
+                    Some(&target_validator),
+                ) else {
+                    return DockViewportWorkspaceRouteTarget::Valid(None);
+                };
+                match cached_route_target(frame, resolution) {
+                    Ok(target) => DockViewportWorkspaceRouteTarget::Valid(Some(target)),
+                    Err(error) => DockViewportWorkspaceRouteTarget::Rejected(error),
+                }
+            }
+            DockViewportDropRoute::TearOff(_) | DockViewportDropRoute::Rejected(_) => {
+                DockViewportWorkspaceRouteTarget::Valid(None)
+            }
         }
     }
 
@@ -925,44 +999,6 @@ impl DockViewportRuntime {
                 )
             }
         }
-    }
-
-    /// Opens a controller-backed viewport window and completes a tear-off transaction.
-    ///
-    /// The graph is not mutated until the destination viewport has opened and registered
-    /// successfully. Duplicate requests for the same item are idempotent and do not open another
-    /// window.
-    pub(crate) fn open_tear_off_viewport(
-        &mut self,
-        request: DockViewportTearOffRequest,
-        target_space: impl Into<DockSpaceId>,
-        options: WindowOptions,
-        cx: &mut App,
-    ) -> Result<DockViewportTearOffOpenOutcome> {
-        let key = request.key();
-        let begin = self.begin_tear_off_request(request, target_space, cx);
-        let pending = match begin {
-            DockViewportTearOffBeginOutcome::Pending(pending) => pending,
-            DockViewportTearOffBeginOutcome::Duplicate(pending) => {
-                let outcome = DockViewportTearOffOpenOutcome::Duplicate(pending);
-                self.status.record_tear_off(&outcome);
-                return Ok(outcome);
-            }
-        };
-
-        let opened = match self.open_viewport(pending.target_space().clone(), options, cx) {
-            Ok(opened) => opened,
-            Err(error) => {
-                self.tear_off
-                    .cancel(&key, DockViewportTearOffCancelReason::Cancelled);
-                return Err(error);
-            }
-        };
-
-        let completion = self.complete_tear_off_viewport(&key, opened.window(), cx);
-        let outcome = self.finish_tear_off_open(pending, completion, cx);
-        self.status.record_tear_off(&outcome);
-        Ok(outcome)
     }
 
     pub(crate) fn finish_tear_off_open(
@@ -1167,33 +1203,6 @@ impl DockViewportRuntime {
                 }
             })
             .unwrap_or(DockViewportCloseStatus::MergeBackFailed)
-    }
-
-    pub(crate) fn open_viewport_with_should_close(
-        &mut self,
-        space: impl Into<DockSpaceId>,
-        options: WindowOptions,
-        cx: &mut App,
-        should_close: impl Fn(WindowId, &App) -> bool + 'static,
-    ) -> Result<DockViewportOpenOutcome> {
-        let should_close = Rc::new(should_close);
-        let outcome = self
-            .adapter
-            .open_viewport(self.controller.clone(), space, options, cx);
-        self.close_gate.sync_adapter(&self.adapter);
-        let outcome = outcome?;
-        if !matches!(outcome.status(), crate::DockViewportOpenStatus::Reused) {
-            self.host_scenes.unregister_space(outcome.space());
-        }
-        let window = outcome.window();
-        if let Err(error) = install_should_close_hook(window, cx, should_close) {
-            self.adapter.handle_window_closed(window.window_id());
-            self.host_scenes.unregister_window(window.window_id());
-            self.close_gate.sync_adapter(&self.adapter);
-            return Err(error);
-        }
-
-        Ok(outcome)
     }
 
     fn next_tear_off_tick(&mut self) -> DockViewportTearOffTick {

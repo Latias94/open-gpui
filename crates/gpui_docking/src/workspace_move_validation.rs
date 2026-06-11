@@ -1,7 +1,8 @@
 use crate::{
     DockActionApplyError, DockClassId, DockGraphMutationError, DockItemId, DockNode, DockNodeId,
-    DockPolicy, DockPolicyError, DockSpaceId, DockWorkspace,
+    DockPolicy, DockPolicyError, DockSpaceId, DockViewportDropPayload, DockWorkspace,
     drag::{DockDragPayload, DockDragPayloadKind},
+    drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
 };
 
 pub(crate) struct DockWorkspaceMoveValidation<'a> {
@@ -133,6 +134,20 @@ impl DockWorkspace {
         }
     }
 
+    pub(crate) fn payload_dock_classes_for_viewport_payload(
+        &self,
+        payload: &DockViewportDropPayload,
+        source_tabs: DockNodeId,
+    ) -> DockPayloadDockClasses {
+        match payload {
+            DockViewportDropPayload::Item(item) => self.payload_dock_classes_for_item(item),
+            DockViewportDropPayload::Tabs => self.payload_dock_classes_for_tabs(source_tabs),
+            DockViewportDropPayload::Floating(floating) => {
+                self.payload_dock_classes_for_floating(*floating)
+            }
+        }
+    }
+
     fn payload_dock_classes_for_items<'a>(
         &self,
         items: impl IntoIterator<Item = &'a DockItemId>,
@@ -165,6 +180,30 @@ impl DockPayloadDockClasses {
             )?;
         }
         Ok(())
+    }
+}
+
+pub(crate) fn dock_target_space<'a>(
+    default_space: &'a DockSpaceId,
+    target: &'a DockResolvedDropTarget,
+) -> &'a DockSpaceId {
+    match &target.kind {
+        DockResolvedDropTargetKind::EmptyDockSpace { space } => space,
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::LeafCenter { .. }
+        | DockResolvedDropTargetKind::InnerEdge { .. }
+        | DockResolvedDropTargetKind::RootEdge { .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { .. } => default_space,
+    }
+}
+
+pub(crate) fn dock_target_validator<'a>(
+    default_space: &'a DockSpaceId,
+    payload_classes: &'a DockPayloadDockClasses,
+    policy: &'a DockPolicy,
+) -> impl Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a {
+    move |target| {
+        payload_classes.validate_target_space(dock_target_space(default_space, target), policy)
     }
 }
 
