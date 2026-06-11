@@ -144,7 +144,8 @@ impl DockHost {
             ) {
                 handle = handle.child(probe);
             }
-            let payload = DockDragPayload::new_tabs(space.clone(), target_tabs, title.clone());
+            let payload =
+                DockDragPayload::new_floating(space.clone(), floating, target_tabs, title.clone());
             let drag_entity = entity.clone();
             let drag_space = space.clone();
             let drag_surface_id = format!(

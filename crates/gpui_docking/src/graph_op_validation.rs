@@ -124,6 +124,38 @@ impl DockGraph {
                 self.require_source_node_in_space(source_space, *source_tabs)?;
                 Ok(self.apply_op(op))
             }
+            DockOp::MoveFloating {
+                source_space,
+                floating,
+                target_space,
+                target,
+                zone,
+            } => {
+                self.validate_move_floating(source_space, *floating, target_space, *target, *zone)?;
+                Ok(self.apply_op(op))
+            }
+            DockOp::MoveFloatingToEmptyDockSpace {
+                source_space,
+                floating,
+                target_space,
+            } => {
+                if self.floating_container(source_space, *floating).is_none() {
+                    return Err(DockGraphMutationError::FloatingContainerNotFound {
+                        space: source_space.clone(),
+                        floating: *floating,
+                    });
+                }
+                if !self.target_space_is_empty_for_floating_move(
+                    source_space,
+                    *floating,
+                    target_space,
+                ) {
+                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                        space: target_space.clone(),
+                    });
+                }
+                Ok(self.apply_op(op))
+            }
             DockOp::FloatItemInWindow {
                 source_space, item, ..
             } => {
@@ -240,6 +272,33 @@ impl DockGraph {
         self.require_target_node_in_space(target_space, target_tabs)?;
         if zone == DropZone::Center {
             self.require_tabs_node(target_tabs)?;
+        }
+        Ok(())
+    }
+
+    fn validate_move_floating(
+        &self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockNodeId,
+        zone: DropZone,
+    ) -> Result<(), DockGraphMutationError> {
+        if self.floating_container(source_space, floating).is_none() {
+            return Err(DockGraphMutationError::FloatingContainerNotFound {
+                space: source_space.clone(),
+                floating,
+            });
+        }
+        self.require_target_node_in_space(target_space, target)?;
+        if source_space == target_space && self.subtree_contains(floating, target) {
+            return Err(DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
+                floating,
+                target,
+            });
+        }
+        if zone == DropZone::Center {
+            self.require_tabs_node(target)?;
         }
         Ok(())
     }

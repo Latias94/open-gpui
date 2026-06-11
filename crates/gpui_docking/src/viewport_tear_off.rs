@@ -14,6 +14,8 @@ pub(crate) enum DockViewportDropPayload {
     Item(DockItemId),
     /// The entire source tabs stack.
     Tabs,
+    /// An in-window floating subtree.
+    Floating(DockNodeId),
 }
 
 impl DockViewportDropPayload {
@@ -26,6 +28,9 @@ impl DockViewportDropPayload {
                 DockWorkspaceDropPayload::Item { source_tabs, item }
             }
             DockViewportDropPayload::Tabs => DockWorkspaceDropPayload::Tabs { source_tabs },
+            DockViewportDropPayload::Floating(floating) => DockWorkspaceDropPayload::Floating {
+                floating: *floating,
+            },
         }
     }
 
@@ -40,6 +45,10 @@ impl DockViewportDropPayload {
                 source_space: source_space.clone(),
                 source_tabs: source_tabs.as_u64(),
             },
+            DockViewportDropPayload::Floating(floating) => DockViewportTearOffKey::Floating {
+                source_space: source_space.clone(),
+                floating: *floating,
+            },
         }
     }
 
@@ -47,6 +56,7 @@ impl DockViewportDropPayload {
         match self {
             DockViewportDropPayload::Item(item) => item.as_str().to_string(),
             DockViewportDropPayload::Tabs => "tabs".to_string(),
+            DockViewportDropPayload::Floating(_) => "floating".to_string(),
         }
     }
 
@@ -56,8 +66,13 @@ impl DockViewportDropPayload {
                 left == right
             }
             (DockViewportDropPayload::Tabs, DockDragPayloadKind::Tabs) => true,
-            (DockViewportDropPayload::Item(_), DockDragPayloadKind::Tabs)
-            | (DockViewportDropPayload::Tabs, DockDragPayloadKind::Item { .. }) => false,
+            (
+                DockViewportDropPayload::Floating(left),
+                DockDragPayloadKind::Floating { floating: right },
+            ) => left == right,
+            (DockViewportDropPayload::Item(_), _)
+            | (DockViewportDropPayload::Tabs, _)
+            | (DockViewportDropPayload::Floating(_), _) => false,
         }
     }
 }
@@ -447,6 +462,10 @@ pub(crate) enum DockViewportTearOffKey {
         source_space: DockSpaceId,
         source_tabs: u64,
     },
+    Floating {
+        source_space: DockSpaceId,
+        floating: DockNodeId,
+    },
 }
 
 impl DockViewportTearOffKey {
@@ -454,6 +473,9 @@ impl DockViewportTearOffKey {
         match self {
             DockViewportTearOffKey::Item(item) => DockViewportDropPayload::Item(item.clone()),
             DockViewportTearOffKey::Tabs { .. } => DockViewportDropPayload::Tabs,
+            DockViewportTearOffKey::Floating { floating, .. } => {
+                DockViewportDropPayload::Floating(*floating)
+            }
         }
     }
 }

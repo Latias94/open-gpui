@@ -47,4 +47,21 @@ impl DockGraph {
         let source_items = self.collect_items_in_subtree(source_tabs);
         !source_items.is_empty() && target_items == source_items
     }
+
+    pub(in crate::graph) fn target_space_is_empty_for_floating_move(
+        &self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if self.root(target_space).is_some() {
+            return false;
+        }
+        if source_space != target_space {
+            return self.floating_containers(target_space).is_empty();
+        }
+
+        let floatings = self.floating_containers(target_space);
+        !floatings.is_empty() && floatings.iter().all(|entry| entry.node == floating)
+    }
 }

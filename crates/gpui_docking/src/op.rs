@@ -84,6 +84,30 @@ pub(crate) enum DockOp {
         target_space: DockSpaceId,
     },
 
+    /// Moves an in-window floating subtree into an existing target.
+    MoveFloating {
+        /// The source dock space containing the floating container.
+        source_space: DockSpaceId,
+        /// The floating container node to move.
+        floating: DockNodeId,
+        /// The target dock space.
+        target_space: DockSpaceId,
+        /// The target tabs or split node.
+        target: DockNodeId,
+        /// The drop zone.
+        zone: DropZone,
+    },
+
+    /// Moves an in-window floating subtree into an empty dock space.
+    MoveFloatingToEmptyDockSpace {
+        /// The source dock space containing the floating container.
+        source_space: DockSpaceId,
+        /// The floating container node to move.
+        floating: DockNodeId,
+        /// The target dock space.
+        target_space: DockSpaceId,
+    },
+
     /// Floats one item inside a dock space without creating a platform window.
     FloatItemInWindow {
         /// The source dock space.

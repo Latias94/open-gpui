@@ -266,9 +266,10 @@ impl DockHost {
     ) -> Option<DockItemId> {
         match &payload.kind {
             DockDragPayloadKind::Item { item } => Some(item.clone()),
-            DockDragPayloadKind::Tabs => self.with_workspace(cx, |workspace| {
-                workspace.graph().active_item_in_tabs(payload.source_tabs)
-            }),
+            DockDragPayloadKind::Tabs | DockDragPayloadKind::Floating { .. } => self
+                .with_workspace(cx, |workspace| {
+                    workspace.graph().active_item_in_tabs(payload.source_tabs)
+                }),
         }
     }
 
@@ -319,6 +320,9 @@ fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> 
         },
         DockDragPayloadKind::Tabs => DockWorkspaceDropPayload::Tabs {
             source_tabs: payload.source_tabs,
+        },
+        DockDragPayloadKind::Floating { floating } => DockWorkspaceDropPayload::Floating {
+            floating: *floating,
         },
     }
 }

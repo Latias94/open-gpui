@@ -76,4 +76,36 @@ impl DockWorkspace {
             target_tabs,
         })
     }
+
+    pub(crate) fn commit_floating_move(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockNodeId,
+        zone: crate::DropZone,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_drop_zone(zone)?;
+        self.commit_graph_op(DockOp::MoveFloating {
+            source_space: source_space.clone(),
+            floating,
+            target_space: target_space.clone(),
+            target,
+            zone,
+        })
+    }
+
+    pub(crate) fn commit_floating_to_empty_dock_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.policy().validate_platform_viewports()?;
+        self.commit_graph_op(DockOp::MoveFloatingToEmptyDockSpace {
+            source_space: source_space.clone(),
+            floating,
+            target_space: target_space.clone(),
+        })
+    }
 }

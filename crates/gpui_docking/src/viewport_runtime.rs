@@ -1,12 +1,13 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockPolicy,
-    DockSpaceId, DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
-    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteCommit,
-    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportIdentity,
-    DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockActionApplyError, DockActionOutcome, DockController, DockGraphMutationError, DockItemId,
+    DockNode, DockPolicy, DockSpaceId, DockViewportActivationTarget, DockViewportAdapter,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
+    DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteCommit, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportIdentity, DockViewportOpenOutcome, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
+    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
@@ -698,6 +699,31 @@ impl DockViewportRuntime {
                         ));
                     }
                 }
+                DockViewportDropPayload::Floating(floating) => {
+                    if graph
+                        .floating_containers(request.source_space())
+                        .iter()
+                        .all(|container| container.node != *floating)
+                    {
+                        return Err(DockGraphMutationError::FloatingContainerNotFound {
+                            space: request.source_space().clone(),
+                            floating: *floating,
+                        }
+                        .into());
+                    }
+                    if !matches!(
+                        graph.node(request.source_tabs()),
+                        Some(DockNode::Tabs { items, .. }) if !items.is_empty()
+                    ) || graph
+                        .root_for_node_in_space(request.source_space(), request.source_tabs())
+                        != Some(*floating)
+                    {
+                        return Err(tear_off_payload_mismatch(
+                            request.source_space(),
+                            request.source_tabs(),
+                        ));
+                    }
+                }
             }
         }
 
@@ -1013,7 +1039,7 @@ impl DockViewportRuntime {
     ) -> Option<DockItemId> {
         match payload {
             DockViewportDropPayload::Item(item) => Some(item.clone()),
-            DockViewportDropPayload::Tabs => self
+            DockViewportDropPayload::Tabs | DockViewportDropPayload::Floating(_) => self
                 .controller
                 .read(cx)
                 .graph()
@@ -1204,6 +1230,27 @@ impl DockViewportRuntime {
                     DockViewportTearOffSourceStatus::Moved
                 }
             }
+            DockViewportDropPayload::Floating(floating) => {
+                let source_tabs = request.source_tabs();
+                let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
+                    return DockViewportTearOffSourceStatus::Missing;
+                };
+                if graph
+                    .floating_containers(request.source_space())
+                    .iter()
+                    .all(|container| container.node != *floating)
+                {
+                    return DockViewportTearOffSourceStatus::Missing;
+                }
+                if !items.is_empty()
+                    && graph.root_for_node_in_space(request.source_space(), source_tabs)
+                        == Some(*floating)
+                {
+                    DockViewportTearOffSourceStatus::Ready
+                } else {
+                    DockViewportTearOffSourceStatus::Moved
+                }
+            }
         }
     }
 
@@ -1225,6 +1272,12 @@ impl DockViewportRuntime {
                     request.source_tabs(),
                     pending.target_space(),
                 ),
+                DockViewportDropPayload::Floating(floating) => controller
+                    .commit_floating_to_empty_dock_space(
+                        request.source_space(),
+                        *floating,
+                        pending.target_space(),
+                    ),
             };
             if outcome
                 .as_ref()

@@ -157,5 +157,6 @@ fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
     match &payload.kind {
         DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
         DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
+        DockDragPayloadKind::Floating { floating } => DockViewportDropPayload::Floating(*floating),
     }
 }

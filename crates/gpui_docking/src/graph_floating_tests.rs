@@ -151,3 +151,113 @@ fn merge_floating_into_moves_items_and_removes_floating() {
     );
     graph.assert_canonical_space(&space());
 }
+
+#[test]
+fn move_floating_edge_preserves_child_subtree() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    let floating_child = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.4, 0.6],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_child,
+    });
+    graph.set_root(space(), root);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: root,
+                zone: DropZone::Right,
+            })
+            .expect("floating edge drop should be valid")
+    );
+
+    assert!(graph.floating_containers(&space()).is_empty());
+    let new_root = graph
+        .root(&space())
+        .expect("space should still have a root");
+    let DockNode::Split { axis, children, .. } =
+        graph.node(new_root).expect("new root should exist")
+    else {
+        panic!("root should become a split");
+    };
+    assert_eq!(*axis, SplitAxis::Horizontal);
+    assert_eq!(children, &vec![root, floating_child]);
+    let DockNode::Split { axis, children, .. } = graph
+        .node(floating_child)
+        .expect("floating child subtree should be docked intact")
+    else {
+        panic!("floating child should remain a split subtree");
+    };
+    assert_eq!(*axis, SplitAxis::Vertical);
+    assert_eq!(children, &vec![floating_left, floating_right]);
+    assert_eq!(
+        graph.collect_items_in_subtree(floating_child),
+        vec![item("a"), item("c")]
+    );
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn move_floating_to_empty_space_promotes_child_as_root() {
+    let mut graph = DockGraph::new();
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+    let detached = DockSpaceId::new("detached");
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloatingToEmptyDockSpace {
+                source_space: space(),
+                floating,
+                target_space: detached.clone(),
+            })
+            .expect("floating tear-off move should be valid")
+    );
+
+    assert!(graph.floating_containers(&space()).is_empty());
+    assert_eq!(graph.root(&detached), Some(floating_tabs));
+    let DockNode::Tabs { items, active } = graph
+        .node(floating_tabs)
+        .expect("promoted floating tabs should exist")
+    else {
+        panic!("detached root should be tabs");
+    };
+    assert_eq!(items, &vec![item("a"), item("c")]);
+    assert_eq!(*active, 1);
+    graph.assert_canonical_space(&detached);
+}

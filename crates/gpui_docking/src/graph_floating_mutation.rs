@@ -133,4 +133,116 @@ impl DockGraph {
         self.simplify_space(space);
         true
     }
+
+    pub(in crate::graph) fn move_floating_between_spaces(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockNodeId,
+        zone: DropZone,
+    ) -> bool {
+        if self.floating_container(source_space, floating).is_none() {
+            return false;
+        }
+        if self.root_for_node_in_space(target_space, target).is_none() {
+            return false;
+        }
+        if source_space == target_space && self.subtree_contains(floating, target) {
+            return false;
+        }
+
+        if zone == DropZone::Center {
+            return self.merge_floating_items_between_spaces(
+                source_space,
+                floating,
+                target_space,
+                target,
+            );
+        }
+
+        let Some(child) = self.take_floating_child_from_space(source_space, floating) else {
+            return false;
+        };
+        if !self.insert_edge_docked_child(target_space, target, zone, child) {
+            return false;
+        }
+        self.simplify_space(source_space);
+        if source_space != target_space {
+            self.simplify_space(target_space);
+        }
+        true
+    }
+
+    pub(in crate::graph) fn move_floating_to_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if !self.target_space_is_empty_for_floating_move(source_space, floating, target_space) {
+            return false;
+        }
+        let Some(child) = self.take_floating_child_from_space(source_space, floating) else {
+            return false;
+        };
+        self.set_root(target_space.clone(), child);
+        self.simplify_space(source_space);
+        if source_space != target_space {
+            self.simplify_space(target_space);
+        }
+        true
+    }
+
+    fn merge_floating_items_between_spaces(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+    ) -> bool {
+        if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
+            return false;
+        }
+        let items = self.collect_items_in_subtree(floating);
+        if items.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        for item in items {
+            changed |= self.move_item_between_spaces(
+                source_space,
+                item,
+                target_space,
+                target_tabs,
+                DropZone::Center,
+                None,
+            );
+        }
+        if let Some(floatings) = self.floatings.get_mut(source_space)
+            && let Some(index) = floatings.iter().position(|entry| entry.node == floating)
+        {
+            floatings.remove(index);
+        }
+        self.simplify_space(source_space);
+        if source_space != target_space {
+            self.simplify_space(target_space);
+        }
+        changed
+    }
+
+    fn take_floating_child_from_space(
+        &mut self,
+        space: &DockSpaceId,
+        floating: DockNodeId,
+    ) -> Option<DockNodeId> {
+        let child = match self.nodes.get(floating)? {
+            DockNode::Floating { child } => *child,
+            _ => return None,
+        };
+        let floatings = self.floatings.get_mut(space)?;
+        let index = floatings.iter().position(|entry| entry.node == floating)?;
+        floatings.remove(index);
+        Some(child)
+    }
 }

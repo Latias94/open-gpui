@@ -13,6 +13,7 @@ pub(crate) struct DockDragPayload {
 pub(crate) enum DockDragPayloadKind {
     Item { item: DockItemId },
     Tabs,
+    Floating { floating: DockNodeId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,17 +51,39 @@ impl DockDragPayload {
         }
     }
 
+    pub(crate) fn new_floating(
+        source_space: DockSpaceId,
+        floating: DockNodeId,
+        source_tabs: DockNodeId,
+        title: String,
+    ) -> Self {
+        Self {
+            source_space,
+            source_tabs,
+            kind: DockDragPayloadKind::Floating { floating },
+            title,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn item(&self) -> Option<&DockItemId> {
         match &self.kind {
             DockDragPayloadKind::Item { item } => Some(item),
-            DockDragPayloadKind::Tabs => None,
+            DockDragPayloadKind::Tabs | DockDragPayloadKind::Floating { .. } => None,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn is_tabs_stack(&self) -> bool {
         matches!(self.kind, DockDragPayloadKind::Tabs)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn floating(&self) -> Option<DockNodeId> {
+        match self.kind {
+            DockDragPayloadKind::Floating { floating } => Some(floating),
+            DockDragPayloadKind::Item { .. } | DockDragPayloadKind::Tabs => None,
+        }
     }
 
     pub(crate) fn title(&self) -> &str {
@@ -78,7 +101,9 @@ impl DockDragPayload {
     pub(crate) fn excluded_tabs_for_drop_scene(&self) -> Option<DockNodeId> {
         match self.kind {
             DockDragPayloadKind::Item { .. } => None,
-            DockDragPayloadKind::Tabs => Some(self.source_tabs),
+            DockDragPayloadKind::Tabs | DockDragPayloadKind::Floating { .. } => {
+                Some(self.source_tabs)
+            }
         }
     }
 }
@@ -124,13 +149,25 @@ mod tests {
             DockItemId::from("a"),
             "Panel A".to_string(),
         );
+        let floating = DockNodeId::null();
         let tabs_payload =
-            DockDragPayload::new_tabs(source_space, source_tabs, "Stack".to_string());
+            DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
+        let floating_payload = DockDragPayload::new_floating(
+            source_space,
+            floating,
+            source_tabs,
+            "Floating".to_string(),
+        );
 
         assert_eq!(item_payload.item(), Some(&DockItemId::from("a")));
         assert!(!item_payload.is_tabs_stack());
         assert_eq!(tabs_payload.item(), None);
         assert!(tabs_payload.is_tabs_stack());
+        assert_eq!(floating_payload.floating(), Some(floating));
+        assert_eq!(
+            floating_payload.excluded_tabs_for_drop_scene(),
+            Some(source_tabs)
+        );
     }
 
     #[test]

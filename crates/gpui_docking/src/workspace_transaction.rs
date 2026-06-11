@@ -30,6 +30,9 @@ pub(crate) enum DockWorkspaceDropPayload<'a> {
     Tabs {
         source_tabs: DockNodeId,
     },
+    Floating {
+        floating: DockNodeId,
+    },
 }
 
 impl DockWorkspace {
@@ -113,6 +116,9 @@ impl DockWorkspace {
                 DockWorkspaceDropPayload::Tabs { source_tabs } => {
                     self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
                 }
+                DockWorkspaceDropPayload::Floating { floating } => {
+                    self.commit_floating_to_empty_dock_space(source_space, floating, &space)
+                }
             },
             DockResolvedDropTargetKind::KnownViewport { .. }
             | DockResolvedDropTargetKind::TearOffCandidate { .. } => {
@@ -152,6 +158,9 @@ impl DockWorkspace {
                     insert_index,
                 })
             }
+            DockWorkspaceDropPayload::Floating { floating } => {
+                self.commit_floating_move(source_space, floating, target_space, target_tabs, zone)
+            }
         }
     }
 }
@@ -160,7 +169,8 @@ impl DockWorkspace {
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId, DockViewportHit, SplitAxis,
+        DockFloatingContainer, DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId,
+        DockViewportHit, SplitAxis,
         drop_target::{
             DockDropResolveSource, DockKnownViewportDropTarget, DockResolvedDropTargetKind,
         },
@@ -514,6 +524,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn resolved_root_edge_target_moves_floating_subtree_without_flattening() {
+        let source_space = DockSpaceId::from("source");
+        let target_space = DockSpaceId::from("target");
+        let mut graph = DockGraph::new();
+        let floating_left = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            active: 0,
+        });
+        let floating_right = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            active: 0,
+        });
+        let floating_child = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Vertical,
+            children: vec![floating_left, floating_right],
+            fractions: vec![0.4, 0.6],
+        });
+        let floating = graph.insert_node(DockNode::Floating {
+            child: floating_child,
+        });
+        graph
+            .floating_containers_mut(source_space.clone())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: bounds(),
+            });
+        let target_left = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            active: 0,
+        });
+        let target_right = graph.insert_node(DockNode::Tabs {
+            items: vec![item("d")],
+            active: 0,
+        });
+        let target_root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![target_left, target_right],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(target_space.clone(), target_root);
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+
+        let outcome = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                source_space: &source_space,
+                payload: DockWorkspaceDropPayload::Floating { floating },
+                target_space: &target_space,
+                target: resolved_target(DockResolvedDropTargetKind::RootEdge {
+                    root: target_root,
+                    leaf_tabs: None,
+                    zone: DropZone::Right,
+                }),
+            })
+            .expect("floating root-edge drop should commit");
+
+        assert_eq!(outcome, DockActionOutcome::Changed);
+        assert!(
+            workspace
+                .graph()
+                .floating_containers(&source_space)
+                .is_empty()
+        );
+        let DockNode::Split { axis, children, .. } = workspace
+            .graph()
+            .node(target_root)
+            .expect("target root should remain present")
+        else {
+            panic!("target root should remain a split");
+        };
+        assert_eq!(*axis, SplitAxis::Horizontal);
+        assert_eq!(children, &vec![target_left, target_right, floating_child]);
+        let DockNode::Split { axis, children, .. } = workspace
+            .graph()
+            .node(floating_child)
+            .expect("floating child should be docked intact")
+        else {
+            panic!("floating child should remain split");
+        };
+        assert_eq!(*axis, SplitAxis::Vertical);
+        assert_eq!(children, &vec![floating_left, floating_right]);
+        assert_eq!(
+            workspace.graph().collect_items_in_subtree(floating_child),
+            vec![item("a"), item("c")]
+        );
     }
 
     fn assert_root_edge_commit_graph(

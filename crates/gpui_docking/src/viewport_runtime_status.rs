@@ -34,6 +34,11 @@ pub enum DockViewportPayloadRecord {
     },
     /// The entire source tabs stack was routed.
     Tabs,
+    /// An in-window floating subtree was routed.
+    Floating {
+        /// Routed floating container node.
+        floating: DockNodeId,
+    },
 }
 
 /// Route resolution recorded before a rendered drop mutates the workspace.
@@ -262,6 +267,9 @@ impl DockViewportPayloadRecord {
         match payload {
             DockViewportDropPayload::Item(item) => Self::Item { item: item.clone() },
             DockViewportDropPayload::Tabs => Self::Tabs,
+            DockViewportDropPayload::Floating(floating) => Self::Floating {
+                floating: *floating,
+            },
         }
     }
 }

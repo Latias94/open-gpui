@@ -70,6 +70,24 @@ impl DockGraph {
                 }
                 self.move_tabs_to_empty_space(source_space, *source_tabs, target_space)
             }
+            DockOp::MoveFloating {
+                source_space,
+                floating,
+                target_space,
+                target,
+                zone,
+            } => self.move_floating_between_spaces(
+                source_space,
+                *floating,
+                target_space,
+                *target,
+                *zone,
+            ),
+            DockOp::MoveFloatingToEmptyDockSpace {
+                source_space,
+                floating,
+                target_space,
+            } => self.move_floating_to_empty_space(source_space, *floating, target_space),
             DockOp::FloatItemInWindow {
                 source_space,
                 item,
