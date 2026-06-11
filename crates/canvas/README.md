@@ -577,9 +577,8 @@ They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cac
 persistence, and future CRDT translation keep passing through one mutation path. Built-in reducer
 state stays behind the crate-private session/reducer context rather than becoming part of the
 custom-tool API. For continuous interactions such as dragging or resizing, return
-`BeginTransientTransaction`, one or more `UpdateTransientTransaction` intents, and then
-`CommitTransientTransaction` or `CancelTransientTransaction`; the editor coalesces those updates
-into one undo entry and persistence log entry.
+`ApplyTransaction` updates, then `CommitTransaction` or `CancelTransaction`; the editor owns the
+gesture lifecycle and coalesces those updates into one undo entry and persistence log entry.
 
 ```rust
 use open_gpui::{px, size};
@@ -615,6 +614,7 @@ impl CanvasToolReducer for StampTool {
             CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::InsertNode(node),
             )),
+            CanvasToolIntent::CommitTransaction,
             CanvasToolIntent::SetTool(CanvasTool::Select),
         ])
     }
@@ -624,12 +624,15 @@ impl CanvasToolReducer for StampTool {
 ```rust
 # use open_gpui_canvas::{CanvasToolIntent, CanvasTransaction};
 let drag_update = CanvasTransaction::default();
-let intents = vec![
-    CanvasToolIntent::BeginTransientTransaction,
-    CanvasToolIntent::UpdateTransientTransaction(drag_update),
-    CanvasToolIntent::CommitTransientTransaction,
+let commit_intents = vec![
+    CanvasToolIntent::ApplyTransaction(drag_update.clone()),
+    CanvasToolIntent::CommitTransaction,
 ];
-# let _ = intents;
+let cancel_intents = vec![
+    CanvasToolIntent::ApplyTransaction(drag_update),
+    CanvasToolIntent::CancelTransaction,
+];
+# let _ = (commit_intents, cancel_intents);
 ```
 
 Register application tools with `CanvasToolRegistry`, then call

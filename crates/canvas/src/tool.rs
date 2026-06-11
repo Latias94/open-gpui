@@ -382,10 +382,8 @@ pub(crate) enum CanvasToolEffect {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CanvasToolIntent {
     ApplyTransaction(CanvasTransaction),
-    BeginTransientTransaction,
-    UpdateTransientTransaction(CanvasTransaction),
-    CommitTransientTransaction,
-    CancelTransientTransaction,
+    CommitTransaction,
+    CancelTransaction,
     SetTool(CanvasTool),
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
@@ -450,12 +448,8 @@ impl From<CanvasToolIntent> for CanvasEditorAction {
     fn from(intent: CanvasToolIntent) -> Self {
         match intent {
             CanvasToolIntent::ApplyTransaction(transaction) => Self::ApplyTransaction(transaction),
-            CanvasToolIntent::BeginTransientTransaction => Self::BeginGesture,
-            CanvasToolIntent::UpdateTransientTransaction(transaction) => {
-                Self::UpdateGesture(transaction)
-            }
-            CanvasToolIntent::CommitTransientTransaction => Self::CommitGesture,
-            CanvasToolIntent::CancelTransientTransaction => Self::CancelGesture,
+            CanvasToolIntent::CommitTransaction => Self::CommitGesture,
+            CanvasToolIntent::CancelTransaction => Self::CancelGesture,
             CanvasToolIntent::SetTool(tool) => Self::SetTool(tool),
             CanvasToolIntent::SetSelection(selection) => {
                 Self::Session(CanvasSessionEffect::SetSelection(selection))
@@ -1347,6 +1341,46 @@ impl CanvasEditor {
         Ok(())
     }
 
+    pub(crate) fn apply_custom_tool_intent(
+        &mut self,
+        intent: CanvasToolIntent,
+    ) -> Result<(), DocumentError> {
+        match intent {
+            CanvasToolIntent::ApplyTransaction(transaction) => {
+                if transaction.is_empty() {
+                    return Ok(());
+                }
+
+                self.apply_tool_effects([
+                    CanvasToolEffect::BeginGesture,
+                    CanvasToolEffect::UpdateGesture(transaction),
+                ])?;
+            }
+            CanvasToolIntent::CommitTransaction => {
+                self.apply_tool_effect(CanvasToolEffect::CommitGesture)?;
+            }
+            CanvasToolIntent::CancelTransaction => {
+                self.apply_tool_effect(CanvasToolEffect::CancelGesture)?;
+            }
+            intent => {
+                self.apply_tool_intent(intent)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn apply_custom_tool_intents(
+        &mut self,
+        intents: impl IntoIterator<Item = CanvasToolIntent>,
+    ) -> Result<(), DocumentError> {
+        for intent in intents {
+            self.apply_custom_tool_intent(intent)?;
+        }
+
+        Ok(())
+    }
+
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
         let changed = self.store.undo()?;
         if changed {
@@ -1509,7 +1543,7 @@ impl CanvasEditor {
             self.apply_tool_effects(effects)
         } else {
             let intents = custom_tool.handle_event(self.tool_context(), event)?;
-            self.apply_tool_intents(intents)
+            self.apply_custom_tool_intents(intents)
         }
     }
 
@@ -1523,7 +1557,7 @@ impl CanvasEditor {
                 .reducer_mut(&tool_id)
                 .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
             let intents = reducer.handle_event(self.tool_context(), event)?;
-            self.apply_tool_intents(intents)?;
+            self.apply_custom_tool_intents(intents)?;
         } else {
             let effects = self.event_effects(event)?;
             self.apply_tool_effects(effects)?;
@@ -1793,6 +1827,7 @@ mod tests {
                     )),
                 )),
                 CanvasToolIntent::SetSelection(selection),
+                CanvasToolIntent::CommitTransaction,
             ])
         }
     }
@@ -4962,7 +4997,7 @@ mod tests {
     }
 
     #[test]
-    fn public_tool_intents_commit_transient_transaction_as_one_undo_entry() {
+    fn public_tool_intents_commit_transaction_as_one_undo_entry() {
         let mut editor = CanvasEditor::default();
         let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         let first = CanvasNode::new("a", point(px(100.0), px(0.0)), size(px(100.0), px(100.0)));
@@ -4973,15 +5008,14 @@ mod tests {
         let baseline_depth = editor.history().undo_depth();
 
         editor
-            .apply_tool_intents([
-                CanvasToolIntent::BeginTransientTransaction,
-                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+            .apply_custom_tool_intents([
+                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                     DocumentCommand::UpdateNode(first),
                 )),
-                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                     DocumentCommand::UpdateNode(second.clone()),
                 )),
-                CanvasToolIntent::CommitTransientTransaction,
+                CanvasToolIntent::CommitTransaction,
             ])
             .unwrap();
 
@@ -4995,7 +5029,7 @@ mod tests {
     }
 
     #[test]
-    fn public_tool_intents_cancel_transient_transaction_without_history() {
+    fn public_tool_intents_cancel_transaction_without_history() {
         let mut editor = CanvasEditor::default();
         let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         let moved = CanvasNode::new("a", point(px(100.0), px(0.0)), size(px(100.0), px(100.0)));
@@ -5005,12 +5039,11 @@ mod tests {
         let baseline_depth = editor.history().undo_depth();
 
         editor
-            .apply_tool_intents([
-                CanvasToolIntent::BeginTransientTransaction,
-                CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+            .apply_custom_tool_intents([
+                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                     DocumentCommand::UpdateNode(moved),
                 )),
-                CanvasToolIntent::CancelTransientTransaction,
+                CanvasToolIntent::CancelTransaction,
             ])
             .unwrap();
 

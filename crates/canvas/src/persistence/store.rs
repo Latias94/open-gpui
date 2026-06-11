@@ -420,13 +420,13 @@ where
 {
     match intent {
         CanvasToolIntent::ApplyTransaction(transaction) => {
-            apply_persistent_transaction(editor, store, cursor, transaction)?;
+            editor.apply_custom_tool_intent(CanvasToolIntent::ApplyTransaction(transaction))?;
         }
-        CanvasToolIntent::CommitTransientTransaction => {
+        CanvasToolIntent::CommitTransaction => {
             apply_persistent_gesture_commit(editor, store, cursor)?;
         }
         intent => {
-            editor.apply_tool_intent(intent)?;
+            editor.apply_custom_tool_intent(intent)?;
         }
     }
 
