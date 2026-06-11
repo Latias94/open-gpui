@@ -33,7 +33,7 @@ mod tests {
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
-        test_support::document_fixture,
+        test_support::{connected_pair_fixture, document_fixture},
         tool::{CanvasToolEffect, ToolState},
     };
     use open_gpui::{
@@ -1303,23 +1303,7 @@ mod tests {
     }
 
     fn connected_edge_document() -> CanvasDocument {
-        document_fixture()
-            .node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .build()
+        connected_pair_fixture().build()
     }
 
     fn geometry_registry() -> CanvasKindRegistry {

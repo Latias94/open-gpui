@@ -1597,7 +1597,7 @@ mod tests {
         CanvasNodeKind, CanvasNodeResizeProposal, CanvasNodeSchemaPolicy,
         CanvasNodeTransformPolicy, CanvasRecordKind, CanvasRoutePath, CanvasRouteRequest,
         CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId,
-        test_support::document_fixture,
+        test_support::{connected_pair_fixture, document_fixture},
     };
     use open_gpui::{point, px, size};
     use serde_json::{Value, json};
@@ -4636,23 +4636,7 @@ mod tests {
     }
 
     fn connected_edge_document() -> CanvasDocument {
-        document_fixture()
-            .node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .build()
+        connected_pair_fixture().build()
     }
 
     struct VerticalDetourRouter;
