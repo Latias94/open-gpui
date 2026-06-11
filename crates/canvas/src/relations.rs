@@ -228,6 +228,30 @@ impl CanvasRecordRelations {
             .filter(move |relation| &relation.source == record || &relation.target == record)
     }
 
+    pub(crate) fn collect_related_records(
+        &self,
+        seeds: impl IntoIterator<Item = CanvasRecordId>,
+        mut can_include: impl FnMut(&CanvasRecordId) -> bool,
+    ) -> IndexSet<CanvasRecordId> {
+        let mut records = IndexSet::new();
+        let mut pending = Vec::new();
+
+        for record_id in seeds {
+            Self::insert_related_record(record_id, &mut records, &mut pending, &mut can_include);
+        }
+
+        while let Some(record_id) = pending.pop() {
+            for child in self.children_of(&record_id).cloned().collect::<Vec<_>>() {
+                Self::insert_related_record(child, &mut records, &mut pending, &mut can_include);
+            }
+            for member in self.members_of(&record_id).cloned().collect::<Vec<_>>() {
+                Self::insert_related_record(member, &mut records, &mut pending, &mut can_include);
+            }
+        }
+
+        records
+    }
+
     pub fn contains_relation(&self, relation: &CanvasRecordRelation) -> bool {
         match relation {
             CanvasRecordRelation::Parent(relation) => {
@@ -354,6 +378,22 @@ impl CanvasRecordRelations {
             .iter()
             .any(|existing| existing.group == relation.group && existing.member == relation.member)
     }
+
+    fn insert_related_record<F>(
+        record_id: CanvasRecordId,
+        records: &mut IndexSet<CanvasRecordId>,
+        pending: &mut Vec<CanvasRecordId>,
+        can_include: &mut F,
+    ) where
+        F: FnMut(&CanvasRecordId) -> bool,
+    {
+        if !can_include(&record_id) {
+            return;
+        }
+        if records.insert(record_id.clone()) {
+            pending.push(record_id);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -422,6 +462,27 @@ mod tests {
         assert_eq!(relations.parents().count(), 0);
         assert_eq!(relations.groups().count(), 0);
         assert_eq!(relations.bindings().count(), 0);
+    }
+
+    #[test]
+    fn collect_related_records_expands_descendants_only() {
+        let mut relations = CanvasRecordRelations::default();
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let leaf = CanvasRecordId::Node(NodeId::from("leaf"));
+        let outside = CanvasRecordId::Node(NodeId::from("outside"));
+
+        relations.set_parent(group.clone(), frame.clone());
+        relations.add_to_group(group.clone(), leaf.clone());
+        relations.add_to_group(frame.clone(), outside.clone());
+
+        let records = relations.collect_related_records([frame.clone()], |_| true);
+
+        assert_eq!(records.len(), 4);
+        assert!(records.contains(&frame));
+        assert!(records.contains(&group));
+        assert!(records.contains(&leaf));
+        assert!(records.contains(&outside));
     }
 
     #[test]

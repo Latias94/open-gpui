@@ -639,51 +639,25 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (IndexSet<NodeId>, IndexSet<EdgeId>, IndexSet<ShapeId>) {
-        let mut records = IndexSet::new();
-        let mut pending = Vec::new();
-
-        for id in selection.selected_nodes() {
-            self.insert_deletable_record(
-                CanvasRecordId::Node(id.clone()),
-                &mut records,
-                &mut pending,
-            );
-        }
-        for id in selection.selected_edges() {
-            self.insert_deletable_record(
-                CanvasRecordId::Edge(id.clone()),
-                &mut records,
-                &mut pending,
-            );
-        }
-        for id in selection.selected_shapes() {
-            self.insert_deletable_record(
-                CanvasRecordId::Shape(id.clone()),
-                &mut records,
-                &mut pending,
-            );
-        }
-
-        while let Some(record_id) = pending.pop() {
-            for child in self
-                .document
-                .relations()
-                .children_of(&record_id)
+        let records = self.document.relations().collect_related_records(
+            selection
+                .selected_nodes()
                 .cloned()
-                .collect::<Vec<_>>()
-            {
-                self.insert_deletable_record(child, &mut records, &mut pending);
-            }
-            for member in self
-                .document
-                .relations()
-                .members_of(&record_id)
-                .cloned()
-                .collect::<Vec<_>>()
-            {
-                self.insert_deletable_record(member, &mut records, &mut pending);
-            }
-        }
+                .map(CanvasRecordId::Node)
+                .chain(
+                    selection
+                        .selected_edges()
+                        .cloned()
+                        .map(CanvasRecordId::Edge),
+                )
+                .chain(
+                    selection
+                        .selected_shapes()
+                        .cloned()
+                        .map(CanvasRecordId::Shape),
+                ),
+            |record_id| self.is_deletable_record(record_id),
+        );
 
         let mut node_ids = IndexSet::new();
         let mut edge_ids = IndexSet::new();
@@ -705,20 +679,6 @@ impl CanvasToolReducerContext<'_> {
         (node_ids, edge_ids, shape_ids)
     }
 
-    fn insert_deletable_record(
-        &self,
-        record_id: CanvasRecordId,
-        records: &mut IndexSet<CanvasRecordId>,
-        pending: &mut Vec<CanvasRecordId>,
-    ) {
-        if !self.is_deletable_record(&record_id) {
-            return;
-        }
-        if records.insert(record_id.clone()) {
-            pending.push(record_id);
-        }
-    }
-
     fn is_deletable_record(&self, record_id: &CanvasRecordId) -> bool {
         match record_id {
             CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
@@ -731,44 +691,19 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let mut records = IndexSet::new();
-        let mut pending = Vec::new();
-
-        for id in selection.selected_nodes() {
-            self.insert_translatable_record(
-                CanvasRecordId::Node(id.clone()),
-                &mut records,
-                &mut pending,
-            );
-        }
-        for id in selection.selected_shapes() {
-            self.insert_translatable_record(
-                CanvasRecordId::Shape(id.clone()),
-                &mut records,
-                &mut pending,
-            );
-        }
-
-        while let Some(record_id) = pending.pop() {
-            for child in self
-                .document
-                .relations()
-                .children_of(&record_id)
+        let records = self.document.relations().collect_related_records(
+            selection
+                .selected_nodes()
                 .cloned()
-                .collect::<Vec<_>>()
-            {
-                self.insert_translatable_record(child, &mut records, &mut pending);
-            }
-            for member in self
-                .document
-                .relations()
-                .members_of(&record_id)
-                .cloned()
-                .collect::<Vec<_>>()
-            {
-                self.insert_translatable_record(member, &mut records, &mut pending);
-            }
-        }
+                .map(CanvasRecordId::Node)
+                .chain(
+                    selection
+                        .selected_shapes()
+                        .cloned()
+                        .map(CanvasRecordId::Shape),
+                ),
+            |record_id| self.is_translatable_record(record_id),
+        );
 
         let node_ids = records
             .iter()
@@ -786,20 +721,6 @@ impl CanvasToolReducerContext<'_> {
             .collect();
 
         (node_ids, shape_ids)
-    }
-
-    fn insert_translatable_record(
-        &self,
-        record_id: CanvasRecordId,
-        records: &mut IndexSet<CanvasRecordId>,
-        pending: &mut Vec<CanvasRecordId>,
-    ) {
-        if !self.is_translatable_record(&record_id) {
-            return;
-        }
-        if records.insert(record_id.clone()) {
-            pending.push(record_id);
-        }
     }
 
     fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {

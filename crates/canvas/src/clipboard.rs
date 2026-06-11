@@ -23,44 +23,30 @@ pub struct CanvasClipboardPayload {
 
 impl CanvasClipboardPayload {
     pub fn from_document_selection(document: &CanvasDocument, selection: &CanvasSelection) -> Self {
-        let nodes = selection
-            .selected_nodes()
-            .filter_map(|id| document.node(id))
-            .filter(|node| !node.locked)
-            .cloned()
-            .collect::<Vec<_>>();
-        let shapes = selection
-            .selected_shapes()
-            .filter_map(|id| document.shape(id))
-            .filter(|shape| !shape.locked)
-            .cloned()
-            .collect::<Vec<_>>();
+        let copied_record_ids = copied_record_ids(document, selection);
 
-        let selected_node_ids = nodes
-            .iter()
-            .map(|node| node.id.clone())
-            .collect::<IndexSet<_>>();
-        let mut edges = selection
-            .selected_edges()
-            .filter_map(|id| document.edge(id))
-            .filter(|edge| !edge.locked)
-            .cloned()
-            .collect::<Vec<_>>();
-        let selected_edge_ids = edges
-            .iter()
-            .map(|edge| edge.id.clone())
-            .collect::<IndexSet<_>>();
-        edges.extend(
-            document
-                .edges()
-                .filter(|edge| {
-                    !edge.locked
-                        && selected_node_ids.contains(&edge.source.node_id)
-                        && selected_node_ids.contains(&edge.target.node_id)
-                        && !selected_edge_ids.contains(&edge.id)
-                })
-                .cloned(),
-        );
+        let mut nodes = Vec::new();
+        let mut edges = Vec::new();
+        let mut shapes = Vec::new();
+        for record_id in &copied_record_ids {
+            match record_id {
+                CanvasRecordId::Node(id) => {
+                    if let Some(node) = document.node(id) {
+                        nodes.push(node.clone());
+                    }
+                }
+                CanvasRecordId::Edge(id) => {
+                    if let Some(edge) = document.edge(id) {
+                        edges.push(edge.clone());
+                    }
+                }
+                CanvasRecordId::Shape(id) => {
+                    if let Some(shape) = document.shape(id) {
+                        shapes.push(shape.clone());
+                    }
+                }
+            }
+        }
 
         let mut payload_selection = CanvasSelection::default();
         for node in &nodes {
@@ -73,7 +59,6 @@ impl CanvasClipboardPayload {
             payload_selection.insert_shape(shape.id.clone());
         }
 
-        let copied_record_ids = copied_record_ids(&nodes, &edges, &shapes);
         let mut relations = CanvasRecordRelations::builder();
         for relation in document.relations().parents() {
             if copied_record_ids.contains(&relation.child)
@@ -238,24 +223,58 @@ pub struct CanvasPasteTransaction {
 }
 
 fn copied_record_ids(
-    nodes: &[CanvasNode],
-    edges: &[CanvasEdge],
-    shapes: &[CanvasShape],
+    document: &CanvasDocument,
+    selection: &CanvasSelection,
 ) -> IndexSet<CanvasRecordId> {
-    nodes
+    let mut records = document
+        .relations()
+        .collect_related_records(selected_record_ids(selection), |record_id| {
+            is_copyable_record(document, record_id)
+        });
+    let copied_node_ids = records
         .iter()
-        .map(|node| CanvasRecordId::Node(node.id.clone()))
+        .filter_map(|record_id| match record_id {
+            CanvasRecordId::Node(id) => Some(id.clone()),
+            CanvasRecordId::Edge(_) | CanvasRecordId::Shape(_) => None,
+        })
+        .collect::<IndexSet<_>>();
+
+    for edge in document.edges().filter(|edge| {
+        !edge.locked
+            && copied_node_ids.contains(&edge.source.node_id)
+            && copied_node_ids.contains(&edge.target.node_id)
+    }) {
+        records.insert(CanvasRecordId::Edge(edge.id.clone()));
+    }
+
+    records
+}
+
+fn selected_record_ids(selection: &CanvasSelection) -> impl Iterator<Item = CanvasRecordId> + '_ {
+    selection
+        .selected_nodes()
+        .cloned()
+        .map(CanvasRecordId::Node)
         .chain(
-            edges
-                .iter()
-                .map(|edge| CanvasRecordId::Edge(edge.id.clone())),
+            selection
+                .selected_edges()
+                .cloned()
+                .map(CanvasRecordId::Edge),
         )
         .chain(
-            shapes
-                .iter()
-                .map(|shape| CanvasRecordId::Shape(shape.id.clone())),
+            selection
+                .selected_shapes()
+                .cloned()
+                .map(CanvasRecordId::Shape),
         )
-        .collect()
+}
+
+fn is_copyable_record(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
+    match record_id {
+        CanvasRecordId::Node(id) => document.node(id).is_some_and(|node| !node.locked),
+        CanvasRecordId::Edge(id) => document.edge(id).is_some_and(|edge| !edge.locked),
+        CanvasRecordId::Shape(id) => document.shape(id).is_some_and(|shape| !shape.locked),
+    }
 }
 
 fn remap_ids<'a, I, T, Exists, Unique>(ids: I, exists: Exists, unique: Unique) -> IndexMap<T, T>
@@ -481,6 +500,58 @@ mod tests {
     }
 
     #[test]
+    fn copy_selection_expands_related_descendants() {
+        let document = related_tree_document();
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+
+        assert_eq!(
+            payload
+                .nodes
+                .iter()
+                .map(|node| &node.id)
+                .collect::<Vec<_>>(),
+            vec![&NodeId::from("child"), &NodeId::from("peer")]
+        );
+        assert_eq!(
+            payload
+                .edges
+                .iter()
+                .map(|edge| &edge.id)
+                .collect::<Vec<_>>(),
+            vec![&EdgeId::from("child-peer")]
+        );
+        assert_eq!(
+            payload
+                .shapes
+                .iter()
+                .map(|shape| &shape.id)
+                .collect::<Vec<_>>(),
+            vec![&ShapeId::from("frame"), &ShapeId::from("group")]
+        );
+
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let peer = CanvasRecordId::Node(NodeId::from("peer"));
+        assert_eq!(payload.relations.parent_of(&group), Some(&frame));
+        assert_eq!(
+            payload
+                .relations
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![child.clone(), peer.clone()]
+        );
+        assert_eq!(
+            payload.relations.binding(&BindingId::from("binding")),
+            Some(&CanvasRecordBindingRelation::new("binding", child, group))
+        );
+    }
+
+    #[test]
     fn copy_selection_omits_external_relations() {
         let document = related_document();
         let mut selection = CanvasSelection::default();
@@ -576,6 +647,56 @@ mod tests {
                 DocumentCommand::AddRecordToGroup {
                     group: CanvasRecordId::Shape(ShapeId::from("group")),
                     member: CanvasRecordId::Node(NodeId::from("child")),
+                },
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("group")),
+                )),
+            ]))
+            .unwrap();
+        document
+    }
+
+    fn related_tree_document() -> CanvasDocument {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(20.0), px(20.0)), size(px(100.0), px(100.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(40.0), px(40.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(80.0), px(40.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "child-peer",
+                CanvasEndpoint::new("child", None::<&str>),
+                CanvasEndpoint::new("peer", None::<&str>),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("group")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("child")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("peer")),
                 },
                 DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
                     "binding",
