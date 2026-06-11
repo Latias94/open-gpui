@@ -1,6 +1,8 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
-    interaction::DockRuntimeDragSession, workspace_transaction::DockWorkspaceDropPayload,
+    drag::{DockDragPayload, DockDragPayloadKind},
+    interaction::DockRuntimeDragSession,
+    workspace_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
@@ -45,6 +47,17 @@ impl DockViewportDropPayload {
         match self {
             DockViewportDropPayload::Item(item) => item.as_str().to_string(),
             DockViewportDropPayload::Tabs => "tabs".to_string(),
+        }
+    }
+
+    pub(crate) fn matches_drag_payload(&self, payload: &DockDragPayload) -> bool {
+        match (self, &payload.kind) {
+            (DockViewportDropPayload::Item(left), DockDragPayloadKind::Item { item: right }) => {
+                left == right
+            }
+            (DockViewportDropPayload::Tabs, DockDragPayloadKind::Tabs) => true,
+            (DockViewportDropPayload::Item(_), DockDragPayloadKind::Tabs)
+            | (DockViewportDropPayload::Tabs, DockDragPayloadKind::Item { .. }) => false,
         }
     }
 }

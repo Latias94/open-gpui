@@ -1,12 +1,12 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockSpaceId,
-    DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNode, DockPolicy,
+    DockSpaceId, DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseOutcome,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropActionOutcome,
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteCommit,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportIdentity,
     DockViewportOpenOutcome, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportTargetHit, DockViewportTearOffBeginOutcome,
+    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRuntimeHandle,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
@@ -368,15 +368,14 @@ impl DockViewportRuntime {
 
     pub(crate) fn update_routed_drop_preview(
         &mut self,
-        route: &DockViewportDropRoute,
+        resolution: &DockViewportResolvedDropRoute,
         payload_title: impl Into<String>,
-        cx: &App,
     ) -> (bool, Vec<AnyWindowHandle>) {
         let payload_title = payload_title.into();
-        let next = match route {
+        let next = match resolution.route() {
             DockViewportDropRoute::KnownViewport { target } => {
                 self.last_hovered_window = Some(target.window_id());
-                self.routed_drop_preview_from_target(target, payload_title, cx)
+                self.routed_drop_preview_from_commit(resolution.commit(), payload_title)
             }
             DockViewportDropRoute::Local { .. }
             | DockViewportDropRoute::TearOff(_)
@@ -389,22 +388,15 @@ impl DockViewportRuntime {
         self.replace_routed_drop_preview(None)
     }
 
-    fn routed_drop_preview_from_target(
+    fn routed_drop_preview_from_commit(
         &self,
-        target: &DockViewportTargetHit,
+        commit: &DockViewportDropRouteCommit,
         payload_title: String,
-        cx: &App,
     ) -> Option<DockViewportRoutedDropPreview> {
-        let policy = *self.controller.read(cx).workspace().policy();
-        let resolved = self.host_scenes.resolve_for_window(
-            target.space(),
-            Some(target.window_id()),
-            target.host_position(),
-            &policy,
-        )?;
+        let (space, window_id, resolved) = commit.routed_preview_target()?;
         Some(DockViewportRoutedDropPreview::new(
-            target.space().clone(),
-            target.window_id(),
+            space.clone(),
+            window_id,
             DockDropPreview::from_resolved_target(&resolved)?,
             payload_title,
         ))
@@ -503,9 +495,17 @@ impl DockViewportRuntime {
                     route_space,
                     target_window_id,
                     host_position,
+                    resolved_target,
                 ) = commit.into_parts();
-                let target_space =
-                    self.resolve_route_target(&route_space, target_window_id, host_position, cx)?;
+                let target_space = match resolved_target {
+                    Some(target) => (route_space, target),
+                    None => self.resolve_route_target(
+                        &route_space,
+                        target_window_id,
+                        host_position,
+                        cx,
+                    )?,
+                };
                 (source_space, source_tabs, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {
@@ -697,10 +697,49 @@ impl DockViewportRuntime {
         request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportDropRoute {
+        self.resolve_payload_drop_route_with_commit(request, cx)
+            .into_route()
+    }
+
+    /// Resolves a rendered payload release into route and commit facts from one snapshot.
+    pub(crate) fn resolve_payload_drop_route_with_commit(
+        &mut self,
+        request: &DockViewportDropRouteRequest,
+        cx: &App,
+    ) -> DockViewportResolvedDropRoute {
         let policy = self.controller.read(cx).workspace().policy().to_owned();
         let route = self.adapter.resolve_payload_drop_route(request, &policy);
         self.status.record_route(request, &route);
-        route
+        let resolved_target = self.resolved_workspace_target_for_route(&route, request, &policy);
+        let commit = DockViewportDropRouteCommit::from_route_request_with_resolved_target(
+            request,
+            route.clone(),
+            resolved_target,
+        );
+        DockViewportResolvedDropRoute::new(route, commit)
+    }
+
+    fn resolved_workspace_target_for_route(
+        &self,
+        route: &DockViewportDropRoute,
+        request: &DockViewportDropRouteRequest,
+        policy: &DockPolicy,
+    ) -> Option<DockResolvedDropTarget> {
+        match route {
+            DockViewportDropRoute::Local { host_position } => self.host_scenes.resolve_for_window(
+                request.source_space(),
+                None,
+                *host_position,
+                policy,
+            ),
+            DockViewportDropRoute::KnownViewport { target } => self.host_scenes.resolve_for_window(
+                target.space(),
+                Some(target.window_id()),
+                target.host_position(),
+                policy,
+            ),
+            DockViewportDropRoute::TearOff(_) | DockViewportDropRoute::Rejected(_) => None,
+        }
     }
 
     pub(crate) fn begin_tear_off_request(

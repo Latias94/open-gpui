@@ -1,5 +1,5 @@
 use crate::{
-    DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
+    DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute, DockViewportDropRouteCommit,
     drag::{DockDragPayload, DockDragPayloadIdentity},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
@@ -15,6 +15,7 @@ pub(crate) struct DockInteractionRuntime {
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
     drop_route_preview: Option<DockDropPreview>,
+    drop_route_commit: Option<DockViewportDropRouteCommit>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
@@ -393,12 +394,27 @@ impl DockInteractionRuntime {
         &mut self,
         route: &DockViewportDropRoute,
         host_position: Point<Pixels>,
+        commit: DockViewportDropRouteCommit,
     ) -> bool {
-        self.set_drop_route_preview(DockDropPreview::from_viewport_route(route, host_position))
+        let preview_changed =
+            self.set_drop_route_preview(DockDropPreview::from_viewport_route(route, host_position));
+        let commit_changed = if self.drop_route_commit.as_ref() == Some(&commit) {
+            false
+        } else {
+            self.drop_route_commit = Some(commit);
+            true
+        };
+        preview_changed || commit_changed
     }
 
     pub(crate) fn clear_drop_route_preview(&mut self) -> bool {
-        self.set_drop_route_preview(None)
+        let preview_changed = self.set_drop_route_preview(None);
+        let commit_changed = self.drop_route_commit.take().is_some();
+        preview_changed || commit_changed
+    }
+
+    pub(crate) fn take_drop_route_commit(&mut self) -> Option<DockViewportDropRouteCommit> {
+        self.drop_route_commit.take()
     }
 
     #[cfg(test)]
@@ -940,6 +956,9 @@ mod tests {
         assert!(runtime.update_drop_route_preview(
             &DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled),
             position,
+            DockViewportDropRouteCommit::Rejected(
+                crate::DockPolicyError::PlatformViewportsDisabled,
+            ),
         ));
         assert_eq!(
             runtime

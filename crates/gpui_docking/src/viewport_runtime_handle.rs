@@ -3,10 +3,10 @@ use crate::{
     DockViewportClosePolicy, DockViewportDropRoute, DockViewportDropRouteCommit,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRoutedDropPreview, DockViewportRuntime,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockViewportWindowFacts,
+    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRoutedDropPreview,
+    DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -363,16 +363,26 @@ impl DockViewportRuntimeHandle {
             .resolve_payload_drop_route(request, cx)
     }
 
+    pub(crate) fn resolve_payload_drop_route_with_commit(
+        &self,
+        request: &DockViewportDropRouteRequest,
+        cx: &App,
+    ) -> DockViewportResolvedDropRoute {
+        self.runtime
+            .borrow_mut()
+            .resolve_payload_drop_route_with_commit(request, cx)
+    }
+
     pub(crate) fn update_routed_drop_preview(
         &self,
-        route: &DockViewportDropRoute,
+        resolution: &DockViewportResolvedDropRoute,
         payload_title: &str,
         cx: &mut App,
     ) -> bool {
-        let (changed, windows) =
-            self.runtime
-                .borrow_mut()
-                .update_routed_drop_preview(route, payload_title, cx);
+        let (changed, windows) = self
+            .runtime
+            .borrow_mut()
+            .update_routed_drop_preview(resolution, payload_title);
         refresh_windows(windows, cx);
         changed
     }
@@ -447,8 +457,8 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let route = self.resolve_payload_drop_route(request, cx);
-        let commit = DockViewportDropRouteCommit::from_route_request(request, route);
+        let resolution = self.resolve_payload_drop_route_with_commit(request, cx);
+        let commit = resolution.commit().clone();
         self.commit_payload_drop_route_with_outcome(commit, cx)
     }
 

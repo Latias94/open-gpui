@@ -2,7 +2,8 @@ use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest, interaction::DockRuntimeDragSession,
+    DockViewportTearOffRequest, drag::DockDragPayload, drop_target::DockResolvedDropTarget,
+    interaction::DockRuntimeDragSession,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
 
@@ -48,6 +49,31 @@ pub(crate) enum DockViewportDropRouteCommit {
     Rejected(DockPolicyError),
 }
 
+/// Route and commit facts resolved from the same release snapshot.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockViewportResolvedDropRoute {
+    route: DockViewportDropRoute,
+    commit: DockViewportDropRouteCommit,
+}
+
+impl DockViewportResolvedDropRoute {
+    pub(crate) fn new(route: DockViewportDropRoute, commit: DockViewportDropRouteCommit) -> Self {
+        Self { route, commit }
+    }
+
+    pub(crate) fn route(&self) -> &DockViewportDropRoute {
+        &self.route
+    }
+
+    pub(crate) fn commit(&self) -> &DockViewportDropRouteCommit {
+        &self.commit
+    }
+
+    pub(crate) fn into_route(self) -> DockViewportDropRoute {
+        self.route
+    }
+}
+
 /// Commit facts for a drop route that lands in an existing viewport workspace.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportDropWorkspaceCommit {
@@ -58,14 +84,16 @@ pub(crate) struct DockViewportDropWorkspaceCommit {
     target_space: DockSpaceId,
     target_window_id: Option<WindowId>,
     host_position: Point<Pixels>,
+    resolved_target: Option<DockResolvedDropTarget>,
 }
 
 impl DockViewportDropWorkspaceCommit {
-    fn from_request_target(
+    fn from_request_resolved_target(
         request: &DockViewportDropRouteRequest,
         target_space: DockSpaceId,
         target_window_id: Option<WindowId>,
         host_position: Point<Pixels>,
+        resolved_target: Option<DockResolvedDropTarget>,
     ) -> Self {
         Self {
             source_space: request.source_space().clone(),
@@ -75,6 +103,7 @@ impl DockViewportDropWorkspaceCommit {
             target_space,
             target_window_id,
             host_position,
+            resolved_target,
         }
     }
 
@@ -87,6 +116,7 @@ impl DockViewportDropWorkspaceCommit {
         DockSpaceId,
         Option<WindowId>,
         Point<Pixels>,
+        Option<DockResolvedDropTarget>,
     ) {
         (
             self.source_space,
@@ -95,11 +125,31 @@ impl DockViewportDropWorkspaceCommit {
             self.target_space,
             self.target_window_id,
             self.host_position,
+            self.resolved_target,
         )
     }
 
     pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
         self.drag_session.as_ref()
+    }
+
+    fn accepts_release(
+        &self,
+        payload: &DockDragPayload,
+        drag_session: Option<&DockRuntimeDragSession>,
+    ) -> bool {
+        self.source_space == payload.source_space
+            && self.source_tabs == payload.source_tabs
+            && self.payload.matches_drag_payload(payload)
+            && drag_sessions_match(self.drag_session.as_ref(), drag_session, payload)
+    }
+
+    fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
+        Some((
+            &self.target_space,
+            self.target_window_id?,
+            self.resolved_target.as_ref()?,
+        ))
     }
 }
 
@@ -108,29 +158,83 @@ impl DockViewportDropRouteCommit {
         request: &DockViewportDropRouteRequest,
         route: DockViewportDropRoute,
     ) -> Self {
+        Self::from_route_request_with_resolved_target(request, route, None)
+    }
+
+    pub(crate) fn from_route_request_with_resolved_target(
+        request: &DockViewportDropRouteRequest,
+        route: DockViewportDropRoute,
+        resolved_target: Option<DockResolvedDropTarget>,
+    ) -> Self {
         match route {
-            DockViewportDropRoute::Local { host_position } => {
-                Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
+            DockViewportDropRoute::Local { host_position } => Self::Workspace(
+                DockViewportDropWorkspaceCommit::from_request_resolved_target(
                     request,
                     request.source_space().clone(),
                     None,
                     host_position,
-                ))
-            }
+                    resolved_target,
+                ),
+            ),
             DockViewportDropRoute::KnownViewport { target } => {
                 let target_space = target.space().clone();
                 let target_window_id = Some(target.window_id());
                 let host_position = target.host_position();
-                Self::Workspace(DockViewportDropWorkspaceCommit::from_request_target(
-                    request,
-                    target_space,
-                    target_window_id,
-                    host_position,
-                ))
+                Self::Workspace(
+                    DockViewportDropWorkspaceCommit::from_request_resolved_target(
+                        request,
+                        target_space,
+                        target_window_id,
+                        host_position,
+                        resolved_target,
+                    ),
+                )
             }
             DockViewportDropRoute::TearOff(_) => Self::TearOff(request.tear_off_request()),
             DockViewportDropRoute::Rejected(error) => Self::Rejected(error),
         }
+    }
+
+    pub(crate) fn accepts_release(
+        &self,
+        payload: &DockDragPayload,
+        drag_session: Option<&DockRuntimeDragSession>,
+    ) -> bool {
+        match self {
+            DockViewportDropRouteCommit::Workspace(commit) => {
+                commit.accepts_release(payload, drag_session)
+            }
+            DockViewportDropRouteCommit::TearOff(request) => {
+                request.source_space() == &payload.source_space
+                    && request.source_tabs() == payload.source_tabs
+                    && request.payload().matches_drag_payload(payload)
+                    && drag_sessions_match(request.drag_session(), drag_session, payload)
+            }
+            DockViewportDropRouteCommit::Rejected(_) => false,
+        }
+    }
+
+    pub(crate) fn routed_preview_target(
+        &self,
+    ) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
+        match self {
+            DockViewportDropRouteCommit::Workspace(commit) => commit.routed_preview_target(),
+            DockViewportDropRouteCommit::TearOff(_) | DockViewportDropRouteCommit::Rejected(_) => {
+                None
+            }
+        }
+    }
+}
+
+fn drag_sessions_match(
+    left: Option<&DockRuntimeDragSession>,
+    right: Option<&DockRuntimeDragSession>,
+    payload: &DockDragPayload,
+) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left == right && left.accepts_payload(payload),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
     }
 }
 
@@ -502,6 +606,7 @@ mod tests {
             target_space,
             target_window_id,
             host_position,
+            resolved_target,
         ) = local.into_parts();
         assert_eq!(recorded_source, source);
         assert_eq!(recorded_tabs, source_tabs);
@@ -509,6 +614,7 @@ mod tests {
         assert_eq!(target_space, recorded_source);
         assert_eq!(target_window_id, None);
         assert_eq!(host_position, local_position);
+        assert_eq!(resolved_target, None);
 
         let target = space("target");
         let target_window = handle(9);
@@ -535,6 +641,7 @@ mod tests {
             target_space,
             target_window_id,
             host_position,
+            resolved_target,
         ) = known.into_parts();
         assert_eq!(recorded_source, source);
         assert_eq!(recorded_tabs, source_tabs);
@@ -542,6 +649,7 @@ mod tests {
         assert_eq!(target_space, target);
         assert_eq!(target_window_id, Some(target_window.window_id()));
         assert_eq!(host_position, known_position);
+        assert_eq!(resolved_target, None);
     }
 
     #[test]

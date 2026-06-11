@@ -839,6 +839,97 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
 }
 
 #[open_gpui::test]
+fn viewport_runtime_commits_preview_resolved_target_after_scene_changes(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let target_window = handle(21);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(target_space.clone(), target_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = point(px(120.0), px(100.0));
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(target_window),
+    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    assert!(
+        matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target }
+            if target.window_id() == target_window.window_id()),
+        "preview route should target the registered viewport"
+    );
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    let target_after_scene_change =
+        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app));
+    assert!(
+        target_after_scene_change.is_none(),
+        "new frame intentionally has no facts; re-resolving would fail"
+    );
+
+    let result = cx.update(|app| {
+        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+    });
+    assert!(result.is_ok(), "cached preview target should commit");
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            Vec::<DockItemId>::new()
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("b"), item("a")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
@@ -892,14 +983,30 @@ fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut Test
         .expect("source viewport should be activatable");
     cx.run_until_parked();
 
-    let target_hit = DockViewportTargetHit::new(
+    assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
-        target_opened.window(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    let preview_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(target_opened.window()),
     );
-    let route = DockViewportDropRoute::KnownViewport { target: target_hit };
+    let resolution =
+        cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&preview_request, app));
     cx.update(|app| {
-        runtime.update_routed_drop_preview(&route, "Panel A", app);
+        runtime.update_routed_drop_preview(&resolution, "Panel A", app);
     });
     assert_eq!(
         runtime.last_hovered_window(),

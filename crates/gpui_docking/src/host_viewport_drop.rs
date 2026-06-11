@@ -1,6 +1,6 @@
 use crate::{
-    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
-    DockViewportWindowFacts,
+    DockHost, DockViewportDropPayload, DockViewportDropRouteCommit, DockViewportDropRouteRequest,
+    DockViewportPlatformSignals, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -59,12 +59,14 @@ impl DockHost {
             None,
             self.active_payload_drag_session(payload),
         );
-        let route = runtime.resolve_payload_drop_route(&request, cx);
+        let resolution = runtime.resolve_payload_drop_route_with_commit(&request, cx);
+        let route = resolution.route().clone();
+        let commit = resolution.commit().clone();
         let routed_preview_changed =
-            runtime.update_routed_drop_preview(&route, payload.title(), cx);
+            runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
-                .update_drop_route_preview(&route, position)
+                .update_drop_route_preview(&route, position, commit)
                 || routed_preview_changed,
         )
     }
@@ -72,10 +74,18 @@ impl DockHost {
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
         release: &DockPayloadDropRelease,
+        cached_route_commit: Option<DockViewportDropRouteCommit>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
+        if let Some(commit) = cached_route_commit
+            && commit.accepts_release(release.payload(), release.drag_session())
+        {
+            let result = runtime.commit_payload_drop_route_with_outcome(commit, cx);
+            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
+        }
+
         let request = viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
