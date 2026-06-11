@@ -25,7 +25,7 @@ use open_gpui::{
     WindowId, WindowOptions,
 };
 #[cfg(test)]
-use std::cell::Ref;
+use std::cell::{Ref, RefMut};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -72,7 +72,6 @@ fn install_should_close_hook(
     runtime: DockViewportRuntimeHandle,
     window: AnyWindowHandle,
     cx: &mut App,
-    refresh: bool,
 ) -> Result<()> {
     window.update(cx, move |_, window, cx| {
         let window_id = window.window_handle().window_id();
@@ -81,16 +80,17 @@ fn install_should_close_hook(
                 .handle_window_should_close_with_app(window_id, cx)
                 .allows_close()
         });
-        if refresh {
-            // The first render can happen before the runtime mapping is registered. Refresh once so
-            // render-time viewport probes can publish into the registered mapping.
-            window.refresh();
-        }
     })
 }
 
 fn close_window_quietly(window: AnyWindowHandle, cx: &mut App) {
     let _ = window.update(cx, |_, window, _| window.remove_window());
+}
+
+fn close_windows_quietly(windows: Vec<AnyWindowHandle>, cx: &mut App) {
+    for window in windows {
+        close_window_quietly(window, cx);
+    }
 }
 
 impl DockViewportRuntimeHandle {
@@ -118,6 +118,11 @@ impl DockViewportRuntimeHandle {
     #[cfg(test)]
     pub(crate) fn borrow(&self) -> Ref<'_, DockViewportRuntime> {
         self.runtime.borrow()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn borrow_mut(&self) -> RefMut<'_, DockViewportRuntime> {
+        self.runtime.borrow_mut()
     }
 
     /// Returns the shared close policy used by runtime-opened viewport windows.
@@ -201,7 +206,7 @@ impl DockViewportRuntimeHandle {
             .reusable_window_for_space(&space, cx)
         {
             DockViewportReusableWindow::Reused(window) => {
-                install_should_close_hook(self.clone(), window, cx, false)?;
+                install_should_close_hook(self.clone(), window, cx)?;
                 return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
@@ -223,17 +228,17 @@ impl DockViewportRuntimeHandle {
             })?
             .into();
 
-        self.runtime
-            .borrow_mut()
-            .register_opened_viewport(space.clone(), window);
-
-        if let Err(error) = install_should_close_hook(self.clone(), window, cx, true) {
-            self.runtime
-                .borrow_mut()
-                .discard_failed_opened_viewport(window.window_id());
+        if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
             close_window_quietly(window, cx);
             return Err(error);
         }
+
+        let replaced_windows = self
+            .runtime
+            .borrow_mut()
+            .register_opened_viewport(space.clone(), window);
+        close_windows_quietly(replaced_windows, cx);
+        refresh_windows(vec![window], cx);
 
         Ok(DockViewportOpenOutcome::new(space, window, status))
     }

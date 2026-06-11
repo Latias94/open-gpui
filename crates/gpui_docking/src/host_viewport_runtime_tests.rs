@@ -58,6 +58,10 @@ fn leaf_host_scene_fact(
     })
 }
 
+fn close_window_quietly_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {
+    let _ = window.update(cx, |_, window, _| window.remove_window());
+}
+
 #[open_gpui::test]
 fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
@@ -609,6 +613,61 @@ fn viewport_runtime_tear_off_commit_failure_closes_opened_window(cx: &mut TestAp
 }
 
 #[open_gpui::test]
+fn viewport_runtime_replacement_closes_superseded_runtime_window(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+    let replacement = open_controller_space(
+        cx,
+        runtime.borrow().controller_entity(),
+        secondary_space.clone(),
+        size(px(360.0), px(220.0)),
+    )
+    .0;
+    let replacement: AnyWindowHandle = replacement.into();
+    let window_count_with_both = cx.windows().len();
+
+    let superseded = runtime
+        .borrow_mut()
+        .register_opened_viewport(secondary_space.clone(), replacement);
+    assert_eq!(superseded, vec![opened.window()]);
+    close_window_quietly_for_test(opened.window(), cx);
+    cx.run_until_parked();
+    cx.update(|app| app.refresh_windows());
+
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
+        Some(replacement)
+    );
+    assert!(
+        cx.windows().len() < window_count_with_both,
+        "replacing a runtime-owned viewport should not leave the old window alive"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_tear_off_rejects_already_open_target_space_without_reuse(
     cx: &mut TestAppContext,
 ) {
@@ -815,6 +874,54 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
         assert_eq!(*active, 2);
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_merge_back_should_close_vetoes_invalid_target(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let fallback_space = DockSpaceId::from("fallback");
+    let mut graph = DockGraph::new();
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space, graph);
+    workspace.policy_mut().set_allow_platform_viewports(false);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller,
+        DockViewportClosePolicy::MergeBack {
+            target_space: fallback_space,
+        },
+    );
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("detached viewport should open through runtime");
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+
+    assert!(
+        !visual.simulate_close(),
+        "merge-back should veto close when commit would require a disabled platform viewport"
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&detached_space),
+        Some(opened.window())
+    );
+    let should_close = cx.update(|app| {
+        runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+    });
+    assert_eq!(should_close.status, DockViewportShouldCloseStatus::Vetoed);
 }
 
 #[open_gpui::test]
