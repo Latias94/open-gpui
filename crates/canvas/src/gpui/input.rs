@@ -172,12 +172,8 @@ impl<T> CanvasEditorInputHandler<T> {
     }
 
     pub fn dispatch_key_down(&self, target: &mut T, event: &KeyDownEvent, cx: &mut Context<T>) {
-        self.dispatch_event(target, canvas_editor_key_down_event(event), cx);
+        self.dispatch_event(target, CanvasInputMapper::key_down_event(event), cx);
     }
-}
-
-pub fn canvas_editor_key_down_event(event: &KeyDownEvent) -> CanvasEvent {
-    CanvasInputMapper::key_down_event(event)
 }
 
 pub fn register_canvas_editor_input<T>(

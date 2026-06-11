@@ -480,12 +480,12 @@ Editor-backed applications should start with `canvas_editor_view` or
 the canvas adapter: mouse, wheel, focus, and drag-capture events become renderer-neutral
 `CanvasEvent` values, and the application decides how to apply those events to its editor.
 Keyboard events are owned by the focused element and should be forwarded explicitly through
-`canvas_editor_key_down_event` or `CanvasEditorInputHandler::dispatch_key_down`.
+`CanvasInputMapper::key_down_event` or `CanvasEditorInputHandler::dispatch_key_down`.
 
 ```rust
 use open_gpui_canvas::{
     CanvasEditorInputHandler, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
-    canvas_editor_key_down_event, canvas_editor_view,
+    CanvasInputMapper, canvas_editor_view,
 };
 
 fn render_canvas(this: &MyView, cx: &mut open_gpui::Context<MyView>) -> impl open_gpui::IntoElement {
@@ -507,7 +507,7 @@ fn render_canvas(this: &MyView, cx: &mut open_gpui::Context<MyView>) -> impl ope
 }
 
 fn handle_key_down(view: &mut MyView, event: &open_gpui::KeyDownEvent) {
-    let _ = view.editor.handle_event(canvas_editor_key_down_event(event));
+    let _ = view.editor.handle_event(CanvasInputMapper::key_down_event(event));
 }
 ```
 
