@@ -1,12 +1,13 @@
 use crate::{
-    DockActionApplyError, DockController, DockHost, DockSpaceId, DockViewportCloseOutcome,
-    DockViewportClosePolicy, DockViewportDropRoute, DockViewportDropRouteCommit,
-    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
-    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRoutedDropPreview,
-    DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
-    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
+    DockActionApplyError, DockController, DockHost, DockSpaceId, DockViewportActivationTarget,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRoute,
+    DockViewportDropRouteCommit, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
+    DockViewportOpenOutcome, DockViewportOpenStatus, DockViewportPlacementLayout,
+    DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
+    DockViewportRestoreOutcome, DockViewportRoutedDropPreview, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportWindowFacts,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -45,6 +46,26 @@ fn refresh_windows(windows: Vec<AnyWindowHandle>, cx: &mut App) {
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
+}
+
+fn apply_viewport_activation(activation: Option<DockViewportActivationTarget>, cx: &mut App) {
+    let Some(activation) = activation else {
+        return;
+    };
+    let activation_space = activation.space().clone();
+    let focus_item = activation.focus_item().cloned();
+    let _ = activation.window().update(cx, move |view, window, cx| {
+        window.activate_window();
+        if let Some(focus_item) = focus_item
+            && let Ok(host) = view.downcast::<DockHost>()
+        {
+            host.update(cx, |host, cx| {
+                if host.space() == &activation_space && host.request_panel_focus(focus_item) {
+                    cx.notify();
+                }
+            });
+        }
+    });
 }
 
 impl DockViewportRuntimeHandle {
@@ -182,9 +203,9 @@ impl DockViewportRuntimeHandle {
         let close_runtime = self.clone();
         if let Err(error) = window.update(cx, move |_, window, cx| {
             let window_id = window.window_handle().window_id();
-            window.on_window_should_close(cx, move |_, _| {
+            window.on_window_should_close(cx, move |_, cx| {
                 close_runtime
-                    .handle_window_should_close(window_id)
+                    .handle_window_should_close_with_app(window_id, cx)
                     .allows_close()
             });
             // The first render can happen before the runtime mapping is registered. Refresh once so
@@ -508,9 +529,16 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
-        self.runtime
+        let outcome = self
+            .runtime
             .borrow_mut()
-            .handle_window_closed_with_app(window_id, cx)
+            .handle_window_closed_with_app(window_id, cx);
+        let activation = self
+            .runtime
+            .borrow_mut()
+            .activation_target_after_close(&outcome, cx);
+        apply_viewport_activation(activation, cx);
+        outcome
     }
 
     /// Handles a GPUI window should-close query through the shared runtime.
@@ -521,6 +549,17 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .handle_window_should_close(window_id)
+    }
+
+    /// Handles a GPUI window should-close query with workspace lifecycle policy.
+    pub fn handle_window_should_close_with_app(
+        &self,
+        window_id: WindowId,
+        cx: &App,
+    ) -> DockViewportShouldCloseOutcome {
+        self.runtime
+            .borrow_mut()
+            .handle_window_should_close_with_app(window_id, cx)
     }
 
     /// Ensures the application-level close observer is installed.
@@ -547,9 +586,13 @@ impl DockViewportRuntimeHandle {
             let Some(runtime) = runtime.upgrade() else {
                 return;
             };
-            runtime
+            let outcome = runtime
                 .borrow_mut()
                 .handle_window_closed_with_app(window_id, cx);
+            let activation = runtime
+                .borrow_mut()
+                .activation_target_after_close(&outcome, cx);
+            apply_viewport_activation(activation, cx);
         })
         .detach();
     }

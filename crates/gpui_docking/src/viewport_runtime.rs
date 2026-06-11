@@ -7,7 +7,7 @@ use crate::{
     DockViewportIdentity, DockViewportOpenOutcome, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
     DockViewportRestoreOutcome, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
@@ -124,11 +124,11 @@ pub(crate) enum DockViewportTearOffCommitPreparation {
 fn install_should_close_hook(
     window: AnyWindowHandle,
     cx: &mut App,
-    should_close: Rc<dyn Fn(WindowId) -> bool>,
+    should_close: Rc<dyn Fn(WindowId, &App) -> bool>,
 ) -> Result<()> {
     let window_id = window.window_id();
     window.update(cx, move |_, window, cx| {
-        window.on_window_should_close(cx, move |_, _| should_close(window_id));
+        window.on_window_should_close(cx, move |_, cx| should_close(window_id, cx));
     })
 }
 
@@ -330,8 +330,9 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
         let close_gate = self.close_gate.clone();
-        self.open_viewport_with_should_close(space, options, cx, move |window_id| {
-            close_gate.should_allow_close(window_id)
+        let controller = self.controller.clone();
+        self.open_viewport_with_should_close(space, options, cx, move |window_id, cx| {
+            close_gate.should_allow_close_with_workspace(window_id, controller.read(cx).workspace())
         })
     }
 
@@ -1082,6 +1083,27 @@ impl DockViewportRuntime {
         outcome
     }
 
+    pub(crate) fn activation_target_after_close(
+        &mut self,
+        outcome: &DockViewportCloseOutcome,
+        cx: &mut App,
+    ) -> Option<DockViewportActivationTarget> {
+        if outcome.status() != DockViewportCloseStatus::MergedBack {
+            return None;
+        }
+        let DockViewportClosePolicy::MergeBack { target_space } = self.close_policy() else {
+            return None;
+        };
+        let focus_item = {
+            let controller = self.controller.read(cx);
+            let graph = controller.graph();
+            graph
+                .first_tabs_in_space(&target_space)
+                .and_then(|tabs| graph.active_item_in_tabs(tabs))
+        };
+        self.activate_viewport_for_space(&target_space, focus_item, cx)
+    }
+
     /// Handles a GPUI window should-close query by applying this runtime's close policy.
     pub(crate) fn handle_window_should_close(
         &mut self,
@@ -1090,6 +1112,31 @@ impl DockViewportRuntime {
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
+        self.status.record_should_close(&outcome);
+        outcome
+    }
+
+    pub(crate) fn handle_window_should_close_with_app(
+        &mut self,
+        window_id: WindowId,
+        cx: &App,
+    ) -> DockViewportShouldCloseOutcome {
+        let mut outcome = self
+            .adapter
+            .should_close_viewport(window_id, self.close_policy());
+        if matches!(outcome.status, DockViewportShouldCloseStatus::Allowed)
+            && let Some(space) = outcome.space.as_ref()
+        {
+            let allowed = self
+                .controller
+                .read(cx)
+                .workspace()
+                .validate_close_space(space)
+                .is_ok();
+            if !allowed && matches!(self.close_policy(), DockViewportClosePolicy::RetainLayout) {
+                outcome.status = DockViewportShouldCloseStatus::Vetoed;
+            }
+        }
         self.status.record_should_close(&outcome);
         outcome
     }
@@ -1127,7 +1174,7 @@ impl DockViewportRuntime {
         space: impl Into<DockSpaceId>,
         options: WindowOptions,
         cx: &mut App,
-        should_close: impl Fn(WindowId) -> bool + 'static,
+        should_close: impl Fn(WindowId, &App) -> bool + 'static,
     ) -> Result<DockViewportOpenOutcome> {
         let should_close = Rc::new(should_close);
         let outcome = self

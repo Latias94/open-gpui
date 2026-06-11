@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
+    DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockPanel,
+    DockSpaceId, DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportRuntimeHandle,
     DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
@@ -298,7 +298,10 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
     graph.set_root(detached_space.clone(), detached_tabs);
 
     let mut workspace = DockWorkspace::new(main_space.clone(), graph);
-    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel(
+        item("a"),
+        DockPanel::new("Panel A", test_view(cx, "A")).closable(false),
+    );
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
     let controller = cx.new(|_| DockController::new(workspace));
@@ -320,9 +323,9 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
         .expect("detached viewport should open");
 
     assert!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .allows_close(),
+        cx.update(|app| runtime
+            .handle_window_should_close_with_app(opened.window().window_id(), app)
+            .allows_close()),
         "merge-back policy should allow GPUI to close before graph merge"
     );
     opened
@@ -353,6 +356,82 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
             "merge-back close should empty the detached logical space"
         );
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_merge_back_close_focuses_fallback_active_item(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let panel_c = test_view(cx, "C");
+    let panel_c_focus = cx.read_entity(&panel_c, |panel, cx| panel.focus_handle(cx));
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_focusable_panel_view(item("c"), "Panel C", panel_c);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller,
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let main_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                main_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("main viewport should open");
+    let detached_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("detached viewport should open");
+
+    detached_opened
+        .window()
+        .update(cx, |_, window, _| window.remove_window())
+        .expect("detached viewport should still be live");
+    cx.run_until_parked();
+
+    let active_window = main_opened
+        .window()
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app)
+                .target_context()
+                .active_window()
+        })
+        .expect("main viewport should remain live");
+    assert_eq!(active_window, Some(main_opened.window().window_id()));
+    main_opened
+        .window()
+        .update(cx, |_, window, cx| {
+            assert_eq!(
+                window.focused(cx),
+                Some(panel_c_focus),
+                "merge-back close should focus the selected item in the fallback viewport"
+            );
+        })
+        .expect("main viewport should remain live");
 }
 
 #[open_gpui::test]
@@ -1806,6 +1885,57 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
             .handle_window_should_close(opened.window().window_id())
             .status,
         DockViewportShouldCloseStatus::Vetoed
+    );
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
+        Some(opened.window())
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_vetoes_retain_layout_close_for_non_closable_panel(
+    cx: &mut TestAppContext,
+) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel(
+        item("b"),
+        DockPanel::new("Panel B", test_view(cx, "B")).closable(false),
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime handle");
+    let mut visual = VisualTestContext::from_window(opened.window(), cx);
+    let window_id = opened.window().window_id();
+
+    assert_eq!(
+        cx.update(|app| runtime
+            .handle_window_should_close_with_app(window_id, app)
+            .status),
+        DockViewportShouldCloseStatus::Vetoed
+    );
+    assert!(
+        !visual.simulate_close(),
+        "RetainLayout should not hide a non-closable panel by closing its viewport"
     );
     assert_eq!(
         runtime

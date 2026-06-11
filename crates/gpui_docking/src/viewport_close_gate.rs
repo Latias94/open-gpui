@@ -1,18 +1,18 @@
-use crate::{DockViewportAdapter, DockViewportClosePolicy};
+use crate::{DockViewportAdapter, DockViewportClosePolicy, DockWorkspace};
 use open_gpui::WindowId;
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[derive(Clone, Debug)]
 pub(crate) struct DockViewportCloseGate {
     close_policy: Rc<RefCell<DockViewportClosePolicy>>,
-    known_windows: Rc<RefCell<HashSet<WindowId>>>,
+    window_spaces: Rc<RefCell<HashMap<WindowId, crate::DockSpaceId>>>,
 }
 
 impl DockViewportCloseGate {
     pub(crate) fn new(close_policy: DockViewportClosePolicy) -> Self {
         Self {
             close_policy: Rc::new(RefCell::new(close_policy)),
-            known_windows: Rc::new(RefCell::new(HashSet::new())),
+            window_spaces: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -25,23 +25,39 @@ impl DockViewportCloseGate {
     }
 
     pub(crate) fn sync_adapter(&self, adapter: &DockViewportAdapter) {
-        *self.known_windows.borrow_mut() = adapter
+        *self.window_spaces.borrow_mut() = adapter
             .spaces()
             .into_iter()
             .filter_map(|space| {
                 adapter
                     .window_for_space(&space)
-                    .map(|window| window.window_id())
+                    .map(|window| (window.window_id(), space))
             })
             .collect();
     }
 
     pub(crate) fn should_allow_close(&self, window_id: WindowId) -> bool {
-        if !self.known_windows.borrow().contains(&window_id) {
+        if !self.window_spaces.borrow().contains_key(&window_id) {
             return true;
         }
 
         !matches!(self.close_policy(), DockViewportClosePolicy::Prevent)
+    }
+
+    pub(crate) fn should_allow_close_with_workspace(
+        &self,
+        window_id: WindowId,
+        workspace: &DockWorkspace,
+    ) -> bool {
+        let Some(space) = self.window_spaces.borrow().get(&window_id).cloned() else {
+            return true;
+        };
+
+        match self.close_policy() {
+            DockViewportClosePolicy::Prevent => false,
+            DockViewportClosePolicy::RetainLayout => workspace.validate_close_space(&space).is_ok(),
+            DockViewportClosePolicy::MergeBack { .. } => true,
+        }
     }
 }
 
