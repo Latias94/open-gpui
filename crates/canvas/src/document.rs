@@ -1894,28 +1894,23 @@ mod tests {
 
     #[test]
     fn removes_edges_when_node_is_removed() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         document.remove_node(&NodeId::from("a")).unwrap();
 
@@ -1927,15 +1922,14 @@ mod tests {
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
-        let mut document = CanvasDocument::default();
-        document.insert_node(node).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(node)
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let err = document
             .insert_edge(CanvasEdge::new(
@@ -1981,7 +1975,8 @@ mod tests {
         node.handles
             .push(CanvasHandle::new("out", point(px(0.0), px(5.0))));
 
-        let err = CanvasDocument::default().insert_node(node).unwrap_err();
+        let mut document = document_fixture().build();
+        let err = document.insert_node(node).unwrap_err();
 
         assert_eq!(
             err,
@@ -2004,9 +1999,7 @@ mod tests {
         source_only.role = HandleRole::Source;
         target.handles.push(source_only);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
+        let mut document = document_fixture().node(source).node(target).build();
 
         let err = document
             .insert_edge(CanvasEdge::new(
@@ -2032,15 +2025,14 @@ mod tests {
         handle.connectable = false;
         source.handles.push(handle);
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(source).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(source)
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let err = document
             .insert_edge(CanvasEdge::new(
@@ -2081,21 +2073,18 @@ mod tests {
 
     #[test]
     fn edge_route_points_include_waypoints_between_endpoints() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         let mut edge = CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
@@ -2119,21 +2108,18 @@ mod tests {
 
     #[test]
     fn edge_bounds_include_route_points_and_interaction_width() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         let mut edge = CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
@@ -2162,21 +2148,18 @@ mod tests {
             }
         }
 
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         let mut edge = CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
@@ -2205,21 +2188,18 @@ mod tests {
 
     #[test]
     fn rejects_invalid_edge_route_metadata() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let mut empty_kind = CanvasEdge::new(
             "empty-kind",
@@ -2264,22 +2244,19 @@ mod tests {
         node.handles
             .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(node.clone()).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(node.clone())
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         node.handles.clear();
         let err = document
@@ -2304,7 +2281,7 @@ mod tests {
 
     #[test]
     fn applies_transaction_atomically() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let transaction = CanvasTransaction::new([
             DocumentCommand::InsertNode(CanvasNode::new(
                 "a",
@@ -2327,14 +2304,13 @@ mod tests {
 
     #[test]
     fn transaction_inverse_restores_document() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let before = document.clone();
         let transaction = CanvasTransaction::new([
@@ -2360,14 +2336,13 @@ mod tests {
 
     #[test]
     fn transaction_diff_tracks_record_changes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let moved_a = CanvasNode::new("a", point(px(5.0), px(0.0)), size(px(10.0), px(10.0)));
         let transaction = CanvasTransaction::new([
@@ -2402,20 +2377,17 @@ mod tests {
 
     #[test]
     fn transaction_diff_tracks_relation_changes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
 
         let diff = document
             .apply_transaction_with_diff(CanvasTransaction::single(
@@ -2435,14 +2407,13 @@ mod tests {
 
     #[test]
     fn relation_commands_reject_dangling_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let err = document
             .apply_transaction(CanvasTransaction::single(
@@ -2462,20 +2433,17 @@ mod tests {
 
     #[test]
     fn deleting_records_prunes_relations() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         document
             .apply_transaction(CanvasTransaction::new([
                 DocumentCommand::SetRecordParent {
@@ -2501,20 +2469,17 @@ mod tests {
 
     #[test]
     fn relation_inverse_restores_previous_relations() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "group",
                 Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
             ))
-            .unwrap();
+            .build();
         let before = document.clone();
         let transaction = CanvasTransaction::new([
             DocumentCommand::SetRecordParent {
@@ -2537,7 +2502,7 @@ mod tests {
 
     #[test]
     fn transaction_diff_compacts_insert_then_remove() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let transaction = CanvasTransaction::new([
             DocumentCommand::InsertNode(CanvasNode::new(
                 "temp",
@@ -2555,28 +2520,23 @@ mod tests {
 
     #[test]
     fn transaction_diff_includes_edges_removed_with_node() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let diff = document
             .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::RemoveNode(
@@ -2596,7 +2556,7 @@ mod tests {
 
     #[test]
     fn document_diff_tracks_metadata_changes() {
-        let previous = CanvasDocument::default();
+        let previous = document_fixture().build();
         let mut document = previous.clone();
         document
             .metadata
@@ -2612,7 +2572,7 @@ mod tests {
     fn randomized_transaction_batches_match_final_diff_and_inverse() {
         let mut rng = TestRng::new(0x7a99_21c8_5f01_4d3b);
         let mut generator = CanvasCommandGenerator::default();
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
 
         for _ in 0..96 {
             let before = document.clone();

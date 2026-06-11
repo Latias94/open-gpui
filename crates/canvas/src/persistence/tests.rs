@@ -1,12 +1,13 @@
 use super::*;
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers,
-    CanvasKindRegistry, CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId,
-    CanvasRecordKind, CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError,
-    CanvasSelection, CanvasShape, CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId,
-    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentCommand,
-    DocumentError, EdgeId, NodeId, PointerButton, ShapeId,
+    CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers, CanvasKindRegistry,
+    CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId, CanvasRecordKind,
+    CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape,
+    CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
+    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId,
+    PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
+    test_support::document_fixture,
     tool::CanvasToolEffect,
 };
 use open_gpui::{Bounds, point, px, size};
@@ -127,14 +128,13 @@ fn persistence_adapter_statuses_describe_default_and_future_adapters() {
 
 #[test]
 fn replays_checkpoint_and_transaction_log() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     let checkpoint = CanvasCheckpoint::new(1, &document);
     let log_entry = CanvasLogEntry::from_replay_transaction(
         2,
@@ -170,28 +170,23 @@ fn legacy_log_entries_do_not_expose_committed_record_operations() {
 
 #[test]
 fn committed_log_entries_expose_actual_record_operation_batches() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let mut document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_node(CanvasNode::new(
+        .node(CanvasNode::new(
             "b",
             point(px(20.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_edge(CanvasEdge::new(
+        .edge(CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
             CanvasEndpoint::new("b", None::<&str>),
         ))
-        .unwrap();
+        .build();
     let mut transaction = CanvasTransaction::single(DocumentCommand::RemoveNode(NodeId::from("a")));
     transaction
         .metadata
@@ -223,20 +218,17 @@ fn committed_log_entries_expose_actual_record_operation_batches() {
 
 #[test]
 fn committed_log_entries_expose_actual_relation_operation_batches() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let mut document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_shape(crate::CanvasShape::new(
+        .shape(crate::CanvasShape::new(
             "frame",
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         ))
-        .unwrap();
+        .build();
     let mut transaction = CanvasTransaction::new([
         DocumentCommand::SetRecordParent {
             child: CanvasRecordId::Node(NodeId::from("child")),
@@ -268,20 +260,17 @@ fn committed_log_entries_expose_actual_relation_operation_batches() {
 #[test]
 fn json_persistence_codec_round_trips_committed_relation_operation_batches() {
     let codec = CanvasJsonPersistenceCodec;
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let mut document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_shape(crate::CanvasShape::new(
+        .shape(crate::CanvasShape::new(
             "frame",
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         ))
-        .unwrap();
+        .build();
     let committed = document
         .commit_transaction(CanvasTransaction::single(
             DocumentCommand::SetRecordParent {
@@ -309,7 +298,7 @@ fn json_persistence_codec_round_trips_committed_relation_operation_batches() {
 #[test]
 fn json_persistence_codec_decodes_legacy_committed_batch_field() {
     let codec = CanvasJsonPersistenceCodec;
-    let mut document = CanvasDocument::default();
+    let mut document = document_fixture().build();
     let committed = document
         .commit_transaction(CanvasTransaction::single(DocumentCommand::InsertNode(
             CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
@@ -337,7 +326,7 @@ fn json_persistence_codec_decodes_legacy_committed_batch_field() {
 #[test]
 fn json_persistence_codec_marks_record_only_committed_entries_partial() {
     let codec = CanvasJsonPersistenceCodec;
-    let mut document = CanvasDocument::default();
+    let mut document = document_fixture().build();
     let committed = document
         .commit_transaction(CanvasTransaction::single(DocumentCommand::InsertNode(
             CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
@@ -363,14 +352,13 @@ fn json_persistence_codec_marks_record_only_committed_entries_partial() {
 
 #[test]
 fn rejects_non_monotonic_log_sequences() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     let checkpoint = CanvasCheckpoint::new(3, &document);
     let log_entry = CanvasLogEntry::from_replay_transaction(
         3,
@@ -395,14 +383,13 @@ fn rejects_non_monotonic_log_sequences() {
 #[test]
 fn loads_document_from_store_after_checkpoint_sequence() {
     let mut store = MemoryCanvasPersistenceStore::default();
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
 
     store
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
@@ -472,14 +459,13 @@ fn compacts_log_entries_through_checkpoint_sequence() {
 #[test]
 fn json_persistence_codec_round_trips_checkpoint_envelope() {
     let codec = CanvasJsonPersistenceCodec;
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     let checkpoint = CanvasCheckpoint::new(7, &document);
 
     let bytes = codec.encode_checkpoint(&checkpoint).unwrap();
@@ -583,7 +569,7 @@ fn json_persistence_codec_rejects_unsupported_document_format_version() {
 #[test]
 fn json_persistence_codec_rejects_checkpoint_as_log_entry() {
     let codec = CanvasJsonPersistenceCodec;
-    let checkpoint = CanvasCheckpoint::new(1, &CanvasDocument::default());
+    let checkpoint = CanvasCheckpoint::new(1, &document_fixture().build());
     let bytes = codec.encode_checkpoint(&checkpoint).unwrap();
 
     let err = codec.decode_log_entry(&bytes).unwrap_err();
@@ -601,14 +587,13 @@ fn json_persistence_codec_rejects_checkpoint_as_log_entry() {
 fn byte_store_adapter_replays_encoded_checkpoint_and_log() {
     let mut typed_store =
         CanvasPersistenceByteStoreAdapter::new(MemoryCanvasPersistenceByteStore::default());
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     typed_store
         .save_checkpoint(CanvasCheckpoint::new(1, &document))
         .unwrap();
@@ -653,7 +638,7 @@ fn byte_store_adapter_rejects_log_key_sequence_mismatch() {
 #[test]
 fn loads_persistence_cursor_from_checkpoint_and_log_tail() {
     let mut store = MemoryCanvasPersistenceStore::default();
-    let document = CanvasDocument::default();
+    let document = document_fixture().build();
     store
         .save_checkpoint(CanvasCheckpoint::new(3, &document))
         .unwrap();
@@ -769,20 +754,17 @@ fn persistent_transaction_skips_empty_transactions() {
 
 #[test]
 fn persistent_transaction_skips_empty_committed_diff() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_shape(crate::CanvasShape::new(
+        .shape(crate::CanvasShape::new(
             "frame",
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         ))
-        .unwrap();
+        .build();
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::new(7);
@@ -805,22 +787,21 @@ fn persistent_transaction_skips_empty_committed_diff() {
 
 #[test]
 fn persistent_transaction_skips_relation_order_only_diff() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let mut document = document_fixture()
+        .node(CanvasNode::new(
             "member",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    for id in ["group-a", "group-b"] {
-        document
-            .insert_shape(CanvasShape::new(
-                id,
-                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-            ))
-            .unwrap();
-    }
+        .shape(CanvasShape::new(
+            "group-a",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        ))
+        .shape(CanvasShape::new(
+            "group-b",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        ))
+        .build();
     let member = CanvasRecordId::Node(NodeId::from("member"));
     let group_a = CanvasRecordId::Shape(ShapeId::from("group-a"));
     let group_b = CanvasRecordId::Shape(ShapeId::from("group-b"));
@@ -1113,20 +1094,17 @@ fn persistent_store_undo_and_redo_return_store_changes() {
 
 #[test]
 fn persistent_undo_and_redo_log_relation_operation_batches() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_shape(crate::CanvasShape::new(
+        .shape(crate::CanvasShape::new(
             "frame",
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         ))
-        .unwrap();
+        .build();
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::default();
@@ -1168,28 +1146,23 @@ fn persistent_undo_and_redo_log_relation_operation_batches() {
 
 #[test]
 fn persistent_undo_replay_restores_relations_pruned_by_remove_node() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let mut document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_node(CanvasNode::new(
+        .node(CanvasNode::new(
             "b",
             point(px(20.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_edge(CanvasEdge::new(
+        .edge(CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
             CanvasEndpoint::new("b", None::<&str>),
         ))
-        .unwrap();
+        .build();
     let edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
     let group = CanvasRecordId::Node(NodeId::from("b"));
     document
@@ -1243,11 +1216,10 @@ fn persistent_undo_replay_restores_relations_pruned_by_remove_node() {
 
 #[test]
 fn persistent_undo_reuses_prepared_mutation_after_logging() {
-    let mut document = CanvasDocument::default();
     let mut original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
     original.kind = "counted".to_string();
     original.data.insert("version".to_string(), json!(1));
-    document.insert_node(original.clone()).unwrap();
+    let document = document_fixture().node(original.clone()).build();
 
     let calls = Arc::new(AtomicUsize::new(0));
     let mut registry = CanvasKindRegistry::open();
@@ -1520,9 +1492,8 @@ fn persistent_tool_effects_log_recorded_transactions() {
 
 #[test]
 fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
-    let mut document = CanvasDocument::default();
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
-    document.insert_node(original.clone()).unwrap();
+    let document = document_fixture().node(original.clone()).build();
 
     let mut editor = CanvasEditor::new(document.clone());
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1561,9 +1532,8 @@ fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
 
 #[test]
 fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry() {
-    let mut document = CanvasDocument::default();
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
-    document.insert_node(original.clone()).unwrap();
+    let document = document_fixture().node(original.clone()).build();
 
     let mut editor = CanvasEditor::new(document.clone());
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1606,9 +1576,8 @@ fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry(
 
 #[test]
 fn persistent_public_tool_intents_cancel_transient_transaction_without_log() {
-    let mut document = CanvasDocument::default();
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
-    document.insert_node(original.clone()).unwrap();
+    let document = document_fixture().node(original.clone()).build();
 
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1640,20 +1609,17 @@ fn persistent_public_tool_intents_cancel_transient_transaction_without_log() {
 
 #[test]
 fn persistent_tool_effects_commit_relation_gesture_as_one_log_entry() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
-    document
-        .insert_shape(CanvasShape::new(
+        .shape(CanvasShape::new(
             "frame",
             Bounds::new(point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
         ))
-        .unwrap();
+        .build();
 
     let mut editor = CanvasEditor::new(document.clone());
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1705,14 +1671,13 @@ fn persistent_tool_effects_commit_relation_gesture_as_one_log_entry() {
 
 #[test]
 fn persistent_empty_gesture_commit_does_not_log_or_push_history() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "child",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::new(5);
@@ -1775,14 +1740,13 @@ fn persistent_gesture_commit_does_not_finish_when_store_fails() {
         }
     }
 
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
     let mut retry_store = MemoryCanvasPersistenceStore::default();
     retry_store
         .save_checkpoint(CanvasCheckpoint::new(4, &document))
@@ -1835,14 +1799,13 @@ fn persistent_gesture_commit_does_not_finish_when_store_fails() {
 
 #[test]
 fn persistent_tool_effects_keep_gesture_updates_out_of_log_until_commit() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(10.0), px(10.0)),
         ))
-        .unwrap();
+        .build();
 
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
@@ -1869,21 +1832,18 @@ fn persistent_tool_effects_keep_gesture_updates_out_of_log_until_commit() {
 
 #[test]
 fn persistent_event_dispatch_logs_builtin_connect_transaction() {
-    let mut document = CanvasDocument::default();
-    document
-        .insert_node(CanvasNode::new(
+    let document = document_fixture()
+        .node(CanvasNode::new(
             "a",
             point(px(0.0), px(0.0)),
             size(px(100.0), px(100.0)),
         ))
-        .unwrap();
-    document
-        .insert_node(CanvasNode::new(
+        .node(CanvasNode::new(
             "b",
             point(px(200.0), px(0.0)),
             size(px(100.0), px(100.0)),
         ))
-        .unwrap();
+        .build();
     let mut editor = CanvasEditor::new(document);
     editor.set_tool(CanvasTool::Connect).unwrap();
     let mut store = MemoryCanvasPersistenceStore::default();
