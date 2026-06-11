@@ -84,6 +84,15 @@ interface for explicit non-move commands such as selection, panel close/reopen, 
 resize. `DockAction` remains available when applications need command objects. `DockOp` is
 crate-internal graph mutation machinery, so render code and applications do not need to understand
 source/target node ids, zones, and insertion indexes to commit ordinary drag/drop.
+Descriptor dock-class metadata and per-space dock-class policy live outside `DockGraph`.
+Preview-time resolution can render rejected targets for incompatible routes, and workspace commit
+validation applies the same policy before graph mutation for item, tabs-stack, floating-subtree,
+open, and empty-space moves. This preserves the graph as pure layout data while still giving
+applications editor-like docking zones.
+Keep-alive central regions are also dock-space metadata rather than placeholder nodes. When runtime
+mutations create a new root in an empty central space, the graph rebinds that metadata to the new
+root so panel restore, empty-space drops, tabs moves, and floating subtree promotion recover central
+identity without serializing fake empty tabs.
 
 ## Architecture
 

@@ -117,7 +117,7 @@ impl DockGraph {
             items: vec![item],
             active: 0,
         });
-        self.set_root(space.clone(), tabs);
+        self.set_root_for_empty_space(space, tabs);
         true
     }
 
@@ -207,7 +207,7 @@ impl DockGraph {
             items: vec![item],
             active: 0,
         });
-        self.set_root(target_space.clone(), tabs);
+        self.set_root_for_empty_space(target_space, tabs);
         self.simplify_space(source_space);
         self.simplify_space(target_space);
         true
@@ -273,7 +273,7 @@ impl DockGraph {
             return false;
         };
         let tabs = self.insert_detached_tabs(detached);
-        self.set_root(target_space.clone(), tabs);
+        self.set_root_for_empty_space(target_space, tabs);
         self.simplify_space(target_space);
         true
     }

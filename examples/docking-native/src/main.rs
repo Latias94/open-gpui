@@ -14,6 +14,9 @@ use open_gpui_platform::application;
 const SPACE: &str = "docking-demo";
 const SECONDARY_SPACE: &str = "docking-preview";
 const CENTRAL_SPACE: &str = "docking-empty-central";
+const PRIMARY_DOCK_CLASS: &str = "primary-demo";
+const SECONDARY_DOCK_CLASS: &str = "secondary-demo";
+const CENTRAL_DOCK_CLASS: &str = "central-demo";
 
 struct DemoPanel {
     title: &'static str,
@@ -102,6 +105,13 @@ impl RuntimeStatusPanel {
         let message = self
             .controller
             .update(cx, |controller, _| restore_outline_panel(controller));
+        self.set_operation_log(message, cx);
+    }
+
+    fn restore_central_note_panel(&mut self, cx: &mut Context<Self>) {
+        let message = self
+            .controller
+            .update(cx, |controller, _| restore_central_note_panel(controller));
         self.set_operation_log(message, cx);
     }
 
@@ -289,6 +299,12 @@ impl Render for RuntimeStatusPanel {
                                 cx.listener(|this, _, _, cx| {
                                     this.restore_outline_panel(cx);
                                 }),
+                            ))
+                            .child(control_button(
+                                "Restore central note",
+                                cx.listener(|this, _, _, cx| {
+                                    this.restore_central_note_panel(cx);
+                                }),
                             )),
                     ),
             )
@@ -403,6 +419,26 @@ fn restore_outline_panel(controller: &mut DockController) -> String {
     )
 }
 
+fn restore_central_note_panel(controller: &mut DockController) -> String {
+    let central_space = DockSpaceId::from(CENTRAL_SPACE);
+    let note = DockItemId::from("central-note");
+    if controller
+        .graph()
+        .find_item_in_space(&central_space, &note)
+        .is_some()
+    {
+        return "central note already in central".to_string();
+    }
+    if controller.graph().contains_item(&note) {
+        return "central note is open outside central".to_string();
+    }
+
+    open_item_result(
+        "central note",
+        controller.open_item(central_space, None, note, None),
+    )
+}
+
 fn open_item_result(
     label: &str,
     result: std::result::Result<
@@ -500,18 +536,35 @@ fn restored_demo_layout() -> DockLayout {
         )
         .allow_floating(true)
         .allow_platform_viewports(true)
-        .panel_descriptor("explorer", DockPanelDescriptor::new("Explorer"))
-        .panel_descriptor("outline", DockPanelDescriptor::new("Outline"))
+        .allow_dock_class_in_space(SPACE, PRIMARY_DOCK_CLASS)
+        .allow_dock_class_in_space(SPACE, SECONDARY_DOCK_CLASS)
+        .allow_dock_class_in_space(SPACE, CENTRAL_DOCK_CLASS)
+        .allow_dock_class_in_space(SECONDARY_SPACE, SECONDARY_DOCK_CLASS)
+        .allow_dock_class_in_space(CENTRAL_SPACE, CENTRAL_DOCK_CLASS)
+        .panel_descriptor(
+            "explorer",
+            dogfood_descriptor("Explorer", PRIMARY_DOCK_CLASS),
+        )
+        .panel_descriptor("outline", dogfood_descriptor("Outline", PRIMARY_DOCK_CLASS))
         .panel_descriptor(
             "workspace",
-            DockPanelDescriptor::new("Workspace").closable(false),
+            dogfood_descriptor("Workspace", PRIMARY_DOCK_CLASS).closable(false),
         )
-        .panel_descriptor("editor", DockPanelDescriptor::new("Editor"))
-        .panel_descriptor("preview", DockPanelDescriptor::new("Preview"))
-        .panel_descriptor("diff", DockPanelDescriptor::new("Diff"))
-        .panel_descriptor("terminal", DockPanelDescriptor::new("Terminal"))
-        .panel_descriptor("problems", DockPanelDescriptor::new("Problems"))
-        .panel_descriptor("runtime", DockPanelDescriptor::new("Runtime"))
+        .panel_descriptor("editor", dogfood_descriptor("Editor", PRIMARY_DOCK_CLASS))
+        .panel_descriptor(
+            "preview",
+            dogfood_descriptor("Preview", SECONDARY_DOCK_CLASS),
+        )
+        .panel_descriptor("diff", dogfood_descriptor("Diff", SECONDARY_DOCK_CLASS))
+        .panel_descriptor(
+            "terminal",
+            dogfood_descriptor("Terminal", PRIMARY_DOCK_CLASS),
+        )
+        .panel_descriptor(
+            "problems",
+            dogfood_descriptor("Problems", PRIMARY_DOCK_CLASS),
+        )
+        .panel_descriptor("runtime", dogfood_descriptor("Runtime", PRIMARY_DOCK_CLASS))
         .try_build()
         .expect("demo controller setup should validate");
 
@@ -573,39 +626,52 @@ fn build_controller() -> DockController {
         .expect("demo dock layout should restore")
         .allow_floating(true)
         .allow_platform_viewports(true)
-        .panel_descriptor("runtime", DockPanelDescriptor::new("Runtime"))
-        .panel_factory("explorer", "Explorer", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Explorer",
-                    "Project structure",
-                    0x2563eb,
-                    &[
-                        "crates/gpui_docking",
-                        "examples/docking-native",
-                        "docs/plans",
-                        "target/doc",
-                    ],
-                )
+        .allow_dock_class_in_space(SPACE, PRIMARY_DOCK_CLASS)
+        .allow_dock_class_in_space(SPACE, SECONDARY_DOCK_CLASS)
+        .allow_dock_class_in_space(SPACE, CENTRAL_DOCK_CLASS)
+        .allow_dock_class_in_space(SECONDARY_SPACE, SECONDARY_DOCK_CLASS)
+        .allow_dock_class_in_space(CENTRAL_SPACE, CENTRAL_DOCK_CLASS)
+        .panel_descriptor("runtime", dogfood_descriptor("Runtime", PRIMARY_DOCK_CLASS))
+        .panel(
+            "explorer",
+            DockPanel::lazy("Explorer", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Explorer",
+                        "Project structure",
+                        0x2563eb,
+                        &[
+                            "crates/gpui_docking",
+                            "examples/docking-native",
+                            "docs/plans",
+                            "target/doc",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
-        .panel_factory("outline", "Outline", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Outline",
-                    "Symbols in the active file",
-                    0x0891b2,
-                    &[
-                        "DockHost",
-                        "DockController::builder",
-                        "DockGraph::default_editor_layout",
-                        "Render for DockHost",
-                    ],
-                )
+            .with_dock_class(PRIMARY_DOCK_CLASS),
+        )
+        .panel(
+            "outline",
+            DockPanel::lazy("Outline", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Outline",
+                        "Symbols in the active file",
+                        0x0891b2,
+                        &[
+                            "DockHost",
+                            "DockController::builder",
+                            "DockGraph::default_editor_layout",
+                            "Render for DockHost",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
+            .with_dock_class(PRIMARY_DOCK_CLASS),
+        )
         .panel(
             "workspace",
             DockPanel::lazy("Workspace", |cx| {
@@ -624,91 +690,135 @@ fn build_controller() -> DockController {
                 })
                 .into()
             })
-            .closable(false),
+            .closable(false)
+            .with_dock_class(PRIMARY_DOCK_CLASS),
         )
-        .panel_factory("editor", "Editor", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Editor",
-                    "Active document",
-                    0x16a34a,
-                    &[
-                        "Controller-backed rendering is active.",
-                        "Tabs route through resolved drop transactions.",
-                        "Splits use normalized graph fractions.",
-                        "Registered panel factories stay outside the graph.",
-                    ],
-                )
+        .panel(
+            "editor",
+            DockPanel::lazy("Editor", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Editor",
+                        "Active document",
+                        0x16a34a,
+                        &[
+                            "Controller-backed rendering is active.",
+                            "Tabs route through resolved drop transactions.",
+                            "Splits use normalized graph fractions.",
+                            "Registered panel factories stay outside the graph.",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
-        .panel_factory("preview", "Preview", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Preview",
-                    "Rendered layout notes",
-                    0x9333ea,
-                    &[
-                        "DockHost observes DockController.",
-                        "Tab selection updates graph state.",
-                        "Layout round-trips through DockLayout.",
-                        "Splitter handles resize panes.",
-                        "Tabs can drag/drop between stacks.",
-                        "Secondary viewport placement lives in the adapter.",
-                    ],
-                )
+            .with_dock_class(PRIMARY_DOCK_CLASS),
+        )
+        .panel(
+            "preview",
+            DockPanel::lazy("Preview", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Preview",
+                        "Rendered layout notes",
+                        0x9333ea,
+                        &[
+                            "DockHost observes DockController.",
+                            "Tab selection updates graph state.",
+                            "Layout round-trips through DockLayout.",
+                            "Splitter handles resize panes.",
+                            "Tabs can drag/drop between stacks.",
+                            "Secondary viewport placement lives in the adapter.",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
-        .panel_factory("diff", "Diff", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Diff",
-                    "Secondary stack",
-                    0x7c3aed,
-                    &[
-                        "drop_runtime.rs",
-                        "viewport_runtime.rs",
-                        "render_tabs.rs",
-                        "host_interactions.rs",
-                    ],
-                )
+            .with_dock_class(SECONDARY_DOCK_CLASS),
+        )
+        .panel(
+            "diff",
+            DockPanel::lazy("Diff", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Diff",
+                        "Secondary stack",
+                        0x7c3aed,
+                        &[
+                            "drop_runtime.rs",
+                            "viewport_runtime.rs",
+                            "render_tabs.rs",
+                            "host_interactions.rs",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
-        .panel_factory("terminal", "Terminal", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Terminal",
-                    "Command output",
-                    0xea580c,
-                    &[
-                        "$ cargo nextest run -p open-gpui-docking",
-                        "Docking public API tests passed",
-                        "$ cargo doc -p open-gpui-docking --no-deps",
-                        "DockController::builder restores DockLayout.",
-                    ],
-                )
+            .with_dock_class(SECONDARY_DOCK_CLASS),
+        )
+        .panel(
+            "terminal",
+            DockPanel::lazy("Terminal", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Terminal",
+                        "Command output",
+                        0xea580c,
+                        &[
+                            "$ cargo nextest run -p open-gpui-docking",
+                            "Docking public API tests passed",
+                            "$ cargo doc -p open-gpui-docking --no-deps",
+                            "DockController::builder restores DockLayout.",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
-        .panel_factory("problems", "Problems", |cx| {
-            cx.new(|_| {
-                DemoPanel::new(
-                    "Problems",
-                    "Diagnostics",
-                    0xdc2626,
-                    &[
-                        "No active diagnostics.",
-                        "Missing panels render placeholders.",
-                        "OS windows remain adapter state.",
-                    ],
-                )
+            .with_dock_class(PRIMARY_DOCK_CLASS),
+        )
+        .panel(
+            "problems",
+            DockPanel::lazy("Problems", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Problems",
+                        "Diagnostics",
+                        0xdc2626,
+                        &[
+                            "No active diagnostics.",
+                            "Missing panels render placeholders.",
+                            "OS windows remain adapter state.",
+                        ],
+                    )
+                })
+                .into()
             })
-            .into()
-        })
+            .with_dock_class(PRIMARY_DOCK_CLASS),
+        )
+        .panel(
+            "central-note",
+            DockPanel::lazy("Central note", |cx| {
+                cx.new(|_| {
+                    DemoPanel::new(
+                        "Central note",
+                        "Central-only dogfood panel",
+                        0x4f46e5,
+                        &[
+                            "This panel is classed for the empty central viewport.",
+                            "Secondary-class panels should reject here.",
+                            "Opening content recovers the central region identity.",
+                        ],
+                    )
+                })
+                .into()
+            })
+            .with_dock_class(CENTRAL_DOCK_CLASS),
+        )
         .try_build()
         .expect("demo controller setup should validate")
+}
+
+fn dogfood_descriptor(title: impl Into<String>, dock_class: &str) -> DockPanelDescriptor {
+    DockPanelDescriptor::new(title).with_dock_class(dock_class)
 }
 
 fn viewport_window_options(bounds: Bounds<open_gpui::Pixels>) -> WindowOptions {
@@ -842,7 +952,10 @@ fn main() {
 mod tests {
     use super::*;
     use open_gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
-    use open_gpui_docking::{DockActionOutcome, DockGraph, DockHost, DockNode, DockNodeId};
+    use open_gpui_docking::{
+        DockActionApplyError, DockActionOutcome, DockClassId, DockGraph, DockHost, DockNode,
+        DockNodeId, DockPolicyError,
+    };
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
@@ -970,13 +1083,32 @@ mod tests {
             .descriptor(&item("workspace"))
             .expect("workspace descriptor should be registered");
         assert!(!workspace.is_closable());
+        assert_eq!(
+            workspace.dock_class(),
+            Some(&DockClassId::from(PRIMARY_DOCK_CLASS))
+        );
 
-        for id in ["preview", "diff", "runtime", "problems"] {
+        for id in ["preview", "diff", "runtime", "problems", "central-note"] {
             assert!(
                 controller.panels().descriptor(&item(id)).is_some(),
                 "{id} descriptor should be registered for native dogfood"
             );
         }
+        assert_eq!(
+            controller
+                .panels()
+                .descriptor(&item("preview"))
+                .and_then(|descriptor| descriptor.dock_class()),
+            Some(&DockClassId::from(SECONDARY_DOCK_CLASS))
+        );
+        assert!(controller.policy().allows_dock_class_in_space(
+            &DockSpaceId::from(SECONDARY_SPACE),
+            Some(&DockClassId::from(SECONDARY_DOCK_CLASS)),
+        ));
+        assert!(!controller.policy().allows_dock_class_in_space(
+            &DockSpaceId::from(CENTRAL_SPACE),
+            Some(&DockClassId::from(SECONDARY_DOCK_CLASS)),
+        ));
     }
 
     #[test]
@@ -1051,6 +1183,54 @@ mod tests {
                 .graph()
                 .find_item_in_space(&primary, &outline)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn dogfood_class_policy_rejects_secondary_stack_in_central_but_allows_central_note() {
+        let mut controller = build_controller();
+        let secondary = DockSpaceId::from(SECONDARY_SPACE);
+        let central = DockSpaceId::from(CENTRAL_SPACE);
+        let preview = item("preview");
+        let (secondary_tabs, _) = controller
+            .graph()
+            .find_item_in_space(&secondary, &preview)
+            .expect("preview should start in secondary dogfood space");
+
+        let err = controller
+            .float_tabs_in_window(
+                secondary,
+                secondary_tabs,
+                central.clone(),
+                Bounds::new(point(px(80.0), px(40.0)), size(px(260.0), px(180.0))),
+            )
+            .expect_err("secondary-class stack should reject the central-only dogfood space");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::Policy(DockPolicyError::DockClassRejected {
+                space: central.clone(),
+                item: preview,
+                dock_class: Some(DockClassId::from(SECONDARY_DOCK_CLASS)),
+            })
+        );
+        assert_eq!(
+            restore_central_note_panel(&mut controller),
+            "opened central note: Changed"
+        );
+        assert!(
+            controller
+                .graph()
+                .find_item_in_space(&central, &item("central-note"))
+                .is_some()
+        );
+        let central_region = controller
+            .graph()
+            .central_region(&central)
+            .expect("central dogfood space should keep central metadata");
+        assert!(
+            central_region.node.is_some(),
+            "opening central-note should recover central identity instead of ordinary root-only state"
         );
     }
 

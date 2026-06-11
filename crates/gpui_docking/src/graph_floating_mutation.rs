@@ -186,7 +186,7 @@ impl DockGraph {
         let Some(child) = self.take_floating_child_from_space(source_space, floating) else {
             return false;
         };
-        self.set_root(target_space.clone(), child);
+        self.set_root_for_empty_space(target_space, child);
         self.simplify_space(source_space);
         if source_space != target_space {
             self.simplify_space(target_space);

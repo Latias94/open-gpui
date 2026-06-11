@@ -183,6 +183,20 @@ impl DockGraph {
         self.roots.insert(space, root);
     }
 
+    pub(in crate::graph) fn set_root_for_empty_space(
+        &mut self,
+        space: &DockSpaceId,
+        root: DockNodeId,
+    ) {
+        self.set_root(space.clone(), root);
+        if let Some(central) = self.central_regions.get_mut(space)
+            && central.keep_alive_when_empty
+            && central.node.is_none()
+        {
+            central.node = Some(root);
+        }
+    }
+
     /// Returns the root node for a dock space.
     pub fn root(&self, space: &DockSpaceId) -> Option<DockNodeId> {
         self.roots.get(space).copied()

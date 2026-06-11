@@ -261,3 +261,44 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
     assert_eq!(*active, 1);
     graph.assert_canonical_space(&detached);
 }
+
+#[test]
+fn move_floating_to_empty_space_rebinds_empty_central_region() {
+    let mut graph = DockGraph::new();
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+    let central = DockSpaceId::new("central");
+    graph.set_central_region(central.clone(), DockCentralRegion::empty());
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloatingToEmptyDockSpace {
+                source_space: space(),
+                floating,
+                target_space: central.clone(),
+            })
+            .expect("moving floating content into an empty central space should create a root")
+    );
+
+    assert_eq!(
+        graph
+            .central_region(&central)
+            .expect("central metadata should remain present")
+            .node,
+        Some(floating_tabs)
+    );
+    graph
+        .validate()
+        .expect("central floating recovery should validate");
+}

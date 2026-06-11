@@ -69,17 +69,25 @@ Manual native docking dogfood should use the same example after the automated ch
 
 1. Launch `cargo run -p open-gpui-docking-native` and confirm the app opens `Docking demo`,
    `Docking preview`, and `Empty central dogfood` windows.
-2. Drag a tab from `Docking demo` into `Docking preview`; the preview must appear in the
-   destination window and release must select the moved item there.
-3. Drag the `Preview` / `Diff` stack from `Docking preview` back into `Docking demo`; item order and
-   the active tab must be preserved.
-4. Drag a tab or stack outside every docking window; a new runtime-backed viewport must open before
+2. Drag a primary-class tab from `Docking demo` into another primary-compatible target; the preview
+   must appear in the destination window and release must select the moved item there.
+3. Drag the `Preview` / `Diff` secondary-class stack from `Docking preview` back into `Docking demo`;
+   item order and the active tab must be preserved.
+4. Drag `Preview` / `Diff` over `Empty central dogfood`; the route must render as rejected and
+   release must not mutate the graph because the central space only accepts central-class panels.
+5. Use `Restore central note` from the runtime status panel; the `Central note` panel must reopen in
+   the empty central window and recover the central-region identity instead of becoming ordinary
+   root-only content.
+6. Drag a tab or stack outside every docking window; a new runtime-backed viewport must open before
    the graph moves the source payload.
-5. Dock the torn-off viewport content back into an existing window; the destination window must
+7. Dock the torn-off viewport content back into an existing window; the destination window must
    activate and the moved item must become the selected tab.
-6. Exercise the runtime panel close-policy controls for prevent, retain, and merge-back behavior;
+8. Move runtime-opened windows across displays, choose `Save placement`, then use `Reopen closed
+   demo viewports`; restored placement should use saved bounds only as placement input while live
+   drag routing continues to use current viewport bounds.
+9. Exercise the runtime panel close-policy controls for prevent, retain, and merge-back behavior;
    closing a viewport must match the selected policy without losing descriptor-backed panel restore.
-7. Drag over the empty central dogfood window; empty central-space preview, rejection, and
+10. Drag over the empty central dogfood window; empty central-space preview, rejection, and
    passthrough behavior must match the visible policy state.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:

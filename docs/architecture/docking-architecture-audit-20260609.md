@@ -61,6 +61,10 @@ Interaction foundation:
 - `DockCentralRegion` is dock-space metadata, not a special graph node. It can stay alive while
   empty, expose passthrough semantics to render, and mark the root subtree used by central drop
   policy.
+- Empty-space graph mutations rebind keep-alive central-region metadata when a new root is created.
+  The same invariant is covered for programmatic reopen, item move, tabs-stack move, and floating
+  subtree promotion, so a recovered central space does not silently degrade into ordinary root-only
+  content.
 
 Viewport productization:
 
@@ -101,6 +105,9 @@ Panel lifecycle:
   metadata presence.
 - `attach_view` and `attach_factory` bind restored metadata to live view state without rewriting
   titles or close policy.
+- Descriptor metadata includes optional dock-class ids. `DockPolicy` owns the per-space allow-list,
+  and workspace validation applies the same class policy to item, tabs-stack, floating-subtree,
+  open, and empty-space commits.
 - Live GPUI view resolution stays crate-private through the render snapshot path; public
   `DockPanelRegistration` exposes descriptor metadata only.
 - Rendered tab close controls read closable metadata from the render snapshot, omit the affordance
@@ -116,15 +123,20 @@ Native dogfood:
   manual dogfood covers floating merge and rendered close-policy behavior.
 - An additional empty central-region viewport opens with passthrough metadata, giving manual
   dogfood a retained central-space target without adding placeholder graph nodes.
+- The native dogfood layout assigns explicit dock classes: primary panels can dock in the main
+  space, secondary `Preview` / `Diff` panels can dock in the preview space, and the central dogfood
+  space only accepts the central-note panel. Local previews and commit validation both reject
+  incompatible class routes.
 - The runtime status panel exposes close-policy switching, placement reapply, viewport reopen, and
   descriptor-backed panel restore controls so close/reopen paths can be exercised without code
   changes.
 - Native example tests now assert the dogfood layout facts, viewport placement titles,
   descriptor-backed close/reopen controls, whole-stack float/merge behavior through the public
-  `DockController` API, and rendered cross-window tab/stack drag through runtime-opened `DockHost`
-  windows using GPUI test mouse events and public selector strings. This keeps the example from
-  drifting while physical native-window drag dogfood remains the final proof for backend pixel and
-  event delivery.
+  `DockController` API, class-policy rejection for incompatible secondary stacks, central-note
+  recovery into the empty central region, and rendered cross-window tab/stack drag through
+  runtime-opened `DockHost` windows using GPUI test mouse events and public selector strings. This
+  keeps the example from drifting while physical native-window drag dogfood remains the final proof
+  for backend pixel and event delivery.
 - `docs/verification.md` now carries the manual native-window dogfood checklist so the final
   physical verification run has a stable command and acceptance path.
 

@@ -171,6 +171,36 @@ fn checked_open_item_creates_root_for_empty_space() {
 }
 
 #[test]
+fn checked_open_item_rebinds_empty_central_region() {
+    let mut graph = DockGraph::new();
+    let central = DockSpaceId::new("central");
+    graph.set_central_region(central.clone(), DockCentralRegion::empty());
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::OpenItem {
+                space: central.clone(),
+                target_tabs: None,
+                item: item("reopened"),
+                insert_index: None,
+            })
+            .expect("opening into an empty central space should create a root")
+    );
+
+    let root = graph.root(&central).expect("central space should get root");
+    assert_eq!(
+        graph
+            .central_region(&central)
+            .expect("central metadata should remain present")
+            .node,
+        Some(root)
+    );
+    graph
+        .validate()
+        .expect("central root recovery should validate");
+}
+
+#[test]
 fn checked_open_item_rejects_duplicate_items_without_mutation() {
     let (mut graph, root) = root_tabs_graph(&["a"]);
 
@@ -375,6 +405,35 @@ fn checked_move_item_to_empty_space_creates_target_root() {
 }
 
 #[test]
+fn checked_move_item_to_empty_space_rebinds_empty_central_region() {
+    let (mut graph, _) = root_tabs_graph(&["a", "b"]);
+    let central = DockSpaceId::new("central");
+    graph.set_central_region(central.clone(), DockCentralRegion::empty());
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+                source_space: space(),
+                item: item("b"),
+                target_space: central.clone(),
+            })
+            .expect("moving into an empty central space should create a root")
+    );
+
+    let root = graph.root(&central).expect("central space should get root");
+    assert_eq!(
+        graph
+            .central_region(&central)
+            .expect("central metadata should remain present")
+            .node,
+        Some(root)
+    );
+    graph
+        .validate()
+        .expect("central move recovery should validate");
+}
+
+#[test]
 fn checked_move_tabs_to_empty_space_preserves_stack_order_and_active_tab() {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -417,6 +476,40 @@ fn checked_move_tabs_to_empty_space_preserves_stack_order_and_active_tab() {
     assert_eq!(graph.collect_items_in_space(&space()), vec![item("c")]);
     graph.assert_canonical_space(&space());
     graph.assert_canonical_space(&detached);
+}
+
+#[test]
+fn checked_move_tabs_to_empty_space_rebinds_empty_central_region() {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 1,
+    });
+    graph.set_root(space(), source_tabs);
+    let central = DockSpaceId::new("central");
+    graph.set_central_region(central.clone(), DockCentralRegion::empty());
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+                source_space: space(),
+                source_tabs,
+                target_space: central.clone(),
+            })
+            .expect("moving tabs into an empty central space should create a root")
+    );
+
+    let root = graph.root(&central).expect("central space should get root");
+    assert_eq!(
+        graph
+            .central_region(&central)
+            .expect("central metadata should remain present")
+            .node,
+        Some(root)
+    );
+    graph
+        .validate()
+        .expect("central tabs recovery should validate");
 }
 
 #[test]
