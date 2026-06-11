@@ -86,8 +86,6 @@ pub(crate) enum DockDropResolveSource {
     RootEdge,
     FloatingTitleBar,
     EmptyDockSpace,
-    KnownViewport,
-    TearOffCandidate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,12 +124,6 @@ pub(crate) struct DockEmptySpaceDropTarget {
     pub(crate) bounds: Bounds<Pixels>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockTearOffCandidateDropTarget {
-    pub(crate) release_position: Point<Pixels>,
-    pub(crate) suggested_window_bounds: Option<WindowBounds>,
-}
-
 pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) position: Point<Pixels>,
     pub(crate) policy: &'a DockPolicy,
@@ -140,8 +132,6 @@ pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) root: Option<DockRootDropTarget>,
     pub(crate) floating_title_bars: &'a [DockFloatingTitleBarDropTarget],
     pub(crate) empty_spaces: &'a [DockEmptySpaceDropTarget],
-    pub(crate) known_viewport: Option<DockViewportHit>,
-    pub(crate) tear_off_candidate: Option<DockTearOffCandidateDropTarget>,
 }
 
 impl<'a> DockDropResolverInput<'a> {
@@ -155,8 +145,6 @@ impl<'a> DockDropResolverInput<'a> {
             root: None,
             floating_title_bars: &[],
             empty_spaces: &[],
-            known_viewport: None,
-            tear_off_candidate: None,
         }
     }
 }
@@ -183,17 +171,6 @@ pub(crate) struct DockDropRejection {
 }
 
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
-    if let Some(hit) = input.known_viewport {
-        return Some(DockDropResolution::Valid(DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::KnownViewport {
-                target: DockKnownViewportDropTarget::from_hit(hit),
-            },
-            source: DockDropResolveSource::KnownViewport,
-            preview_bounds: None,
-            is_central_region: false,
-        }));
-    }
-
     if let Some(target) = resolve_floating_title_bar_drop(&input) {
         return Some(validate_target(target, input.policy));
     }
@@ -215,22 +192,6 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
 
     if let Some(target) = resolve_empty_space_drop(&input) {
         return Some(DockDropResolution::Valid(target));
-    }
-
-    if let Some(candidate) = input.tear_off_candidate {
-        let target = DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::TearOffCandidate {
-                release_position: candidate.release_position,
-                suggested_window_bounds: candidate.suggested_window_bounds,
-            },
-            source: DockDropResolveSource::TearOffCandidate,
-            preview_bounds: None,
-            is_central_region: false,
-        };
-        return Some(match input.policy.validate_platform_viewports() {
-            Ok(()) => DockDropResolution::Valid(target),
-            Err(reason) => DockDropResolution::Rejected(DockDropRejection { target, reason }),
-        });
     }
 
     None
@@ -406,7 +367,7 @@ fn area(bounds: Bounds<Pixels>) -> f32 {
 mod tests {
     use super::*;
     use crate::{DockGraph, DockItemId, DockNode, SplitAxis};
-    use open_gpui::{WindowBounds, point, px, size};
+    use open_gpui::{point, px, size};
     use slotmap::Key;
 
     fn tabs() -> DockNodeId {
@@ -1060,68 +1021,5 @@ mod tests {
             panic!("disabled edge split should reject central inner edge");
         };
         assert_eq!(rejection.reason, DockPolicyError::EdgeSplitDisabled);
-    }
-
-    #[test]
-    fn viewport_hit_resolves_to_known_viewport_with_host_position() {
-        let hit = DockViewportHit::new(DockSpaceId::from("secondary"), point(px(12.0), px(18.0)));
-        let target = resolve_layout_drop(DockDropResolverInput {
-            known_viewport: Some(hit.clone()),
-            ..DockDropResolverInput::new(point(px(900.0), px(700.0)), &policy())
-        })
-        .and_then(DockDropResolution::target)
-        .expect("known viewport should resolve");
-
-        assert_eq!(target.source, DockDropResolveSource::KnownViewport);
-        assert_eq!(
-            target.kind,
-            DockResolvedDropTargetKind::KnownViewport {
-                target: DockKnownViewportDropTarget::from_hit(hit)
-            }
-        );
-    }
-
-    #[test]
-    fn tear_off_candidate_respects_platform_viewport_policy() {
-        let release_position = point(px(900.0), px(700.0));
-        let suggested_window_bounds = WindowBounds::Windowed(Bounds::new(
-            point(px(880.0), px(680.0)),
-            size(px(360.0), px(240.0)),
-        ));
-        let candidate = DockTearOffCandidateDropTarget {
-            release_position,
-            suggested_window_bounds: Some(suggested_window_bounds),
-        };
-
-        let disabled = resolve_layout_drop(DockDropResolverInput {
-            tear_off_candidate: Some(candidate.clone()),
-            ..DockDropResolverInput::new(release_position, &policy())
-        })
-        .expect("tear-off candidate should resolve to a policy decision");
-        assert!(matches!(
-            disabled,
-            DockDropResolution::Rejected(DockDropRejection {
-                reason: DockPolicyError::PlatformViewportsDisabled,
-                ..
-            })
-        ));
-
-        let mut policy = DockPolicy::default();
-        policy.set_allow_platform_viewports(true);
-        let target = resolve_layout_drop(DockDropResolverInput {
-            tear_off_candidate: Some(candidate),
-            ..DockDropResolverInput::new(release_position, &policy)
-        })
-        .and_then(DockDropResolution::target)
-        .expect("enabled tear-off should resolve");
-
-        assert_eq!(target.source, DockDropResolveSource::TearOffCandidate);
-        assert_eq!(
-            target.kind,
-            DockResolvedDropTargetKind::TearOffCandidate {
-                release_position,
-                suggested_window_bounds: Some(suggested_window_bounds),
-            }
-        );
     }
 }

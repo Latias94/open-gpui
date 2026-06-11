@@ -37,6 +37,8 @@ impl DockViewportSnapshot {
 pub(crate) struct DockViewportRegistry {
     viewports: BTreeMap<DockSpaceId, DockViewportSnapshot>,
     windows: HashMap<WindowId, DockSpaceId>,
+    focus_stamps: HashMap<WindowId, u64>,
+    next_focus_stamp: u64,
 }
 
 impl DockViewportRegistry {
@@ -72,12 +74,14 @@ impl DockViewportRegistry {
 
         if let Some(previous) = self.viewports.remove(&space) {
             self.windows.remove(&previous.window.window_id());
+            self.focus_stamps.remove(&previous.window.window_id());
             replaced.push((space.clone(), previous));
         }
         if let Some(previous_space) = self.windows.remove(&window_id)
             && previous_space != space
             && let Some(previous) = self.viewports.remove(&previous_space)
         {
+            self.focus_stamps.remove(&previous.window.window_id());
             replaced.push((previous_space, previous));
         }
 
@@ -87,9 +91,15 @@ impl DockViewportRegistry {
         replaced
     }
 
+    pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
+        self.next_focus_stamp = self.next_focus_stamp.wrapping_add(1);
+        self.focus_stamps.insert(window_id, self.next_focus_stamp);
+    }
+
     pub(crate) fn unregister_space(&mut self, space: &DockSpaceId) -> Option<DockViewportSnapshot> {
         let snapshot = self.viewports.remove(space)?;
         self.windows.remove(&snapshot.window.window_id());
+        self.focus_stamps.remove(&snapshot.window.window_id());
         Some(snapshot)
     }
 
@@ -106,6 +116,7 @@ impl DockViewportRegistry {
             return None;
         }
         let snapshot = self.viewports.remove(&space)?;
+        self.focus_stamps.remove(&window_id);
         Some((space, snapshot))
     }
 
@@ -135,6 +146,26 @@ impl DockViewportRegistry {
 
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.viewports.keys().cloned().collect()
+    }
+
+    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
+        let mut spaces = self.spaces();
+        spaces.sort_by(|left, right| {
+            let left_stamp = self
+                .viewports
+                .get(left)
+                .map(|snapshot| snapshot.window.window_id())
+                .and_then(|window_id| self.focus_stamps.get(&window_id).copied())
+                .unwrap_or(0);
+            let right_stamp = self
+                .viewports
+                .get(right)
+                .map(|snapshot| snapshot.window.window_id())
+                .and_then(|window_id| self.focus_stamps.get(&window_id).copied())
+                .unwrap_or(0);
+            right_stamp.cmp(&left_stamp).then_with(|| left.cmp(right))
+        });
+        spaces
     }
 
     #[cfg(test)]
@@ -204,5 +235,29 @@ mod tests {
             registry.space_for_window_id(current_window.window_id()),
             Some(&main)
         );
+    }
+
+    #[test]
+    fn replacing_a_viewport_clears_the_previous_focus_stamp() {
+        let mut registry = DockViewportRegistry::default();
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let alpha_window = handle(1);
+        let zeta_window = handle(2);
+        let rebound_window = handle(3);
+
+        registry.register(alpha.clone(), alpha_window);
+        registry.register(zeta.clone(), zeta_window);
+        registry.record_window_focus(alpha_window.window_id());
+        registry.record_window_focus(zeta_window.window_id());
+        assert_eq!(
+            registry.spaces_by_fallback_priority(),
+            vec![zeta.clone(), alpha.clone()]
+        );
+
+        registry.register(zeta.clone(), rebound_window);
+
+        assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
+        assert_eq!(registry.spaces_by_fallback_priority(), vec![alpha, zeta]);
     }
 }

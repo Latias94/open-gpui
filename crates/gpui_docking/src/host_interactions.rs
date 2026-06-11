@@ -10,6 +10,12 @@ use crate::{
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
 impl DockHost {
+    pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
+        let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
+        let resolved_target_cleared = self.interaction_mut().take_resolved_drop_target().is_some();
+        route_preview_cleared || resolved_target_cleared
+    }
+
     pub(crate) fn select_tab_interaction(
         &mut self,
         tabs: DockNodeId,
@@ -122,9 +128,11 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let payload = release.payload();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
+        let mut drop_preview_cleared = false;
         let outcome = if let Some(outcome) =
             self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
         {
+            drop_preview_cleared = self.clear_drop_preview_interaction();
             outcome
         } else {
             let target = self.interaction_mut().take_resolved_drop_target();
@@ -152,7 +160,7 @@ impl DockHost {
 
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
-                route_preview_cleared,
+                route_preview_cleared || drop_preview_cleared,
             ))
             .merge(self.finish_floating_drag_interaction())
     }

@@ -298,6 +298,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn host_scene_resolve_applies_host_bounds_origin_once() {
+        let space = space("main");
+        let window_id = WindowId::from(1);
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 320.0, 240.0));
+        let host_bounds = bounds(40.0, 30.0, 10.0, 10.0);
+        let host_position = point(px(5.0), px(6.0));
+
+        let frame = registry
+            .register(DockViewportHostSceneSnapshot::new(
+                space.clone(),
+                window_id,
+                window_bounds,
+                host_bounds,
+                host_position,
+            ))
+            .frame;
+        assert!(registry.push_frame_fact(
+            &frame,
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                space: space.clone(),
+                bounds: host_bounds,
+            })
+        ));
+
+        let target = registry
+            .resolve_for_window(
+                &space,
+                Some(window_id),
+                host_position,
+                &DockPolicy::default(),
+            )
+            .expect("offset host scene should still resolve");
+
+        assert!(
+            matches!(
+                target.kind,
+                DockResolvedDropTargetKind::EmptyDockSpace { space: ref resolved_space }
+                    if resolved_space == &space
+            ),
+            "expected empty-space target, got {:?}",
+            target
+        );
+        assert_eq!(target.preview_bounds, Some(host_bounds));
+    }
+
     fn snapshot(space: DockSpaceId, window_id: WindowId) -> DockViewportHostSceneSnapshot {
         DockViewportHostSceneSnapshot::new(
             space,

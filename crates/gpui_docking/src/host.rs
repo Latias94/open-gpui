@@ -5,7 +5,7 @@ use crate::{
     DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, px};
+use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Subscription, Window, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
@@ -41,6 +41,7 @@ pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
     viewport_runtime: Option<DockViewportRuntimeHandle>,
+    viewport_activation_subscription: Option<Subscription>,
     pending_panel_focus: Option<DockItemId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
@@ -59,6 +60,7 @@ impl DockHost {
             controller,
             space: space.into(),
             viewport_runtime: None,
+            viewport_activation_subscription: None,
             pending_panel_focus: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
@@ -184,6 +186,28 @@ impl DockHost {
 
     pub(crate) fn viewport_runtime(&self) -> Option<&DockViewportRuntimeHandle> {
         self.viewport_runtime.as_ref()
+    }
+
+    pub(crate) fn ensure_viewport_activation_subscription(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.viewport_activation_subscription.is_some() {
+            return;
+        }
+
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return;
+        };
+
+        let activation_runtime = runtime.clone();
+        self.viewport_activation_subscription =
+            Some(cx.observe_window_activation(window, move |_, window, _| {
+                if window.is_window_active() {
+                    activation_runtime.record_window_focus(window.window_handle().window_id());
+                }
+            }));
     }
 
     pub(crate) fn request_panel_focus(&mut self, item: DockItemId) -> bool {

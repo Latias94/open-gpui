@@ -35,6 +35,8 @@ pub(crate) enum DockDebugRegion {
     },
     /// The active drag/drop preview overlay for the host.
     DropPreview,
+    /// The payload tab label rendered inside a center/tab drop preview.
+    DropPayloadTabPreview,
     /// A viewport route or tear-off preview before host-local target resolution.
     DropRoutePreview {
         /// Preview route category.

@@ -1,7 +1,7 @@
 use crate::{
     DockPolicyError, DockViewportDropRoute,
     drop_runtime::resolution_target,
-    drop_target::{DockDropResolution, DockResolvedDropTargetKind},
+    drop_target::{DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind},
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
@@ -18,12 +18,21 @@ pub(crate) struct DockDropPreview {
     pub(crate) kind: DockDropPreviewKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) rejected: bool,
+    pub(crate) payload_tab: bool,
 }
 
 impl DockDropPreview {
     pub(crate) fn from_resolution(resolution: &DockDropResolution) -> Option<Self> {
         let target = resolution_target(resolution)?;
         let rejected = matches!(resolution, DockDropResolution::Rejected(_));
+        Self::from_target(target, rejected)
+    }
+
+    pub(crate) fn from_resolved_target(target: &DockResolvedDropTarget) -> Option<Self> {
+        Self::from_target(target, false)
+    }
+
+    fn from_target(target: &DockResolvedDropTarget, rejected: bool) -> Option<Self> {
         let (kind, bounds) = match &target.kind {
             DockResolvedDropTargetKind::KnownViewport { target } => (
                 DockDropPreviewKind::KnownViewportRoute,
@@ -44,11 +53,20 @@ impl DockDropPreview {
                 (DockDropPreviewKind::Local, target.preview_bounds?)
             }
         };
+        let payload_tab = !rejected
+            && matches!(
+                &target.kind,
+                DockResolvedDropTargetKind::TabBar { .. }
+                    | DockResolvedDropTargetKind::LeafCenter { .. }
+                    | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+                    | DockResolvedDropTargetKind::EmptyDockSpace { .. }
+            );
 
         Some(Self {
             kind,
             bounds,
             rejected,
+            payload_tab,
         })
     }
 
@@ -72,6 +90,7 @@ impl DockDropPreview {
             kind,
             bounds: route_bounds(host_position),
             rejected,
+            payload_tab: false,
         })
     }
 
@@ -172,7 +191,7 @@ mod tests {
                     size(px(360.0), px(240.0)),
                 ))),
             },
-            source: DockDropResolveSource::TearOffCandidate,
+            source: DockDropResolveSource::EmptyDockSpace,
             preview_bounds: None,
             is_central_region: false,
         });

@@ -54,6 +54,10 @@ impl DockViewportAdapter {
         self.registry.window_for_space(space)
     }
 
+    pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
+        self.registry.record_window_focus(window_id);
+    }
+
     /// Returns the logical dock space rendered by a window id.
     pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
         self.registry.space_for_window_id(window_id)
@@ -62,6 +66,10 @@ impl DockViewportAdapter {
     /// Returns known dock spaces in stable lexical order.
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.registry.spaces()
+    }
+
+    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
+        self.registry.spaces_by_fallback_priority()
     }
 
     #[cfg(test)]
@@ -79,11 +87,11 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockViewportUnregisterOutcome,
+        DockGraph, DockItemId, DockNode, DockViewportTargetContext, DockViewportUnregisterOutcome,
         DockViewportUnregisterReason,
         viewport_test_support::{bounds, handle, space},
     };
-    use open_gpui::{DisplayId, WindowBounds};
+    use open_gpui::{DisplayId, WindowBounds, point, px};
 
     #[test]
     fn registering_viewports_records_and_replaces_window_mappings() {
@@ -225,6 +233,38 @@ mod tests {
         assert_eq!(snapshot.display_id, display_id);
         assert_eq!(snapshot.window_bounds, Some(window_bounds));
         assert_eq!(snapshot.host_bounds, Some(host_bounds));
+    }
+
+    #[test]
+    fn viewport_target_fallback_prefers_recent_focus_over_lexical_order() {
+        let mut adapter = DockViewportAdapter::new();
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let alpha_window = handle(1);
+        let zeta_window = handle(2);
+
+        adapter.register_viewport(alpha.clone(), alpha_window);
+        adapter.register_viewport(zeta.clone(), zeta_window);
+        for space in [&alpha, &zeta] {
+            adapter.update_snapshot(
+                space,
+                None,
+                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+        adapter.record_window_focus(alpha_window.window_id());
+        adapter.record_window_focus(zeta_window.window_id());
+
+        assert_eq!(
+            adapter
+                .resolve_viewport_target(
+                    point(px(120.0), px(140.0)),
+                    &DockViewportTargetContext::new()
+                )
+                .map(|target| target.space().clone()),
+            Some(zeta)
+        );
     }
 
     #[test]

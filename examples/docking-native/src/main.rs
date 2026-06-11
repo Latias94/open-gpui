@@ -813,9 +813,16 @@ fn main() {
         runtime.observe_window_closed(cx).detach();
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
-        runtime
+        let primary_opened = runtime
             .open_viewport(SPACE, primary_options, cx)
             .expect("failed to open primary docking viewport");
+        let primary_window_id = primary_opened.window().window_id();
+        cx.on_window_closed(move |cx, window_id| {
+            if window_id == primary_window_id {
+                cx.quit();
+            }
+        })
+        .detach();
 
         let secondary_options =
             restored_viewport_options(&placement, SECONDARY_SPACE, secondary_bounds);

@@ -38,6 +38,12 @@ impl DockViewportPlatformSignals {
         self
     }
 
+    /// Adds the hovered window signal by id.
+    pub(crate) fn with_hovered_window_id(mut self, window_id: Option<WindowId>) -> Self {
+        self.hovered_window = window_id;
+        self
+    }
+
     /// Converts the platform snapshot into the pure resolver context.
     #[cfg(test)]
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {

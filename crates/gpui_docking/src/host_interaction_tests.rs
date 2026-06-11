@@ -424,6 +424,10 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
 
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_some(),
+        "edge drop preview should be visible during the drag"
+    );
     let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
         .expect("drop preview selector should be emitted");
     let preview_bounds = debug_bounds(&mut visual, &preview);
@@ -432,6 +436,14 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     assert!(
         preview_bounds.size.width < target_bounds.size.width,
         "edge preview should occupy only an edge band"
+    );
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
+        "edge drop preview should clear after release"
     );
 }
 
@@ -882,9 +894,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
 }
 
 #[open_gpui::test]
-fn runtime_secondary_single_tab_outside_release_does_not_spawn_empty_viewport(
-    cx: &mut TestAppContext,
-) {
+fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &mut TestAppContext) {
     let primary_space = crate::DockSpaceId::from("primary");
     let secondary_space = crate::DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
@@ -955,13 +965,33 @@ fn runtime_secondary_single_tab_outside_release_does_not_spawn_empty_viewport(
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&secondary_space),
-            vec![item("b")],
-            "single-tab secondary viewport should keep its only tab on outside release"
+            vec![]
+        );
+        let detached_space = controller
+            .graph()
+            .spaces()
+            .into_iter()
+            .find(|space| space.as_str().starts_with("secondary:tear-off:b:"))
+            .expect("outside release should create a detached viewport space");
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("b")]
         );
         assert_eq!(
             runtime.registered_viewport_spaces(),
-            vec![primary_space.clone(), secondary_space.clone()],
-            "outside release should not create another viewport for an already detached single-tab window"
+            vec![
+                primary_space.clone(),
+                secondary_space.clone(),
+                detached_space.clone()
+            ],
+            "outside release should create another viewport for the detached payload"
+        );
+        assert!(
+            runtime
+                .borrow()
+                .adapter()
+                .window_for_space(&detached_space)
+                .is_some()
         );
     });
 }

@@ -3,9 +3,10 @@ use crate::{
     DockGraphMutationError, DockHost, DockItemId, DockNode, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteRequest,
-    DockViewportOpenStatus, DockViewportRuntime, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTargetHit, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffRequest, DockWorkspace,
+    DockViewportOpenStatus, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind, DockViewportTearOffRequest,
+    DockWorkspace,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -19,7 +20,7 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
-    WindowHandle, WindowId, point, px, size,
+    WindowHandle, WindowId, WindowOptions, point, px, size,
 };
 
 fn tear_off_request(
@@ -76,7 +77,7 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
-    let mut runtime = DockViewportRuntime::new(controller);
+    let runtime = DockViewportRuntimeHandle::new(controller);
 
     let opened = cx
         .update(|app| {
@@ -89,7 +90,10 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
         .expect("secondary viewport should open through runtime");
     assert_eq!(opened.status(), DockViewportOpenStatus::Opened);
     assert_eq!(
-        runtime.adapter().window_for_space(&secondary_space),
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
         Some(opened.window())
     );
 
@@ -104,7 +108,66 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
         .expect("live viewport should be reused through runtime");
     assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
     assert_eq!(reused.window(), opened.window());
-    assert_eq!(runtime.adapter().spaces().len(), 1);
+    assert_eq!(runtime.borrow().adapter().spaces().len(), 1);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tracks_recent_activation_for_fallback_priority(cx: &mut TestAppContext) {
+    let alpha_space = DockSpaceId::from("alpha");
+    let zeta_space = DockSpaceId::from("zeta");
+    let mut graph = DockGraph::new();
+    let alpha_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let zeta_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(alpha_space.clone(), alpha_tabs);
+    graph.set_root(zeta_space.clone(), zeta_tabs);
+
+    let mut workspace = DockWorkspace::new(alpha_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let zeta_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                zeta_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("zeta viewport should open");
+    let alpha_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                alpha_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("alpha viewport should open");
+    cx.run_until_parked();
+
+    alpha_opened
+        .window()
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("alpha viewport should activate");
+    cx.run_until_parked();
+    zeta_opened
+        .window()
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("zeta viewport should activate");
+    cx.run_until_parked();
+
+    assert_eq!(
+        runtime.borrow().adapter().spaces_by_fallback_priority(),
+        vec![zeta_space, alpha_space]
+    );
 }
 
 #[open_gpui::test]
@@ -773,6 +836,125 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
             vec![item("b")]
         );
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let source_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_window_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_window_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    source_opened
+        .window()
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("source viewport should be activatable");
+    cx.run_until_parked();
+
+    let target_hit = DockViewportTargetHit::new(
+        target_space.clone(),
+        target_opened.window(),
+        point(px(120.0), px(100.0)),
+    );
+    let route = DockViewportDropRoute::KnownViewport { target: target_hit };
+    cx.update(|app| {
+        runtime.update_routed_drop_preview(&route, "Panel A", app);
+    });
+    assert_eq!(
+        runtime.last_hovered_window(),
+        Some(target_opened.window().window_id())
+    );
+
+    let release_position = point(px(220.0), px(200.0));
+    let request_without_hovered = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+        DockViewportTargetContext::new()
+            .with_active_window(source_opened.window())
+            .with_window_stack([source_opened.window(), target_opened.window()]),
+    );
+    let baseline_route =
+        cx.update(|app| runtime.resolve_payload_drop_route(&request_without_hovered, app));
+    match baseline_route {
+        DockViewportDropRoute::Local { .. } => {}
+        DockViewportDropRoute::KnownViewport { target }
+            if target.window_id() == source_opened.window().window_id() => {}
+        other => panic!("unexpected baseline route: {:?}", other),
+    }
+
+    let request_with_hovered = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+        DockViewportTargetContext::new()
+            .with_hovered_window(target_opened.window())
+            .with_active_window(source_opened.window())
+            .with_window_stack([source_opened.window(), target_opened.window()]),
+    );
+    let hovered_route =
+        cx.update(|app| runtime.resolve_payload_drop_route(&request_with_hovered, app));
+    assert!(
+        matches!(
+            hovered_route,
+            DockViewportDropRoute::KnownViewport { target }
+                if target.window_id() == target_opened.window().window_id()
+        ),
+        "last hovered viewport should override the active source window for source-only releases"
+    );
+
+    cx.update(|app| {
+        assert!(runtime.clear_routed_drop_preview(app));
+    });
+    assert_eq!(
+        runtime.last_hovered_window(),
+        Some(target_opened.window().window_id())
+    );
 }
 
 #[open_gpui::test]

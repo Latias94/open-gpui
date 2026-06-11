@@ -16,7 +16,7 @@ impl DockViewportAdapter {
     }
 
     fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportTargetHit> {
-        self.spaces()
+        self.spaces_by_fallback_priority()
             .into_iter()
             .filter_map(|space| {
                 let window = self.snapshot(&space)?.window;

@@ -3,8 +3,8 @@ use crate::{
     DockViewportClosePolicy, DockViewportDropRoute, DockViewportDropRouteCommit,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportRestoreOutcome, DockViewportRuntime, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportRestoreOutcome, DockViewportRoutedDropPreview, DockViewportRuntime,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
@@ -17,8 +17,8 @@ use crate::{
     DockNodeId, DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetContext,
 };
 use open_gpui::{
-    App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription, WindowBounds,
-    WindowId, WindowOptions,
+    AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription,
+    WindowBounds, WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::Ref;
@@ -32,6 +32,12 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Clone, Debug)]
 pub struct DockViewportRuntimeHandle {
     runtime: Rc<RefCell<DockViewportRuntime>>,
+}
+
+fn refresh_windows(windows: Vec<AnyWindowHandle>, cx: &mut App) {
+    for window in windows {
+        let _ = window.update(cx, |_, window, _| window.refresh());
+    }
 }
 
 impl DockViewportRuntimeHandle {
@@ -68,6 +74,14 @@ impl DockViewportRuntimeHandle {
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.runtime.borrow().runtime_status()
+    }
+
+    pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
+        self.runtime.borrow().last_hovered_window()
+    }
+
+    pub(crate) fn record_window_focus(&self, window_id: WindowId) {
+        self.runtime.borrow_mut().record_window_focus(window_id);
     }
 
     pub(crate) fn begin_payload_drag(&self, payload: &DockDragPayload) -> DockRuntimeDragSession {
@@ -275,7 +289,7 @@ impl DockViewportRuntimeHandle {
         commit: DockViewportDropRouteCommit,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        match commit {
+        let result = match commit {
             DockViewportDropRouteCommit::TearOff(request) => {
                 self.commit_tear_off_drop_route(request, cx)
             }
@@ -283,7 +297,9 @@ impl DockViewportRuntimeHandle {
                 .runtime
                 .borrow_mut()
                 .commit_payload_drop_route_with_outcome(commit, cx),
-        }
+        };
+        self.clear_routed_drop_preview(cx);
+        result
     }
 
     fn commit_tear_off_drop_route(
@@ -294,11 +310,6 @@ impl DockViewportRuntimeHandle {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
             match runtime.prepare_tear_off_drop_route_commit(request, cx)? {
-                DockViewportTearOffCommitPreparation::Noop(outcome) => {
-                    let result = Ok(outcome);
-                    runtime.record_drop_route_result(&result);
-                    return result;
-                }
                 DockViewportTearOffCommitPreparation::Prepared(prepared) => *prepared,
             }
         };
@@ -347,6 +358,36 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow_mut()
             .resolve_payload_drop_route(request, cx)
+    }
+
+    pub(crate) fn update_routed_drop_preview(
+        &self,
+        route: &DockViewportDropRoute,
+        payload_title: &str,
+        cx: &mut App,
+    ) -> bool {
+        let (changed, windows) =
+            self.runtime
+                .borrow_mut()
+                .update_routed_drop_preview(route, payload_title, cx);
+        refresh_windows(windows, cx);
+        changed
+    }
+
+    pub(crate) fn clear_routed_drop_preview(&self, cx: &mut App) -> bool {
+        let (changed, windows) = self.runtime.borrow_mut().clear_routed_drop_preview();
+        refresh_windows(windows, cx);
+        changed
+    }
+
+    pub(crate) fn routed_drop_preview_for(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Option<DockViewportRoutedDropPreview> {
+        self.runtime
+            .borrow()
+            .routed_drop_preview_for(space, window_id)
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.

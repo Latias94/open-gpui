@@ -73,6 +73,11 @@ impl DockHost {
             }
             DockOutsideReleasePollDecision::Stop(drag_session) => {
                 self.finish_payload_drag_session(&drag_session);
+                self.clear_drop_preview_interaction();
+                if let Some(runtime) = self.viewport_runtime().cloned() {
+                    runtime.clear_routed_drop_preview(cx);
+                }
+                window.refresh();
                 false
             }
             DockOutsideReleasePollDecision::Inactive => false,

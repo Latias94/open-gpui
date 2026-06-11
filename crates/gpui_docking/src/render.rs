@@ -25,6 +25,7 @@ pub(crate) type DockViewportHostSceneFrameSlot = Rc<RefCell<Option<DockViewportH
 impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
+        self.ensure_viewport_activation_subscription(window, cx);
         let session = self.render_session(cx);
         self.focus_pending_panel_from_render(&session, window, cx);
         let drop_host_space = session.space().clone();
@@ -92,6 +93,11 @@ impl Render for DockHost {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
                         DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
                             this.finish_payload_drag_session(&drag_session);
+                            this.clear_drop_preview_interaction();
+                            if let Some(runtime) = this.viewport_runtime().cloned() {
+                                runtime.clear_routed_drop_preview(cx);
+                            }
+                            window.refresh();
                         }
                         DockRenderedOutsideReleaseDecision::CommitRelease(release) => {
                             this.drop_payload_release_from_render(release, window, cx);
@@ -144,7 +150,7 @@ impl Render for DockHost {
             ));
         }
 
-        if let Some(preview) = self.render_host_drop_preview(&session) {
+        if let Some(preview) = self.render_host_drop_preview(&session, window, cx) {
             host = host.child(preview);
         }
 
@@ -350,8 +356,25 @@ impl DockHost {
             .into_any_element()
     }
 
-    fn render_host_drop_preview(&mut self, session: &DockHostRenderSession) -> Option<AnyElement> {
-        let preview = self.interaction().drop_preview()?;
+    fn render_host_drop_preview(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let active_payload_title = cx
+            .active_drag_value::<DockDragPayload>()
+            .map(|payload| payload.title().to_string());
+        let routed_preview = self.viewport_runtime().and_then(|runtime| {
+            runtime.routed_drop_preview_for(self.space(), window.window_handle().window_id())
+        });
+        let (preview, payload_title) = self
+            .interaction()
+            .drop_preview()
+            .map(|preview| (preview, active_payload_title))
+            .or_else(|| {
+                routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)))
+            })?;
         let bounds = preview.bounds;
         let region = if preview.is_route() {
             DockDebugRegion::DropRoutePreview { kind: preview.kind }
@@ -363,21 +386,63 @@ impl DockHost {
             format!("{}:drop-preview", session.selector_prefix()),
         );
         let (border, background) = drop_preview_colors(&preview);
+        let mut element = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(bounds.origin.x)
+            .top(bounds.origin.y)
+            .w(bounds.size.width)
+            .h(bounds.size.height)
+            .border_1()
+            .border_color(border)
+            .bg(background);
 
-        Some(
-            div()
-                .id(selector.clone())
-                .debug_selector(move || selector)
-                .absolute()
-                .left(bounds.origin.x)
-                .top(bounds.origin.y)
-                .w(bounds.size.width)
-                .h(bounds.size.height)
-                .border_1()
-                .border_color(border)
-                .bg(background)
-                .into_any_element(),
-        )
+        if preview.payload_tab
+            && let Some(title) = payload_title
+        {
+            let tab_left = if bounds.size.width > px(176.0) {
+                px(8.0)
+            } else {
+                px(0.0)
+            };
+            let tab_width = if bounds.size.width > px(176.0) {
+                px(160.0)
+            } else {
+                bounds.size.width
+            };
+            let tab_height = if bounds.size.height > px(26.0) {
+                px(26.0)
+            } else {
+                bounds.size.height
+            };
+            let tab_selector = self.record_debug_selector(
+                DockDebugRegion::DropPayloadTabPreview,
+                format!("{}:drop-preview:payload-tab", session.selector_prefix()),
+            );
+            element = element.child(
+                div()
+                    .id(tab_selector.clone())
+                    .debug_selector(move || tab_selector)
+                    .absolute()
+                    .left(tab_left)
+                    .top(px(0.0))
+                    .flex()
+                    .items_center()
+                    .h(tab_height)
+                    .w(tab_width)
+                    .px_2()
+                    .border_1()
+                    .border_color(border)
+                    .bg(rgb(0xffffff))
+                    .text_color(rgb(0x1f2937))
+                    .text_sm()
+                    .truncate()
+                    .child(title),
+            );
+        }
+
+        Some(element.into_any_element())
     }
 
     /// Publishes viewport bounds during prepaint so cross-window releases can resolve even when

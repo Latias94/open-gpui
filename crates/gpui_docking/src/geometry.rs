@@ -61,9 +61,10 @@ pub(crate) fn resolve_drop_geometry(
         .map(|(zone, _)| zone)
         .unwrap_or(DropZone::Center);
 
+    let preview = preview_bounds(zone, width, height, edge_band);
     Some(DockDropGeometry {
         zone,
-        preview_bounds: preview_bounds(zone, width, height, edge_band),
+        preview_bounds: offset_bounds(bounds.origin, preview),
     })
 }
 
@@ -310,6 +311,13 @@ fn preview_bounds(zone: DropZone, width: f32, height: f32, edge_band: f32) -> Bo
     }
 }
 
+fn offset_bounds(origin: Point<Pixels>, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+    Bounds::new(
+        point(origin.x + bounds.origin.x, origin.y + bounds.origin.y),
+        bounds.size,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,11 +329,12 @@ mod tests {
 
     #[test]
     fn drop_geometry_resolves_center_and_preview_bounds() {
-        let geometry = resolve_drop_geometry(bounds(300.0, 200.0), point(px(160.0), px(120.0)))
+        let bounds = bounds(300.0, 200.0);
+        let geometry = resolve_drop_geometry(bounds, point(px(160.0), px(120.0)))
             .expect("point should resolve");
 
         assert_eq!(geometry.zone, DropZone::Center);
-        assert_eq!(geometry.preview_bounds.origin, point(px(0.0), px(0.0)));
+        assert_eq!(geometry.preview_bounds.origin, bounds.origin);
         assert_eq!(geometry.preview_bounds.size, size(px(300.0), px(200.0)));
     }
 
@@ -345,10 +354,10 @@ mod tests {
         assert_eq!(right.zone, DropZone::Right);
         assert_eq!(top.zone, DropZone::Top);
         assert_eq!(bottom.zone, DropZone::Bottom);
-        assert!(f32::from(left.preview_bounds.size.width) > 0.0);
-        assert!(f32::from(right.preview_bounds.origin.x) > 0.0);
-        assert!(f32::from(top.preview_bounds.size.height) > 0.0);
-        assert!(f32::from(bottom.preview_bounds.origin.y) > 0.0);
+        assert_eq!(left.preview_bounds.origin, bounds.origin);
+        assert!(right.preview_bounds.origin.x > left.preview_bounds.origin.x);
+        assert_eq!(top.preview_bounds.origin.x, bounds.origin.x);
+        assert!(bottom.preview_bounds.origin.y > top.preview_bounds.origin.y);
     }
 
     #[test]

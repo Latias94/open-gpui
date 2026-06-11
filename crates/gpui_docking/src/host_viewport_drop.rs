@@ -54,12 +54,16 @@ impl DockHost {
             window,
             cx,
             DockPayloadDropReleaseOrigin::HoveredHost,
+            None,
             self.active_payload_drag_session(payload),
         );
         let route = runtime.resolve_payload_drop_route(&request, cx);
+        let routed_preview_changed =
+            runtime.update_routed_drop_preview(&route, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
-                .update_drop_route_preview(&route, position),
+                .update_drop_route_preview(&route, position)
+                || routed_preview_changed,
         )
     }
 
@@ -76,6 +80,8 @@ impl DockHost {
             window,
             cx,
             release.origin(),
+            self.viewport_runtime()
+                .and_then(|runtime| runtime.last_hovered_window()),
             release.drag_session().cloned(),
         );
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
@@ -89,13 +95,16 @@ fn viewport_drop_route_request_from_host(
     window: &Window,
     cx: &Context<DockHost>,
     origin: DockPayloadDropReleaseOrigin,
+    last_hovered_window: Option<open_gpui::WindowId>,
     drag_session: Option<DockRuntimeDragSession>,
 ) -> DockViewportDropRouteRequest {
     let platform_signals = match origin {
         DockPayloadDropReleaseOrigin::HoveredHost => {
             DockViewportPlatformSignals::from_hovered_window(window, cx)
         }
-        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
+        DockPayloadDropReleaseOrigin::SourceOnly => {
+            DockViewportPlatformSignals::from_app(cx).with_hovered_window_id(last_hovered_window)
+        }
     };
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),

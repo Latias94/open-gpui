@@ -3,7 +3,7 @@ use crate::{
     drop_target::{
         self, DockDropResolution, DockDropResolverInput, DockEmptySpaceDropTarget,
         DockFloatingTitleBarDropTarget, DockLeafDropTarget, DockResolvedDropTarget,
-        DockRootDropTarget, DockTabLabelDropTarget, DockTearOffCandidateDropTarget,
+        DockRootDropTarget, DockTabLabelDropTarget,
     },
 };
 use open_gpui::{Bounds, Pixels, Point};
@@ -29,8 +29,6 @@ pub(crate) struct DockHostDropScene {
     pub(crate) root: Option<DockRootDropTarget>,
     pub(crate) floating_title_bars: Vec<DockFloatingTitleBarDropTarget>,
     pub(crate) empty_spaces: Vec<DockEmptySpaceDropTarget>,
-    pub(crate) known_viewport: Option<crate::DockViewportHit>,
-    pub(crate) tear_off_candidate: Option<DockTearOffCandidateDropTarget>,
     pub(crate) clear_on_miss: bool,
 }
 
@@ -53,8 +51,6 @@ impl DockHostDropScene {
             root: None,
             floating_title_bars: Vec::new(),
             empty_spaces: Vec::new(),
-            known_viewport: None,
-            tear_off_candidate: None,
             clear_on_miss: true,
         }
     }
@@ -98,8 +94,6 @@ impl DockHostDropScene {
             root: self.root,
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
-            known_viewport: self.known_viewport.clone(),
-            tear_off_candidate: self.tear_off_candidate.clone(),
         })
     }
 
