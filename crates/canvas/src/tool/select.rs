@@ -208,7 +208,9 @@ impl SelectToolStateMachine {
         target: HitTarget,
     ) -> Vec<CanvasToolEffect> {
         let mut selection = context.selection().clone();
-        if !selection.contains_target(&target) {
+        if !selection.contains_target(&target)
+            && !context.selection_structurally_contains_target(&target)
+        {
             selection.replace_with(target);
         }
         let (node_ids, shape_ids) = context.translatable_selection_ids(&selection);

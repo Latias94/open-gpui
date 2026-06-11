@@ -724,6 +724,24 @@ impl CanvasToolReducerContext<'_> {
         (node_ids, shape_ids)
     }
 
+    pub(crate) fn selection_structurally_contains_target(&self, target: &HitTarget) -> bool {
+        let Some(record_id) = record_id_for_selection_target(target) else {
+            return false;
+        };
+
+        self.selection_structurally_contains_record(&record_id)
+    }
+
+    fn selection_structurally_contains_record(&self, record_id: &CanvasRecordId) -> bool {
+        collect_selection_record_scope(
+            self.document,
+            self.selection,
+            CanvasRecordScopeOptions::structural(),
+            |record_id| self.is_translatable_record(record_id),
+        )
+        .contains(record_id)
+    }
+
     fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {
         match record_id {
             CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
@@ -1702,6 +1720,14 @@ fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
         Axis::Horizontal
     } else {
         Axis::Vertical
+    }
+}
+
+fn record_id_for_selection_target(target: &HitTarget) -> Option<CanvasRecordId> {
+    match target {
+        HitTarget::Node(id) => Some(CanvasRecordId::Node(id.clone())),
+        HitTarget::Shape(id) => Some(CanvasRecordId::Shape(id.clone())),
+        HitTarget::Edge(_) | HitTarget::Handle { .. } => None,
     }
 }
 
@@ -3503,6 +3529,86 @@ mod tests {
                 .unwrap()
                 .position,
             point(px(70.0), px(20.0))
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
+    }
+
+    #[test]
+    fn translating_from_related_descendant_keeps_parent_selection() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(60.0), px(40.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("leaf")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(65.0), px(45.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(75.0), px(65.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(75.0), px(65.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
+        );
+        assert!(editor.session.selection.nodes.is_empty());
+        assert_eq!(
+            editor
+                .document()
+                .shape(&ShapeId::from("frame"))
+                .unwrap()
+                .bounds
+                .origin,
+            point(px(10.0), px(20.0))
+        );
+        assert_eq!(
+            editor
+                .document()
+                .node(&NodeId::from("leaf"))
+                .unwrap()
+                .position,
+            point(px(70.0), px(60.0))
         );
         assert_eq!(editor.history().undo_depth(), 1);
     }
