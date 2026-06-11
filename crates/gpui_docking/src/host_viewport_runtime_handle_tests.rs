@@ -72,7 +72,7 @@ fn viewport_runtime_handle_tracks_payload_drag_session(cx: &mut TestAppContext) 
 }
 
 #[open_gpui::test]
-fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContext) {
+fn viewport_runtime_handle_auto_observes_window_closed_cleanup(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
@@ -85,7 +85,6 @@ fn viewport_runtime_handle_observes_window_closed_cleanup(cx: &mut TestAppContex
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller);
-    cx.update(|app| runtime.observe_window_closed(app).detach());
 
     let opened = cx
         .update(|app| {
@@ -195,7 +194,6 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
     workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
-    cx.update(|app| runtime.observe_window_closed(app).detach());
 
     let opened = cx
         .update(|app| {
@@ -310,7 +308,6 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
             target_space: main_space.clone(),
         },
     );
-    cx.update(|app| runtime.observe_window_closed(app).detach());
 
     let opened = cx
         .update(|app| {

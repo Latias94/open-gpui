@@ -810,7 +810,6 @@ fn main() {
                 .attach_panel_view("runtime", runtime_panel)
                 .expect("runtime panel descriptor should exist");
         });
-        runtime.observe_window_closed(cx).detach();
 
         let primary_options = restored_viewport_options(&placement, SPACE, primary_bounds);
         let primary_opened = runtime

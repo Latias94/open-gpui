@@ -25,7 +25,10 @@ use open_gpui::{
 };
 #[cfg(test)]
 use std::cell::Ref;
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 /// Cloneable application handle for the shared viewport runtime.
 ///
@@ -35,6 +38,7 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Clone, Debug)]
 pub struct DockViewportRuntimeHandle {
     runtime: Rc<RefCell<DockViewportRuntime>>,
+    window_closed_observer_installed: Rc<Cell<bool>>,
 }
 
 fn refresh_windows(windows: Vec<AnyWindowHandle>, cx: &mut App) {
@@ -61,6 +65,7 @@ impl DockViewportRuntimeHandle {
     pub(crate) fn from_runtime(runtime: DockViewportRuntime) -> Self {
         Self {
             runtime: Rc::new(RefCell::new(runtime)),
+            window_closed_observer_installed: Rc::new(Cell::new(false)),
         }
     }
 
@@ -140,6 +145,8 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportOpenOutcome> {
+        self.ensure_window_closed_observer(cx);
+
         let space = space.into();
         let status = match self
             .runtime
@@ -516,18 +523,35 @@ impl DockViewportRuntimeHandle {
             .handle_window_should_close(window_id)
     }
 
-    /// Registers an application-level close observer that cleans up viewport mappings by
-    /// [`WindowId`].
+    /// Ensures the application-level close observer is installed.
     ///
-    /// This observer runs after a close has been accepted. It complements the should-close hook
-    /// installed by [`Self::open_viewport`].
+    /// [`Self::open_viewport`] installs this observer automatically before opening a runtime
+    /// viewport. This method remains available for callers that want to eagerly install the same
+    /// observer before the first window opens.
     ///
-    /// Keep or detach the returned subscription according to the application's lifetime policy.
+    /// The returned subscription is intentionally inert because observer lifetime is owned by the
+    /// runtime handle and the GPUI application callback. Dropping it does not disable cleanup for
+    /// runtime-opened windows.
     pub fn observe_window_closed(&self, cx: &mut App) -> Subscription {
-        let runtime = self.clone();
+        self.ensure_window_closed_observer(cx);
+        Subscription::new(|| {})
+    }
+
+    fn ensure_window_closed_observer(&self, cx: &mut App) {
+        if self.window_closed_observer_installed.replace(true) {
+            return;
+        }
+
+        let runtime = Rc::downgrade(&self.runtime);
         cx.on_window_closed(move |cx, window_id| {
-            runtime.handle_window_closed_with_app(window_id, cx);
+            let Some(runtime) = runtime.upgrade() else {
+                return;
+            };
+            runtime
+                .borrow_mut()
+                .handle_window_closed_with_app(window_id, cx);
         })
+        .detach();
     }
 
     /// Exports serializable placement snapshots from the shared runtime.
