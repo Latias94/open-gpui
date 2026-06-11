@@ -1,13 +1,12 @@
 use super::*;
 use crate::{
-    CanvasEdge, CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasKeyModifiers, CanvasKindRegistry,
-    CanvasNode, CanvasNodeKind, CanvasNodeSchemaPolicy, CanvasRecordId, CanvasRecordKind,
-    CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape,
-    CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
-    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId,
-    PointerButton, ShapeId,
+    CanvasEditor, CanvasEvent, CanvasKeyModifiers, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
+    CanvasNodeSchemaPolicy, CanvasRecordId, CanvasRecordKind, CanvasRecordRelation,
+    CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape, CanvasStore, CanvasTool,
+    CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
+    CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
-    test_support::document_fixture,
+    test_support::{child_frame_fixture, connected_pair_fixture, document_fixture},
     tool::CanvasToolEffect,
 };
 use open_gpui::{Bounds, point, px, size};
@@ -170,23 +169,7 @@ fn legacy_log_entries_do_not_expose_committed_record_operations() {
 
 #[test]
 fn committed_log_entries_expose_actual_record_operation_batches() {
-    let mut document = document_fixture()
-        .node(CanvasNode::new(
-            "a",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .node(CanvasNode::new(
-            "b",
-            point(px(20.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .edge(CanvasEdge::new(
-            "a-b",
-            CanvasEndpoint::new("a", None::<&str>),
-            CanvasEndpoint::new("b", None::<&str>),
-        ))
-        .build();
+    let mut document = connected_pair_fixture().build();
     let mut transaction = CanvasTransaction::single(DocumentCommand::RemoveNode(NodeId::from("a")));
     transaction
         .metadata
@@ -218,17 +201,7 @@ fn committed_log_entries_expose_actual_record_operation_batches() {
 
 #[test]
 fn committed_log_entries_expose_actual_relation_operation_batches() {
-    let mut document = document_fixture()
-        .node(CanvasNode::new(
-            "child",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .shape(crate::CanvasShape::new(
-            "frame",
-            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-        ))
-        .build();
+    let mut document = child_frame_fixture().build();
     let mut transaction = CanvasTransaction::new([
         DocumentCommand::SetRecordParent {
             child: CanvasRecordId::Node(NodeId::from("child")),
@@ -260,17 +233,7 @@ fn committed_log_entries_expose_actual_relation_operation_batches() {
 #[test]
 fn json_persistence_codec_round_trips_committed_relation_operation_batches() {
     let codec = CanvasJsonPersistenceCodec;
-    let mut document = document_fixture()
-        .node(CanvasNode::new(
-            "child",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .shape(crate::CanvasShape::new(
-            "frame",
-            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-        ))
-        .build();
+    let mut document = child_frame_fixture().build();
     let committed = document
         .commit_transaction(CanvasTransaction::single(
             DocumentCommand::SetRecordParent {
@@ -754,17 +717,7 @@ fn persistent_transaction_skips_empty_transactions() {
 
 #[test]
 fn persistent_transaction_skips_empty_committed_diff() {
-    let document = document_fixture()
-        .node(CanvasNode::new(
-            "child",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .shape(crate::CanvasShape::new(
-            "frame",
-            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-        ))
-        .build();
+    let document = child_frame_fixture().build();
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::new(7);
@@ -1094,17 +1047,7 @@ fn persistent_store_undo_and_redo_return_store_changes() {
 
 #[test]
 fn persistent_undo_and_redo_log_relation_operation_batches() {
-    let document = document_fixture()
-        .node(CanvasNode::new(
-            "child",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .shape(crate::CanvasShape::new(
-            "frame",
-            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-        ))
-        .build();
+    let document = child_frame_fixture().build();
     let mut editor = CanvasEditor::new(document);
     let mut store = MemoryCanvasPersistenceStore::default();
     let mut cursor = CanvasPersistenceCursor::default();
@@ -1146,23 +1089,7 @@ fn persistent_undo_and_redo_log_relation_operation_batches() {
 
 #[test]
 fn persistent_undo_replay_restores_relations_pruned_by_remove_node() {
-    let mut document = document_fixture()
-        .node(CanvasNode::new(
-            "a",
-            point(px(0.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .node(CanvasNode::new(
-            "b",
-            point(px(20.0), px(0.0)),
-            size(px(10.0), px(10.0)),
-        ))
-        .edge(CanvasEdge::new(
-            "a-b",
-            CanvasEndpoint::new("a", None::<&str>),
-            CanvasEndpoint::new("b", None::<&str>),
-        ))
-        .build();
+    let mut document = connected_pair_fixture().build();
     let edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
     let group = CanvasRecordId::Node(NodeId::from("b"));
     document

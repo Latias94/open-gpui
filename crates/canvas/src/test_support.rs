@@ -13,6 +13,38 @@ pub(crate) fn document_fixture() -> CanvasDocumentFixtureBuilder {
     CanvasDocumentFixtureBuilder::new()
 }
 
+pub(crate) fn connected_pair_fixture() -> CanvasDocumentFixtureBuilder {
+    document_fixture()
+        .node(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .node(CanvasNode::new(
+            "b",
+            point(px(20.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .edge(CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        ))
+}
+
+pub(crate) fn child_frame_fixture() -> CanvasDocumentFixtureBuilder {
+    document_fixture()
+        .node(CanvasNode::new(
+            "child",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .shape(CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        ))
+}
+
 impl CanvasDocumentFixtureBuilder {
     pub(crate) fn new() -> Self {
         Self::default()

@@ -1513,7 +1513,9 @@ fn default_edge_interaction_width() -> Pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{CanvasCommandGenerator, TestRng, document_fixture};
+    use crate::test_support::{
+        CanvasCommandGenerator, TestRng, connected_pair_fixture, document_fixture,
+    };
     use crate::{CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION, CANVAS_SNAPSHOT_MIGRATIONS};
     use open_gpui::{point, px, size};
 
@@ -1541,23 +1543,7 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_array_records() {
-        let document = document_fixture()
-            .node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .build();
+        let document = connected_pair_fixture().build();
 
         let snapshot = document.to_snapshot();
         assert_eq!(snapshot.nodes.len(), 2);
@@ -1894,23 +1880,7 @@ mod tests {
 
     #[test]
     fn removes_edges_when_node_is_removed() {
-        let mut document = document_fixture()
-            .node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .build();
+        let mut document = connected_pair_fixture().build();
 
         document.remove_node(&NodeId::from("a")).unwrap();
 
@@ -2520,23 +2490,7 @@ mod tests {
 
     #[test]
     fn transaction_diff_includes_edges_removed_with_node() {
-        let mut document = document_fixture()
-            .node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .build();
+        let mut document = connected_pair_fixture().build();
 
         let diff = document
             .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::RemoveNode(

@@ -473,12 +473,13 @@ impl CanvasStore {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use open_gpui::{Bounds, point, px, size};
+    use open_gpui::{point, px, size};
 
     use super::*;
     use crate::{
-        CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasRelationChange, CanvasShape,
-        DocumentCommand, NodeId, ShapeId, test_support::document_fixture,
+        CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasRelationChange, DocumentCommand,
+        NodeId, ShapeId,
+        test_support::{child_frame_fixture, document_fixture},
     };
 
     #[test]
@@ -573,17 +574,7 @@ mod tests {
     fn listeners_receive_relation_only_change_facts() {
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
-        let document = document_fixture()
-            .node(CanvasNode::new(
-                "child",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .shape(CanvasShape::new(
-                "frame",
-                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-            ))
-            .build();
+        let document = child_frame_fixture().build();
         let mut store = CanvasStore::new(document);
         let changes = Arc::new(Mutex::new(Vec::new()));
         let observed = Arc::clone(&changes);
@@ -622,17 +613,7 @@ mod tests {
     fn store_changes_expose_relation_cleanup_for_deleted_records() {
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
-        let mut document = document_fixture()
-            .node(CanvasNode::new(
-                "child",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .shape(CanvasShape::new(
-                "frame",
-                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-            ))
-            .build();
+        let mut document = child_frame_fixture().build();
         document
             .apply_transaction(CanvasTransaction::single(
                 DocumentCommand::SetRecordParent {
