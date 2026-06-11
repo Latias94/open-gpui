@@ -28,9 +28,9 @@ mod tests {
         CanvasDocument, CanvasEdge, CanvasEdgeKind, CanvasEdgeRenderPolicy, CanvasEdgeRouter,
         CanvasEditor, CanvasEndpoint, CanvasEvent, CanvasHandle, CanvasKey, CanvasKeyModifiers,
         CanvasKindLabel, CanvasKindPaint, CanvasKindRegistry, CanvasNode, CanvasNodeGeometryPolicy,
-        CanvasNodeKind, CanvasNodeRenderPolicy, CanvasRoutePath, CanvasRouteRequest,
-        CanvasSelection, CanvasSelectionMode, CanvasShape, CanvasShapeKind,
-        CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle,
+        CanvasNodeKind, CanvasNodeRenderPolicy, CanvasRecordId, CanvasRoutePath,
+        CanvasRouteRequest, CanvasSelection, CanvasSelectionMode, CanvasShape, CanvasShapeKind,
+        CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle, CanvasTransaction,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
         test_support::{connected_pair_fixture, document_fixture},
@@ -516,6 +516,175 @@ mod tests {
         assert!(frame.records.iter().any(|record| {
             record.target == HitTarget::Node(crate::NodeId::from("plain")) && !record.selected
         }));
+    }
+
+    #[test]
+    fn structurally_selected_records_are_marked_in_paint_frame() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(120.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(80.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "child-peer",
+                CanvasEndpoint::new("child", None::<&str>),
+                CanvasEndpoint::new("peer", None::<&str>),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(crate::NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+                    member: CanvasRecordId::Node(crate::NodeId::from("peer")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(160.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        let frame_record = frame
+            .records
+            .iter()
+            .find(|record| record.target == HitTarget::Shape(crate::ShapeId::from("frame")))
+            .unwrap();
+        assert!(frame_record.selected);
+        assert!(frame_record.structurally_selected);
+        for target in [
+            HitTarget::Node(crate::NodeId::from("child")),
+            HitTarget::Node(crate::NodeId::from("peer")),
+            HitTarget::Edge(crate::EdgeId::from("child-peer")),
+        ] {
+            let record = frame
+                .records
+                .iter()
+                .find(|record| record.target == target)
+                .unwrap();
+            assert!(!record.selected);
+            assert!(record.structurally_selected);
+        }
+
+        let overlay = frame.widget_overlay_frame(CanvasWidgetOverlayOptions::selected_records());
+        assert_eq!(overlay.len(), 1);
+        assert_eq!(
+            overlay.placements[0].target,
+            HitTarget::Shape(crate::ShapeId::from("frame"))
+        );
+    }
+
+    #[test]
+    fn structural_selection_bounds_do_not_replace_transform_handles() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(160.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(crate::NodeId::from("child")),
+                parent: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+            }]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(140.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.structural_selection_bounds,
+            Some(Bounds::new(
+                point(px(0.0), px(0.0)),
+                size(px(200.0), px(80.0))
+            ))
+        );
+        assert_eq!(frame.interaction.transform_handles.len(), 4);
+        assert!(frame.interaction.transform_handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Shape(crate::ShapeId::from("frame"))
+                && handle.handle == crate::CanvasResizeHandle::BottomRight
+                && handle.view_bounds.contains(&point(px(100.0), px(80.0)))
+        }));
+        assert!(
+            !frame
+                .interaction
+                .transform_handles
+                .iter()
+                .any(|handle| handle.view_bounds.contains(&point(px(200.0), px(80.0))))
+        );
+    }
+
+    #[test]
+    fn structural_selection_bounds_skip_redundant_explicit_selection_bounds() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(120.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(crate::NodeId::from("child")),
+                parent: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+            }]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(160.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(frame.interaction.structural_selection_bounds, None);
     }
 
     #[test]

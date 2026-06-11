@@ -242,6 +242,23 @@ where
         )
     }
 
+    pub fn node_shape_bounds_for_records<'b>(
+        &self,
+        record_ids: impl IntoIterator<Item = &'b CanvasRecordId>,
+    ) -> Option<Bounds<Pixels>> {
+        union_record_geometry_bounds(record_ids.into_iter().filter_map(|record_id| {
+            if !matches!(
+                record_id,
+                CanvasRecordId::Node(_) | CanvasRecordId::Shape(_)
+            ) {
+                return None;
+            }
+
+            self.record_geometry(record_id)
+                .filter(CanvasRecordGeometry::is_visible_unlocked)
+        }))
+    }
+
     pub(crate) fn hit_records(&self) -> Vec<HitRecord> {
         let mut records = Vec::new();
 

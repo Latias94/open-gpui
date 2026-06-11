@@ -19,6 +19,7 @@ mod json_canvas;
 mod layer;
 mod mutation;
 mod persistence;
+mod record_scope;
 mod relations;
 mod routing;
 mod runtime;
@@ -40,10 +41,11 @@ pub use changes::{
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder, CanvasDocumentDiff,
-    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue,
-    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    BindingId, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder,
+    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint,
+    CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle,
+    CanvasTransaction, CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole,
+    NodeId, ShapeId,
 };
 pub use format::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
@@ -93,9 +95,11 @@ pub use persistence::{
     redo_persistent_transaction, replay_canvas_log, save_canvas_checkpoint,
     save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
+pub use record_scope::{CanvasRecordScope, CanvasRecordScopeOptions, selection_record_scope};
 pub use relations::{
-    CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelation,
-    CanvasRecordRelationKind, CanvasRecordRelations, CanvasRecordRelationsBuilder,
+    CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
+    CanvasRecordRelation, CanvasRecordRelationKey, CanvasRecordRelationKind, CanvasRecordRelations,
+    CanvasRecordRelationsBuilder,
 };
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,

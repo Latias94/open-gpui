@@ -89,7 +89,7 @@ pub fn paint_canvas_frame(
     }
 
     for record in &frame.frame.records {
-        if !record.selected {
+        if !record_has_selection_feedback(record) {
             continue;
         }
 
@@ -121,6 +121,18 @@ pub fn paint_canvas_frame(
                 );
             }
         }
+    }
+
+    if let Some(bounds) = frame.frame.interaction.structural_selection_bounds {
+        paint_rect(
+            window,
+            canvas_bounds,
+            bounds.dilate(px(3.0)),
+            theme.selection_bounds_fill,
+            theme.selection_bounds_stroke,
+            theme.selection_bounds_stroke_width,
+            px(2.0),
+        );
     }
 
     if let Some(bounds) = frame.frame.interaction.selection_bounds {
@@ -168,6 +180,10 @@ pub fn paint_canvas_frame(
             theme.handle_corner_radius,
         );
     }
+}
+
+fn record_has_selection_feedback(record: &CanvasPaintRecord) -> bool {
+    record.selected || record.structurally_selected
 }
 
 fn selection_corner_radius(record: &CanvasPaintRecord, theme: CanvasPaintTheme) -> Pixels {

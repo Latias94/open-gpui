@@ -246,8 +246,8 @@ impl CanvasRelationOperationBatch {
 }
 
 impl DocumentCommand {
-    pub fn record_id(&self) -> CanvasRecordId {
-        match self {
+    pub fn record_id(&self) -> Option<CanvasRecordId> {
+        Some(match self {
             Self::InsertNode(node) | Self::UpdateNode(node) => {
                 CanvasRecordId::Node(node.id.clone())
             }
@@ -266,7 +266,9 @@ impl DocumentCommand {
             Self::AddRecordToGroup { group, .. } | Self::RemoveRecordFromGroup { group, .. } => {
                 group.clone()
             }
-        }
+            Self::SetRecordBinding(binding) => binding.source.clone(),
+            Self::RemoveRecordBinding { .. } => return None,
+        })
     }
 
     pub fn record_change(&self) -> Option<CanvasRecordChange> {
@@ -292,7 +294,9 @@ impl DocumentCommand {
             Self::SetRecordParent { .. }
             | Self::ClearRecordParent { .. }
             | Self::AddRecordToGroup { .. }
-            | Self::RemoveRecordFromGroup { .. } => None,
+            | Self::RemoveRecordFromGroup { .. }
+            | Self::SetRecordBinding(_)
+            | Self::RemoveRecordBinding { .. } => None,
         }
     }
 }
@@ -305,7 +309,7 @@ impl CanvasTransaction {
     }
 
     pub fn record_ids(&self) -> impl Iterator<Item = CanvasRecordId> + '_ {
-        self.commands.iter().map(DocumentCommand::record_id)
+        self.commands.iter().filter_map(DocumentCommand::record_id)
     }
 
     pub fn record_operations(
@@ -328,8 +332,8 @@ impl CanvasTransaction {
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasRecordGroupRelation, CanvasRecordParentRelation, EdgeId,
-        NodeId, ShapeId,
+        BindingId, CanvasEdge, CanvasEndpoint, CanvasRecordBindingRelation,
+        CanvasRecordGroupRelation, CanvasRecordParentRelation, EdgeId, NodeId, ShapeId,
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -342,15 +346,31 @@ mod tests {
                 size(px(10.0), px(10.0)),
             ))
             .record_id(),
-            CanvasRecordId::Node(NodeId::from("node"))
+            Some(CanvasRecordId::Node(NodeId::from("node")))
         );
         assert_eq!(
             DocumentCommand::RemoveEdge(EdgeId::from("edge")).record_id(),
-            CanvasRecordId::Edge(EdgeId::from("edge"))
+            Some(CanvasRecordId::Edge(EdgeId::from("edge")))
         );
         assert_eq!(
             DocumentCommand::RemoveShape(ShapeId::from("shape")).record_id(),
-            CanvasRecordId::Shape(ShapeId::from("shape"))
+            Some(CanvasRecordId::Shape(ShapeId::from("shape")))
+        );
+        assert_eq!(
+            DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                "binding",
+                CanvasRecordId::Node(NodeId::from("source")),
+                CanvasRecordId::Shape(ShapeId::from("target")),
+            ))
+            .record_id(),
+            Some(CanvasRecordId::Node(NodeId::from("source")))
+        );
+        assert_eq!(
+            DocumentCommand::RemoveRecordBinding {
+                id: BindingId::from("binding")
+            }
+            .record_id(),
+            None
         );
     }
 
@@ -384,6 +404,13 @@ mod tests {
             Some(CanvasRecordChange::Delete(CanvasRecordId::Node(
                 NodeId::from("node")
             )))
+        );
+        assert_eq!(
+            DocumentCommand::RemoveRecordBinding {
+                id: BindingId::from("binding")
+            }
+            .record_change(),
+            None
         );
     }
 
