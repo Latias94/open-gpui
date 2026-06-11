@@ -1,22 +1,62 @@
 use crate::{CanvasDocument, CanvasRecordId, CanvasSelection};
 use indexmap::IndexSet;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CanvasRecordScopeOptions {
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRecordScopeOptions {
     pub include_internal_edges: bool,
 }
 
 impl CanvasRecordScopeOptions {
-    pub(crate) const fn structural() -> Self {
+    pub const fn structural() -> Self {
         Self {
             include_internal_edges: false,
         }
     }
 
-    pub(crate) const fn structural_with_internal_edges() -> Self {
+    pub const fn structural_with_internal_edges() -> Self {
         Self {
             include_internal_edges: true,
         }
+    }
+
+    pub const fn with_internal_edges(mut self, include_internal_edges: bool) -> Self {
+        self.include_internal_edges = include_internal_edges;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CanvasRecordScope {
+    records: IndexSet<CanvasRecordId>,
+}
+
+impl CanvasRecordScope {
+    pub fn new(records: impl IntoIterator<Item = CanvasRecordId>) -> Self {
+        Self {
+            records: records.into_iter().collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub fn contains(&self, record_id: &CanvasRecordId) -> bool {
+        self.records.contains(record_id)
+    }
+
+    pub fn records(&self) -> impl Iterator<Item = &CanvasRecordId> {
+        self.records.iter()
+    }
+
+    pub fn into_records(self) -> Vec<CanvasRecordId> {
+        self.records.into_iter().collect()
     }
 }
 
@@ -37,6 +77,19 @@ pub(crate) fn collect_selection_record_scope(
     }
 
     records
+}
+
+pub fn selection_record_scope(
+    document: &CanvasDocument,
+    selection: &CanvasSelection,
+    options: CanvasRecordScopeOptions,
+) -> CanvasRecordScope {
+    CanvasRecordScope::new(collect_selection_record_scope(
+        document,
+        selection,
+        options,
+        |record_id| record_exists(document, record_id),
+    ))
 }
 
 fn selected_record_ids(selection: &CanvasSelection) -> impl Iterator<Item = CanvasRecordId> + '_ {
@@ -79,6 +132,14 @@ fn include_internal_edges(
         if can_include(&record_id) {
             records.insert(record_id);
         }
+    }
+}
+
+fn record_exists(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
+    match record_id {
+        CanvasRecordId::Node(id) => document.contains_node(id),
+        CanvasRecordId::Edge(id) => document.contains_edge(id),
+        CanvasRecordId::Shape(id) => document.contains_shape(id),
     }
 }
 

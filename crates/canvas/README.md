@@ -635,6 +635,25 @@ let intents = vec![
 Register application tools with `CanvasToolRegistry`, then call
 `CanvasEditor::handle_event_with_tool_registry`.
 
+When a tool needs to act on the same structural selection as built-in copy, move, snap, or z-order
+commands, use `CanvasToolContext::selection_record_scope` instead of walking
+`CanvasRecordRelations` directly. Parent and group descendants are expanded by the canvas-owned
+scope rules, and internal edges can be included when both endpoints are inside the selected
+structure.
+
+```rust
+# use open_gpui_canvas::{CanvasRecordScopeOptions, CanvasToolContext};
+fn selected_structure(context: CanvasToolContext<'_>) {
+    let scope = context.selection_record_scope(
+        CanvasRecordScopeOptions::structural_with_internal_edges(),
+    );
+
+    for record_id in scope.records() {
+        let _ = record_id;
+    }
+}
+```
+
 ## JSON Canvas
 
 JSON Canvas is treated as an interchange format, not the canonical storage model.

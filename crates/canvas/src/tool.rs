@@ -10,11 +10,11 @@ use crate::transform::{
 use crate::{
     CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
     CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts,
-    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRuntime, CanvasSnapGuide,
-    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
-    DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
-    HitTarget, NodeId, ShapeId, connection_hit_options, snap_delta_for_resize_selection,
-    snap_delta_for_selection,
+    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRecordScope, CanvasRuntime,
+    CanvasSnapGuide, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
+    CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions,
+    HitRecord, HitTarget, NodeId, ShapeId, connection_hit_options, selection_record_scope,
+    snap_delta_for_resize_selection, snap_delta_for_selection,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Axis, Bounds, Pixels, Point};
@@ -562,6 +562,10 @@ impl CanvasToolContext<'_> {
             self.document_position(view_position),
             options,
         )
+    }
+
+    pub fn selection_record_scope(&self, options: CanvasRecordScopeOptions) -> CanvasRecordScope {
+        selection_record_scope(self.document, self.selection, options)
     }
 }
 
@@ -4122,6 +4126,99 @@ mod tests {
 
         assert!(editor.undo().unwrap());
         assert!(!editor.document().contains_node(&NodeId::from("stamp-1")));
+    }
+
+    #[test]
+    fn custom_tool_context_exposes_selection_record_scope() {
+        #[derive(Clone)]
+        struct ScopeProbeTool {
+            observed: Arc<Mutex<Vec<CanvasRecordId>>>,
+        }
+
+        impl CanvasToolReducer for ScopeProbeTool {
+            fn handle_event(
+                &mut self,
+                context: CanvasToolContext<'_>,
+                _event: CanvasEvent,
+            ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
+                let scope = context
+                    .selection_record_scope(
+                        CanvasRecordScopeOptions::structural_with_internal_edges(),
+                    )
+                    .records()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                *self.observed.lock().unwrap() = scope;
+                Ok(Vec::new())
+            }
+        }
+
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(80.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "child-peer",
+                CanvasEndpoint::new("child", None::<&str>),
+                CanvasEndpoint::new("peer", None::<&str>),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("frame")),
+                    member: CanvasRecordId::Node(NodeId::from("peer")),
+                },
+            ]))
+            .unwrap();
+
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let mut editor = CanvasEditor::new(document);
+        editor.set_tool(CanvasTool::custom("probe")).unwrap();
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
+        let mut tool = ScopeProbeTool {
+            observed: Arc::clone(&observed),
+        };
+
+        editor
+            .handle_event_with_custom_tool(
+                CanvasEvent::PointerDown {
+                    position: point(px(10.0), px(10.0)),
+                    button: PointerButton::Primary,
+                    modifiers: CanvasKeyModifiers::default(),
+                },
+                &mut tool,
+            )
+            .unwrap();
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![
+                CanvasRecordId::Shape(ShapeId::from("frame")),
+                CanvasRecordId::Node(NodeId::from("child")),
+                CanvasRecordId::Node(NodeId::from("peer")),
+                CanvasRecordId::Edge(EdgeId::from("child-peer")),
+            ]
+        );
     }
 
     #[test]
