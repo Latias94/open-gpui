@@ -58,10 +58,6 @@ impl CanvasInputMapper {
         })
     }
 
-    pub fn key_down(&self, event: &KeyDownEvent) -> CanvasEvent {
-        Self::key_down_event(event)
-    }
-
     pub fn key_down_event(event: &KeyDownEvent) -> CanvasEvent {
         let key = canvas_key(&event.keystroke);
         if key == CanvasKey::Escape {

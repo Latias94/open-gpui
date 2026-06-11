@@ -486,7 +486,7 @@ impl From<CanvasToolIntent> for CanvasEditorAction {
 #[derive(Clone, Copy)]
 pub struct CanvasToolContext<'a> {
     document: &'a CanvasDocument,
-    viewport: &'a CanvasViewport,
+    viewport: CanvasViewport,
     tool: &'a CanvasTool,
     runtime: &'a CanvasRuntime,
     edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
@@ -499,7 +499,7 @@ impl fmt::Debug for CanvasToolContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CanvasToolContext")
             .field("document", self.document)
-            .field("viewport", self.viewport)
+            .field("viewport", &self.viewport)
             .field("tool", self.tool)
             .field("runtime", self.runtime)
             .field("edge_router", &"<dyn CanvasEdgeRouter>")
@@ -516,7 +516,7 @@ impl CanvasToolContext<'_> {
     }
 
     pub fn viewport(&self) -> &CanvasViewport {
-        self.viewport
+        &self.viewport
     }
 
     pub fn tool(&self) -> &CanvasTool {
@@ -1406,7 +1406,7 @@ impl CanvasEditor {
     pub fn tool_context(&self) -> CanvasToolContext<'_> {
         CanvasToolContext {
             document: self.document(),
-            viewport: &self.session.viewport,
+            viewport: self.session.viewport(),
             tool: self.tool(),
             runtime: self.runtime(),
             edge_router: self.edge_router(),
