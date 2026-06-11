@@ -396,6 +396,92 @@ pub enum CanvasToolIntent {
     SetViewport(CanvasViewport),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum CanvasEditorAction {
+    ApplyTransaction(CanvasTransaction),
+    BeginGesture,
+    UpdateGesture(CanvasTransaction),
+    CommitGesture,
+    CancelGesture,
+    SetTool(CanvasTool),
+    Session(CanvasSessionEffect),
+}
+
+impl From<CanvasToolEffect> for CanvasEditorAction {
+    fn from(effect: CanvasToolEffect) -> Self {
+        match effect {
+            CanvasToolEffect::ApplyTransaction(transaction) => Self::ApplyTransaction(transaction),
+            CanvasToolEffect::BeginGesture => Self::BeginGesture,
+            CanvasToolEffect::UpdateGesture(transaction) => Self::UpdateGesture(transaction),
+            CanvasToolEffect::CommitGesture => Self::CommitGesture,
+            CanvasToolEffect::CancelGesture => Self::CancelGesture,
+            CanvasToolEffect::SetTool(tool) => Self::SetTool(tool),
+            CanvasToolEffect::SetSelection(selection) => {
+                Self::Session(CanvasSessionEffect::SetSelection(selection))
+            }
+            CanvasToolEffect::ReplaceSelection(target) => {
+                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
+            }
+            CanvasToolEffect::AddSelection(target) => {
+                Self::Session(CanvasSessionEffect::AddSelection(target))
+            }
+            CanvasToolEffect::RemoveSelection(target) => {
+                Self::Session(CanvasSessionEffect::RemoveSelection(target))
+            }
+            CanvasToolEffect::ToggleSelection(target) => {
+                Self::Session(CanvasSessionEffect::ToggleSelection(target))
+            }
+            CanvasToolEffect::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
+            CanvasToolEffect::SetState(state) => {
+                Self::Session(CanvasSessionEffect::SetState(state))
+            }
+            CanvasToolEffect::PanViewport(delta) => {
+                Self::Session(CanvasSessionEffect::PanViewport(delta))
+            }
+            CanvasToolEffect::SetViewport(viewport) => {
+                Self::Session(CanvasSessionEffect::SetViewport(viewport))
+            }
+        }
+    }
+}
+
+impl From<CanvasToolIntent> for CanvasEditorAction {
+    fn from(intent: CanvasToolIntent) -> Self {
+        match intent {
+            CanvasToolIntent::ApplyTransaction(transaction) => Self::ApplyTransaction(transaction),
+            CanvasToolIntent::BeginTransientTransaction => Self::BeginGesture,
+            CanvasToolIntent::UpdateTransientTransaction(transaction) => {
+                Self::UpdateGesture(transaction)
+            }
+            CanvasToolIntent::CommitTransientTransaction => Self::CommitGesture,
+            CanvasToolIntent::CancelTransientTransaction => Self::CancelGesture,
+            CanvasToolIntent::SetTool(tool) => Self::SetTool(tool),
+            CanvasToolIntent::SetSelection(selection) => {
+                Self::Session(CanvasSessionEffect::SetSelection(selection))
+            }
+            CanvasToolIntent::ReplaceSelection(target) => {
+                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
+            }
+            CanvasToolIntent::AddSelection(target) => {
+                Self::Session(CanvasSessionEffect::AddSelection(target))
+            }
+            CanvasToolIntent::RemoveSelection(target) => {
+                Self::Session(CanvasSessionEffect::RemoveSelection(target))
+            }
+            CanvasToolIntent::ToggleSelection(target) => {
+                Self::Session(CanvasSessionEffect::ToggleSelection(target))
+            }
+            CanvasToolIntent::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
+            CanvasToolIntent::PanViewport(delta) => {
+                Self::Session(CanvasSessionEffect::PanViewport(delta))
+            }
+            CanvasToolIntent::SetViewport(viewport) => {
+                Self::Session(CanvasSessionEffect::SetViewport(viewport))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct CanvasToolContext<'a> {
     document: &'a CanvasDocument,
@@ -1086,51 +1172,31 @@ impl CanvasEditor {
         &mut self,
         effect: CanvasToolEffect,
     ) -> Result<(), DocumentError> {
-        match effect {
-            CanvasToolEffect::ApplyTransaction(transaction) => {
+        self.apply_editor_action(effect.into())
+    }
+
+    fn apply_editor_action(&mut self, action: CanvasEditorAction) -> Result<(), DocumentError> {
+        match action {
+            CanvasEditorAction::ApplyTransaction(transaction) => {
                 self.apply_transaction(transaction)?;
             }
-            CanvasToolEffect::BeginGesture => {
+            CanvasEditorAction::BeginGesture => {
                 self.begin_gesture();
             }
-            CanvasToolEffect::UpdateGesture(transaction) => {
+            CanvasEditorAction::UpdateGesture(transaction) => {
                 self.update_gesture(transaction)?;
             }
-            CanvasToolEffect::CommitGesture => {
+            CanvasEditorAction::CommitGesture => {
                 self.commit_gesture()?;
             }
-            CanvasToolEffect::CancelGesture => {
+            CanvasEditorAction::CancelGesture => {
                 self.cancel_gesture()?;
             }
-            CanvasToolEffect::SetTool(tool) => {
+            CanvasEditorAction::SetTool(tool) => {
                 self.set_tool(tool)?;
             }
-            CanvasToolEffect::SetSelection(selection) => {
-                self.apply_session_effect(CanvasSessionEffect::SetSelection(selection));
-            }
-            CanvasToolEffect::ReplaceSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::ReplaceSelection(target));
-            }
-            CanvasToolEffect::AddSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::AddSelection(target));
-            }
-            CanvasToolEffect::RemoveSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::RemoveSelection(target));
-            }
-            CanvasToolEffect::ToggleSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::ToggleSelection(target));
-            }
-            CanvasToolEffect::ClearSelection => {
-                self.apply_session_effect(CanvasSessionEffect::ClearSelection);
-            }
-            CanvasToolEffect::SetState(state) => {
-                self.apply_session_effect(CanvasSessionEffect::SetState(state));
-            }
-            CanvasToolEffect::PanViewport(delta) => {
-                self.apply_session_effect(CanvasSessionEffect::PanViewport(delta));
-            }
-            CanvasToolEffect::SetViewport(viewport) => {
-                self.apply_session_effect(CanvasSessionEffect::SetViewport(viewport));
+            CanvasEditorAction::Session(effect) => {
+                self.apply_session_effect(effect);
             }
         }
 
@@ -1171,52 +1237,7 @@ impl CanvasEditor {
     }
 
     pub fn apply_tool_intent(&mut self, intent: CanvasToolIntent) -> Result<(), DocumentError> {
-        match intent {
-            CanvasToolIntent::ApplyTransaction(transaction) => {
-                self.apply_transaction(transaction)?;
-            }
-            CanvasToolIntent::BeginTransientTransaction => {
-                self.begin_gesture();
-            }
-            CanvasToolIntent::UpdateTransientTransaction(transaction) => {
-                self.update_gesture(transaction)?;
-            }
-            CanvasToolIntent::CommitTransientTransaction => {
-                self.commit_gesture()?;
-            }
-            CanvasToolIntent::CancelTransientTransaction => {
-                self.cancel_gesture()?;
-            }
-            CanvasToolIntent::SetTool(tool) => {
-                self.set_tool(tool)?;
-            }
-            CanvasToolIntent::SetSelection(selection) => {
-                self.apply_session_effect(CanvasSessionEffect::SetSelection(selection));
-            }
-            CanvasToolIntent::ReplaceSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::ReplaceSelection(target));
-            }
-            CanvasToolIntent::AddSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::AddSelection(target));
-            }
-            CanvasToolIntent::RemoveSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::RemoveSelection(target));
-            }
-            CanvasToolIntent::ToggleSelection(target) => {
-                self.apply_session_effect(CanvasSessionEffect::ToggleSelection(target));
-            }
-            CanvasToolIntent::ClearSelection => {
-                self.apply_session_effect(CanvasSessionEffect::ClearSelection);
-            }
-            CanvasToolIntent::PanViewport(delta) => {
-                self.apply_session_effect(CanvasSessionEffect::PanViewport(delta));
-            }
-            CanvasToolIntent::SetViewport(viewport) => {
-                self.apply_session_effect(CanvasSessionEffect::SetViewport(viewport));
-            }
-        }
-
-        Ok(())
+        self.apply_editor_action(intent.into())
     }
 
     pub fn apply_tool_intents(
