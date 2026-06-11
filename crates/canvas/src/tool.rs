@@ -601,17 +601,12 @@ impl CanvasToolReducerContext<'_> {
     }
 
     pub(crate) fn delete_selection_transaction(&self) -> CanvasTransaction {
-        let node_ids = self
-            .selection
-            .selected_nodes()
-            .filter(|id| self.document.node(*id).is_some_and(|node| !node.locked))
-            .cloned()
-            .collect::<IndexSet<_>>();
+        let (node_ids, edge_ids, shape_ids) = self.deletable_selection_ids(self.selection);
 
         let mut commands = Vec::new();
 
-        for id in self.selection.selected_edges() {
-            let Some(edge) = self.document.edge(id) else {
+        for id in edge_ids {
+            let Some(edge) = self.document.edge(&id) else {
                 continue;
             };
             if edge.locked
@@ -621,23 +616,115 @@ impl CanvasToolReducerContext<'_> {
                 continue;
             }
 
-            commands.push(DocumentCommand::RemoveEdge(id.clone()));
+            commands.push(DocumentCommand::RemoveEdge(id));
         }
 
         commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
 
-        for id in self.selection.selected_shapes() {
-            let Some(shape) = self.document.shape(id) else {
+        for id in shape_ids {
+            let Some(shape) = self.document.shape(&id) else {
                 continue;
             };
             if shape.locked {
                 continue;
             }
 
-            commands.push(DocumentCommand::RemoveShape(id.clone()));
+            commands.push(DocumentCommand::RemoveShape(id));
         }
 
         CanvasTransaction::new(commands)
+    }
+
+    fn deletable_selection_ids(
+        &self,
+        selection: &CanvasSelection,
+    ) -> (IndexSet<NodeId>, IndexSet<EdgeId>, IndexSet<ShapeId>) {
+        let mut records = IndexSet::new();
+        let mut pending = Vec::new();
+
+        for id in selection.selected_nodes() {
+            self.insert_deletable_record(
+                CanvasRecordId::Node(id.clone()),
+                &mut records,
+                &mut pending,
+            );
+        }
+        for id in selection.selected_edges() {
+            self.insert_deletable_record(
+                CanvasRecordId::Edge(id.clone()),
+                &mut records,
+                &mut pending,
+            );
+        }
+        for id in selection.selected_shapes() {
+            self.insert_deletable_record(
+                CanvasRecordId::Shape(id.clone()),
+                &mut records,
+                &mut pending,
+            );
+        }
+
+        while let Some(record_id) = pending.pop() {
+            for child in self
+                .document
+                .relations()
+                .children_of(&record_id)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.insert_deletable_record(child, &mut records, &mut pending);
+            }
+            for member in self
+                .document
+                .relations()
+                .members_of(&record_id)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.insert_deletable_record(member, &mut records, &mut pending);
+            }
+        }
+
+        let mut node_ids = IndexSet::new();
+        let mut edge_ids = IndexSet::new();
+        let mut shape_ids = IndexSet::new();
+        for record in records {
+            match record {
+                CanvasRecordId::Node(id) => {
+                    node_ids.insert(id);
+                }
+                CanvasRecordId::Edge(id) => {
+                    edge_ids.insert(id);
+                }
+                CanvasRecordId::Shape(id) => {
+                    shape_ids.insert(id);
+                }
+            }
+        }
+
+        (node_ids, edge_ids, shape_ids)
+    }
+
+    fn insert_deletable_record(
+        &self,
+        record_id: CanvasRecordId,
+        records: &mut IndexSet<CanvasRecordId>,
+        pending: &mut Vec<CanvasRecordId>,
+    ) {
+        if !self.is_deletable_record(&record_id) {
+            return;
+        }
+        if records.insert(record_id.clone()) {
+            pending.push(record_id);
+        }
+    }
+
+    fn is_deletable_record(&self, record_id: &CanvasRecordId) -> bool {
+        match record_id {
+            CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
+            CanvasRecordId::Edge(id) => self.document.edge(id).is_some_and(|edge| !edge.locked),
+            CanvasRecordId::Shape(id) => self.document.shape(id).is_some_and(|shape| !shape.locked),
+        }
     }
 
     pub(crate) fn translatable_selection_ids(
@@ -2288,6 +2375,99 @@ mod tests {
         assert!(editor.document().contains_node(&NodeId::from("a")));
         assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
         assert!(editor.document().contains_shape(&ShapeId::from("shape")));
+    }
+
+    #[test]
+    fn select_tool_delete_key_removes_related_descendants() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(40.0), px(0.0)), size(px(50.0), px(50.0))),
+            ))
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(60.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(260.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "leaf-outside",
+                CanvasEndpoint::new("leaf", None::<&str>),
+                CanvasEndpoint::new("outside", None::<&str>),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("group")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
+
+        editor
+            .handle_event(CanvasEvent::KeyDown {
+                key: CanvasKey::Delete,
+                modifiers: CanvasKeyModifiers::default(),
+                repeat: false,
+            })
+            .unwrap();
+
+        assert!(!editor.document().contains_shape(&ShapeId::from("frame")));
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(!editor.document().contains_node(&NodeId::from("leaf")));
+        assert!(editor.document().contains_node(&NodeId::from("outside")));
+        assert!(
+            !editor
+                .document()
+                .contains_edge(&EdgeId::from("leaf-outside"))
+        );
+        assert!(editor.document().relations().is_empty());
+        assert!(editor.session.selection.is_empty());
+
+        assert!(editor.undo().unwrap());
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        let leaf = CanvasRecordId::Node(NodeId::from("leaf"));
+        assert!(editor.document().contains_shape(&ShapeId::from("frame")));
+        assert!(editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(editor.document().contains_node(&NodeId::from("leaf")));
+        assert!(
+            editor
+                .document()
+                .contains_edge(&EdgeId::from("leaf-outside"))
+        );
+        assert_eq!(
+            editor.document().relations().parent_of(&group),
+            Some(&frame)
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![leaf]
+        );
     }
 
     #[test]
