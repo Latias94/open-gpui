@@ -644,18 +644,83 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let node_ids = selection
-            .selected_nodes()
-            .filter(|id| self.document.node(id).is_some_and(|node| !node.locked))
-            .cloned()
+        let mut records = IndexSet::new();
+        let mut pending = Vec::new();
+
+        for id in selection.selected_nodes() {
+            self.insert_translatable_record(
+                CanvasRecordId::Node(id.clone()),
+                &mut records,
+                &mut pending,
+            );
+        }
+        for id in selection.selected_shapes() {
+            self.insert_translatable_record(
+                CanvasRecordId::Shape(id.clone()),
+                &mut records,
+                &mut pending,
+            );
+        }
+
+        while let Some(record_id) = pending.pop() {
+            for child in self
+                .document
+                .relations()
+                .children_of(&record_id)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.insert_translatable_record(child, &mut records, &mut pending);
+            }
+            for member in self
+                .document
+                .relations()
+                .members_of(&record_id)
+                .cloned()
+                .collect::<Vec<_>>()
+            {
+                self.insert_translatable_record(member, &mut records, &mut pending);
+            }
+        }
+
+        let node_ids = records
+            .iter()
+            .filter_map(|id| match id {
+                CanvasRecordId::Node(id) => Some(id.clone()),
+                CanvasRecordId::Edge(_) | CanvasRecordId::Shape(_) => None,
+            })
             .collect();
-        let shape_ids = selection
-            .selected_shapes()
-            .filter(|id| self.document.shape(id).is_some_and(|shape| !shape.locked))
-            .cloned()
+        let shape_ids = records
+            .iter()
+            .filter_map(|id| match id {
+                CanvasRecordId::Shape(id) => Some(id.clone()),
+                CanvasRecordId::Node(_) | CanvasRecordId::Edge(_) => None,
+            })
             .collect();
 
         (node_ids, shape_ids)
+    }
+
+    fn insert_translatable_record(
+        &self,
+        record_id: CanvasRecordId,
+        records: &mut IndexSet<CanvasRecordId>,
+        pending: &mut Vec<CanvasRecordId>,
+    ) {
+        if !self.is_translatable_record(&record_id) {
+            return;
+        }
+        if records.insert(record_id.clone()) {
+            pending.push(record_id);
+        }
+    }
+
+    fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {
+        match record_id {
+            CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
+            CanvasRecordId::Shape(id) => self.document.shape(id).is_some_and(|shape| !shape.locked),
+            CanvasRecordId::Edge(_) => false,
+        }
     }
 
     pub(crate) fn transform_handle_at(
@@ -3130,6 +3195,92 @@ mod tests {
                 .bounds
                 .origin,
             point(px(410.0), px(20.0))
+        );
+        assert_eq!(editor.history().undo_depth(), 1);
+    }
+
+    #[test]
+    fn translating_selected_parent_moves_related_descendants() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .shape(CanvasShape::new(
+                "group",
+                Bounds::new(point(px(40.0), px(0.0)), size(px(50.0), px(50.0))),
+            ))
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(60.0), px(0.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("group")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(150.0), px(150.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(160.0), px(170.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(160.0), px(170.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .document()
+                .shape(&ShapeId::from("frame"))
+                .unwrap()
+                .bounds
+                .origin,
+            point(px(10.0), px(20.0))
+        );
+        assert_eq!(
+            editor
+                .document()
+                .shape(&ShapeId::from("group"))
+                .unwrap()
+                .bounds
+                .origin,
+            point(px(50.0), px(20.0))
+        );
+        assert_eq!(
+            editor
+                .document()
+                .node(&NodeId::from("leaf"))
+                .unwrap()
+                .position,
+            point(px(70.0), px(20.0))
         );
         assert_eq!(editor.history().undo_depth(), 1);
     }
