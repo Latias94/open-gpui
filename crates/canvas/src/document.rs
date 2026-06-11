@@ -456,6 +456,8 @@ pub enum DocumentError {
     MissingRelationRecord(CanvasRecordId),
     #[error("canvas record `{0}` cannot be its own parent")]
     SelfParentRelation(CanvasRecordId),
+    #[error("canvas record relation cycle includes `{0}`")]
+    CyclicRecordRelation(CanvasRecordId),
     #[error("canvas record `{0}` has more than one parent relation")]
     DuplicateParentRelation(CanvasRecordId),
     #[error("canvas group relation from `{group}` to `{member}` is duplicated")]
@@ -1251,6 +1253,61 @@ impl CanvasDocument {
             self.validate_record_id(&relation.target)?;
         }
 
+        self.validate_relation_graph_is_acyclic()?;
+
+        Ok(())
+    }
+
+    fn validate_relation_graph_is_acyclic(&self) -> Result<(), DocumentError> {
+        let mut graph = IndexMap::<CanvasRecordId, Vec<CanvasRecordId>>::new();
+        for relation in self.relations.parents() {
+            graph
+                .entry(relation.parent.clone())
+                .or_default()
+                .push(relation.child.clone());
+        }
+        for relation in self.relations.groups() {
+            graph
+                .entry(relation.group.clone())
+                .or_default()
+                .push(relation.member.clone());
+        }
+
+        let mut visited = IndexSet::new();
+        let mut visiting = IndexSet::new();
+        for record_id in graph.keys() {
+            self.validate_relation_subgraph_is_acyclic(
+                record_id,
+                &graph,
+                &mut visited,
+                &mut visiting,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_relation_subgraph_is_acyclic(
+        &self,
+        record_id: &CanvasRecordId,
+        graph: &IndexMap<CanvasRecordId, Vec<CanvasRecordId>>,
+        visited: &mut IndexSet<CanvasRecordId>,
+        visiting: &mut IndexSet<CanvasRecordId>,
+    ) -> Result<(), DocumentError> {
+        if visited.contains(record_id) {
+            return Ok(());
+        }
+        if !visiting.insert(record_id.clone()) {
+            return Err(DocumentError::CyclicRecordRelation(record_id.clone()));
+        }
+
+        if let Some(children) = graph.get(record_id) {
+            for child in children {
+                self.validate_relation_subgraph_is_acyclic(child, graph, visited, visiting)?;
+            }
+        }
+
+        visiting.shift_remove(record_id);
+        visited.insert(record_id.clone());
         Ok(())
     }
 
@@ -1572,7 +1629,10 @@ mod tests {
     use crate::test_support::{
         CanvasCommandGenerator, TestRng, connected_pair_fixture, document_fixture,
     };
-    use crate::{CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION, CANVAS_SNAPSHOT_MIGRATIONS};
+    use crate::{
+        CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION, CANVAS_SNAPSHOT_MIGRATIONS,
+        CanvasRecordParentRelation,
+    };
     use open_gpui::{point, px, size};
 
     #[test]
@@ -1864,6 +1924,115 @@ mod tests {
         assert_eq!(
             CanvasDocument::from_snapshot(snapshot).unwrap_err(),
             DocumentError::DuplicateGroupRelation { group, member }
+        );
+    }
+
+    #[test]
+    fn relation_commands_reject_parent_cycles() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame-a",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .shape(CanvasShape::new(
+                "frame-b",
+                Bounds::new(point(px(20.0), px(20.0)), size(px(40.0), px(40.0))),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("frame-b")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                },
+            ))
+            .unwrap();
+
+        let err = document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame-b")),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::CyclicRecordRelation(CanvasRecordId::Shape(ShapeId::from("frame-a")))
+        );
+    }
+
+    #[test]
+    fn relation_commands_reject_group_cycles() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "group-a",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .shape(CanvasShape::new(
+                "group-b",
+                Bounds::new(point(px(20.0), px(20.0)), size(px(40.0), px(40.0))),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group-a")),
+                    member: CanvasRecordId::Shape(ShapeId::from("group-b")),
+                },
+            ))
+            .unwrap();
+
+        let err = document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("group-b")),
+                    member: CanvasRecordId::Shape(ShapeId::from("group-a")),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::CyclicRecordRelation(CanvasRecordId::Shape(ShapeId::from("group-a")))
+        );
+    }
+
+    #[test]
+    fn from_snapshot_rejects_relation_cycles() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame-a",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .shape(CanvasShape::new(
+                "frame-b",
+                Bounds::new(point(px(20.0), px(20.0)), size(px(40.0), px(40.0))),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Shape(ShapeId::from("frame-b")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                },
+            ))
+            .unwrap();
+        let mut value = serde_json::to_value(document.to_snapshot()).unwrap();
+        let parents = value["relations"]["parents"].as_array_mut().unwrap();
+        parents.push(
+            serde_json::to_value(CanvasRecordParentRelation::new(
+                CanvasRecordId::Shape(ShapeId::from("frame-a")),
+                CanvasRecordId::Shape(ShapeId::from("frame-b")),
+            ))
+            .unwrap(),
+        );
+        let snapshot = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            CanvasDocument::from_snapshot(snapshot).unwrap_err(),
+            DocumentError::CyclicRecordRelation(CanvasRecordId::Shape(ShapeId::from("frame-a")))
         );
     }
 
