@@ -2,6 +2,7 @@ use crate::gesture::CanvasPreparedGestureCommit;
 use crate::layer::{
     CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
 };
+use crate::record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope};
 use crate::session::{CanvasEditorSession, CanvasEditorSessionSnapshot, CanvasSessionEffect};
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
@@ -1582,7 +1583,8 @@ impl CanvasEditor {
     }
 
     fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
-        let mut records = self.z_order_records();
+        let selection_records = self.z_order_selection_record_ids();
+        let mut records = self.z_order_records(&selection_records);
         let commands = reorder_layer_z_indices(&mut records, command)
             .into_iter()
             .filter_map(|(record_id, z_index)| self.z_order_update_command(&record_id, z_index))
@@ -1591,7 +1593,29 @@ impl CanvasEditor {
         CanvasTransaction::new(commands)
     }
 
-    fn z_order_records(&self) -> Vec<CanvasLayerRecord> {
+    fn z_order_selection_record_ids(&self) -> IndexSet<CanvasRecordId> {
+        collect_selection_record_scope(
+            self.document(),
+            self.selection(),
+            CanvasRecordScopeOptions::structural_with_internal_edges(),
+            |record_id| self.is_reorderable_record(record_id),
+        )
+    }
+
+    fn is_reorderable_record(&self, record_id: &CanvasRecordId) -> bool {
+        match record_id {
+            CanvasRecordId::Node(id) => self.document().node(id).is_some_and(|node| !node.locked),
+            CanvasRecordId::Edge(id) => self.document().edge(id).is_some_and(|edge| !edge.locked),
+            CanvasRecordId::Shape(id) => {
+                self.document().shape(id).is_some_and(|shape| !shape.locked)
+            }
+        }
+    }
+
+    fn z_order_records(
+        &self,
+        selection_records: &IndexSet<CanvasRecordId>,
+    ) -> Vec<CanvasLayerRecord> {
         let mut ordinal = 0;
         let mut records = Vec::new();
 
@@ -1600,7 +1624,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Node(node.id.clone()),
                 z_index: node.z_index,
                 ordinal,
-                selected: self.selection().contains_node(&node.id) && !node.locked,
+                selected: selection_records.contains(&CanvasRecordId::Node(node.id.clone())),
             };
             ordinal += 1;
             record
@@ -1610,7 +1634,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Shape(shape.id.clone()),
                 z_index: shape.z_index,
                 ordinal,
-                selected: self.selection().contains_shape(&shape.id) && !shape.locked,
+                selected: selection_records.contains(&CanvasRecordId::Shape(shape.id.clone())),
             };
             ordinal += 1;
             record
@@ -1620,7 +1644,7 @@ impl CanvasEditor {
                 id: CanvasRecordId::Edge(edge.id.clone()),
                 z_index: edge.z_index,
                 ordinal,
-                selected: self.selection().contains_edge(&edge.id) && !edge.locked,
+                selected: selection_records.contains(&CanvasRecordId::Edge(edge.id.clone())),
             };
             ordinal += 1;
             record
@@ -2863,6 +2887,103 @@ mod tests {
                 HitTarget::Shape(ShapeId::from("top")),
                 HitTarget::Shape(ShapeId::from("shape")),
             ]
+        );
+    }
+
+    #[test]
+    fn z_order_selected_parent_reorders_related_descendants() {
+        let mut child =
+            CanvasNode::new("child", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        child.z_index = 0;
+        let mut peer = CanvasNode::new("peer", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        peer.z_index = 1;
+        let mut edge = CanvasEdge::new(
+            "child-peer",
+            CanvasEndpoint::new("child", None::<&str>),
+            CanvasEndpoint::new("peer", None::<&str>),
+        );
+        edge.z_index = 2;
+        let mut frame = CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        frame.z_index = 3;
+        let mut top = CanvasShape::new(
+            "top",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        top.z_index = 4;
+        let mut document = document_fixture()
+            .node(child)
+            .node(peer)
+            .edge(edge)
+            .shape(frame)
+            .shape(top)
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("frame")),
+                    member: CanvasRecordId::Node(NodeId::from("peer")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("frame"));
+
+        assert!(
+            editor
+                .reorder_selection(CanvasZOrderCommand::BringToFront)
+                .unwrap()
+        );
+
+        let hits = editor
+            .runtime()
+            .hit_test(
+                point(px(50.0), px(50.0)),
+                HitOptions {
+                    include_handles: false,
+                    margin: px(24.0),
+                    ..HitOptions::default()
+                },
+            )
+            .map(|record| record.target.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            hits,
+            vec![
+                HitTarget::Shape(ShapeId::from("frame")),
+                HitTarget::Edge(EdgeId::from("child-peer")),
+                HitTarget::Node(NodeId::from("peer")),
+                HitTarget::Node(NodeId::from("child")),
+                HitTarget::Shape(ShapeId::from("top")),
+            ]
+        );
+
+        assert_eq!(editor.history().undo_depth(), 1);
+        assert!(editor.undo().unwrap());
+        assert_eq!(
+            editor
+                .runtime()
+                .hit_test(
+                    point(px(50.0), px(50.0)),
+                    HitOptions {
+                        include_handles: false,
+                        margin: px(24.0),
+                        ..HitOptions::default()
+                    },
+                )
+                .next()
+                .map(|record| record.target.clone()),
+            Some(HitTarget::Shape(ShapeId::from("top")))
         );
     }
 

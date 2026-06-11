@@ -2,6 +2,7 @@ use crate::{
     BindingId, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId,
     CanvasRecordRelations, CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand,
     EdgeId, NodeId, ShapeId,
+    record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope},
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Pixels, Point};
@@ -226,47 +227,12 @@ fn copied_record_ids(
     document: &CanvasDocument,
     selection: &CanvasSelection,
 ) -> IndexSet<CanvasRecordId> {
-    let mut records = document
-        .relations()
-        .collect_related_records(selected_record_ids(selection), |record_id| {
-            is_copyable_record(document, record_id)
-        });
-    let copied_node_ids = records
-        .iter()
-        .filter_map(|record_id| match record_id {
-            CanvasRecordId::Node(id) => Some(id.clone()),
-            CanvasRecordId::Edge(_) | CanvasRecordId::Shape(_) => None,
-        })
-        .collect::<IndexSet<_>>();
-
-    for edge in document.edges().filter(|edge| {
-        !edge.locked
-            && copied_node_ids.contains(&edge.source.node_id)
-            && copied_node_ids.contains(&edge.target.node_id)
-    }) {
-        records.insert(CanvasRecordId::Edge(edge.id.clone()));
-    }
-
-    records
-}
-
-fn selected_record_ids(selection: &CanvasSelection) -> impl Iterator<Item = CanvasRecordId> + '_ {
-    selection
-        .selected_nodes()
-        .cloned()
-        .map(CanvasRecordId::Node)
-        .chain(
-            selection
-                .selected_edges()
-                .cloned()
-                .map(CanvasRecordId::Edge),
-        )
-        .chain(
-            selection
-                .selected_shapes()
-                .cloned()
-                .map(CanvasRecordId::Shape),
-        )
+    collect_selection_record_scope(
+        document,
+        selection,
+        CanvasRecordScopeOptions::structural_with_internal_edges(),
+        |record_id| is_copyable_record(document, record_id),
+    )
 }
 
 fn is_copyable_record(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {

@@ -19,6 +19,7 @@ mod json_canvas;
 mod layer;
 mod mutation;
 mod persistence;
+mod record_scope;
 mod relations;
 mod routing;
 mod runtime;
