@@ -201,6 +201,50 @@ fn checked_open_item_rebinds_empty_central_region() {
 }
 
 #[test]
+fn checked_close_item_rebinds_collapsed_central_region() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    graph.set_central_region(space(), DockCentralRegion::with_node(root));
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::CloseItem {
+                space: space(),
+                item: item("a"),
+            })
+            .expect("closing a reachable item should be valid")
+    );
+
+    let new_root = graph
+        .root(&space())
+        .expect("space should keep the surviving child");
+    assert_eq!(new_root, right);
+    assert_eq!(
+        graph
+            .central_region(&space())
+            .expect("central metadata should remain present")
+            .node,
+        Some(new_root)
+    );
+    graph
+        .validate()
+        .expect("collapsed central region should validate");
+}
+
+#[test]
 fn checked_open_item_rejects_duplicate_items_without_mutation() {
     let (mut graph, root) = root_tabs_graph(&["a"]);
 

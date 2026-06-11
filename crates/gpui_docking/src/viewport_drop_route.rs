@@ -2,7 +2,7 @@ use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest, drag::DockDragPayload, drop_target::DockResolvedDropTarget,
+    DockViewportTearOffRequest, drop_target::DockResolvedDropTarget,
     interaction::DockRuntimeDragSession, viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
@@ -140,17 +140,6 @@ impl DockViewportDropWorkspaceCommit {
         self.drag_session.as_ref()
     }
 
-    fn accepts_release(
-        &self,
-        payload: &DockDragPayload,
-        drag_session: Option<&DockRuntimeDragSession>,
-    ) -> bool {
-        self.source_space == payload.source_space
-            && self.source_tabs == payload.source_tabs
-            && self.payload.matches_drag_payload(payload)
-            && drag_sessions_match(self.drag_session.as_ref(), drag_session, payload)
-    }
-
     fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
         Some((
             &self.target_space,
@@ -221,25 +210,6 @@ impl DockViewportDropRouteCommit {
         }
     }
 
-    pub(crate) fn accepts_release(
-        &self,
-        payload: &DockDragPayload,
-        drag_session: Option<&DockRuntimeDragSession>,
-    ) -> bool {
-        match self {
-            DockViewportDropRouteCommit::Workspace(commit) => {
-                commit.accepts_release(payload, drag_session)
-            }
-            DockViewportDropRouteCommit::TearOff(request) => {
-                request.source_space() == &payload.source_space
-                    && request.source_tabs() == payload.source_tabs
-                    && request.payload().matches_drag_payload(payload)
-                    && drag_sessions_match(request.drag_session(), drag_session, payload)
-            }
-            DockViewportDropRouteCommit::Rejected(_) => false,
-        }
-    }
-
     pub(crate) fn routed_preview_target(
         &self,
     ) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
@@ -261,18 +231,6 @@ impl DockViewportDropRouteCommit {
             }
             DockViewportDropRouteCommit::Rejected(_) => None,
         }
-    }
-}
-
-fn drag_sessions_match(
-    left: Option<&DockRuntimeDragSession>,
-    right: Option<&DockRuntimeDragSession>,
-    payload: &DockDragPayload,
-) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => left == right && left.accepts_payload(payload),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
     }
 }
 

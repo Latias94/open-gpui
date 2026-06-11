@@ -1,6 +1,6 @@
 use crate::{
-    DockHost, DockViewportDropPayload, DockViewportDropRouteCommit, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
+    DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -74,18 +74,10 @@ impl DockHost {
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
         release: &DockPayloadDropRelease,
-        cached_route_commit: Option<DockViewportDropRouteCommit>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        if let Some(commit) = cached_route_commit
-            && commit.accepts_release(release.payload(), release.drag_session())
-        {
-            let result = runtime.commit_payload_drop_route_with_outcome(commit, cx);
-            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
-        }
-
         let request = viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),

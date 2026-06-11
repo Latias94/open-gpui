@@ -98,40 +98,7 @@ impl DockGraph {
         floating: DockNodeId,
         target_tabs: DockNodeId,
     ) -> bool {
-        let Some(floatings) = self.floatings.get(space) else {
-            return false;
-        };
-        if !floatings.iter().any(|entry| entry.node == floating) {
-            return false;
-        }
-        if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
-            return false;
-        }
-        let Some(target_root) = self.root_for_node_in_space(space, target_tabs) else {
-            return false;
-        };
-        if target_root == floating {
-            return false;
-        }
-
-        let items = self.collect_items_in_subtree(floating);
-        for item in items {
-            let _ = self.move_item_between_spaces(
-                space,
-                item,
-                space,
-                target_tabs,
-                DropZone::Center,
-                None,
-            );
-        }
-        if let Some(floatings) = self.floatings.get_mut(space)
-            && let Some(index) = floatings.iter().position(|entry| entry.node == floating)
-        {
-            floatings.remove(index);
-        }
-        self.simplify_space(space);
-        true
+        self.merge_floating_subtree_into_tabs(space, floating, space, target_tabs)
     }
 
     pub(in crate::graph) fn move_floating_between_spaces(
@@ -153,7 +120,7 @@ impl DockGraph {
         }
 
         if zone == DropZone::Center {
-            return self.merge_floating_items_between_spaces(
+            return self.merge_floating_subtree_into_tabs(
                 source_space,
                 floating,
                 target_space,
@@ -194,7 +161,7 @@ impl DockGraph {
         true
     }
 
-    fn merge_floating_items_between_spaces(
+    fn merge_floating_subtree_into_tabs(
         &mut self,
         source_space: &DockSpaceId,
         floating: DockNodeId,
@@ -208,6 +175,7 @@ impl DockGraph {
         if items.is_empty() {
             return false;
         }
+        let active_item = self.active_item_in_subtree(floating);
         let mut changed = false;
         for item in items {
             changed |= self.move_item_between_spaces(
@@ -218,6 +186,16 @@ impl DockGraph {
                 DropZone::Center,
                 None,
             );
+        }
+        if let Some(active_item) = active_item
+            && let Some(active_index) = self.nodes.get(target_tabs).and_then(|node| match node {
+                DockNode::Tabs { items, .. } => {
+                    items.iter().position(|candidate| candidate == &active_item)
+                }
+                _ => None,
+            })
+        {
+            changed |= self.set_active_tab(target_tabs, active_index);
         }
         if let Some(floatings) = self.floatings.get_mut(source_space)
             && let Some(index) = floatings.iter().position(|entry| entry.node == floating)

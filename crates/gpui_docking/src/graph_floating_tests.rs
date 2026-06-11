@@ -153,6 +153,44 @@ fn merge_floating_into_moves_items_and_removes_floating() {
 }
 
 #[test]
+fn merge_floating_tabs_preserves_active_item() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        active: 0,
+    });
+    graph.set_root(space(), root);
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 1,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    assert!(graph.apply_op(&DockOp::MergeFloatingInto {
+        space: space(),
+        floating,
+        target_tabs: root,
+    }));
+
+    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected root tabs");
+    };
+    assert_eq!(items, &vec![item("root"), item("a"), item("b")]);
+    assert_eq!(*active, 2);
+    assert!(graph.floating_containers(&space()).is_empty());
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn move_floating_edge_preserves_child_subtree() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
