@@ -1359,17 +1359,6 @@ impl CanvasEditor {
         Ok(())
     }
 
-    pub(crate) fn apply_custom_tool_intents(
-        &mut self,
-        intents: impl IntoIterator<Item = CanvasToolIntent>,
-    ) -> Result<(), DocumentError> {
-        for intent in intents {
-            self.apply_custom_tool_intent(intent)?;
-        }
-
-        Ok(())
-    }
-
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
         let changed = self.store.undo()?;
         if changed {
@@ -1532,7 +1521,11 @@ impl CanvasEditor {
             self.apply_tool_effects(effects)
         } else {
             let intents = custom_tool.handle_event(self.tool_context(), event)?;
-            self.apply_custom_tool_intents(intents)
+            for intent in intents {
+                self.apply_custom_tool_intent(intent)?;
+            }
+
+            Ok(())
         }
     }
 
@@ -1546,7 +1539,9 @@ impl CanvasEditor {
                 .reducer_mut(&tool_id)
                 .ok_or_else(|| CanvasToolRegistryError::MissingTool(tool_id.clone()))?;
             let intents = reducer.handle_event(self.tool_context(), event)?;
-            self.apply_custom_tool_intents(intents)?;
+            for intent in intents {
+                self.apply_custom_tool_intent(intent)?;
+            }
         } else {
             let effects = self.event_effects(event)?;
             self.apply_tool_effects(effects)?;
@@ -4996,17 +4991,17 @@ mod tests {
             .unwrap();
         let baseline_depth = editor.history().undo_depth();
 
-        editor
-            .apply_custom_tool_intents([
-                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
-                    DocumentCommand::UpdateNode(first),
-                )),
-                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
-                    DocumentCommand::UpdateNode(second.clone()),
-                )),
-                CanvasToolIntent::CommitTransaction,
-            ])
-            .unwrap();
+        for intent in [
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(first),
+            )),
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(second.clone()),
+            )),
+            CanvasToolIntent::CommitTransaction,
+        ] {
+            editor.apply_custom_tool_intent(intent).unwrap();
+        }
 
         assert_eq!(editor.document().node(&NodeId::from("a")).unwrap(), &second);
         assert_eq!(editor.history().undo_depth(), baseline_depth + 1);
@@ -5027,14 +5022,14 @@ mod tests {
             .unwrap();
         let baseline_depth = editor.history().undo_depth();
 
-        editor
-            .apply_custom_tool_intents([
-                CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
-                    DocumentCommand::UpdateNode(moved),
-                )),
-                CanvasToolIntent::CancelTransaction,
-            ])
-            .unwrap();
+        for intent in [
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
+                DocumentCommand::UpdateNode(moved),
+            )),
+            CanvasToolIntent::CancelTransaction,
+        ] {
+            editor.apply_custom_tool_intent(intent).unwrap();
+        }
 
         assert_eq!(
             editor.document().node(&NodeId::from("a")).unwrap(),
