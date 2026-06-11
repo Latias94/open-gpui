@@ -903,16 +903,16 @@ mod tests {
                 .contains_node(&crate::NodeId::from("selected"))
         );
         assert!(matches!(
-            snapshot.interaction().tool_state(),
-            ToolState::Selecting { .. }
+            snapshot.interaction().state(),
+            CanvasPaintInteractionState::Selecting { .. }
         ));
 
         let new_snapshot = CanvasPaintModel::from(&editor);
         assert_eq!(new_snapshot.viewport(), CanvasViewport::default());
         assert!(new_snapshot.interaction().selection().is_empty());
         assert!(matches!(
-            new_snapshot.interaction().tool_state(),
-            ToolState::Idle
+            new_snapshot.interaction().state(),
+            CanvasPaintInteractionState::Idle
         ));
     }
 
