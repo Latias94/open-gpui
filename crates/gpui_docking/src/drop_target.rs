@@ -168,7 +168,7 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
         ));
     }
 
-    let leaf = smallest_leaf_containing(input.leaves, input.position);
+    let leaf = topmost_leaf_containing(input.leaves, input.position);
     if let Some(target) = resolve_root_edge_drop(&input, leaf) {
         return Some(validate_resolved_drop_target(
             target,
@@ -204,6 +204,7 @@ fn resolve_floating_title_bar_drop(
     input
         .floating_title_bars
         .iter()
+        .rev()
         .find(|target| target.title_bounds.contains(&input.position))
         .map(|target| DockResolvedDropTarget {
             kind: DockResolvedDropTargetKind::FloatingTitleBar {
@@ -220,6 +221,7 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
     input
         .tab_labels
         .iter()
+        .rev()
         .find(|target| target.bounds.contains(&input.position))
         .map(|target| {
             let insert_index = if input.position.x < target.bounds.center().x {
@@ -279,6 +281,7 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
     input
         .empty_spaces
         .iter()
+        .rev()
         .find(|target| target.bounds.contains(&input.position))
         .map(|target| DockResolvedDropTarget {
             kind: DockResolvedDropTargetKind::EmptyDockSpace {
@@ -354,22 +357,14 @@ fn target_from_leaf_geometry(
     }
 }
 
-fn smallest_leaf_containing(
+fn topmost_leaf_containing(
     leaves: &[DockLeafDropTarget],
     position: Point<Pixels>,
 ) -> Option<&DockLeafDropTarget> {
     leaves
         .iter()
-        .filter(|target| target.bounds.contains(&position))
-        .min_by(|a, b| {
-            area(a.bounds)
-                .partial_cmp(&area(b.bounds))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
-
-fn area(bounds: Bounds<Pixels>) -> f32 {
-    f32::from(bounds.size.width) * f32::from(bounds.size.height)
+        .rev()
+        .find(|target| target.bounds.contains(&position))
 }
 
 #[cfg(test)]
@@ -685,6 +680,39 @@ mod tests {
             DockResolvedDropTargetKind::LeafCenter {
                 root,
                 target_tabs: root,
+            }
+        );
+    }
+
+    #[test]
+    fn overlapping_leaf_hits_follow_render_order_rather_than_area() {
+        let (background_tabs, foreground_tabs) = two_node_ids();
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[
+                DockLeafDropTarget {
+                    root: background_tabs,
+                    target_tabs: background_tabs,
+                    bounds: bounds(100.0, 100.0),
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                    bounds: bounds(180.0, 180.0),
+                    is_central: false,
+                },
+            ],
+            ..DockDropResolverInput::new(point(px(60.0), px(70.0)), &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("overlapping leaves should resolve");
+
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: foreground_tabs,
+                target_tabs: foreground_tabs,
             }
         );
     }
