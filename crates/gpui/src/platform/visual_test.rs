@@ -8,7 +8,7 @@
 use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
+    Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
     TestDispatcher, WindowAppearance, WindowParams,
 };
@@ -107,6 +107,10 @@ impl Platform for VisualTestPlatform {
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         self.platform.window_stack()
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        self.platform.mouse_button_is_pressed(button)
     }
 
     fn is_screen_capture_supported(&self) -> bool {

@@ -1,10 +1,10 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
-    size,
+    DummyKeyboardMapper, ForegroundExecutor, Keymap, MouseButton, NoopTextSystem,
+    PathPromptOptions, Platform, PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
+    ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -25,6 +25,7 @@ pub(crate) struct TestPlatform {
     pub(crate) active_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
+    pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
     current_clipboard_item: Mutex<Option<ClipboardItem>>,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     current_primary_item: Mutex<Option<ClipboardItem>>,
@@ -124,6 +125,7 @@ impl TestPlatform {
             prompts: Default::default(),
             screen_capture_sources: Default::default(),
             active_cursor: Default::default(),
+            pressed_mouse_buttons: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
             expect_restart: Default::default(),
@@ -255,6 +257,28 @@ impl TestPlatform {
             .detach();
     }
 
+    pub(crate) fn set_mouse_button_is_pressed(&self, button: MouseButton, pressed: Option<bool>) {
+        let mut buttons = self.pressed_mouse_buttons.lock();
+        match pressed {
+            Some(true) => {
+                let buttons = buttons.get_or_insert_with(Vec::new);
+                if !buttons.contains(&button) {
+                    buttons.push(button);
+                }
+            }
+            Some(false) => {
+                let Some(buttons) = buttons.as_mut() else {
+                    *buttons = Some(Vec::new());
+                    return;
+                };
+                buttons.retain(|pressed_button| pressed_button != &button);
+            }
+            None => {
+                *buttons = None;
+            }
+        }
+    }
+
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
@@ -348,6 +372,13 @@ impl Platform for TestPlatform {
             .borrow()
             .as_ref()
             .map(|window| window.0.lock().handle)
+    }
+
+    fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
+        self.pressed_mouse_buttons
+            .lock()
+            .as_ref()
+            .map(|buttons| buttons.contains(&button))
     }
 
     fn open_window(

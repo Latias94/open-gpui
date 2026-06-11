@@ -74,6 +74,11 @@ jobs:
         shell: pwsh
         run: cargo nextest run -p xtask
 
+      - name: Run native docking rendered tests
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: cargo nextest run -p open-gpui-docking-native --no-fail-fast
+
       - name: Check Linux platform surface
         if: matrix.name == 'linux'
         run: cargo check -p open-gpui-linux --all-features --locked

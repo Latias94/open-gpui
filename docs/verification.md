@@ -34,7 +34,8 @@ not part of the default CI gate because benchmark timing is runner-dependent.
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:
 
-- Windows runs the same local gate, `cargo nextest run -p xtask`, and
+- Windows runs the same local gate, `cargo nextest run -p xtask`,
+  `cargo nextest run -p open-gpui-docking-native --no-fail-fast`, and
   `cargo check -p open-gpui-windows --all-features --locked`.
 - Linux runs `cargo check -p open-gpui-linux --all-features --locked` after installing the system
   headers needed for Wayland, X11, fontconfig, freetype, and pkg-config.
@@ -50,6 +51,36 @@ cargo run -p xtask -- renderer-smoke
 That command runs the focused `open-gpui-wgpu` smoke test that requests a real native `wgpu` adapter and
 device, creates the renderer bind group layouts, and builds the core render pipelines. It is not
 part of the default `verify` gate because it depends on local GPU, driver, and session availability.
+
+Run the docking smoke surface explicitly after changing `open-gpui-docking`:
+
+```sh
+cargo nextest run -p open-gpui-docking
+cargo nextest run -p open-gpui-docking-native --no-fail-fast
+cargo check -p open-gpui-docking-native
+cargo run -p open-gpui-docking-native
+```
+
+The docking native example exercises the public multi-window setup: applications build one
+`DockController`, wrap it in a `DockViewportRuntimeHandle`, register window-close cleanup, and open
+controller-backed primary and secondary `DockHost` viewports.
+
+Manual native docking dogfood should use the same example after the automated checks pass:
+
+1. Launch `cargo run -p open-gpui-docking-native` and confirm the app opens `Docking demo`,
+   `Docking preview`, and `Empty central dogfood` windows.
+2. Drag a tab from `Docking demo` into `Docking preview`; the preview must appear in the
+   destination window and release must select the moved item there.
+3. Drag the `Preview` / `Diff` stack from `Docking preview` back into `Docking demo`; item order and
+   the active tab must be preserved.
+4. Drag a tab or stack outside every docking window; a new runtime-backed viewport must open before
+   the graph moves the source payload.
+5. Dock the torn-off viewport content back into an existing window; the destination window must
+   activate and the moved item must become the selected tab.
+6. Exercise the runtime panel close-policy controls for prevent, retain, and merge-back behavior;
+   closing a viewport must match the selected policy without losing descriptor-backed panel restore.
+7. Drag over the empty central dogfood window; empty central-space preview, rejection, and
+   passthrough behavior must match the visible policy state.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 

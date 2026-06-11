@@ -450,6 +450,14 @@ impl TestAppContext {
         self.dispatcher.run_until_parked();
     }
 
+    /// Overrides the platform-reported mouse button state for tests.
+    ///
+    /// Pass `None` to return the test platform to its default unsupported state.
+    pub fn set_platform_mouse_button_is_pressed(&self, button: MouseButton, pressed: Option<bool>) {
+        self.test_platform
+            .set_mouse_button_is_pressed(button, pressed);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where

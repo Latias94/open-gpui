@@ -1,0 +1,27 @@
+[package]
+name = "open-gpui-docking-native"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish = false
+description = "Native docking smoke example for Open GPUI."
+
+[[bin]]
+name = "open-gpui-docking-native"
+path = "src/main.rs"
+
+[dependencies]
+open_gpui.workspace = true
+open_gpui_docking.workspace = true
+open_gpui_platform.workspace = true
+
+[dev-dependencies]
+open_gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
