@@ -1,6 +1,6 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasStyle, CanvasValue,
-    DocumentError, NodeId,
+    CanvasDocument, CanvasDocumentBuilder, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasStyle, CanvasValue, DocumentError, NodeId,
 };
 use indexmap::IndexMap;
 use open_gpui::{Pixels, Point, point, px, size};
@@ -102,16 +102,16 @@ impl TryFrom<JsonCanvas> for CanvasDocument {
             }
         }
 
-        let mut document = CanvasDocument::default();
+        let mut builder = CanvasDocumentBuilder::new();
         for (_, node) in nodes {
-            document.insert_node(node)?;
+            builder.add_node(node)?;
         }
 
         for edge in canvas.edges {
-            document.insert_edge(edge.into_canvas_edge())?;
+            builder.add_edge(edge.into_canvas_edge())?;
         }
 
-        Ok(document)
+        builder.build().map_err(Into::into)
     }
 }
 
@@ -526,6 +526,7 @@ fn nonnegative_pixel_to_i64(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{EdgeId, HandleId};
     use open_gpui::{point, px, size};
     use serde_json::json;
@@ -693,7 +694,6 @@ mod tests {
 
     #[test]
     fn exports_json_canvas_nodes_by_z_index() {
-        let mut document = CanvasDocument::default();
         let mut front = CanvasNode::new(
             "front",
             point(px(100.0), px(0.0)),
@@ -707,8 +707,7 @@ mod tests {
         back.z_index = -1;
         back.data.insert(LABEL_FIELD.to_string(), json!("Back"));
 
-        document.insert_node(front).unwrap();
-        document.insert_node(back).unwrap();
+        let document = document_fixture().node(front).node(back).build();
 
         let json_canvas = JsonCanvas::from_document(&document).unwrap();
 
@@ -720,7 +719,6 @@ mod tests {
 
     #[test]
     fn exports_json_canvas_edge_sides_from_handles() {
-        let mut document = CanvasDocument::default();
         let mut source = CanvasNode::new(
             "source",
             point(px(0.0), px(0.0)),
@@ -744,8 +742,6 @@ mod tests {
             point(px(0.0), px(50.0)),
         ));
 
-        document.insert_node(source).unwrap();
-        document.insert_node(target).unwrap();
         let mut edge = CanvasEdge::new(
             "edge",
             CanvasEndpoint::new("source", Some("json_canvas:right")),
@@ -758,7 +754,11 @@ mod tests {
             TO_END_FIELD.to_string(),
             json!(JsonCanvasEndpointShape::Arrow.as_str()),
         );
-        document.insert_edge(edge).unwrap();
+        let document = document_fixture()
+            .node(source)
+            .node(target)
+            .edge(edge)
+            .build();
 
         let json_canvas = JsonCanvas::from_document(&document).unwrap();
         let edge = &json_canvas.edges[0];
@@ -825,11 +825,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_edges_with_missing_nodes_on_import() {
+        let input = r#"{
+            "nodes": [
+                { "id": "note", "type": "text", "x": 0, "y": 0, "width": 100, "height": 100, "text": "A" }
+            ],
+            "edges": [
+                { "id": "edge", "fromNode": "note", "toNode": "missing" }
+            ]
+        }"#;
+
+        let err = document_from_json_canvas_str(input).unwrap_err();
+
+        assert!(matches!(
+            err,
+            JsonCanvasError::Document(DocumentError::MissingNode(id)) if id == NodeId::from("missing")
+        ));
+    }
+
+    #[test]
     fn rejects_exporting_incomplete_json_canvas_nodes() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         node.kind = TEXT_NODE_TYPE.to_string();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let err = JsonCanvas::from_document(&document).unwrap_err();
 

@@ -1,6 +1,6 @@
 use crate::{
-    CanvasEdge, CanvasNode, CanvasRecordGroupRelation, CanvasRecordId, CanvasRecordParentRelation,
-    CanvasShape, CanvasTransaction, CanvasValue, DocumentCommand,
+    CanvasEdge, CanvasNode, CanvasRecordId, CanvasRecordRelation, CanvasShape, CanvasTransaction,
+    CanvasValue, DocumentCommand,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -52,33 +52,6 @@ impl CanvasRecordChange {
             Self::Upsert(record) => record.id(),
             Self::Delete(id) => id.clone(),
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum CanvasRecordRelation {
-    Parent(CanvasRecordParentRelation),
-    Group(CanvasRecordGroupRelation),
-}
-
-impl CanvasRecordRelation {
-    pub fn relation_id(&self) -> (&CanvasRecordId, &CanvasRecordId) {
-        match self {
-            Self::Parent(relation) => (&relation.child, &relation.parent),
-            Self::Group(relation) => (&relation.group, &relation.member),
-        }
-    }
-}
-
-impl From<CanvasRecordParentRelation> for CanvasRecordRelation {
-    fn from(value: CanvasRecordParentRelation) -> Self {
-        Self::Parent(value)
-    }
-}
-
-impl From<CanvasRecordGroupRelation> for CanvasRecordRelation {
-    fn from(value: CanvasRecordGroupRelation) -> Self {
-        Self::Group(value)
     }
 }
 
@@ -354,7 +327,10 @@ impl CanvasTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEdge, CanvasEndpoint, EdgeId, NodeId, ShapeId};
+    use crate::{
+        CanvasEdge, CanvasEndpoint, CanvasRecordGroupRelation, CanvasRecordParentRelation, EdgeId,
+        NodeId, ShapeId,
+    };
     use open_gpui::{Bounds, point, px, size};
 
     #[test]

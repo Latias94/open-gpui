@@ -182,7 +182,7 @@ fn relation_changes_from_diff(
     }
 
     for relation in previous.groups() {
-        if !current.contains_group_relation(relation) {
+        if !current.contains_relation(&CanvasRecordRelation::Group(relation.clone())) {
             changes.push(CanvasRelationChange::Delete(CanvasRecordRelation::Group(
                 relation.clone(),
             )));
@@ -190,7 +190,7 @@ fn relation_changes_from_diff(
     }
 
     for relation in current.groups() {
-        if !previous.contains_group_relation(relation) {
+        if !previous.contains_relation(&CanvasRecordRelation::Group(relation.clone())) {
             changes.push(CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
                 relation.clone(),
             )));
@@ -268,6 +268,7 @@ fn record_from_document(document: &CanvasDocument, id: &CanvasRecordId) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{child_frame_fixture, connected_pair_fixture, document_fixture};
     use crate::{
         CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordGroupRelation, CanvasRecordId,
         CanvasRecordParentRelation, DocumentCommand, EdgeId, NodeId, ShapeId,
@@ -345,20 +346,7 @@ mod tests {
 
     #[test]
     fn committed_mutation_reports_relation_only_changes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "child",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
-        document
-            .insert_shape(crate::CanvasShape::new(
-                "frame",
-                open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-            ))
-            .unwrap();
+        let mut document = child_frame_fixture().build();
         let mut transaction = CanvasTransaction::new([
             DocumentCommand::SetRecordParent {
                 child: CanvasRecordId::Node(NodeId::from("child")),
@@ -407,14 +395,13 @@ mod tests {
 
     #[test]
     fn committed_mutation_reports_parent_replacement_as_delete_and_upsert() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "child",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
         for id in ["old-frame", "new-frame"] {
             document
                 .insert_shape(crate::CanvasShape::new(
@@ -462,20 +449,7 @@ mod tests {
 
     #[test]
     fn committed_mutation_omits_noop_relation_changes() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "child",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
-        document
-            .insert_shape(crate::CanvasShape::new(
-                "frame",
-                open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
-            ))
-            .unwrap();
+        let mut document = child_frame_fixture().build();
         let relation_transaction = CanvasTransaction::new([
             DocumentCommand::SetRecordParent {
                 child: CanvasRecordId::Node(NodeId::from("child")),
@@ -499,7 +473,7 @@ mod tests {
 
     #[test]
     fn failed_transaction_leaves_document_unchanged() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let before = document.clone();
         let transaction = CanvasTransaction::new([
             DocumentCommand::InsertNode(CanvasNode::new(
@@ -522,7 +496,7 @@ mod tests {
 
     #[test]
     fn committed_mutation_preserves_transaction_metadata() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let mut transaction = CanvasTransaction::single(DocumentCommand::InsertNode(
             CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
         ));
@@ -600,28 +574,6 @@ mod tests {
     }
 
     fn connected_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "b",
-                point(px(20.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
-                "a-b",
-                CanvasEndpoint::new("a", None::<&str>),
-                CanvasEndpoint::new("b", None::<&str>),
-            ))
-            .unwrap();
-        document
+        connected_pair_fixture().build()
     }
 }

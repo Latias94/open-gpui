@@ -28,6 +28,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   act as coarse candidate providers.
 - `CanvasStore` owns the canonical document, runtime cache, history, edge router, kind registry, and
   committed change feed. No-op and failed mutations do not advance history or notify listeners.
+- `CanvasDocumentBuilder` is the explicit construction path for snapshots, imports, examples, and
+  fixtures. It validates records and relation facts without publishing edit history or store
+  changes.
 - `CanvasGeometryFacts` centralizes record bounds, handle positions, route paths, edge bounds,
   hit areas, endpoint picking, previews, and paint fallback geometry.
 - `CanvasKindRegistry` lets applications register node, edge, and shape kind policy bundles for
@@ -35,8 +38,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
   records.
 - Locked records remain visible for culling and painting, but default hit testing and selection
   skip them unless `HitOptions::include_locked` is enabled.
-- `CanvasEditor` is the ergonomic editing facade over `CanvasStore` plus viewport, selection, and
-  tool-session state. Durable document changes still pass through the store mutation path.
+- `CanvasEditor` is the ergonomic editing facade over `CanvasStore` plus a crate-private
+  `CanvasEditorSession`. Durable document changes pass through the store mutation path; viewport,
+  selection, active tool state, and gesture baselines stay in the ephemeral session boundary.
 - `CanvasEditor` exposes command methods for delete, copy, cut, paste, duplicate, undo, redo, and
   z-order changes so applications do not need to mutate document collections directly.
 - `CanvasTransformHandle` and `CanvasResizeHandle` describe selected-record resize affordances in
@@ -51,9 +55,9 @@ command, query, tool, and persistence boundaries over early feature breadth.
 - `CanvasInputMapper::key_down_event` lets focus-owning widgets dispatch keyboard input without a
   canvas-local bounds mapper; the native smoke example forwards Delete, Backspace, and Escape this
   way.
-- Built-in tool state machines keep their gesture effects inside `CanvasEditor`, while
-  `CanvasToolIntent` is the public custom-tool vocabulary for document, selection, viewport, and
-  tool-mode changes.
+- Built-in tool state machines read through a crate-private reducer context and emit effects that
+  the editor routes through store or session paths. `CanvasToolIntent` remains the public
+  custom-tool vocabulary for document, selection, viewport, and tool-mode changes.
 - The built-in select tool supports shift-click selection toggling through the same selection
   semantics exposed to custom tools as intents.
 - The built-in select tool also supports shift-drag additive marquee selection, seeded from the
@@ -75,8 +79,7 @@ command, query, tool, and persistence boundaries over early feature breadth.
 ```rust
 use open_gpui::{point, px, size};
 use open_gpui_canvas::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasTransaction,
-    DocumentCommand, DocumentError,
+    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasNode, DocumentError,
 };
 
 fn build_document() -> Result<CanvasDocument, DocumentError> {
@@ -98,19 +101,23 @@ fn build_document() -> Result<CanvasDocument, DocumentError> {
         .handles
         .push(CanvasHandle::new("in", point(px(0.0), px(40.0))));
 
-    let mut document = CanvasDocument::default();
-    document.apply_transaction(CanvasTransaction::new([
-        DocumentCommand::InsertNode(source),
-        DocumentCommand::InsertNode(target),
-        DocumentCommand::InsertEdge(CanvasEdge::new(
-            "source-target",
-            CanvasEndpoint::new("source", Some("out")),
-            CanvasEndpoint::new("target", Some("in")),
-        )),
-    ]))?;
-    Ok(document)
+    let mut builder = CanvasDocument::builder();
+    builder.add_node(source)?;
+    builder.add_node(target)?;
+    builder.add_edge(CanvasEdge::new(
+        "source-target",
+        CanvasEndpoint::new("source", Some("out")),
+        CanvasEndpoint::new("target", Some("in")),
+    ))?;
+    builder.build()
 }
 ```
+
+Use `CanvasDocumentBuilder` when creating a document from snapshots, import formats, examples, or
+fixtures. Use `CanvasDocument::apply_transaction`, `CanvasStore`, or `CanvasEditor` when modeling an
+edit to an existing document, because those paths produce committed mutation facts, inverse
+transactions, runtime-cache updates, history entries, persistence log records, and listener
+notifications as appropriate.
 
 ## Query Graph Structure
 
@@ -206,12 +213,18 @@ deletion, so persistence, undo/redo, runtime sync, and future CRDT adapters see 
 structural facts. This slice does not implement group editing tools, frame layout, clipping, or
 parent-relative transforms yet.
 
+`CanvasRecordRelation` is the unified relation record vocabulary for parent and group membership
+facts. `CanvasRecordRelationsBuilder` is the construction path for clipboard payloads, imports, and
+fixtures that need to assemble a relation set without treating each relation as an editor mutation.
+Future edge bindings, frame containment, or layout ownership should extend this relationship layer
+as first-class records rather than hiding cross-record structure in `CanvasValue`.
+
 ## Edit Through Commands
 
 Applications should route product editing actions through `CanvasEditor` methods. The editor
 delegates durable document mutation, undo/redo, runtime cache updates, kind validation, and committed
-change notification to `CanvasStore`, while keeping viewport, selection, and active tool-session
-state editor-scoped for now.
+change notification to `CanvasStore`, while viewport, selection, active tool state, and gesture
+baselines live in its crate-private `CanvasEditorSession`.
 Copy, cut, paste, and duplicate preserve internal edges plus internal parent/group relations when
 both relationship endpoints are included in the clipboard payload; relationships to records outside
 the payload are intentionally omitted.
@@ -419,9 +432,11 @@ assert_eq!(
 ```
 
 Use `CanvasDocument::from_snapshot_with_kind_registry` to normalize and validate a snapshot at load
-time. Use `CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_registry` when the
-interactive editor should apply the same registry to transactions, gestures, undo/redo validation,
-runtime caches, and paint snapshots.
+time. Snapshot loading and JSON Canvas import use the construction path rather than store changes;
+the resulting document is already valid, but no edit history or listeners are produced. Use
+`CanvasEditor::try_new_with_kind_registry` or `CanvasEditor::set_kind_registry` when the interactive
+editor should apply the same registry to transactions, gestures, undo/redo validation, runtime
+caches, and paint snapshots.
 
 Node, edge, and shape render policies can all return renderer-neutral `CanvasKindPaint` defaults.
 Node and shape render policies can also return `CanvasKindLabel` metadata for paint-frame snapshots.
@@ -559,8 +574,9 @@ rendering work through visible-record culling instead of per-record GPUI element
 
 Custom tools read editor state through `CanvasToolContext` and return `CanvasToolIntent` values.
 They do not receive `&mut CanvasEditor`, so undo, selection pruning, runtime-cache updates,
-persistence, and future CRDT translation keep passing through one mutation path. Built-in gesture
-state stays inside the editor. For continuous interactions such as dragging or resizing, return
+persistence, and future CRDT translation keep passing through one mutation path. Built-in reducer
+state stays behind the crate-private session/reducer context rather than becoming part of the
+custom-tool API. For continuous interactions such as dragging or resizing, return
 `BeginTransientTransaction`, one or more `UpdateTransientTransaction` intents, and then
 `CommitTransientTransaction` or `CancelTransientTransaction`; the editor coalesces those updates
 into one undo entry and persistence log entry.

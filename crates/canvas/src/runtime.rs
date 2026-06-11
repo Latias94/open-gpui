@@ -325,6 +325,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{
         CanvasEdge, CanvasEndpoint, CanvasHandle, CanvasKindRegistry, CanvasNode,
         CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy, CanvasNodeKind,
@@ -453,27 +454,24 @@ mod tests {
 
     #[test]
     fn runtime_uses_kind_registry_geometry_for_index_and_routes() {
-        let mut document = CanvasDocument::default();
         let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         source.kind = "wide".to_string();
         source
             .handles
             .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
-        document.insert_node(source).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(source)
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
         let registry = geometry_registry();
         let runtime = CanvasRuntime::rebuild_with_kind_registry(&document, &registry);
 
@@ -507,10 +505,9 @@ mod tests {
 
     #[test]
     fn runtime_precise_hit_test_uses_kind_policy() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         node.kind = "right-half".to_string();
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind(
             "right-half",
@@ -619,54 +616,44 @@ mod tests {
     }
 
     fn connected_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn connected_registry_document() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
         let mut source = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         source.kind = "wide".to_string();
         source
             .handles
             .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
-        document.insert_node(source).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(source)
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn geometry_registry() -> CanvasKindRegistry {

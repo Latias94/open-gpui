@@ -24,6 +24,7 @@ mod routing;
 mod runtime;
 mod runtime_query;
 mod schema;
+mod session;
 mod snap;
 mod spatial_cache;
 mod store;
@@ -34,15 +35,15 @@ mod transform;
 
 pub use changes::{
     CanvasChangeOrigin, CanvasRecord, CanvasRecordChange, CanvasRecordOperation,
-    CanvasRecordOperationBatch, CanvasRecordRelation, CanvasRelationChange,
-    CanvasRelationOperation, CanvasRelationOperationBatch,
+    CanvasRecordOperationBatch, CanvasRelationChange, CanvasRelationOperation,
+    CanvasRelationOperationBatch,
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute,
-    CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape,
-    CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue, DocumentCommand, DocumentError,
-    EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder, CanvasDocumentDiff,
+    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
+    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue,
+    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
 };
 pub use format::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
@@ -92,7 +93,10 @@ pub use persistence::{
     redo_persistent_transaction, replay_canvas_log, save_canvas_checkpoint,
     save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
-pub use relations::{CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelations};
+pub use relations::{
+    CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelation,
+    CanvasRecordRelationKind, CanvasRecordRelations, CanvasRecordRelationsBuilder,
+};
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,
     CanvasRouteSegment,

@@ -4,7 +4,7 @@ use super::*;
 trait BuiltInCanvasToolReducer {
     fn handle_event(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError>;
 }
@@ -28,13 +28,13 @@ impl BuiltInCanvasTool {
 
     pub(super) fn handle_event(
         self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         match self {
-            Self::Select => SelectToolStateMachine.handle_event(editor, event),
-            Self::Pan => PanToolStateMachine.handle_event(editor, event),
-            Self::Connect => ConnectToolStateMachine.handle_event(editor, event),
+            Self::Select => SelectToolStateMachine.handle_event(context, event),
+            Self::Pan => PanToolStateMachine.handle_event(context, event),
+            Self::Connect => ConnectToolStateMachine.handle_event(context, event),
         }
     }
 }
@@ -44,10 +44,10 @@ struct PanToolStateMachine;
 impl BuiltInCanvasToolReducer for PanToolStateMachine {
     fn handle_event(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        Ok(match (&editor.state, event) {
+        Ok(match (context.state(), event) {
             (
                 ToolState::Idle,
                 CanvasEvent::PointerDown {
@@ -84,10 +84,10 @@ struct ConnectToolStateMachine;
 impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
     fn handle_event(
         &self,
-        editor: &CanvasEditor,
+        context: CanvasToolReducerContext<'_>,
         event: CanvasEvent,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
-        Ok(match (&editor.state, event) {
+        Ok(match (context.state(), event) {
             (
                 ToolState::Idle,
                 CanvasEvent::PointerDown {
@@ -96,8 +96,8 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                     ..
                 },
             ) => {
-                let document_position = editor.viewport.view_to_document(position);
-                editor
+                let document_position = context.viewport().view_to_document(position);
+                context
                     .node_endpoint_at(document_position, CanvasConnectionEndpointRole::Source)
                     .map(|source| {
                         vec![CanvasToolEffect::SetState(ToolState::Connecting {
@@ -108,7 +108,7 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                     .unwrap_or_default()
             }
             (ToolState::Connecting { source, .. }, CanvasEvent::PointerMove { position, .. }) => {
-                let document_position = editor.viewport.view_to_document(position);
+                let document_position = context.viewport().view_to_document(position);
                 vec![CanvasToolEffect::SetState(ToolState::Connecting {
                     source: source.clone(),
                     current: document_position,
@@ -122,17 +122,17 @@ impl BuiltInCanvasToolReducer for ConnectToolStateMachine {
                     ..
                 },
             ) => {
-                let document_position = editor.viewport.view_to_document(position);
+                let document_position = context.viewport().view_to_document(position);
                 let mut effects = Vec::new();
-                if let Some(target) =
-                    editor.node_endpoint_at(document_position, CanvasConnectionEndpointRole::Target)
+                if let Some(target) = context
+                    .node_endpoint_at(document_position, CanvasConnectionEndpointRole::Target)
                     && (source.node_id != target.node_id || source.handle_id != target.handle_id)
                 {
                     let edge_id = EdgeId::new(format!(
                         "{}->{}:{}",
                         source.node_id,
                         target.node_id,
-                        editor.document().edge_count()
+                        context.document().edge_count()
                     ));
                     effects.push(CanvasToolEffect::ApplyTransaction(
                         CanvasTransaction::single(DocumentCommand::InsertEdge(CanvasEdge::new(

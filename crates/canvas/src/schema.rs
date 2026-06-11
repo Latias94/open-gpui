@@ -811,6 +811,7 @@ mod tests {
     use super::*;
     use crate::{
         CanvasDocument, CanvasEndpoint, CanvasRecordKind, DocumentError, EdgeId, NodeId, ShapeId,
+        test_support::document_fixture,
     };
     use open_gpui::{Bounds, point, px, size};
     use serde_json::{Value, json};
@@ -1546,11 +1547,10 @@ mod tests {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
 
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.kind = "note".to_string();
         node.data.insert("label".to_string(), json!("Snapshot"));
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let loaded =
             CanvasDocument::from_snapshot_with_kind_registry(document.to_snapshot(), &registry)
@@ -1566,10 +1566,10 @@ mod tests {
     fn document_mutation_path_rejects_registered_kind_errors_atomically() {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("n", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.kind = "note".to_string();
         node.data.insert("title".to_string(), json!(false));
+        let mut document = document_fixture().build();
 
         let err = document
             .commit_transaction_with_kind_registry(

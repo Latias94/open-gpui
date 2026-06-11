@@ -624,16 +624,18 @@ pub fn connection_hit_options() -> HitOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasEdge, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle, HandleRole};
+    use crate::{
+        CanvasEdge, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle, HandleRole,
+        test_support::document_fixture,
+    };
     use open_gpui::{point, px, size};
 
     #[test]
     fn facts_use_same_endpoint_position_for_handles_and_node_centers() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(10.0), px(20.0)), size(px(40.0), px(60.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(40.0), px(30.0))));
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let facts = CanvasGeometryFacts::new(&document);
 
         assert_eq!(
@@ -652,12 +654,11 @@ mod tests {
 
     #[test]
     fn facts_pick_connection_handles_by_role() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         let mut target_only = CanvasHandle::new("in", point(px(100.0), px(50.0)));
         target_only.role = HandleRole::Target;
         node.handles.push(target_only);
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
         let facts = CanvasGeometryFacts::new(&document);
         let records = [HitRecord {
             target: HitTarget::Handle {
@@ -682,31 +683,26 @@ mod tests {
 
     #[test]
     fn facts_materialize_hit_records_for_nodes_handles_shapes_and_edges() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(10.0), px(5.0))));
-        document.insert_node(node).unwrap();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(node)
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_shape(CanvasShape::new(
+            .shape(CanvasShape::new(
                 "shape",
                 Bounds::new(point(px(0.0), px(40.0)), size(px(20.0), px(20.0))),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let records = CanvasGeometryFacts::new(&document).hit_records();
         let targets = records
@@ -731,21 +727,6 @@ mod tests {
 
     #[test]
     fn resolved_edge_geometry_answers_nearest_point_and_hit() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
-                "b",
-                point(px(100.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
-            .unwrap();
         let mut edge = CanvasEdge::new(
             "a-b",
             CanvasEndpoint::new("a", None::<&str>),
@@ -756,7 +737,19 @@ mod tests {
             stroke_width: px(4.0),
             fill: None,
         };
-        document.insert_edge(edge.clone()).unwrap();
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(100.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .edge(edge.clone())
+            .build();
 
         let geometry = CanvasGeometryFacts::new(&document)
             .edge_geometry(&edge)

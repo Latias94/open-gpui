@@ -303,12 +303,12 @@ fn ordinals_for_records(records: &[HitRecord]) -> IndexMap<HitTarget, usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::document_fixture;
     use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape, DocumentCommand, NodeId};
     use open_gpui::{point, px, size};
 
     #[test]
     fn base_only_cache_matches_spatial_index_query_order() {
-        let mut document = CanvasDocument::default();
         let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(50.0), px(50.0)));
         back.z_index = 1;
         let mut front = CanvasShape::new(
@@ -316,8 +316,7 @@ mod tests {
             Bounds::new(point(px(10.0), px(10.0)), size(px(50.0), px(50.0))),
         );
         front.z_index = 2;
-        document.insert_node(back).unwrap();
-        document.insert_shape(front).unwrap();
+        let document = document_fixture().node(back).shape(front).build();
 
         let cache =
             CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
@@ -339,14 +338,13 @@ mod tests {
 
     #[test]
     fn overlay_records_replace_stale_base_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(100.0), px(100.0)),
             ))
-            .unwrap();
+            .build();
         let mut cache =
             CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
 
@@ -374,28 +372,23 @@ mod tests {
 
     #[test]
     fn moving_node_refreshes_incident_edge_overlay_record() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
         let mut cache =
             CanvasSpatialCache::rebuild_with_router(&document, &crate::CanvasDefaultEdgeRouter);
 

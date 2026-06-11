@@ -1,8 +1,89 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEdgeRoute, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasShape, DocumentCommand, EdgeId, NodeId, ShapeId,
+    CanvasDocument, CanvasDocumentBuilder, CanvasEdge, CanvasEdgeRoute, CanvasEndpoint,
+    CanvasHandle, CanvasNode, CanvasShape, DocumentCommand, EdgeId, NodeId, ShapeId,
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CanvasDocumentFixtureBuilder {
+    builder: CanvasDocumentBuilder,
+}
+
+pub(crate) fn document_fixture() -> CanvasDocumentFixtureBuilder {
+    CanvasDocumentFixtureBuilder::new()
+}
+
+pub(crate) fn connected_pair_fixture() -> CanvasDocumentFixtureBuilder {
+    document_fixture()
+        .node(CanvasNode::new(
+            "a",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .node(CanvasNode::new(
+            "b",
+            point(px(20.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .edge(CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        ))
+}
+
+pub(crate) fn child_frame_fixture() -> CanvasDocumentFixtureBuilder {
+    document_fixture()
+        .node(CanvasNode::new(
+            "child",
+            point(px(0.0), px(0.0)),
+            size(px(10.0), px(10.0)),
+        ))
+        .shape(CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        ))
+}
+
+impl CanvasDocumentFixtureBuilder {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn node(mut self, node: CanvasNode) -> Self {
+        self.add_node(node);
+        self
+    }
+
+    pub(crate) fn edge(mut self, edge: CanvasEdge) -> Self {
+        self.add_edge(edge);
+        self
+    }
+
+    pub(crate) fn shape(mut self, shape: CanvasShape) -> Self {
+        self.add_shape(shape);
+        self
+    }
+
+    pub(crate) fn add_node(&mut self, node: CanvasNode) -> &mut Self {
+        self.builder.add_node(node).unwrap();
+        self
+    }
+
+    pub(crate) fn add_edge(&mut self, edge: CanvasEdge) -> &mut Self {
+        self.builder.add_edge(edge).unwrap();
+        self
+    }
+
+    pub(crate) fn add_shape(&mut self, shape: CanvasShape) -> &mut Self {
+        self.builder.add_shape(shape).unwrap();
+        self
+    }
+
+    pub(crate) fn build(self) -> CanvasDocument {
+        self.builder.build().unwrap()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct TestRng {

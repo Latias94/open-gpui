@@ -219,15 +219,14 @@ mod tests {
     use super::*;
     use crate::{
         CanvasDocument, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasNode, CanvasRoutePath,
-        CanvasRouteRequest, CanvasShape, CanvasTransaction,
-        test_support::{CanvasCommandGenerator, TestRng},
+        CanvasRouteRequest, CanvasShape, CanvasTransaction, DocumentCommand,
+        test_support::{CanvasCommandGenerator, TestRng, document_fixture},
     };
     use open_gpui::{Bounds, point, px, size};
     use std::cmp::Ordering;
 
     #[test]
     fn hit_test_returns_topmost_first() {
-        let mut document = CanvasDocument::default();
         let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         back.z_index = 1;
         let mut front = CanvasShape::new(
@@ -235,8 +234,7 @@ mod tests {
             Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
         );
         front.z_index = 2;
-        document.insert_node(back).unwrap();
-        document.insert_shape(front).unwrap();
+        let document = document_fixture().node(back).shape(front).build();
 
         let index = SpatialIndex::rebuild(&document);
         let hits = index
@@ -255,21 +253,18 @@ mod tests {
 
     #[test]
     fn query_culls_outside_records() {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "inside",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "outside",
                 point(px(100.0), px(100.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
+            .build();
 
         let index = SpatialIndex::rebuild(&document);
         let visible = index
@@ -285,10 +280,9 @@ mod tests {
 
     #[test]
     fn hidden_records_are_only_returned_when_requested() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("hidden", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.hidden = true;
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let index = SpatialIndex::rebuild(&document);
         assert!(
@@ -313,10 +307,9 @@ mod tests {
 
     #[test]
     fn locked_records_are_skipped_by_hit_test_unless_requested() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.locked = true;
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let index = SpatialIndex::rebuild(&document);
         assert!(
@@ -341,10 +334,9 @@ mod tests {
 
     #[test]
     fn query_returns_locked_records_for_culling() {
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("locked", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
         node.locked = true;
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let index = SpatialIndex::rebuild(&document);
         let records = index
@@ -365,28 +357,23 @@ mod tests {
     fn edge_bounds_are_indexed_from_route_hit_area() {
         use crate::{CanvasEdge, CanvasEndpoint};
 
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        let document = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let index = SpatialIndex::rebuild(&document);
         assert!(index.records().iter().any(|record| {
@@ -425,9 +412,11 @@ mod tests {
         let mut target = document.node(&NodeId::from("b")).unwrap().clone();
         target.position = point(px(40.0), px(0.0));
 
-        let previous = document.clone();
-        document.update_node(target).unwrap();
-        let diff = document.diff_against(&previous);
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+                target,
+            )))
+            .unwrap();
         index.apply_diff_with_router(&document, &diff, &VerticalDetourRouter);
 
         assert!(index.records().iter().any(|record| {
@@ -441,11 +430,10 @@ mod tests {
     fn handles_are_hit_only_when_requested() {
         use crate::CanvasHandle;
 
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         node.handles
             .push(CanvasHandle::new("out", point(px(95.0), px(50.0))));
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let index = SpatialIndex::rebuild(&document);
         let point = point(px(95.0), px(50.0));
@@ -480,12 +468,11 @@ mod tests {
     fn hidden_handles_are_only_hit_when_hidden_records_are_requested() {
         use crate::CanvasHandle;
 
-        let mut document = CanvasDocument::default();
         let mut node = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         let mut handle = CanvasHandle::new("hidden", point(px(95.0), px(50.0)));
         handle.hidden = true;
         node.handles.push(handle);
-        document.insert_node(node).unwrap();
+        let document = document_fixture().node(node).build();
 
         let index = SpatialIndex::rebuild(&document);
         let point = point(px(95.0), px(50.0));
@@ -524,18 +511,15 @@ mod tests {
 
     #[test]
     fn applies_diff_for_inserted_records() {
-        let previous = CanvasDocument::default();
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
-                "a",
-                point(px(0.0), px(0.0)),
-                size(px(10.0), px(10.0)),
-            ))
+        let previous = document_fixture().build();
+        let mut document = previous.clone();
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::InsertNode(
+                CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
+            )))
             .unwrap();
 
         let mut index = SpatialIndex::rebuild(&previous);
-        let diff = document.diff_against(&previous);
         index.apply_diff(&document, &diff);
 
         assert_eq!(
@@ -551,36 +535,34 @@ mod tests {
     fn applies_diff_for_moved_node_and_incident_edge() {
         use crate::{CanvasEdge, CanvasEndpoint};
 
-        let mut previous = CanvasDocument::default();
-        previous
-            .insert_node(CanvasNode::new(
+        let previous = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        previous
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        previous
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let mut document = previous.clone();
         let mut node = document.node(&NodeId::from("a")).unwrap().clone();
         node.position = point(px(40.0), px(0.0));
-        document.update_node(node).unwrap();
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateNode(
+                node,
+            )))
+            .unwrap();
 
         let mut index = SpatialIndex::rebuild(&previous);
-        let diff = document.diff_against(&previous);
         index.apply_diff(&document, &diff);
 
         assert!(index.records().iter().any(|record| {
@@ -595,37 +577,35 @@ mod tests {
     fn applies_diff_for_updated_edge_route() {
         use crate::{CanvasEdge, CanvasEdgeRoute, CanvasEndpoint};
 
-        let mut previous = CanvasDocument::default();
-        previous
-            .insert_node(CanvasNode::new(
+        let previous = document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        previous
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(100.0), px(0.0)),
                 size(px(20.0), px(20.0)),
             ))
-            .unwrap();
-        previous
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
+            .build();
 
         let mut document = previous.clone();
         let mut edge = document.edge(&EdgeId::from("a-b")).unwrap().clone();
         edge.route = CanvasEdgeRoute::polyline([point(px(60.0), px(80.0))]);
         edge.route.interaction_width = px(20.0);
-        document.update_edge(edge).unwrap();
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateEdge(
+                edge,
+            )))
+            .unwrap();
 
         let mut index = SpatialIndex::rebuild(&previous);
-        let diff = document.diff_against(&previous);
         index.apply_diff(&document, &diff);
 
         assert!(index.records().iter().any(|record| {
@@ -639,7 +619,7 @@ mod tests {
     fn incremental_index_matches_rebuild_after_random_diffs() {
         let mut rng = TestRng::new(0x4b65_9072_e9c1_fab3);
         let mut generator = CanvasCommandGenerator::default();
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let mut index = SpatialIndex::rebuild(&document);
 
         for _ in 0..192 {
@@ -680,29 +660,23 @@ mod tests {
     }
 
     fn connected_document_for_router() -> CanvasDocument {
-        let mut document = CanvasDocument::default();
-        document
-            .insert_node(CanvasNode::new(
+        document_fixture()
+            .node(CanvasNode::new(
                 "a",
                 point(px(0.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_node(CanvasNode::new(
+            .node(CanvasNode::new(
                 "b",
                 point(px(20.0), px(0.0)),
                 size(px(10.0), px(10.0)),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", None::<&str>),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     struct VerticalDetourRouter;

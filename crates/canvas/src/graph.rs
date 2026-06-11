@@ -577,7 +577,10 @@ fn neighbor_node_id<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CanvasHandle, CanvasTransaction, DocumentCommand, HandleRole};
+    use crate::{
+        CanvasHandle, CanvasTransaction, DocumentCommand, HandleRole,
+        test_support::document_fixture,
+    };
     use open_gpui::{point, px, size};
 
     #[test]
@@ -789,32 +792,26 @@ mod tests {
         let b = CanvasNode::new("b", point(px(160.0), px(0.0)), size(px(100.0), px(60.0)));
         let c = CanvasNode::new("c", point(px(-160.0), px(0.0)), size(px(100.0), px(60.0)));
 
-        let mut document = CanvasDocument::default();
-        document.insert_node(a).unwrap();
-        document.insert_node(b).unwrap();
-        document.insert_node(c).unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+        document_fixture()
+            .node(a)
+            .node(b)
+            .node(c)
+            .edge(CanvasEdge::new(
                 "a-b",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("b", None::<&str>),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "c-a",
                 CanvasEndpoint::new("c", None::<&str>),
                 CanvasEndpoint::new("a", Some("in")),
             ))
-            .unwrap();
-        document
-            .insert_edge(CanvasEdge::new(
+            .edge(CanvasEdge::new(
                 "a-a",
                 CanvasEndpoint::new("a", Some("out")),
                 CanvasEndpoint::new("a", Some("in")),
             ))
-            .unwrap();
-        document
+            .build()
     }
 
     fn edge_ids<'a>(edges: impl IntoIterator<Item = &'a CanvasEdge>) -> Vec<String> {

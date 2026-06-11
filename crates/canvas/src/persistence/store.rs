@@ -1,8 +1,8 @@
 use crate::{
     CanvasCommittedMutation, CanvasDocument, CanvasDocumentDiff, CanvasEditor, CanvasEvent,
-    CanvasRecordOperationBatch, CanvasRelationOperationBatch, CanvasSnapshot, CanvasToolId,
-    CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry, CanvasTransaction, DocumentError,
-    tool::CanvasToolEffect,
+    CanvasPreparedMutation, CanvasRecordOperationBatch, CanvasRelationOperationBatch,
+    CanvasSnapshot, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
+    CanvasTransaction, DocumentError, tool::CanvasToolEffect,
 };
 use crate::{CanvasStore, CanvasStoreChange};
 use std::{convert::Infallible, error::Error, fmt};
@@ -290,16 +290,13 @@ where
     }
 
     let prepared = canvas_store.prepare_transaction(transaction)?;
-    let committed = prepared.committed().clone();
-    if committed.diff().is_empty() {
-        return Ok(canvas_store.apply_prepared_transaction(prepared));
-    }
-
-    append_committed_log_entry(store, cursor, &committed)?;
-    let change = canvas_store.apply_prepared_transaction(prepared);
-    debug_assert!(change.is_some());
-    cursor.advance();
-    Ok(change)
+    append_then_apply_prepared_mutation(
+        canvas_store,
+        store,
+        cursor,
+        prepared,
+        |canvas_store, prepared| canvas_store.apply_prepared_transaction(prepared),
+    )
 }
 
 pub fn undo_persistent_transaction<S>(
@@ -328,16 +325,13 @@ where
     let Some(prepared) = canvas_store.prepare_undo()? else {
         return Ok(None);
     };
-    let committed = prepared.committed().clone();
-    if committed.diff().is_empty() {
-        return Ok(canvas_store.apply_prepared_undo(prepared));
-    }
-
-    append_committed_log_entry(store, cursor, &committed)?;
-    let change = canvas_store.apply_prepared_undo(prepared);
-    debug_assert!(change.is_some());
-    cursor.advance();
-    Ok(change)
+    append_then_apply_prepared_mutation(
+        canvas_store,
+        store,
+        cursor,
+        prepared,
+        |canvas_store, prepared| canvas_store.apply_prepared_undo(prepared),
+    )
 }
 
 pub fn redo_persistent_transaction<S>(
@@ -366,16 +360,13 @@ where
     let Some(prepared) = canvas_store.prepare_redo()? else {
         return Ok(None);
     };
-    let committed = prepared.committed().clone();
-    if committed.diff().is_empty() {
-        return Ok(canvas_store.apply_prepared_redo(prepared));
-    }
-
-    append_committed_log_entry(store, cursor, &committed)?;
-    let change = canvas_store.apply_prepared_redo(prepared);
-    debug_assert!(change.is_some());
-    cursor.advance();
-    Ok(change)
+    append_then_apply_prepared_mutation(
+        canvas_store,
+        store,
+        cursor,
+        prepared,
+        |canvas_store, prepared| canvas_store.apply_prepared_redo(prepared),
+    )
 }
 
 pub(crate) fn apply_persistent_tool_effect<S>(
@@ -567,6 +558,28 @@ where
             committed,
         ))
         .map_err(CanvasPersistenceError::Store)
+}
+
+fn append_then_apply_prepared_mutation<S>(
+    canvas_store: &mut CanvasStore,
+    store: &mut S,
+    cursor: &mut CanvasPersistenceCursor,
+    prepared: CanvasPreparedMutation,
+    apply: impl FnOnce(&mut CanvasStore, CanvasPreparedMutation) -> Option<CanvasStoreChange>,
+) -> Result<Option<CanvasStoreChange>, CanvasPersistenceError<S::Error>>
+where
+    S: CanvasPersistenceStore,
+{
+    let committed = prepared.committed().clone();
+    if committed.diff().is_empty() {
+        return Ok(apply(canvas_store, prepared));
+    }
+
+    append_committed_log_entry(store, cursor, &committed)?;
+    let change = apply(canvas_store, prepared);
+    debug_assert!(change.is_some());
+    cursor.advance();
+    Ok(change)
 }
 
 fn apply_persistent_gesture_commit<S>(
