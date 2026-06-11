@@ -100,6 +100,7 @@ pub struct CanvasPaintLabel {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CanvasPaintInteractionFrame {
     pub selection_bounds: Option<Bounds<Pixels>>,
+    pub structural_selection_bounds: Option<Bounds<Pixels>>,
     pub connection_preview: Option<CanvasPaintConnectionPreview>,
     pub transform_handles: Vec<CanvasPaintTransformHandle>,
     pub snap_guides: Vec<CanvasPaintSnapGuide>,
@@ -254,7 +255,7 @@ pub fn collect_visible_records(
         visible_document_bounds,
         records,
         interaction: if options.include_interaction_feedback {
-            interaction_frame(model)
+            interaction_frame(model, &structural_selection)
         } else {
             CanvasPaintInteractionFrame::default()
         },
@@ -318,7 +319,10 @@ pub fn prepare_canvas_frame(
     }
 }
 
-fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
+fn interaction_frame(
+    model: &CanvasPaintModel,
+    structural_selection: &CanvasRecordScope,
+) -> CanvasPaintInteractionFrame {
     match model.interaction.tool_state() {
         ToolState::Selecting {
             origin, current, ..
@@ -328,12 +332,14 @@ fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
                     .viewport
                     .document_bounds_to_view(bounds_from_points(*origin, *current)),
             ),
+            structural_selection_bounds: None,
             connection_preview: None,
             transform_handles: Vec::new(),
             snap_guides: Vec::new(),
         },
         ToolState::Connecting { source, current } => CanvasPaintInteractionFrame {
             selection_bounds: None,
+            structural_selection_bounds: structural_selection_bounds(model, structural_selection),
             connection_preview: connection_preview(model, source, *current),
             transform_handles: Vec::new(),
             snap_guides: Vec::new(),
@@ -341,6 +347,10 @@ fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
         ToolState::Translating { snap_guides, .. } | ToolState::Resizing { snap_guides, .. } => {
             CanvasPaintInteractionFrame {
                 selection_bounds: None,
+                structural_selection_bounds: structural_selection_bounds(
+                    model,
+                    structural_selection,
+                ),
                 connection_preview: None,
                 transform_handles: transform_handles_for_model(model),
                 snap_guides: paint_snap_guides(model, snap_guides),
@@ -348,11 +358,28 @@ fn interaction_frame(model: &CanvasPaintModel) -> CanvasPaintInteractionFrame {
         }
         _ => CanvasPaintInteractionFrame {
             selection_bounds: None,
+            structural_selection_bounds: structural_selection_bounds(model, structural_selection),
             connection_preview: None,
             transform_handles: transform_handles_for_model(model),
             snap_guides: Vec::new(),
         },
     }
+}
+
+fn structural_selection_bounds(
+    model: &CanvasPaintModel,
+    structural_selection: &CanvasRecordScope,
+) -> Option<Bounds<Pixels>> {
+    let facts = CanvasGeometryFacts::with_kind_registry(
+        model.document.as_ref(),
+        model.kind_registry.as_ref(),
+    );
+    let structural_bounds = facts.node_shape_bounds_for_records(structural_selection.records())?;
+    if Some(structural_bounds) == facts.selected_bounds(model.interaction.selection()) {
+        return None;
+    }
+
+    Some(model.viewport.document_bounds_to_view(structural_bounds))
 }
 
 fn paint_snap_guides(

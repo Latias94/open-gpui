@@ -123,6 +123,18 @@ pub fn paint_canvas_frame(
         }
     }
 
+    if let Some(bounds) = frame.frame.interaction.structural_selection_bounds {
+        paint_rect(
+            window,
+            canvas_bounds,
+            bounds.dilate(px(3.0)),
+            theme.selection_bounds_fill,
+            theme.selection_bounds_stroke,
+            theme.selection_bounds_stroke_width,
+            px(2.0),
+        );
+    }
+
     if let Some(bounds) = frame.frame.interaction.selection_bounds {
         paint_rect(
             window,

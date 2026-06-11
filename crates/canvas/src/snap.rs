@@ -1,4 +1,3 @@
-use crate::geometry_facts::union_record_geometry_bounds;
 use crate::transform::{CanvasResizeHandle, resize_bounds_by_handle};
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
@@ -187,12 +186,7 @@ fn record_selection_bounds(
         CanvasDefaultEdgeRouter,
         kind_registry,
     );
-    union_record_geometry_bounds(
-        record_ids
-            .iter()
-            .filter_map(|record_id| facts.record_geometry(record_id))
-            .filter(CanvasRecordGeometry::is_visible_unlocked),
-    )
+    facts.node_shape_bounds_for_records(record_ids)
 }
 
 fn explicit_selection_bounds(

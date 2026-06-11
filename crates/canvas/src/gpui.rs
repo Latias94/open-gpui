@@ -597,6 +597,97 @@ mod tests {
     }
 
     #[test]
+    fn structural_selection_bounds_do_not_replace_transform_handles() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(80.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(160.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(crate::NodeId::from("child")),
+                parent: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+            }]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(140.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(
+            frame.interaction.structural_selection_bounds,
+            Some(Bounds::new(
+                point(px(0.0), px(0.0)),
+                size(px(200.0), px(80.0))
+            ))
+        );
+        assert_eq!(frame.interaction.transform_handles.len(), 4);
+        assert!(frame.interaction.transform_handles.iter().any(|handle| {
+            handle.target == CanvasTransformTarget::Shape(crate::ShapeId::from("frame"))
+                && handle.handle == crate::CanvasResizeHandle::BottomRight
+                && handle.view_bounds.contains(&point(px(100.0), px(80.0)))
+        }));
+        assert!(
+            !frame
+                .interaction
+                .transform_handles
+                .iter()
+                .any(|handle| handle.view_bounds.contains(&point(px(200.0), px(80.0))))
+        );
+    }
+
+    #[test]
+    fn structural_selection_bounds_skip_redundant_explicit_selection_bounds() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(120.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(30.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([DocumentCommand::SetRecordParent {
+                child: CanvasRecordId::Node(crate::NodeId::from("child")),
+                parent: CanvasRecordId::Shape(crate::ShapeId::from("frame")),
+            }]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        let model = CanvasPaintModel::from(&editor);
+
+        let frame = collect_visible_records(
+            &model,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(160.0))),
+            CanvasPaintOptions::default(),
+        );
+
+        assert_eq!(frame.interaction.structural_selection_bounds, None);
+    }
+
+    #[test]
     fn widget_overlay_frame_uses_selected_visible_record_placements() {
         let mut selected = CanvasNode::new(
             "selected",
