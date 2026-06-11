@@ -1272,3 +1272,42 @@ fn viewport_runtime_rejects_tear_off_commit_from_stale_drag_session(cx: &mut Tes
         );
     });
 }
+
+#[open_gpui::test]
+fn viewport_runtime_default_tear_off_bounds_keep_cursor_inside_window(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let release_position = point(px(900.0), px(900.0));
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+    );
+
+    let options = runtime.tear_off_window_options(&request);
+    assert_eq!(
+        options.window_bounds,
+        Some(WindowBounds::Windowed(floating_bounds(
+            876.0, 882.0, 360.0, 240.0
+        )))
+    );
+    if let Some(WindowBounds::Windowed(bounds)) = options.window_bounds {
+        assert!(bounds.contains(&release_position));
+        assert_ne!(bounds.origin, release_position);
+    } else {
+        panic!("tear-off should use windowed bounds");
+    }
+}

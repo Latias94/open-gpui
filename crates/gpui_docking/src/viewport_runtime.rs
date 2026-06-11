@@ -27,9 +27,12 @@ use crate::{
 };
 use open_gpui::{
     AnyWindowHandle, App, Bounds, Entity, Pixels, Point, Result, WindowBounds, WindowId,
-    WindowOptions, px, size,
+    WindowOptions, point, px, size,
 };
 use std::rc::Rc;
+
+const DEFAULT_TEAR_OFF_WINDOW_SIZE: open_gpui::Size<Pixels> = size(px(360.0), px(240.0));
+const DEFAULT_TEAR_OFF_CURSOR_OFFSET: Point<Pixels> = point(px(24.0), px(18.0));
 
 /// Internal owner for controller-backed platform viewport lifecycle.
 ///
@@ -724,12 +727,9 @@ impl DockViewportRuntime {
         &self,
         request: &DockViewportTearOffRequest,
     ) -> WindowOptions {
-        let window_bounds = request.suggested_window_bounds().unwrap_or_else(|| {
-            WindowBounds::Windowed(Bounds::new(
-                request.release_position(),
-                size(px(360.0), px(240.0)),
-            ))
-        });
+        let window_bounds = request
+            .suggested_window_bounds()
+            .unwrap_or_else(|| default_tear_off_window_bounds(request.release_position()));
 
         WindowOptions {
             window_bounds: Some(window_bounds),
@@ -1249,6 +1249,13 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
         self.adapter.apply_placement(placement)
     }
+}
+
+fn default_tear_off_window_bounds(release_position: Point<Pixels>) -> WindowBounds {
+    WindowBounds::Windowed(Bounds::new(
+        release_position - DEFAULT_TEAR_OFF_CURSOR_OFFSET,
+        DEFAULT_TEAR_OFF_WINDOW_SIZE,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
