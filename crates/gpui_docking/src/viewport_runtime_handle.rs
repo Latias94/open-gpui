@@ -6,6 +6,7 @@ use crate::{
     DockViewportRestoreOutcome, DockViewportRoutedDropPreview, DockViewportRuntime,
     DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportWindowFacts,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
@@ -16,9 +17,11 @@ use crate::{
 use crate::{
     DockNodeId, DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetContext,
 };
+#[cfg(test)]
+use open_gpui::WindowBounds;
 use open_gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, Entity, Pixels, Point, Result, Subscription,
-    WindowBounds, WindowId, WindowOptions,
+    WindowId, WindowOptions,
 };
 #[cfg(test)]
 use std::cell::Ref;
@@ -224,14 +227,14 @@ impl DockViewportRuntimeHandle {
         &self,
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
-        window_bounds: WindowBounds,
+        window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> bool {
         self.runtime.borrow_mut().begin_viewport_host_scene(
             space,
             window_id,
-            window_bounds,
+            window_facts,
             host_bounds,
             host_position,
         )
@@ -241,14 +244,14 @@ impl DockViewportRuntimeHandle {
         &self,
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
-        window_bounds: WindowBounds,
+        window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> Option<DockViewportHostSceneRegistration> {
         self.runtime.borrow_mut().begin_viewport_host_scene_frame(
             space,
             window_id,
-            window_bounds,
+            window_facts,
             host_bounds,
             host_position,
         )

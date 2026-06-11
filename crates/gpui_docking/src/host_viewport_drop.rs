@@ -1,5 +1,6 @@
 use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
+    DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -12,6 +13,7 @@ impl DockHost {
         host_bounds: Bounds<Pixels>,
         position: Point<Pixels>,
         window: &Window,
+        cx: &Context<Self>,
     ) {
         let Some(runtime) = self.viewport_runtime().cloned() else {
             self.interaction_mut().set_viewport_host_scene_frame(None);
@@ -27,7 +29,7 @@ impl DockHost {
         let registration = runtime.begin_viewport_host_scene_frame(
             space,
             window_id,
-            window.window_bounds(),
+            window_facts(window, cx),
             host_bounds,
             host_local_point(host_bounds, position),
         );
@@ -118,10 +120,18 @@ fn viewport_drop_route_request_from_host(
 }
 
 fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
-    let window_bounds = window.window_bounds().get_bounds();
+    let window_bounds = window.bounds();
     point(
         window_bounds.origin.x + position.x,
         window_bounds.origin.y + position.y,
+    )
+}
+
+fn window_facts(window: &Window, cx: &Context<DockHost>) -> DockViewportWindowFacts {
+    DockViewportWindowFacts::new(
+        window.display(cx).map(|display| display.id()),
+        window.window_bounds(),
+        window.bounds(),
     )
 }
 

@@ -2,7 +2,8 @@ use crate::{
     DockController, DockGraph, DockHost, DockLayoutRect, DockNode, DockSpaceId,
     DockViewportAdapter, DockViewportOpenStatus, DockViewportPlacement,
     DockViewportPlacementLayout, DockViewportPlatformSignals, DockViewportWindowBounds,
-    DockViewportWindowState, DockWorkspace, debug::DockDebugRegion, host_test_support::*,
+    DockViewportWindowFacts, DockViewportWindowState, DockWorkspace, debug::DockDebugRegion,
+    host_test_support::*,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds, point, px,
@@ -103,8 +104,9 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     for space in [&alpha_space, &zeta_space] {
         adapter.update_snapshot(
             space,
-            None,
-            WindowBounds::Windowed(floating_bounds(100.0, 100.0, 300.0, 200.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+                100.0, 100.0, 300.0, 200.0,
+            ))),
             floating_bounds(0.0, 0.0, 300.0, 200.0),
         );
     }

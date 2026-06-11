@@ -1,7 +1,8 @@
 use crate::{
     DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
     DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
+    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
+    DropZone, SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{
@@ -226,7 +227,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         runtime.begin_viewport_host_scene(
             target_space.clone(),
             target_opened.window().window_id(),
-            target_bounds,
+            DockViewportWindowFacts::from_window_bounds(target_bounds),
             target_host_bounds,
             point(px(0.0), px(0.0)),
         ),
@@ -237,7 +238,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         runtime.begin_viewport_host_scene(
             source_space.clone(),
             source_opened.window().window_id(),
-            source_bounds,
+            DockViewportWindowFacts::from_window_bounds(source_bounds),
             floating_bounds(0.0, 0.0, 360.0, 220.0),
             point(px(0.0), px(0.0)),
         ),

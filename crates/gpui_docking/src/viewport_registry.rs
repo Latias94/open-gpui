@@ -3,6 +3,42 @@ use crate::DockViewportIdentity;
 use open_gpui::{AnyWindowHandle, Bounds, DisplayId, Pixels, WindowBounds, WindowId};
 use std::collections::{BTreeMap, HashMap};
 
+/// Platform window facts captured from a live rendered viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockViewportWindowFacts {
+    /// Display currently containing the window.
+    pub(crate) display_id: Option<DisplayId>,
+    /// Platform window state suitable for placement persistence.
+    pub(crate) window_bounds: WindowBounds,
+    /// Current window rectangle in global screen coordinates.
+    pub(crate) screen_bounds: Bounds<Pixels>,
+}
+
+impl DockViewportWindowFacts {
+    pub(crate) fn new(
+        display_id: Option<DisplayId>,
+        window_bounds: WindowBounds,
+        screen_bounds: Bounds<Pixels>,
+    ) -> Self {
+        Self {
+            display_id,
+            window_bounds,
+            screen_bounds,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_window_bounds(window_bounds: WindowBounds) -> Self {
+        Self::new(None, window_bounds, window_bounds.get_bounds())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_display_id(mut self, display_id: Option<DisplayId>) -> Self {
+        self.display_id = display_id;
+        self
+    }
+}
+
 /// Runtime snapshot for one rendered dock viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DockViewportSnapshot {
@@ -10,8 +46,10 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) window: AnyWindowHandle,
     /// Display containing the window, when the application has recorded one.
     pub(crate) display_id: Option<DisplayId>,
-    /// Last known platform window bounds in screen coordinates.
+    /// Last known platform window state used for placement persistence.
     pub(crate) window_bounds: Option<WindowBounds>,
+    /// Last known current window rectangle in global screen coordinates.
+    pub(crate) screen_bounds: Option<Bounds<Pixels>>,
     /// Last known dock host bounds in window-local coordinates.
     pub(crate) host_bounds: Option<Bounds<Pixels>>,
 }
@@ -23,6 +61,7 @@ impl DockViewportSnapshot {
             window,
             display_id: None,
             window_bounds: None,
+            screen_bounds: None,
             host_bounds: None,
         }
     }

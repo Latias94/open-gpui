@@ -3,7 +3,7 @@ use crate::{
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
     drop_target::DockResolvedDropTarget,
 };
-use open_gpui::{Bounds, Pixels, Point, WindowBounds, WindowId, point};
+use open_gpui::{Bounds, Pixels, Point, WindowId, point};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +37,7 @@ pub(crate) struct DockViewportHostSceneRegistration {
 pub(crate) struct DockViewportHostSceneSnapshot {
     pub(crate) space: DockSpaceId,
     pub(crate) window_id: WindowId,
-    pub(crate) window_bounds: WindowBounds,
+    pub(crate) screen_bounds: Bounds<Pixels>,
     pub(crate) host_bounds: Bounds<Pixels>,
     generation: u64,
     scene: DockHostDropScene,
@@ -47,7 +47,7 @@ impl DockViewportHostSceneSnapshot {
     pub(crate) fn new(
         space: DockSpaceId,
         window_id: WindowId,
-        window_bounds: WindowBounds,
+        screen_bounds: Bounds<Pixels>,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> Self {
@@ -58,7 +58,7 @@ impl DockViewportHostSceneSnapshot {
         Self {
             space,
             window_id,
-            window_bounds,
+            screen_bounds,
             host_bounds,
             generation: 0,
             scene: DockHostDropScene::new(window_position),
@@ -68,7 +68,7 @@ impl DockViewportHostSceneSnapshot {
     fn same_content_as(&self, other: &Self) -> bool {
         self.space == other.space
             && self.window_id == other.window_id
-            && self.window_bounds == other.window_bounds
+            && self.screen_bounds == other.screen_bounds
             && self.host_bounds == other.host_bounds
             && self.scene == other.scene
     }
@@ -90,10 +90,9 @@ impl DockViewportHostSceneSnapshot {
 
     #[cfg(test)]
     pub(crate) fn screen_position(&self) -> Point<Pixels> {
-        let window_bounds = self.window_bounds.get_bounds();
         point(
-            window_bounds.origin.x + self.scene.position.x,
-            window_bounds.origin.y + self.scene.position.y,
+            self.screen_bounds.origin.x + self.scene.position.x,
+            self.screen_bounds.origin.y + self.scene.position.y,
         )
     }
 }
@@ -215,7 +214,7 @@ mod tests {
         drop_target::{DockEmptySpaceDropTarget, DockResolvedDropTargetKind},
         viewport_test_support::{bounds, space},
     };
-    use open_gpui::{WindowBounds, WindowId, point, px};
+    use open_gpui::{WindowId, point, px};
 
     #[test]
     fn host_scene_frame_rejects_facts_from_stale_generation() {
@@ -303,7 +302,7 @@ mod tests {
         let space = space("main");
         let window_id = WindowId::from(1);
         let mut registry = DockViewportHostSceneRegistry::default();
-        let window_bounds = WindowBounds::Windowed(bounds(100.0, 200.0, 320.0, 240.0));
+        let screen_bounds = bounds(100.0, 200.0, 320.0, 240.0);
         let host_bounds = bounds(40.0, 30.0, 10.0, 10.0);
         let host_position = point(px(5.0), px(6.0));
 
@@ -311,7 +310,7 @@ mod tests {
             .register(DockViewportHostSceneSnapshot::new(
                 space.clone(),
                 window_id,
-                window_bounds,
+                screen_bounds,
                 host_bounds,
                 host_position,
             ))
@@ -349,7 +348,7 @@ mod tests {
         DockViewportHostSceneSnapshot::new(
             space,
             window_id,
-            WindowBounds::Windowed(bounds(0.0, 0.0, 200.0, 120.0)),
+            bounds(0.0, 0.0, 200.0, 120.0),
             bounds(0.0, 0.0, 200.0, 120.0),
             point(px(10.0), px(10.0)),
         )

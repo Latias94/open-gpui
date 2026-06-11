@@ -6,7 +6,7 @@ use crate::{
     DockViewportOpenStatus, DockViewportRuntime, DockViewportRuntimeHandle,
     DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
     DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind, DockViewportTearOffRequest,
-    DockWorkspace,
+    DockViewportWindowFacts, DockWorkspace,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -785,7 +785,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         old_window.window_id(),
-        window_bounds,
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
         host_bounds,
         host_position,
     ));
@@ -814,7 +814,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         new_window.window_id(),
-        window_bounds,
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
         host_bounds,
         host_position,
     ));
@@ -993,7 +993,7 @@ fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &m
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
-        window_bounds,
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
         host_bounds,
         host_position,
     ));

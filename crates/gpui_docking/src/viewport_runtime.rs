@@ -12,6 +12,7 @@ use crate::{
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
+    DockViewportWindowFacts,
     drag::DockDragPayload,
     drop_preview::DockDropPreview,
     drop_runtime::DockHostDropSceneFact,
@@ -25,7 +26,7 @@ use crate::{
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{
-    AnyWindowHandle, App, Bounds, DisplayId, Entity, Pixels, Point, Result, WindowBounds, WindowId,
+    AnyWindowHandle, App, Bounds, Entity, Pixels, Point, Result, WindowBounds, WindowId,
     WindowOptions, px, size,
 };
 use std::rc::Rc;
@@ -35,7 +36,7 @@ use std::rc::Rc;
 /// The runtime keeps the shared [`DockController`] together with the low-level
 /// [`DockViewportAdapter`] so the handle does not have to pass the controller into every open call
 /// or duplicate close-callback cleanup logic. The adapter remains the place for window mappings,
-/// coordinate snapshots, and placement import/export.
+/// live window facts, and placement import/export.
 #[derive(Debug)]
 pub(crate) struct DockViewportRuntime {
     controller: Entity<DockController>,
@@ -282,12 +283,11 @@ impl DockViewportRuntime {
     pub(crate) fn update_viewport_snapshot(
         &mut self,
         space: &DockSpaceId,
-        display_id: Option<DisplayId>,
-        window_bounds: WindowBounds,
+        window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
     ) -> bool {
         self.adapter
-            .update_snapshot(space, display_id, window_bounds, host_bounds)
+            .update_snapshot(space, window_facts, host_bounds)
     }
 
     #[cfg(test)]
@@ -295,14 +295,14 @@ impl DockViewportRuntime {
         &mut self,
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
-        window_bounds: WindowBounds,
+        window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> bool {
         self.begin_viewport_host_scene_frame(
             space,
             window_id,
-            window_bounds,
+            window_facts,
             host_bounds,
             host_position,
         )
@@ -313,7 +313,7 @@ impl DockViewportRuntime {
         &mut self,
         space: impl Into<DockSpaceId>,
         window_id: WindowId,
-        window_bounds: WindowBounds,
+        window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
         host_position: Point<Pixels>,
     ) -> Option<DockViewportHostSceneRegistration> {
@@ -323,17 +323,13 @@ impl DockViewportRuntime {
         if !current_identity.matches(&space, window_id) {
             return None;
         }
-        let display_id = self
-            .adapter
-            .snapshot(&space)
-            .and_then(|snapshot| snapshot.display_id);
-        let changed = self.update_viewport_snapshot(&space, display_id, window_bounds, host_bounds);
+        let changed = self.update_viewport_snapshot(&space, window_facts, host_bounds);
         let mut registration = self
             .host_scenes
             .register(DockViewportHostSceneSnapshot::new(
                 space,
                 window_id,
-                window_bounds,
+                window_facts.screen_bounds,
                 host_bounds,
                 host_position,
             ));

@@ -4,7 +4,7 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportRuntimeHandle,
     DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffRequest, DockWorkspace, DropZone, SplitAxis,
+    DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropPreviewKind,
@@ -147,7 +147,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         .begin_viewport_host_scene_frame(
             target_space.clone(),
             opened.window().window_id(),
-            window_bounds,
+            DockViewportWindowFacts::from_window_bounds(window_bounds),
             host_bounds,
             point(px(120.0), px(100.0)),
         )
@@ -162,7 +162,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         .begin_viewport_host_scene_frame(
             target_space.clone(),
             opened.window().window_id(),
-            window_bounds,
+            DockViewportWindowFacts::from_window_bounds(window_bounds),
             host_bounds,
             point(px(120.0), px(100.0)),
         )
@@ -209,7 +209,9 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
     assert!(runtime.begin_viewport_host_scene(
         secondary_space.clone(),
         opened.window().window_id(),
-        WindowBounds::Windowed(floating_bounds(10.0, 20.0, 360.0, 220.0)),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            10.0, 20.0, 360.0, 220.0,
+        ))),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
@@ -447,7 +449,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         opened.window().window_id(),
-        target_window_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         host_bounds,
         point(px(0.0), px(0.0))
     ));
@@ -790,7 +792,7 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         opened.window().window_id(),
-        target_window_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0))
     ));
@@ -897,7 +899,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         opened.window().window_id(),
-        target_window_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
@@ -1037,7 +1039,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_opened.window().window_id(),
-        target_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
@@ -1176,7 +1178,7 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_opened.window().window_id(),
-        target_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
@@ -1573,7 +1575,9 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),
         source_opened.window().window_id(),
-        WindowBounds::Windowed(floating_bounds(520.0, 0.0, 360.0, 220.0)),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            520.0, 0.0, 360.0, 220.0,
+        ))),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
     ));
@@ -1857,7 +1861,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         opened.window().window_id(),
-        target_window_bounds,
+        DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
     ));
@@ -2013,7 +2017,9 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),
         source_opened.window().window_id(),
-        WindowBounds::Windowed(floating_bounds(520.0, 0.0, 360.0, 220.0)),
+        DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
+            520.0, 0.0, 360.0, 220.0,
+        ))),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
     ));

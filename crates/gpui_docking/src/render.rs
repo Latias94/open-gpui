@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNode, DockNodeId,
+    DockHost, DockNode, DockNodeId, DockViewportWindowFacts,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropPreviewKind},
@@ -456,7 +456,7 @@ impl DockHost {
         let frame_slot = frame_slot.clone();
         Some(
             canvas(
-                move |bounds, window, _| {
+                move |bounds, window, app| {
                     let mouse_position = window.mouse_position();
                     let host_position = point(
                         mouse_position.x - bounds.origin.x,
@@ -465,7 +465,11 @@ impl DockHost {
                     let registration = runtime.begin_viewport_host_scene_frame(
                         space,
                         window.window_handle().window_id(),
-                        window.window_bounds(),
+                        DockViewportWindowFacts::new(
+                            window.display(app).map(|display| display.id()),
+                            window.window_bounds(),
+                            window.bounds(),
+                        ),
                         bounds,
                         host_position,
                     );

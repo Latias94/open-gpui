@@ -30,7 +30,10 @@ impl DockViewportAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viewport_test_support::{bounds, handle, space};
+    use crate::{
+        DockViewportWindowFacts,
+        viewport_test_support::{bounds, handle, space},
+    };
     use open_gpui::{WindowBounds, point, px};
 
     #[test]
@@ -46,8 +49,9 @@ mod tests {
         for space in [&alpha, &zeta] {
             adapter.update_snapshot(
                 space,
-                None,
-                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }

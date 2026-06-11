@@ -107,7 +107,7 @@ mod tests {
     use super::*;
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportPlacementValidationError,
-        DockViewportRestoreOutcome, DockViewportTargetContext,
+        DockViewportRestoreOutcome, DockViewportTargetContext, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, WindowOptions, point, px};
@@ -121,8 +121,11 @@ mod tests {
         adapter.register_viewport(secondary, handle(2));
         assert!(adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Maximized(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::new(
+                Some(DisplayId::new(7)),
+                WindowBounds::Maximized(bounds(100.0, 200.0, 800.0, 600.0)),
+                bounds(0.0, 0.0, 1440.0, 900.0),
+            ),
             bounds(10.0, 20.0, 300.0, 200.0),
         ));
 
@@ -152,16 +155,14 @@ mod tests {
             .snapshot(&main)
             .expect("main viewport should be restored");
         assert_eq!(snapshot.window, handle(99));
-        assert_eq!(snapshot.display_id, Some(DisplayId::new(7)));
-        assert_eq!(
-            snapshot.window_bounds,
-            Some(WindowBounds::Maximized(bounds(100.0, 200.0, 800.0, 600.0)))
-        );
-        assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));
+        assert_eq!(snapshot.display_id, None);
+        assert_eq!(snapshot.window_bounds, None);
+        assert_eq!(snapshot.screen_bounds, None);
+        assert_eq!(snapshot.host_bounds, None);
     }
 
     #[test]
-    fn viewport_restore_workflow_uses_new_runtime_windows_with_saved_placement() {
+    fn viewport_restore_workflow_waits_for_live_window_facts_after_saved_placement() {
         let mut adapter = DockViewportAdapter::new();
         let main = space("main");
         let secondary = space("secondary");
@@ -169,14 +170,18 @@ mod tests {
         adapter.register_viewport(secondary.clone(), handle(2));
         adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_display_id(Some(DisplayId::new(7))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
         adapter.update_snapshot(
             &secondary,
-            Some(DisplayId::new(8)),
-            WindowBounds::Windowed(bounds(900.0, 200.0, 500.0, 400.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                900.0, 200.0, 500.0, 400.0,
+            )))
+            .with_display_id(Some(DisplayId::new(8))),
             bounds(30.0, 40.0, 240.0, 180.0),
         );
         let placement = adapter.export_placement();
@@ -198,6 +203,23 @@ mod tests {
         assert_eq!(
             restored.space_for_window_id(handle(102).window_id()),
             Some(&secondary)
+        );
+        assert!(
+            restored
+                .resolve_viewport_target(
+                    point(px(935.0), px(245.0)),
+                    &DockViewportTargetContext::new()
+                )
+                .is_none(),
+            "saved placement must not masquerade as live screen coordinates"
+        );
+        restored.update_snapshot(
+            &secondary,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                900.0, 200.0, 500.0, 400.0,
+            )))
+            .with_display_id(Some(DisplayId::new(8))),
+            bounds(30.0, 40.0, 240.0, 180.0),
         );
         assert_eq!(
             restored
@@ -401,8 +423,10 @@ mod tests {
         adapter.register_viewport(main.clone(), handle(1));
         adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_display_id(Some(DisplayId::new(7))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
 
@@ -421,6 +445,10 @@ mod tests {
         assert_eq!(
             snapshot.window_bounds,
             Some(WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)))
+        );
+        assert_eq!(
+            snapshot.screen_bounds,
+            Some(bounds(100.0, 200.0, 800.0, 600.0))
         );
         assert_eq!(snapshot.host_bounds, Some(bounds(10.0, 20.0, 300.0, 200.0)));
     }

@@ -298,7 +298,7 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockPolicy,
+        DockPolicy, DockViewportWindowFacts,
         drag::DockDragPayload,
         interaction::DockRuntimeDragSession,
         viewport_test_support::{bounds, handle, item, space},
@@ -314,8 +314,10 @@ mod tests {
         adapter.register_viewport(main.clone(), window);
         adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_display_id(Some(DisplayId::new(7))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
 
@@ -349,8 +351,9 @@ mod tests {
         for space in [&alpha, &zeta] {
             adapter.update_snapshot(
                 space,
-                None,
-                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }
@@ -386,8 +389,9 @@ mod tests {
         for space in [&source, &target] {
             adapter.update_snapshot(
                 space,
-                None,
-                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }

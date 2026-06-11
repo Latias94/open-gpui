@@ -2,12 +2,11 @@ use crate::{
     DockLayoutRect, DockViewportAdapter, DockViewportPlacement, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportWindowBounds,
 };
-use open_gpui::DisplayId;
 
 /// Summary of applying saved viewport placement to runtime windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DockViewportRestoreOutcome {
-    /// Number of saved placement entries applied to registered windows.
+    /// Number of saved placement entries matched to registered windows.
     pub applied: usize,
     /// Number of saved placement entries skipped because no runtime window was registered.
     pub skipped: usize,
@@ -34,10 +33,11 @@ impl DockViewportAdapter {
         )
     }
 
-    /// Applies placement snapshots to already registered viewport windows.
+    /// Validates placement snapshots against already registered viewport windows.
     ///
-    /// This does not open windows or create viewport mappings. The runtime should first register
-    /// restored windows, then apply placement data to rehydrate adapter snapshots.
+    /// This does not open, move, or resize windows. Saved placement should be converted into
+    /// `WindowOptions` before opening a viewport; live snapshots are then refreshed by render
+    /// frames from real platform window facts.
     pub(crate) fn apply_placement(
         &mut self,
         placement: &DockViewportPlacementLayout,
@@ -47,15 +47,10 @@ impl DockViewportAdapter {
         let mut applied = 0;
         let mut skipped = 0;
         for viewport in &placement.viewports {
-            let Some(snapshot) = self.snapshot_mut(&viewport.space) else {
+            if self.snapshot(&viewport.space).is_none() {
                 skipped += 1;
                 continue;
-            };
-            snapshot.display_id = viewport.display_id.map(DisplayId::from);
-            snapshot.window_bounds = viewport
-                .window_bounds
-                .map(DockViewportWindowBounds::to_window_bounds);
-            snapshot.host_bounds = viewport.host_bounds.map(DockLayoutRect::to_bounds);
+            }
             applied += 1;
         }
 

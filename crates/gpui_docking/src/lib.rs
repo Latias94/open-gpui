@@ -214,7 +214,7 @@ pub use viewport_placement_adapter::*;
 pub use viewport_placement_validation::*;
 pub(crate) use viewport_platform_signals::*;
 pub(crate) use viewport_registration::*;
-pub(crate) use viewport_registry::DockViewportSnapshot;
+pub(crate) use viewport_registry::{DockViewportSnapshot, DockViewportWindowFacts};
 pub(crate) use viewport_runtime::*;
 pub use viewport_runtime_handle::*;
 pub use viewport_runtime_status::*;

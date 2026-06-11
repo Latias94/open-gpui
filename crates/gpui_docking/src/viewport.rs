@@ -8,9 +8,8 @@ use open_gpui::{AnyWindowHandle, WindowId};
 /// [`DockGraph`](crate::DockGraph) or [`DockLayout`](crate::DockLayout).
 ///
 /// A typical restore flow imports [`DockLayout`](crate::DockLayout) into a controller, opens or
-/// reuses GPUI windows for each logical dock space, registers those windows here, then applies a
-/// [`DockViewportPlacementLayout`](crate::DockViewportPlacementLayout) to rehydrate placement
-/// snapshots for coordinate conversion.
+/// reuses GPUI windows for each logical dock space, registers those windows here, and lets render
+/// frames refresh current platform facts for coordinate conversion.
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportAdapter {
     pub(crate) registry: DockViewportRegistry,
@@ -88,7 +87,7 @@ mod tests {
     use super::*;
     use crate::{
         DockGraph, DockItemId, DockNode, DockViewportTargetContext, DockViewportUnregisterOutcome,
-        DockViewportUnregisterReason,
+        DockViewportUnregisterReason, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
@@ -215,7 +214,11 @@ mod tests {
         let host_bounds = bounds(10.0, 20.0, 300.0, 200.0);
 
         adapter.register_viewport(main.clone(), window);
-        adapter.update_snapshot(&main, display_id, window_bounds, host_bounds);
+        adapter.update_snapshot(
+            &main,
+            DockViewportWindowFacts::from_window_bounds(window_bounds).with_display_id(display_id),
+            host_bounds,
+        );
 
         assert!(
             adapter.register_viewport(main.clone(), window).is_none(),
@@ -248,8 +251,9 @@ mod tests {
         for space in [&alpha, &zeta] {
             adapter.update_snapshot(
                 space,
-                None,
-                WindowBounds::Windowed(bounds(100.0, 100.0, 320.0, 240.0)),
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
                 bounds(0.0, 0.0, 320.0, 240.0),
             );
         }
@@ -281,8 +285,10 @@ mod tests {
         adapter.register_viewport(main.clone(), handle(1));
         adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_display_id(Some(DisplayId::new(7))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
 
@@ -313,8 +319,10 @@ mod tests {
         adapter.register_viewport(main.clone(), handle(42));
         adapter.update_snapshot(
             &main,
-            Some(DisplayId::new(7)),
-            WindowBounds::Windowed(bounds(100.0, 200.0, 800.0, 600.0)),
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 800.0, 600.0,
+            )))
+            .with_display_id(Some(DisplayId::new(7))),
             bounds(10.0, 20.0, 300.0, 200.0),
         );
 
