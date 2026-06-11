@@ -120,10 +120,6 @@ impl DockWorkspace {
                     self.commit_floating_to_empty_dock_space(source_space, floating, &space)
                 }
             },
-            DockResolvedDropTargetKind::KnownViewport { .. }
-            | DockResolvedDropTargetKind::TearOffCandidate { .. } => {
-                Err(DockActionApplyError::DropTargetUnavailable)
-            }
         }
     }
 
@@ -170,10 +166,8 @@ mod tests {
     use super::*;
     use crate::{
         DockFloatingContainer, DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId,
-        DockViewportHit, SplitAxis,
-        drop_target::{
-            DockDropResolveSource, DockKnownViewportDropTarget, DockResolvedDropTargetKind,
-        },
+        SplitAxis,
+        drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -700,32 +694,5 @@ mod tests {
             panic!("{zone:?}: moved child should be tabs");
         };
         assert_eq!(items, expected_items, "{zone:?}");
-    }
-
-    #[test]
-    fn runtime_only_targets_return_drop_target_unavailable_without_mutation() {
-        let (mut workspace, _root, left, _right) = split_workspace();
-        let secondary = DockSpaceId::from("secondary");
-
-        let viewport_err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
-                source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::KnownViewport {
-                    target: DockKnownViewportDropTarget::from_hit(DockViewportHit::new(
-                        secondary.clone(),
-                        point(px(5.0), px(5.0)),
-                    )),
-                }),
-            })
-            .expect_err("known viewport requires local target resolution");
-
-        assert_eq!(viewport_err, DockActionApplyError::DropTargetUnavailable);
-        assert_eq!(
-            workspace.graph().collect_items_in_space(&space()),
-            vec![item("a"), item("b")]
-        );
     }
 }

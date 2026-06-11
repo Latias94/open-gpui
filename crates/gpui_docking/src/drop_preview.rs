@@ -34,16 +34,6 @@ impl DockDropPreview {
 
     fn from_target(target: &DockResolvedDropTarget, rejected: bool) -> Option<Self> {
         let (kind, bounds) = match &target.kind {
-            DockResolvedDropTargetKind::KnownViewport { target } => (
-                DockDropPreviewKind::KnownViewportRoute,
-                route_bounds(target.host_position()),
-            ),
-            DockResolvedDropTargetKind::TearOffCandidate {
-                release_position, ..
-            } => (
-                DockDropPreviewKind::TearOffRoute,
-                route_bounds(*release_position),
-            ),
             DockResolvedDropTargetKind::TabBar { .. }
             | DockResolvedDropTargetKind::LeafCenter { .. }
             | DockResolvedDropTargetKind::InnerEdge { .. }
@@ -120,10 +110,9 @@ mod tests {
     use super::*;
     use crate::{
         DockNodeId, DockViewportDropPayload, DockViewportTargetHit, DockViewportTearOffRequest,
-        drop_target::{DockDropResolveSource, DockResolvedDropTarget},
         viewport_test_support::{handle, item, space},
     };
-    use open_gpui::{WindowBounds, point, px};
+    use open_gpui::{point, px};
     use slotmap::Key;
 
     #[test]
@@ -178,28 +167,5 @@ mod tests {
         assert_eq!(preview.kind, DockDropPreviewKind::RejectedRoute);
         assert!(preview.rejected);
         assert!(preview.bounds.contains(&point(px(12.0), px(34.0))));
-    }
-
-    #[test]
-    fn resolved_tear_off_candidate_preview_does_not_need_receiver_bounds() {
-        let release_position = point(px(320.0), px(180.0));
-        let resolution = DockDropResolution::Valid(DockResolvedDropTarget {
-            kind: DockResolvedDropTargetKind::TearOffCandidate {
-                release_position,
-                suggested_window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                    release_position,
-                    size(px(360.0), px(240.0)),
-                ))),
-            },
-            source: DockDropResolveSource::EmptyDockSpace,
-            preview_bounds: None,
-            is_central_region: false,
-        });
-
-        let preview = DockDropPreview::from_resolution(&resolution)
-            .expect("tear-off candidate should produce route preview");
-
-        assert_eq!(preview.kind, DockDropPreviewKind::TearOffRoute);
-        assert!(preview.bounds.contains(&release_position));
     }
 }

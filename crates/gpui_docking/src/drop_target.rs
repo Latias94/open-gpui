@@ -1,8 +1,8 @@
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportHit, DropZone,
+    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DropZone,
     geometry::{self, DockDropGeometry},
 };
-use open_gpui::{Bounds, Pixels, Point, WindowBounds};
+use open_gpui::{Bounds, Pixels, Point};
 
 pub(crate) type DockDropTargetValidator<'a> =
     dyn Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a;
@@ -23,9 +23,7 @@ impl DockResolvedDropTarget {
             | DockResolvedDropTargetKind::FloatingTitleBar { .. } => Some(DropZone::Center),
             DockResolvedDropTargetKind::InnerEdge { zone, .. }
             | DockResolvedDropTargetKind::RootEdge { zone, .. } => Some(zone),
-            DockResolvedDropTargetKind::EmptyDockSpace { .. }
-            | DockResolvedDropTargetKind::KnownViewport { .. }
-            | DockResolvedDropTargetKind::TearOffCandidate { .. } => None,
+            DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
         }
     }
 }
@@ -57,28 +55,6 @@ pub(crate) enum DockResolvedDropTargetKind {
     EmptyDockSpace {
         space: DockSpaceId,
     },
-    KnownViewport {
-        target: DockKnownViewportDropTarget,
-    },
-    TearOffCandidate {
-        release_position: Point<Pixels>,
-        suggested_window_bounds: Option<WindowBounds>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockKnownViewportDropTarget {
-    hit: DockViewportHit,
-}
-
-impl DockKnownViewportDropTarget {
-    pub(crate) fn from_hit(hit: DockViewportHit) -> Self {
-        Self { hit }
-    }
-
-    pub(crate) fn host_position(&self) -> Point<Pixels> {
-        self.hit.host_position()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +153,7 @@ pub(crate) struct DockDropRejection {
 
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
     if let Some(target) = resolve_floating_title_bar_drop(&input) {
-        return Some(validate_target(
+        return Some(validate_resolved_drop_target(
             target,
             input.policy,
             input.target_validator,
@@ -185,16 +161,16 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     }
 
     if let Some(target) = resolve_tab_bar_drop(&input) {
-        return Some(validate_target(
+        return Some(validate_resolved_drop_target(
             target,
             input.policy,
             input.target_validator,
         ));
     }
 
-    let leaf = smallest_leaf_containing(input.leaves, input.position);
+    let leaf = topmost_leaf_containing(input.leaves, input.position);
     if let Some(target) = resolve_root_edge_drop(&input, leaf) {
-        return Some(validate_target(
+        return Some(validate_resolved_drop_target(
             target,
             input.policy,
             input.target_validator,
@@ -204,7 +180,7 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     if let Some(leaf) = leaf
         && let Some(target) = resolve_leaf_drop(leaf, input.position)
     {
-        return Some(validate_target(
+        return Some(validate_resolved_drop_target(
             target,
             input.policy,
             input.target_validator,
@@ -212,7 +188,11 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     }
 
     if let Some(target) = resolve_empty_space_drop(&input) {
-        return Some(DockDropResolution::Valid(target));
+        return Some(validate_resolved_drop_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
     }
 
     None
@@ -224,6 +204,7 @@ fn resolve_floating_title_bar_drop(
     input
         .floating_title_bars
         .iter()
+        .rev()
         .find(|target| target.title_bounds.contains(&input.position))
         .map(|target| DockResolvedDropTarget {
             kind: DockResolvedDropTargetKind::FloatingTitleBar {
@@ -240,6 +221,7 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
     input
         .tab_labels
         .iter()
+        .rev()
         .find(|target| target.bounds.contains(&input.position))
         .map(|target| {
             let insert_index = if input.position.x < target.bounds.center().x {
@@ -299,6 +281,7 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
     input
         .empty_spaces
         .iter()
+        .rev()
         .find(|target| target.bounds.contains(&input.position))
         .map(|target| DockResolvedDropTarget {
             kind: DockResolvedDropTargetKind::EmptyDockSpace {
@@ -310,7 +293,7 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
         })
 }
 
-fn validate_target(
+pub(crate) fn validate_resolved_drop_target(
     target: DockResolvedDropTarget,
     policy: &DockPolicy,
     target_validator: Option<&DockDropTargetValidator<'_>>,
@@ -374,22 +357,14 @@ fn target_from_leaf_geometry(
     }
 }
 
-fn smallest_leaf_containing(
+fn topmost_leaf_containing(
     leaves: &[DockLeafDropTarget],
     position: Point<Pixels>,
 ) -> Option<&DockLeafDropTarget> {
     leaves
         .iter()
-        .filter(|target| target.bounds.contains(&position))
-        .min_by(|a, b| {
-            area(a.bounds)
-                .partial_cmp(&area(b.bounds))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
-
-fn area(bounds: Bounds<Pixels>) -> f32 {
-    f32::from(bounds.size.width) * f32::from(bounds.size.height)
+        .rev()
+        .find(|target| target.bounds.contains(&position))
 }
 
 #[cfg(test)]
@@ -710,6 +685,39 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_leaf_hits_follow_render_order_rather_than_area() {
+        let (background_tabs, foreground_tabs) = two_node_ids();
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[
+                DockLeafDropTarget {
+                    root: background_tabs,
+                    target_tabs: background_tabs,
+                    bounds: bounds(100.0, 100.0),
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                    bounds: bounds(180.0, 180.0),
+                    is_central: false,
+                },
+            ],
+            ..DockDropResolverInput::new(point(px(60.0), px(70.0)), &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("overlapping leaves should resolve");
+
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: foreground_tabs,
+                target_tabs: foreground_tabs,
+            }
+        );
+    }
+
+    #[test]
     fn leaf_edge_resolves_to_inner_edge_split_target() {
         let root = tabs();
         let target = resolve_layout_drop(DockDropResolverInput {
@@ -994,6 +1002,49 @@ mod tests {
             target.preview_bounds,
             Some(bounds(300.0, 200.0)),
             "empty dock spaces now carry host-overlay preview bounds"
+        );
+    }
+
+    #[test]
+    fn empty_dock_space_respects_target_validator() {
+        let space = DockSpaceId::from("restricted");
+        let target_validator = |_: &DockResolvedDropTarget| {
+            Err(DockPolicyError::DockClassRejected {
+                space: space.clone(),
+                item: DockItemId::from("editor"),
+                dock_class: None,
+            })
+        };
+        let resolution = resolve_layout_drop(DockDropResolverInput {
+            empty_spaces: &[DockEmptySpaceDropTarget {
+                space: space.clone(),
+                bounds: bounds(300.0, 200.0),
+            }],
+            target_validator: Some(&target_validator),
+            ..DockDropResolverInput::new(point(px(160.0), px(120.0)), &policy())
+        })
+        .expect("empty dock space should resolve to a policy decision");
+
+        let DockDropResolution::Rejected(rejection) = resolution else {
+            panic!("empty dock space target validator should reject");
+        };
+        assert_eq!(
+            rejection.target.source,
+            DockDropResolveSource::EmptyDockSpace
+        );
+        assert_eq!(
+            rejection.target.kind,
+            DockResolvedDropTargetKind::EmptyDockSpace {
+                space: space.clone()
+            }
+        );
+        assert_eq!(
+            rejection.reason,
+            DockPolicyError::DockClassRejected {
+                space,
+                item: DockItemId::from("editor"),
+                dock_class: None,
+            }
         );
     }
 

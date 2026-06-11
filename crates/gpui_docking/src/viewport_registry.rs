@@ -81,6 +81,7 @@ pub(crate) struct DockViewportRegistry {
 }
 
 impl DockViewportRegistry {
+    #[cfg(test)]
     pub(crate) fn register(
         &mut self,
         space: DockSpaceId,

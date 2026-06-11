@@ -152,10 +152,14 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         )
         .expect("first scene frame should register")
         .frame;
-    assert!(runtime.push_viewport_host_scene_frame_fact(
-        &first,
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
+    assert!(
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &first,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_some()
+    );
 
     let second = runtime
         .begin_viewport_host_scene_frame(
@@ -168,16 +172,22 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
         .expect("second scene frame should register")
         .frame;
     assert!(
-        !runtime.push_viewport_host_scene_frame_fact(
-            &first,
-            leaf_host_scene_fact(target_tabs, target_tabs),
-        ),
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &first,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_none(),
         "facts captured by an older render frame must not populate a newer scene"
     );
-    assert!(runtime.push_viewport_host_scene_frame_fact(
-        &second,
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
+    assert!(
+        runtime
+            .push_viewport_host_scene_frame_fact(
+                &second,
+                leaf_host_scene_fact(target_tabs, target_tabs),
+            )
+            .is_some()
+    );
 }
 
 #[open_gpui::test]
@@ -1448,6 +1458,188 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
         .is_some(),
         "source viewport can still show the route marker while the target draws the dock overlay"
     );
+}
+
+#[open_gpui::test]
+fn source_release_recomputes_route_instead_of_reusing_preview_commit(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(source_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("source viewport should open");
+    let source_window = source_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("source viewport should render DockHost");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    let source_host = source_window
+        .root(cx)
+        .expect("source viewport should expose DockHost root");
+    let target_host = target_window
+        .root(cx)
+        .expect("target viewport should expose DockHost root");
+    let source_window_bounds = source_window
+        .update(cx, |_, window, _| window.window_bounds().get_bounds())
+        .expect("source window should be live");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let target_screen_position = point(
+        target_bounds.get_bounds().origin.x + px(120.0),
+        target_bounds.get_bounds().origin.y + px(100.0),
+    );
+    let route_position_in_source_window = point(
+        target_screen_position.x - source_window_bounds.origin.x,
+        target_screen_position.y - source_window_bounds.origin.y,
+    );
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+
+    source_window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                floating_bounds(0.0, 0.0, 360.0, 220.0),
+                route_position_in_source_window,
+                window,
+                cx,
+            );
+        })
+        .expect("source host should update route preview");
+    cx.run_until_parked();
+
+    let target_visual = VisualTestContext::from_window(target_opened.window(), cx);
+    assert!(
+        selector_for(&target_visual, &target_host, DockDebugRegion::DropPreview).is_some(),
+        "target viewport should draw the cached routed preview before release"
+    );
+    let mut source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    assert!(
+        selector_for(
+            &source_visual,
+            &source_host,
+            DockDebugRegion::DropRoutePreview {
+                kind: DockDropPreviewKind::KnownViewportRoute
+            }
+        )
+        .is_some(),
+        "source viewport should cache the routed preview before release"
+    );
+    let source_tab_selector = selector_for(
+        &source_visual,
+        &source_host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let source_tab_center = debug_bounds(&mut source_visual, &source_tab_selector).center();
+
+    source_window
+        .update(cx, |host, window, cx| {
+            host.drop_payload_from_render(
+                &payload,
+                source_space.clone(),
+                source_tab_center,
+                window,
+                cx,
+            )
+        })
+        .expect("source host should commit the rendered release");
+    cx.run_until_parked();
+
+    let final_source_visual = VisualTestContext::from_window(source_opened.window(), cx);
+    assert!(
+        selector_for(
+            &final_source_visual,
+            &source_host,
+            DockDebugRegion::DropPreview
+        )
+        .is_none(),
+        "release should clear the cached routed preview"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should still exist")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("b")]);
+        assert_eq!(*active, 0);
+
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("c")]);
+        assert_eq!(*active, 0);
+    });
 }
 
 #[open_gpui::test]

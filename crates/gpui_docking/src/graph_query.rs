@@ -99,6 +99,20 @@ impl DockGraph {
             .cloned()
     }
 
+    /// Returns the active item of a reachable subtree in stable depth-first order.
+    pub(in crate::graph) fn active_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
+        match self.nodes.get(root)? {
+            DockNode::Tabs { items, active } => items
+                .get((*active).min(items.len().checked_sub(1)?))
+                .cloned(),
+            DockNode::Floating { child } => self.active_item_in_subtree(*child),
+            DockNode::Split { children, .. } => children
+                .iter()
+                .copied()
+                .find_map(|child| self.active_item_in_subtree(child)),
+        }
+    }
+
     pub(in crate::graph) fn root_subtree_contains(
         &self,
         space: &DockSpaceId,

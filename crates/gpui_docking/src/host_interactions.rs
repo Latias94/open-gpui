@@ -127,15 +127,12 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let payload = release.payload();
-        let cached_route_commit = self.interaction_mut().take_drop_route_commit();
+        self.interaction_mut().take_drop_route_commit();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let mut drop_preview_cleared = false;
-        let outcome = if let Some(outcome) = self.commit_runtime_routed_payload_drop_interaction(
-            &release,
-            cached_route_commit,
-            window,
-            cx,
-        ) {
+        let outcome = if let Some(outcome) =
+            self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
+        {
             drop_preview_cleared = self.clear_drop_preview_interaction();
             outcome
         } else {

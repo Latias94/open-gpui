@@ -1,6 +1,7 @@
+#[cfg(test)]
+use crate::DockViewportSnapshot;
 use crate::{
-    DockSpaceId, DockViewportAdapter, DockViewportSnapshot, DockViewportUnregisterOutcome,
-    DockViewportUnregisterReason,
+    DockSpaceId, DockViewportAdapter, DockViewportUnregisterOutcome, DockViewportUnregisterReason,
 };
 use open_gpui::AnyWindowHandle;
 
@@ -35,6 +36,7 @@ impl DockViewportAdapter {
     ///
     /// A window can belong to only one dock space at a time. Registering the same window for a
     /// different space removes its previous space mapping.
+    #[cfg(test)]
     pub(crate) fn register_viewport(
         &mut self,
         space: impl Into<DockSpaceId>,

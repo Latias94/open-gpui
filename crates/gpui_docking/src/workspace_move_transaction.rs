@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockOp, DockSpaceId,
-    DockWorkspace, DropZone,
+    DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockNode,
+    DockNodeId, DockOp, DockSpaceId, DockWorkspace, DropZone,
 };
 
 pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
@@ -23,6 +23,84 @@ pub(crate) struct DockWorkspaceMoveTabsRequest<'a> {
 }
 
 impl DockWorkspace {
+    pub(crate) fn validate_merge_space_into(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<(), DockActionApplyError> {
+        if source_space == target_space {
+            return Ok(());
+        }
+
+        let mut target_tabs = self
+            .graph()
+            .first_tabs_in_space(target_space)
+            .map(|tabs| (tabs, true));
+        for source_tabs in self.graph().tabs_in_space(source_space) {
+            if self
+                .graph()
+                .root_for_node_in_space(source_space, source_tabs)
+                .is_none()
+            {
+                continue;
+            }
+
+            self.require_non_empty_tabs_for_merge(source_tabs)?;
+            if let Some((target_tabs, target_exists_now)) = target_tabs {
+                self.validate_merge_tabs_target(target_space, target_tabs, target_exists_now)?;
+                self.move_validation()
+                    .validate_tabs_target_space(target_space, source_tabs)?;
+                self.policy().validate_drop_zone(DropZone::Center)?;
+                if source_space == target_space && source_tabs == target_tabs {
+                    self.policy().validate_same_stack_center_drop()?;
+                }
+            } else {
+                self.policy().validate_platform_viewports()?;
+                self.move_validation()
+                    .validate_tabs_target_space(target_space, source_tabs)?;
+            }
+            target_tabs = target_tabs.or(Some((source_tabs, false)));
+        }
+
+        Ok(())
+    }
+
+    fn validate_merge_tabs_target(
+        &self,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+        target_exists_now: bool,
+    ) -> Result<(), DockActionApplyError> {
+        self.require_non_empty_tabs_for_merge(target_tabs)?;
+        if target_exists_now
+            && self
+                .graph()
+                .root_for_node_in_space(target_space, target_tabs)
+                .is_none()
+        {
+            return Err(DockGraphMutationError::TargetNodeNotInSpace {
+                space: target_space.clone(),
+                target: target_tabs,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    fn require_non_empty_tabs_for_merge(
+        &self,
+        tabs: DockNodeId,
+    ) -> Result<(), DockActionApplyError> {
+        match self.graph().node(tabs) {
+            Some(DockNode::Tabs { items, .. }) if !items.is_empty() => Ok(()),
+            Some(DockNode::Tabs { .. }) => {
+                Err(DockGraphMutationError::TabsNodeEmpty { tabs }.into())
+            }
+            Some(_) => Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into()),
+            None => Err(DockGraphMutationError::TabsNodeNotFound { tabs }.into()),
+        }
+    }
+
     pub(crate) fn commit_tab_move(
         &mut self,
         request: DockWorkspaceMoveTabRequest<'_>,

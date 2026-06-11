@@ -85,10 +85,6 @@ impl DockHostDropScene {
         self
     }
 
-    pub(crate) fn resolve_drop(&self, policy: &DockPolicy) -> Option<DockDropResolution> {
-        self.resolve_drop_with_validator(policy, None)
-    }
-
     pub(crate) fn resolve_drop_with_validator(
         &self,
         policy: &DockPolicy,
@@ -104,11 +100,6 @@ impl DockHostDropScene {
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
         })
-    }
-
-    pub(crate) fn resolved_target(&self, policy: &DockPolicy) -> Option<DockResolvedDropTarget> {
-        self.resolve_drop(policy)
-            .and_then(DockDropResolution::target)
     }
 }
 
@@ -271,9 +262,7 @@ fn center_target_tabs(target: &DockResolvedDropTarget) -> Option<DockNodeId> {
         }
         drop_target::DockResolvedDropTargetKind::InnerEdge { .. }
         | drop_target::DockResolvedDropTargetKind::RootEdge { .. }
-        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. }
-        | drop_target::DockResolvedDropTargetKind::KnownViewport { .. }
-        | drop_target::DockResolvedDropTargetKind::TearOffCandidate { .. } => None,
+        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
     }
 }
 

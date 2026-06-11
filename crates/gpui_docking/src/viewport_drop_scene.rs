@@ -1,7 +1,9 @@
+#[cfg(test)]
+use crate::drop_target::DockResolvedDropTarget;
 use crate::{
     DockPolicy, DockSpaceId, DockViewportIdentity,
     drop_runtime::{DockHostDropScene, DockHostDropSceneFact},
-    drop_target::DockResolvedDropTarget,
+    drop_target::{DockDropResolution, DockDropTargetValidator},
 };
 use open_gpui::{Bounds, Pixels, Point, WindowId, point};
 use std::collections::BTreeMap;
@@ -24,6 +26,13 @@ impl DockViewportHostSceneFrame {
 
     fn matches_snapshot(&self, snapshot: &DockViewportHostSceneSnapshot) -> bool {
         self.identity == snapshot.identity() && self.generation == snapshot.generation
+    }
+
+    pub(crate) fn is_current_in(&self, registry: &DockViewportHostSceneRegistry) -> bool {
+        registry
+            .scenes
+            .get(self.space())
+            .is_some_and(|snapshot| self.matches_snapshot(snapshot))
     }
 }
 
@@ -129,22 +138,24 @@ impl DockViewportHostSceneRegistry {
         let Some(frame) = self.current_frame(space, window_id) else {
             return false;
         };
-        self.push_frame_fact(&frame, fact)
+        self.push_frame_fact(&frame, fact).is_some()
     }
 
     pub(crate) fn push_frame_fact(
         &mut self,
         frame: &DockViewportHostSceneFrame,
         fact: DockHostDropSceneFact,
-    ) -> bool {
+    ) -> Option<DockViewportHostSceneFrame> {
         let Some(scene) = self.scenes.get_mut(frame.space()) else {
-            return false;
+            return None;
         };
         if !frame.matches_snapshot(scene) {
-            return false;
+            return None;
         }
         scene.push_fact(fact);
-        true
+        self.next_generation = self.next_generation.wrapping_add(1);
+        scene.generation = self.next_generation;
+        Some(scene.frame())
     }
 
     #[cfg(test)]
@@ -167,26 +178,42 @@ impl DockViewportHostSceneRegistry {
         host_position: Point<Pixels>,
         policy: &DockPolicy,
     ) -> Option<DockResolvedDropTarget> {
-        self.resolve_for_window(space, None, host_position, policy)
+        self.resolve_for_window(space, None, host_position, policy, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve_for_window(
         &self,
         space: &DockSpaceId,
         window_id: Option<WindowId>,
         host_position: Point<Pixels>,
         policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
     ) -> Option<DockResolvedDropTarget> {
+        self.resolve_frame_for_window(space, window_id, host_position, policy, target_validator)
+            .and_then(|(_, resolution)| resolution.target())
+    }
+
+    pub(crate) fn resolve_frame_for_window(
+        &self,
+        space: &DockSpaceId,
+        window_id: Option<WindowId>,
+        host_position: Point<Pixels>,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> Option<(DockViewportHostSceneFrame, DockDropResolution)> {
         let snapshot = self.scenes.get(space)?;
         if window_id.is_some_and(|window_id| !snapshot.identity().matches(space, window_id)) {
             return None;
         }
+        let frame = snapshot.frame();
         let mut scene = snapshot.scene.clone();
         scene.position = point(
             snapshot.host_bounds.origin.x + host_position.x,
             snapshot.host_bounds.origin.y + host_position.y,
         );
-        scene.resolved_target(policy)
+        let resolution = scene.resolve_drop_with_validator(policy, target_validator)?;
+        Some((frame, resolution))
     }
 
     #[cfg(test)]
@@ -223,11 +250,27 @@ mod tests {
         let mut registry = DockViewportHostSceneRegistry::default();
 
         let first = registry.register(snapshot(space.clone(), window_id)).frame;
-        assert!(registry.push_frame_fact(&first, empty_space_fact(space.clone())));
+        let first_after_fact = registry
+            .push_frame_fact(&first, empty_space_fact(space.clone()))
+            .expect("first frame should accept a fact");
+        assert_ne!(
+            first, first_after_fact,
+            "scene content changes should advance frame generation"
+        );
         assert_empty_space_target(&registry, &space);
+        assert!(
+            registry
+                .push_frame_fact(&first, empty_space_fact(space.clone()))
+                .is_none(),
+            "the frame captured before a scene mutation should become stale"
+        );
 
         let second = registry.register(snapshot(space.clone(), window_id)).frame;
-        assert!(!registry.push_frame_fact(&first, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .push_frame_fact(&first, empty_space_fact(space.clone()))
+                .is_none()
+        );
         assert!(
             registry
                 .resolve(&space, point(px(10.0), px(10.0)), &DockPolicy::default())
@@ -235,7 +278,11 @@ mod tests {
             "new frame should start without stale facts from the previous generation"
         );
 
-        assert!(registry.push_frame_fact(&second, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .push_frame_fact(&second, empty_space_fact(space.clone()))
+                .is_some()
+        );
         assert_empty_space_target(&registry, &space);
     }
 
@@ -247,7 +294,11 @@ mod tests {
         let mut registry = DockViewportHostSceneRegistry::default();
 
         let old_frame = registry.register(snapshot(space.clone(), old_window)).frame;
-        assert!(registry.push_frame_fact(&old_frame, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .push_frame_fact(&old_frame, empty_space_fact(space.clone()))
+                .is_some()
+        );
         assert!(
             registry
                 .resolve_for_window(
@@ -255,6 +306,7 @@ mod tests {
                     Some(old_window),
                     point(px(10.0), px(10.0)),
                     &DockPolicy::default(),
+                    None,
                 )
                 .is_some(),
             "the current window should resolve its own scene"
@@ -266,13 +318,18 @@ mod tests {
                     Some(new_window),
                     point(px(10.0), px(10.0)),
                     &DockPolicy::default(),
+                    None,
                 )
                 .is_none(),
             "a different window id must not consume another window's scene"
         );
 
         let new_frame = registry.register(snapshot(space.clone(), new_window)).frame;
-        assert!(registry.push_frame_fact(&new_frame, empty_space_fact(space.clone())));
+        assert!(
+            registry
+                .push_frame_fact(&new_frame, empty_space_fact(space.clone()))
+                .is_some()
+        );
         assert!(
             registry
                 .resolve_for_window(
@@ -280,6 +337,7 @@ mod tests {
                     Some(old_window),
                     point(px(10.0), px(10.0)),
                     &DockPolicy::default(),
+                    None,
                 )
                 .is_none(),
             "a stale route from the old window must not resolve the reopened scene"
@@ -291,6 +349,7 @@ mod tests {
                     Some(new_window),
                     point(px(10.0), px(10.0)),
                     &DockPolicy::default(),
+                    None,
                 )
                 .is_some(),
             "the reopened window should resolve its own scene"
@@ -315,13 +374,17 @@ mod tests {
                 host_position,
             ))
             .frame;
-        assert!(registry.push_frame_fact(
-            &frame,
-            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
-                space: space.clone(),
-                bounds: host_bounds,
-            })
-        ));
+        assert!(
+            registry
+                .push_frame_fact(
+                    &frame,
+                    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                        space: space.clone(),
+                        bounds: host_bounds,
+                    })
+                )
+                .is_some()
+        );
 
         let target = registry
             .resolve_for_window(
@@ -329,6 +392,7 @@ mod tests {
                 Some(window_id),
                 host_position,
                 &DockPolicy::default(),
+                None,
             )
             .expect("offset host scene should still resolve");
 

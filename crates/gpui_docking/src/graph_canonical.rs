@@ -7,21 +7,31 @@ use super::{DockGraph, DockNode, SplitAxis};
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
     pub fn simplify_space(&mut self, space: &DockSpaceId) {
-        if let Some(root) = self.root(space) {
-            match self.simplify_subtree(root) {
-                Some(root) => self.set_root(space.clone(), root),
-                None => {
-                    self.remove_root(space);
-                }
+        let previous_root = self.root(space);
+        let simplified_root = previous_root.and_then(|root| self.simplify_subtree(root));
+        match simplified_root {
+            Some(root) => self.set_root(space.clone(), root),
+            None => {
+                self.remove_root(space);
             }
         }
-        let stale_central_node = self
-            .central_regions
-            .get(space)
-            .and_then(|central| central.node)
-            .is_some_and(|node| !self.root_subtree_contains(space, node));
-        if stale_central_node && let Some(central) = self.central_regions.get_mut(space) {
-            central.node = None;
+        if self.central_regions.contains_key(space) {
+            let mut central_node = self
+                .central_regions
+                .get(space)
+                .and_then(|central| central.node);
+            if let (Some(previous_root), Some(simplified_root)) = (previous_root, simplified_root)
+                && central_node == Some(previous_root)
+                && previous_root != simplified_root
+            {
+                central_node = Some(simplified_root);
+            }
+            if central_node.is_some_and(|node| !self.root_subtree_contains(space, node)) {
+                central_node = None;
+            }
+            if let Some(central) = self.central_regions.get_mut(space) {
+                central.node = central_node;
+            }
         }
 
         let Some(mut floatings) = self.floatings.remove(space) else {
