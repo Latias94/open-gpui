@@ -1,6 +1,7 @@
 use crate::{
-    CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId, CanvasRecordRelations,
-    CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand, EdgeId, NodeId, ShapeId,
+    BindingId, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId,
+    CanvasRecordRelations, CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand,
+    EdgeId, NodeId, ShapeId,
 };
 use indexmap::{IndexMap, IndexSet};
 use open_gpui::{Pixels, Point};
@@ -88,6 +89,13 @@ impl CanvasClipboardPayload {
                 relations.add_group_member(relation.group.clone(), relation.member.clone());
             }
         }
+        for relation in document.relations().bindings() {
+            if copied_record_ids.contains(&relation.source)
+                && copied_record_ids.contains(&relation.target)
+            {
+                relations.add_binding(relation.clone());
+            }
+        }
 
         Self {
             nodes,
@@ -121,6 +129,16 @@ impl CanvasClipboardPayload {
             self.shapes.iter().map(|shape| shape.id.as_str()),
             |id| document.contains_shape(&ShapeId::from(id.to_owned())),
             unique_shape_id,
+        );
+        let binding_ids = remap_ids(
+            self.relations.bindings().map(|binding| binding.id.as_str()),
+            |id| {
+                document
+                    .relations()
+                    .binding(&BindingId::from(id.to_owned()))
+                    .is_some()
+            },
+            unique_binding_id,
         );
 
         let mut selection = CanvasSelection::default();
@@ -186,6 +204,24 @@ impl CanvasClipboardPayload {
                 continue;
             };
             commands.push(DocumentCommand::AddRecordToGroup { group, member });
+        }
+
+        for relation in self.relations.bindings() {
+            let Some(source) =
+                remap_record_id(&relation.source, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            let Some(target) =
+                remap_record_id(&relation.target, &node_ids, &pasted_edge_ids, &shape_ids)
+            else {
+                continue;
+            };
+            let mut binding = relation.clone();
+            binding.id = binding_ids[&binding.id].clone();
+            binding.source = source;
+            binding.target = target;
+            commands.push(DocumentCommand::SetRecordBinding(binding));
         }
 
         CanvasPasteTransaction {
@@ -254,6 +290,10 @@ fn unique_shape_id(base: &str, taken: &mut dyn FnMut(&str) -> bool) -> ShapeId {
     ShapeId::new(unique_id(base, taken))
 }
 
+fn unique_binding_id(base: &str, taken: &mut dyn FnMut(&str) -> bool) -> BindingId {
+    BindingId::new(unique_id(base, taken))
+}
+
 fn unique_id(base: &str, taken: &mut dyn FnMut(&str) -> bool) -> String {
     let copy = format!("{base}-copy");
     if !taken(&copy) {
@@ -300,7 +340,9 @@ fn remap_record_id(
 mod tests {
     use super::*;
     use crate::test_support::document_fixture;
-    use crate::{CanvasEdge, CanvasEndpoint, CanvasNode, CanvasShape};
+    use crate::{
+        BindingId, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordBindingRelation, CanvasShape,
+    };
     use open_gpui::{Bounds, point, px, size};
 
     #[test]
@@ -426,7 +468,15 @@ mod tests {
                 .members_of(&group)
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![child]
+            vec![child.clone()]
+        );
+        assert_eq!(
+            payload.relations.binding(&BindingId::from("binding")),
+            Some(&CanvasRecordBindingRelation::new(
+                "binding",
+                child,
+                group.clone()
+            ))
         );
     }
 
@@ -463,7 +513,15 @@ mod tests {
                 .members_of(&group)
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![child]
+            vec![child.clone()]
+        );
+        assert_eq!(
+            draft.relations().binding(&BindingId::from("binding-copy")),
+            Some(&CanvasRecordBindingRelation::new(
+                "binding-copy",
+                child,
+                group
+            ))
         );
     }
 
@@ -519,6 +577,11 @@ mod tests {
                     group: CanvasRecordId::Shape(ShapeId::from("group")),
                     member: CanvasRecordId::Node(NodeId::from("child")),
                 },
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("group")),
+                )),
             ]))
             .unwrap();
         document

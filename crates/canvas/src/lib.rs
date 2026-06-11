@@ -40,10 +40,11 @@ pub use changes::{
 };
 pub use clipboard::{CanvasClipboardPayload, CanvasPasteTransaction};
 pub use document::{
-    CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder, CanvasDocumentDiff,
-    CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint, CanvasHandle, CanvasNode,
-    CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle, CanvasTransaction, CanvasValue,
-    DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole, NodeId, ShapeId,
+    BindingId, CanvasConnectionEndpointRole, CanvasDocument, CanvasDocumentBuilder,
+    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRoute, CanvasEdgeRouteKind, CanvasEndpoint,
+    CanvasHandle, CanvasNode, CanvasRecordId, CanvasShape, CanvasSnapshot, CanvasStyle,
+    CanvasTransaction, CanvasValue, DocumentCommand, DocumentError, EdgeId, HandleId, HandleRole,
+    NodeId, ShapeId,
 };
 pub use format::{
     CANVAS_DOCUMENT_FORMAT_VERSION, CANVAS_DOCUMENT_MIN_SUPPORTED_FORMAT_VERSION,
@@ -94,8 +95,9 @@ pub use persistence::{
     save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
 pub use relations::{
-    CanvasRecordGroupRelation, CanvasRecordParentRelation, CanvasRecordRelation,
-    CanvasRecordRelationKind, CanvasRecordRelations, CanvasRecordRelationsBuilder,
+    CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,
+    CanvasRecordRelation, CanvasRecordRelationKey, CanvasRecordRelationKind, CanvasRecordRelations,
+    CanvasRecordRelationsBuilder,
 };
 pub use routing::{
     CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath, CanvasRouteRequest,

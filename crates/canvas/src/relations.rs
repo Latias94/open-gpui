@@ -1,4 +1,4 @@
-use crate::CanvasRecordId;
+use crate::{BindingId, CanvasRecordId};
 use indexmap::IndexSet;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +7,22 @@ use serde::{Deserialize, Serialize};
 pub enum CanvasRecordRelationKind {
     Parent,
     Group,
+    Binding,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CanvasRecordRelationKey<'a> {
+    Parent {
+        child: &'a CanvasRecordId,
+        parent: &'a CanvasRecordId,
+    },
+    Group {
+        group: &'a CanvasRecordId,
+        member: &'a CanvasRecordId,
+    },
+    Binding {
+        id: &'a BindingId,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -40,9 +56,43 @@ impl CanvasRecordGroupRelation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CanvasRecordBindingRelation {
+    pub id: BindingId,
+    #[serde(default = "default_binding_kind")]
+    pub kind: String,
+    pub source: CanvasRecordId,
+    pub target: CanvasRecordId,
+}
+
+impl CanvasRecordBindingRelation {
+    pub fn new(
+        id: impl Into<BindingId>,
+        source: impl Into<CanvasRecordId>,
+        target: impl Into<CanvasRecordId>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            kind: default_binding_kind(),
+            source: source.into(),
+            target: target.into(),
+        }
+    }
+
+    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = kind.into();
+        self
+    }
+}
+
+fn default_binding_kind() -> String {
+    "binding".to_string()
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CanvasRecordRelation {
     Parent(CanvasRecordParentRelation),
     Group(CanvasRecordGroupRelation),
+    Binding(CanvasRecordBindingRelation),
 }
 
 impl CanvasRecordRelation {
@@ -50,13 +100,21 @@ impl CanvasRecordRelation {
         match self {
             Self::Parent(_) => CanvasRecordRelationKind::Parent,
             Self::Group(_) => CanvasRecordRelationKind::Group,
+            Self::Binding(_) => CanvasRecordRelationKind::Binding,
         }
     }
 
-    pub fn relation_id(&self) -> (&CanvasRecordId, &CanvasRecordId) {
+    pub fn relation_key(&self) -> CanvasRecordRelationKey<'_> {
         match self {
-            Self::Parent(relation) => (&relation.child, &relation.parent),
-            Self::Group(relation) => (&relation.group, &relation.member),
+            Self::Parent(relation) => CanvasRecordRelationKey::Parent {
+                child: &relation.child,
+                parent: &relation.parent,
+            },
+            Self::Group(relation) => CanvasRecordRelationKey::Group {
+                group: &relation.group,
+                member: &relation.member,
+            },
+            Self::Binding(relation) => CanvasRecordRelationKey::Binding { id: &relation.id },
         }
     }
 }
@@ -73,23 +131,35 @@ impl From<CanvasRecordGroupRelation> for CanvasRecordRelation {
     }
 }
 
+impl From<CanvasRecordBindingRelation> for CanvasRecordRelation {
+    fn from(value: CanvasRecordBindingRelation) -> Self {
+        Self::Binding(value)
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CanvasRecordRelations {
     #[serde(default)]
     parents: Vec<CanvasRecordParentRelation>,
     #[serde(default)]
     groups: Vec<CanvasRecordGroupRelation>,
+    #[serde(default)]
+    bindings: Vec<CanvasRecordBindingRelation>,
 }
 
 impl PartialEq for CanvasRecordRelations {
     fn eq(&self, other: &Self) -> bool {
         self.parents.len() == other.parents.len()
             && self.groups.len() == other.groups.len()
+            && self.bindings.len() == other.bindings.len()
             && self.parents.iter().all(|relation| {
                 other.contains_relation(&CanvasRecordRelation::Parent(relation.clone()))
             })
             && self.groups.iter().all(|relation| {
                 other.contains_relation(&CanvasRecordRelation::Group(relation.clone()))
+            })
+            && self.bindings.iter().all(|relation| {
+                other.contains_relation(&CanvasRecordRelation::Binding(relation.clone()))
             })
     }
 }
@@ -102,7 +172,7 @@ impl CanvasRecordRelations {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.parents.is_empty() && self.groups.is_empty()
+        self.parents.is_empty() && self.groups.is_empty() && self.bindings.is_empty()
     }
 
     pub fn parents(&self) -> impl Iterator<Item = &CanvasRecordParentRelation> {
@@ -111,6 +181,14 @@ impl CanvasRecordRelations {
 
     pub fn groups(&self) -> impl Iterator<Item = &CanvasRecordGroupRelation> {
         self.groups.iter()
+    }
+
+    pub fn bindings(&self) -> impl Iterator<Item = &CanvasRecordBindingRelation> {
+        self.bindings.iter()
+    }
+
+    pub fn binding(&self, id: &BindingId) -> Option<&CanvasRecordBindingRelation> {
+        self.bindings.iter().find(|relation| &relation.id == id)
     }
 
     pub fn parent_of(&self, child: &CanvasRecordId) -> Option<&CanvasRecordId> {
@@ -141,12 +219,22 @@ impl CanvasRecordRelations {
             .map(|relation| &relation.group)
     }
 
+    pub fn bindings_for(
+        &self,
+        record: &CanvasRecordId,
+    ) -> impl Iterator<Item = &CanvasRecordBindingRelation> {
+        self.bindings
+            .iter()
+            .filter(move |relation| &relation.source == record || &relation.target == record)
+    }
+
     pub fn contains_relation(&self, relation: &CanvasRecordRelation) -> bool {
         match relation {
             CanvasRecordRelation::Parent(relation) => {
                 self.parent_of(&relation.child) == Some(&relation.parent)
             }
             CanvasRecordRelation::Group(relation) => self.contains_group_relation(relation),
+            CanvasRecordRelation::Binding(relation) => self.binding(&relation.id) == Some(relation),
         }
     }
 
@@ -211,6 +299,35 @@ impl CanvasRecordRelations {
         true
     }
 
+    pub(crate) fn set_binding(
+        &mut self,
+        binding: CanvasRecordBindingRelation,
+    ) -> Option<CanvasRecordBindingRelation> {
+        if let Some(relation) = self
+            .bindings
+            .iter_mut()
+            .find(|relation| relation.id == binding.id)
+        {
+            if *relation == binding {
+                return Some(binding);
+            }
+
+            let previous = std::mem::replace(relation, binding);
+            return Some(previous);
+        }
+
+        self.bindings.push(binding);
+        None
+    }
+
+    pub(crate) fn remove_binding(&mut self, id: &BindingId) -> Option<CanvasRecordBindingRelation> {
+        let index = self
+            .bindings
+            .iter()
+            .position(|relation| &relation.id == id)?;
+        Some(self.bindings.remove(index))
+    }
+
     pub(crate) fn prune_missing_records(&mut self, existing: &IndexSet<CanvasRecordId>) -> bool {
         let parent_count = self.parents.len();
         self.parents.retain(|relation| {
@@ -222,7 +339,14 @@ impl CanvasRecordRelations {
             existing.contains(&relation.group) && existing.contains(&relation.member)
         });
 
-        self.parents.len() != parent_count || self.groups.len() != group_count
+        let binding_count = self.bindings.len();
+        self.bindings.retain(|relation| {
+            existing.contains(&relation.source) && existing.contains(&relation.target)
+        });
+
+        self.parents.len() != parent_count
+            || self.groups.len() != group_count
+            || self.bindings.len() != binding_count
     }
 
     fn contains_group_relation(&self, relation: &CanvasRecordGroupRelation) -> bool {
@@ -268,7 +392,15 @@ impl CanvasRecordRelationsBuilder {
             CanvasRecordRelation::Group(relation) => {
                 self.add_group_member(relation.group, relation.member);
             }
+            CanvasRecordRelation::Binding(relation) => {
+                self.add_binding(relation);
+            }
         }
+        self
+    }
+
+    pub fn add_binding(&mut self, binding: CanvasRecordBindingRelation) -> &mut Self {
+        self.relations.set_binding(binding);
         self
     }
 
@@ -289,6 +421,7 @@ mod tests {
         assert!(relations.is_empty());
         assert_eq!(relations.parents().count(), 0);
         assert_eq!(relations.groups().count(), 0);
+        assert_eq!(relations.bindings().count(), 0);
     }
 
     #[test]
@@ -337,11 +470,35 @@ mod tests {
             parent.clone(),
             child.clone(),
         ));
+        let binding_relation = CanvasRecordRelation::from(CanvasRecordBindingRelation::new(
+            "binding",
+            child.clone(),
+            parent.clone(),
+        ));
 
         assert_eq!(parent_relation.kind(), CanvasRecordRelationKind::Parent);
-        assert_eq!(parent_relation.relation_id(), (&child, &parent));
+        assert_eq!(
+            parent_relation.relation_key(),
+            CanvasRecordRelationKey::Parent {
+                child: &child,
+                parent: &parent,
+            }
+        );
         assert_eq!(group_relation.kind(), CanvasRecordRelationKind::Group);
-        assert_eq!(group_relation.relation_id(), (&parent, &child));
+        assert_eq!(
+            group_relation.relation_key(),
+            CanvasRecordRelationKey::Group {
+                group: &parent,
+                member: &child,
+            }
+        );
+        assert_eq!(binding_relation.kind(), CanvasRecordRelationKind::Binding);
+        assert_eq!(
+            binding_relation.relation_key(),
+            CanvasRecordRelationKey::Binding {
+                id: &BindingId::from("binding"),
+            }
+        );
     }
 
     #[test]
@@ -374,6 +531,11 @@ mod tests {
             parent.clone(),
             child.clone(),
         ));
+        builder.add_relation(CanvasRecordBindingRelation::new(
+            "binding",
+            child.clone(),
+            parent.clone(),
+        ));
 
         let relations = builder.build();
 
@@ -381,8 +543,58 @@ mod tests {
             CanvasRecordParentRelation::new(child.clone(), parent.clone())
         )));
         assert!(relations.contains_relation(&CanvasRecordRelation::Group(
-            CanvasRecordGroupRelation::new(parent, child)
+            CanvasRecordGroupRelation::new(parent.clone(), child.clone())
         )));
+        assert!(relations.contains_relation(&CanvasRecordRelation::Binding(
+            CanvasRecordBindingRelation::new("binding", child, parent)
+        )));
+    }
+
+    #[test]
+    fn binding_relations_are_keyed_by_binding_id() {
+        let source = CanvasRecordId::Node(NodeId::from("source"));
+        let target = CanvasRecordId::Shape(ShapeId::from("target"));
+        let replacement_target = CanvasRecordId::Shape(ShapeId::from("replacement-target"));
+        let mut relations = CanvasRecordRelations::default();
+
+        assert_eq!(
+            relations.set_binding(CanvasRecordBindingRelation::new(
+                "binding",
+                source.clone(),
+                target.clone(),
+            )),
+            None
+        );
+        assert_eq!(
+            relations.set_binding(CanvasRecordBindingRelation::new(
+                "binding",
+                source.clone(),
+                replacement_target.clone(),
+            )),
+            Some(CanvasRecordBindingRelation::new(
+                "binding",
+                source.clone(),
+                target
+            ))
+        );
+
+        assert_eq!(
+            relations.bindings_for(&source).cloned().collect::<Vec<_>>(),
+            vec![CanvasRecordBindingRelation::new(
+                "binding",
+                source,
+                replacement_target
+            )]
+        );
+        assert_eq!(
+            relations.remove_binding(&BindingId::from("binding")),
+            Some(CanvasRecordBindingRelation::new(
+                "binding",
+                CanvasRecordId::Node(NodeId::from("source")),
+                CanvasRecordId::Shape(ShapeId::from("replacement-target")),
+            ))
+        );
+        assert!(relations.is_empty());
     }
 
     #[test]
@@ -397,12 +609,32 @@ mod tests {
         left.set_parent(member_b.clone(), group_b.clone());
         left.add_to_group(group_a.clone(), member_a.clone());
         left.add_to_group(group_b.clone(), member_b.clone());
+        left.set_binding(CanvasRecordBindingRelation::new(
+            "binding-a",
+            member_a.clone(),
+            group_a.clone(),
+        ));
+        left.set_binding(CanvasRecordBindingRelation::new(
+            "binding-b",
+            member_b.clone(),
+            group_b.clone(),
+        ));
 
         let mut right = CanvasRecordRelations::default();
         right.set_parent(member_b.clone(), group_b.clone());
         right.set_parent(member_a.clone(), group_a.clone());
-        right.add_to_group(group_b, member_b);
-        right.add_to_group(group_a, member_a);
+        right.add_to_group(group_b.clone(), member_b.clone());
+        right.add_to_group(group_a.clone(), member_a.clone());
+        right.set_binding(CanvasRecordBindingRelation::new(
+            "binding-b",
+            member_b,
+            group_b,
+        ));
+        right.set_binding(CanvasRecordBindingRelation::new(
+            "binding-a",
+            member_a,
+            group_a,
+        ));
 
         assert_eq!(left, right);
     }
@@ -415,7 +647,12 @@ mod tests {
         let missing = CanvasRecordId::Node(NodeId::from("missing"));
         relations.set_parent(member.clone(), group.clone());
         relations.add_to_group(group.clone(), member.clone());
-        relations.add_to_group(group.clone(), missing);
+        relations.add_to_group(group.clone(), missing.clone());
+        relations.set_binding(CanvasRecordBindingRelation::new(
+            "binding",
+            member.clone(),
+            missing,
+        ));
 
         let existing = IndexSet::from_iter([group.clone(), member.clone()]);
 
@@ -425,5 +662,6 @@ mod tests {
             relations.members_of(&group).cloned().collect::<Vec<_>>(),
             vec![member]
         );
+        assert!(relations.bindings().next().is_none());
     }
 }

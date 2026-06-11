@@ -197,6 +197,22 @@ fn relation_changes_from_diff(
         }
     }
 
+    for relation in previous.bindings() {
+        if current.binding(&relation.id) != Some(relation) {
+            changes.push(CanvasRelationChange::Delete(CanvasRecordRelation::Binding(
+                relation.clone(),
+            )));
+        }
+    }
+
+    for relation in current.bindings() {
+        if previous.binding(&relation.id) != Some(relation) {
+            changes.push(CanvasRelationChange::Upsert(CanvasRecordRelation::Binding(
+                relation.clone(),
+            )));
+        }
+    }
+
     changes
 }
 
@@ -254,6 +270,12 @@ fn relation_change_to_command(change: CanvasRelationChange) -> DocumentCommand {
                 member: relation.member,
             }
         }
+        CanvasRelationChange::Upsert(CanvasRecordRelation::Binding(relation)) => {
+            DocumentCommand::SetRecordBinding(relation)
+        }
+        CanvasRelationChange::Delete(CanvasRecordRelation::Binding(relation)) => {
+            DocumentCommand::RemoveRecordBinding { id: relation.id }
+        }
     }
 }
 
@@ -270,8 +292,9 @@ mod tests {
     use super::*;
     use crate::test_support::{child_frame_fixture, connected_pair_fixture, document_fixture};
     use crate::{
-        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordGroupRelation, CanvasRecordId,
-        CanvasRecordParentRelation, DocumentCommand, EdgeId, NodeId, ShapeId,
+        CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordBindingRelation,
+        CanvasRecordGroupRelation, CanvasRecordId, CanvasRecordParentRelation, DocumentCommand,
+        EdgeId, NodeId, ShapeId,
     };
     use open_gpui::{point, px, size};
 
@@ -347,6 +370,11 @@ mod tests {
     #[test]
     fn committed_mutation_reports_relation_only_changes() {
         let mut document = child_frame_fixture().build();
+        let binding = CanvasRecordBindingRelation::new(
+            "binding",
+            CanvasRecordId::Node(NodeId::from("child")),
+            CanvasRecordId::Shape(ShapeId::from("frame")),
+        );
         let mut transaction = CanvasTransaction::new([
             DocumentCommand::SetRecordParent {
                 child: CanvasRecordId::Node(NodeId::from("child")),
@@ -356,6 +384,7 @@ mod tests {
                 group: CanvasRecordId::Shape(ShapeId::from("frame")),
                 member: CanvasRecordId::Node(NodeId::from("child")),
             },
+            DocumentCommand::SetRecordBinding(binding.clone()),
         ]);
         transaction
             .metadata
@@ -374,6 +403,7 @@ mod tests {
                 CanvasRelationChange::Upsert(CanvasRecordRelation::Group(
                     CanvasRecordGroupRelation::new(ShapeId::from("frame"), NodeId::from("child"))
                 )),
+                CanvasRelationChange::Upsert(CanvasRecordRelation::Binding(binding)),
             ]
         );
 
@@ -389,7 +419,57 @@ mod tests {
                 .iter()
                 .map(|operation| operation.operation_index)
                 .collect::<Vec<_>>(),
-            vec![0, 1]
+            vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn committed_mutation_reports_binding_replacement_as_delete_and_upsert() {
+        let mut document = child_frame_fixture().build();
+        document
+            .insert_shape(crate::CanvasShape::new(
+                "other-frame",
+                open_gpui::Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .unwrap();
+        document
+            .commit_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("frame")),
+                )),
+            ))
+            .unwrap();
+
+        let committed = document
+            .commit_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("other-frame")),
+                )),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            committed.relation_changes(),
+            &[
+                CanvasRelationChange::Delete(CanvasRecordRelation::Binding(
+                    CanvasRecordBindingRelation::new(
+                        "binding",
+                        CanvasRecordId::Node(NodeId::from("child")),
+                        CanvasRecordId::Shape(ShapeId::from("frame")),
+                    )
+                )),
+                CanvasRelationChange::Upsert(CanvasRecordRelation::Binding(
+                    CanvasRecordBindingRelation::new(
+                        "binding",
+                        CanvasRecordId::Node(NodeId::from("child")),
+                        CanvasRecordId::Shape(ShapeId::from("other-frame")),
+                    )
+                )),
+            ]
         );
     }
 
@@ -546,6 +626,11 @@ mod tests {
                     group: group.clone(),
                     member: edge.clone(),
                 },
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    edge.clone(),
+                    group.clone(),
+                )),
             ]))
             .unwrap();
         let before = document.clone();
@@ -569,7 +654,13 @@ mod tests {
                 .members_of(&group)
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![edge]
+            vec![edge.clone()]
+        );
+        assert_eq!(
+            document
+                .relations()
+                .binding(&crate::BindingId::from("binding")),
+            Some(&CanvasRecordBindingRelation::new("binding", edge, group))
         );
     }
 

@@ -10,7 +10,7 @@ use crate::format::{
 };
 use crate::geometry_facts::CanvasGeometryFacts;
 use crate::mutation::{CanvasCommittedMutation, CanvasMutationJournal, CanvasPreparedMutation};
-use crate::relations::CanvasRecordRelations;
+use crate::relations::{CanvasRecordBindingRelation, CanvasRecordRelations};
 use crate::routing::{CanvasDefaultEdgeRouter, CanvasEdgeRouter, CanvasRoutePath};
 use crate::schema::{CanvasKindRegistry, CanvasSchemaError};
 
@@ -56,6 +56,7 @@ canvas_id!(NodeId);
 canvas_id!(EdgeId);
 canvas_id!(ShapeId);
 canvas_id!(HandleId);
+canvas_id!(BindingId);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -462,6 +463,10 @@ pub enum DocumentError {
         group: CanvasRecordId,
         member: CanvasRecordId,
     },
+    #[error("canvas binding relation `{0}` is duplicated")]
+    DuplicateBindingRelation(BindingId),
+    #[error("canvas record `{0}` cannot be bound to itself")]
+    SelfBindingRelation(CanvasRecordId),
     #[error(transparent)]
     Schema(#[from] CanvasSchemaError),
 }
@@ -491,6 +496,10 @@ pub enum DocumentCommand {
     RemoveRecordFromGroup {
         group: CanvasRecordId,
         member: CanvasRecordId,
+    },
+    SetRecordBinding(CanvasRecordBindingRelation),
+    RemoveRecordBinding {
+        id: BindingId,
     },
 }
 
@@ -866,6 +875,11 @@ impl CanvasDocument {
                 self.relations.remove_from_group(&group, &member);
                 Ok(())
             }
+            DocumentCommand::SetRecordBinding(binding) => self.set_record_binding_rule(binding),
+            DocumentCommand::RemoveRecordBinding { id } => {
+                self.relations.remove_binding(&id);
+                Ok(())
+            }
         }
     }
 
@@ -1033,6 +1047,19 @@ impl CanvasDocument {
         self.validate_record_id(&group)?;
         self.validate_record_id(&member)?;
         self.relations.add_to_group(group, member);
+        Ok(())
+    }
+
+    fn set_record_binding_rule(
+        &mut self,
+        binding: CanvasRecordBindingRelation,
+    ) -> Result<(), DocumentError> {
+        if binding.source == binding.target {
+            return Err(DocumentError::SelfBindingRelation(binding.source));
+        }
+        self.validate_record_id(&binding.source)?;
+        self.validate_record_id(&binding.target)?;
+        self.relations.set_binding(binding);
         Ok(())
     }
 
@@ -1210,6 +1237,18 @@ impl CanvasDocument {
             }
             self.validate_record_id(&relation.group)?;
             self.validate_record_id(&relation.member)?;
+        }
+
+        let mut binding_ids = IndexSet::new();
+        for relation in self.relations.bindings() {
+            if !binding_ids.insert(relation.id.clone()) {
+                return Err(DocumentError::DuplicateBindingRelation(relation.id.clone()));
+            }
+            if relation.source == relation.target {
+                return Err(DocumentError::SelfBindingRelation(relation.source.clone()));
+            }
+            self.validate_record_id(&relation.source)?;
+            self.validate_record_id(&relation.target)?;
         }
 
         Ok(())
@@ -1476,6 +1515,23 @@ impl CanvasDocument {
                     Vec::new()
                 })
             }
+            DocumentCommand::SetRecordBinding(binding) => {
+                if binding.source == binding.target {
+                    return Err(DocumentError::SelfBindingRelation(binding.source.clone()));
+                }
+                self.validate_record_id(&binding.source)?;
+                self.validate_record_id(&binding.target)?;
+                Ok(match self.relations.binding(&binding.id).cloned() {
+                    Some(previous) => vec![DocumentCommand::SetRecordBinding(previous)],
+                    None => vec![DocumentCommand::RemoveRecordBinding {
+                        id: binding.id.clone(),
+                    }],
+                })
+            }
+            DocumentCommand::RemoveRecordBinding { id } => Ok(match self.relations.binding(id) {
+                Some(binding) => vec![DocumentCommand::SetRecordBinding(binding.clone())],
+                None => Vec::new(),
+            }),
         }
     }
 }
@@ -1569,6 +1625,7 @@ mod tests {
             .build();
         let child = CanvasRecordId::Node(NodeId::from("child"));
         let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let binding = CanvasRecordBindingRelation::new("binding", child.clone(), group.clone());
         document
             .apply_transaction(CanvasTransaction::new([
                 DocumentCommand::SetRecordParent {
@@ -1579,6 +1636,7 @@ mod tests {
                     group: group.clone(),
                     member: child.clone(),
                 },
+                DocumentCommand::SetRecordBinding(binding.clone()),
             ]))
             .unwrap();
 
@@ -1591,8 +1649,9 @@ mod tests {
                 .members_of(&group)
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![child]
+            vec![child.clone()]
         );
+        assert_eq!(restored.relations().binding(&binding.id), Some(&binding));
     }
 
     #[test]
@@ -1651,7 +1710,12 @@ mod tests {
         let mut relations = CanvasRecordRelations::default();
         relations.set_parent(child.clone(), missing_group.clone());
         relations.add_to_group(existing_group.clone(), child.clone());
-        relations.add_to_group(missing_group, child.clone());
+        relations.add_to_group(missing_group.clone(), child.clone());
+        relations.set_binding(CanvasRecordBindingRelation::new(
+            "binding",
+            child.clone(),
+            missing_group,
+        ));
 
         let mut builder = CanvasDocument::builder().with_relations(relations);
         builder
@@ -1679,6 +1743,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![child]
         );
+        assert!(document.relations().bindings().next().is_none());
     }
 
     #[test]
@@ -1800,6 +1865,64 @@ mod tests {
             CanvasDocument::from_snapshot(snapshot).unwrap_err(),
             DocumentError::DuplicateGroupRelation { group, member }
         );
+    }
+
+    #[test]
+    fn from_snapshot_rejects_duplicate_binding_relations() {
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
+                "source",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .shape(CanvasShape::new(
+                "target",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+            ))
+            .build();
+        let binding = CanvasRecordBindingRelation::new(
+            "binding",
+            CanvasRecordId::Node(NodeId::from("source")),
+            CanvasRecordId::Shape(ShapeId::from("target")),
+        );
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordBinding(binding),
+            ))
+            .unwrap();
+        let mut value = serde_json::to_value(document.to_snapshot()).unwrap();
+        let bindings = value["relations"]["bindings"].as_array_mut().unwrap();
+        bindings.push(bindings[0].clone());
+        let snapshot = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            CanvasDocument::from_snapshot(snapshot).unwrap_err(),
+            DocumentError::DuplicateBindingRelation(BindingId::from("binding"))
+        );
+    }
+
+    #[test]
+    fn relation_commands_reject_self_binding() {
+        let mut document = document_fixture()
+            .node(CanvasNode::new(
+                "source",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .build();
+        let source = CanvasRecordId::Node(NodeId::from("source"));
+
+        let err = document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    source.clone(),
+                    source.clone(),
+                )),
+            ))
+            .unwrap_err();
+
+        assert_eq!(err, DocumentError::SelfBindingRelation(source));
     }
 
     #[test]
@@ -2399,6 +2522,21 @@ mod tests {
             DocumentError::MissingRelationRecord(CanvasRecordId::Shape(ShapeId::from("missing")))
         );
         assert!(document.relations().is_empty());
+
+        let err = document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("missing")),
+                )),
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            DocumentError::MissingRelationRecord(CanvasRecordId::Shape(ShapeId::from("missing")))
+        );
     }
 
     #[test]
@@ -2424,6 +2562,11 @@ mod tests {
                     group: CanvasRecordId::Shape(ShapeId::from("group")),
                     member: CanvasRecordId::Node(NodeId::from("child")),
                 },
+                DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                    "binding",
+                    CanvasRecordId::Node(NodeId::from("child")),
+                    CanvasRecordId::Shape(ShapeId::from("group")),
+                )),
             ]))
             .unwrap();
 
@@ -2460,6 +2603,11 @@ mod tests {
                 group: CanvasRecordId::Shape(ShapeId::from("group")),
                 member: CanvasRecordId::Node(NodeId::from("child")),
             },
+            DocumentCommand::SetRecordBinding(CanvasRecordBindingRelation::new(
+                "binding",
+                CanvasRecordId::Node(NodeId::from("child")),
+                CanvasRecordId::Shape(ShapeId::from("group")),
+            )),
         ]);
         let inverse = document.invert_transaction(&transaction).unwrap();
 

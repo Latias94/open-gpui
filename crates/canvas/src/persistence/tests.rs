@@ -1,10 +1,11 @@
 use super::*;
 use crate::{
     CanvasEditor, CanvasEvent, CanvasKeyModifiers, CanvasKindRegistry, CanvasNode, CanvasNodeKind,
-    CanvasNodeSchemaPolicy, CanvasRecordId, CanvasRecordKind, CanvasRecordRelation,
-    CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape, CanvasStore, CanvasTool,
-    CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer, CanvasToolRegistry,
-    CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId, PointerButton, ShapeId,
+    CanvasNodeSchemaPolicy, CanvasRecordBindingRelation, CanvasRecordId, CanvasRecordKind,
+    CanvasRecordRelation, CanvasRelationChange, CanvasSchemaError, CanvasSelection, CanvasShape,
+    CanvasStore, CanvasTool, CanvasToolContext, CanvasToolId, CanvasToolIntent, CanvasToolReducer,
+    CanvasToolRegistry, CanvasTransaction, DocumentCommand, DocumentError, EdgeId, NodeId,
+    PointerButton, ShapeId,
     persistence::store::{apply_persistent_tool_effect, apply_persistent_tool_effects},
     test_support::{child_frame_fixture, connected_pair_fixture, document_fixture},
     tool::CanvasToolEffect,
@@ -255,6 +256,35 @@ fn json_persistence_codec_round_trips_committed_relation_operation_batches() {
             .operations
             .len(),
         1
+    );
+}
+
+#[test]
+fn json_persistence_codec_round_trips_binding_relation_operation_batches() {
+    let codec = CanvasJsonPersistenceCodec;
+    let mut document = child_frame_fixture().build();
+    let binding = CanvasRecordBindingRelation::new(
+        "binding",
+        CanvasRecordId::Node(NodeId::from("child")),
+        CanvasRecordId::Shape(ShapeId::from("frame")),
+    );
+    let committed = document
+        .commit_transaction(CanvasTransaction::single(
+            DocumentCommand::SetRecordBinding(binding.clone()),
+        ))
+        .unwrap();
+    let entry = CanvasLogEntry::from_committed_mutation(14, &committed);
+
+    let bytes = codec.encode_log_entry(&entry).unwrap();
+    let decoded = codec.decode_log_entry(&bytes).unwrap();
+    let batch = decoded.committed_relation_operations().unwrap();
+
+    assert_eq!(batch.transaction_sequence, 14);
+    assert_eq!(
+        batch.changes().cloned().collect::<Vec<_>>(),
+        vec![CanvasRelationChange::Upsert(CanvasRecordRelation::Binding(
+            binding
+        ))]
     );
 }
 
