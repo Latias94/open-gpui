@@ -69,6 +69,10 @@ impl DockViewportResolvedDropRoute {
         &self.commit
     }
 
+    pub(crate) fn drag_session_id(&self) -> Option<u64> {
+        self.commit.drag_session_id()
+    }
+
     pub(crate) fn into_route(self) -> DockViewportDropRoute {
         self.route
     }
@@ -222,6 +226,18 @@ impl DockViewportDropRouteCommit {
             DockViewportDropRouteCommit::TearOff(_) | DockViewportDropRouteCommit::Rejected(_) => {
                 None
             }
+        }
+    }
+
+    fn drag_session_id(&self) -> Option<u64> {
+        match self {
+            DockViewportDropRouteCommit::Workspace(commit) => {
+                commit.drag_session().map(DockRuntimeDragSession::id)
+            }
+            DockViewportDropRouteCommit::TearOff(request) => {
+                request.drag_session().map(DockRuntimeDragSession::id)
+            }
+            DockViewportDropRouteCommit::Rejected(_) => None,
         }
     }
 }

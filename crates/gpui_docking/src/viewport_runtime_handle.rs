@@ -83,6 +83,15 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().last_hovered_window()
     }
 
+    pub(crate) fn last_hovered_window_for_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<WindowId> {
+        self.runtime
+            .borrow()
+            .last_hovered_window_for_drag_session(session)
+    }
+
     pub(crate) fn record_window_focus(&self, window_id: WindowId) {
         self.runtime.borrow_mut().record_window_focus(window_id);
     }

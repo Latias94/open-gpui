@@ -92,8 +92,9 @@ impl DockHost {
             window,
             cx,
             release.origin(),
-            self.viewport_runtime()
-                .and_then(|runtime| runtime.last_hovered_window()),
+            self.viewport_runtime().and_then(|runtime| {
+                runtime.last_hovered_window_for_drag_session(release.drag_session())
+            }),
             release.drag_session().cloned(),
         );
         let result = runtime.commit_payload_drop_from_screen(&request, cx);

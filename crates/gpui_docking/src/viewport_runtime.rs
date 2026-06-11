@@ -47,9 +47,32 @@ pub(crate) struct DockViewportRuntime {
     tear_off_tick: DockViewportTearOffTick,
     drag_session: Option<DockRuntimeDragSession>,
     next_drag_session_id: u64,
-    last_hovered_window: Option<WindowId>,
+    last_hovered_window: Option<DockViewportLastHoveredWindow>,
     routed_drop_preview: Option<DockViewportRoutedDropPreview>,
     status: DockViewportRuntimeStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DockViewportLastHoveredWindow {
+    window_id: WindowId,
+    drag_session_id: Option<u64>,
+}
+
+impl DockViewportLastHoveredWindow {
+    fn new(window_id: WindowId, drag_session_id: Option<u64>) -> Self {
+        Self {
+            window_id,
+            drag_session_id,
+        }
+    }
+
+    fn matches_drag_session(&self, session: Option<&DockRuntimeDragSession>) -> bool {
+        self.drag_session_id == session.map(DockRuntimeDragSession::id)
+    }
+
+    fn matches_drag_session_id(&self, drag_session_id: Option<u64>) -> bool {
+        self.drag_session_id == drag_session_id
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -195,6 +218,7 @@ impl DockViewportRuntime {
         self.next_drag_session_id = id;
         let session = DockRuntimeDragSession::new(id, payload);
         self.drag_session = Some(session.clone());
+        self.last_hovered_window = None;
         session
     }
 
@@ -213,6 +237,7 @@ impl DockViewportRuntime {
             return false;
         }
         self.drag_session = None;
+        self.clear_last_hovered_window_for_drag_session(Some(session));
         true
     }
 
@@ -232,7 +257,17 @@ impl DockViewportRuntime {
     }
 
     pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
-        self.last_hovered_window
+        self.last_hovered_window.map(|hovered| hovered.window_id)
+    }
+
+    pub(crate) fn last_hovered_window_for_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<WindowId> {
+        let hovered = self.last_hovered_window?;
+        hovered
+            .matches_drag_session(session)
+            .then_some(hovered.window_id)
     }
 
     pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
@@ -240,7 +275,31 @@ impl DockViewportRuntime {
     }
 
     fn clear_last_hovered_window_if_matches(&mut self, window_id: WindowId) {
-        if self.last_hovered_window == Some(window_id) {
+        if self
+            .last_hovered_window
+            .is_some_and(|hovered| hovered.window_id == window_id)
+        {
+            self.last_hovered_window = None;
+        }
+    }
+
+    fn clear_last_hovered_window_for_drag_session(
+        &mut self,
+        session: Option<&DockRuntimeDragSession>,
+    ) {
+        if self
+            .last_hovered_window
+            .is_some_and(|hovered| hovered.matches_drag_session(session))
+        {
+            self.last_hovered_window = None;
+        }
+    }
+
+    fn clear_last_hovered_window_for_drag_id(&mut self, drag_session_id: Option<u64>) {
+        if self
+            .last_hovered_window
+            .is_some_and(|hovered| hovered.matches_drag_session_id(drag_session_id))
+        {
             self.last_hovered_window = None;
         }
     }
@@ -374,12 +433,18 @@ impl DockViewportRuntime {
         let payload_title = payload_title.into();
         let next = match resolution.route() {
             DockViewportDropRoute::KnownViewport { target } => {
-                self.last_hovered_window = Some(target.window_id());
+                self.last_hovered_window = Some(DockViewportLastHoveredWindow::new(
+                    target.window_id(),
+                    resolution.drag_session_id(),
+                ));
                 self.routed_drop_preview_from_commit(resolution.commit(), payload_title)
             }
             DockViewportDropRoute::Local { .. }
             | DockViewportDropRoute::TearOff(_)
-            | DockViewportDropRoute::Rejected(_) => None,
+            | DockViewportDropRoute::Rejected(_) => {
+                self.clear_last_hovered_window_for_drag_id(resolution.drag_session_id());
+                None
+            }
         };
         self.replace_routed_drop_preview(next)
     }

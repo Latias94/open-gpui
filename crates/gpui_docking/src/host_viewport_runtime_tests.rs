@@ -3,10 +3,10 @@ use crate::{
     DockGraphMutationError, DockHost, DockItemId, DockNode, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteCommit, DockViewportDropRouteRequest,
-    DockViewportOpenStatus, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace,
+    DockViewportOpenStatus, DockViewportResolvedDropRoute, DockViewportRuntime,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportTargetContext,
+    DockViewportTargetHit, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace,
     drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -1062,6 +1062,78 @@ fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut Test
         runtime.last_hovered_window(),
         Some(target_opened.window().window_id())
     );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_scopes_last_hovered_window_to_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new(),
+    )
+    .with_drag_session(Some(session.clone()));
+    let target_window = handle(77);
+    let target_position = point(px(120.0), px(100.0));
+    let route = DockViewportDropRoute::KnownViewport {
+        target: DockViewportTargetHit::new(target_space, target_window, target_position),
+    };
+    let resolution = DockViewportResolvedDropRoute::new(
+        route.clone(),
+        DockViewportDropRouteCommit::from_route_request(&request, route),
+    );
+
+    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    assert_eq!(
+        runtime.last_hovered_window_for_drag_session(Some(&session)),
+        Some(target_window.window_id())
+    );
+    assert_eq!(runtime.last_hovered_window_for_drag_session(None), None);
+
+    let local_resolution = DockViewportResolvedDropRoute::new(
+        DockViewportDropRoute::Local {
+            host_position: target_position,
+        },
+        DockViewportDropRouteCommit::from_route_request(
+            &request,
+            DockViewportDropRoute::Local {
+                host_position: target_position,
+            },
+        ),
+    );
+    runtime.update_routed_drop_preview(&local_resolution, "Panel A");
+    assert_eq!(runtime.last_hovered_window(), None);
+
+    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    assert!(runtime.finish_payload_drag(&session));
+    assert_eq!(runtime.last_hovered_window(), None);
+
+    runtime.update_routed_drop_preview(&resolution, "Panel A");
+    let next_session = runtime.begin_payload_drag(&payload);
+    assert_ne!(next_session.id(), session.id());
+    assert_eq!(runtime.last_hovered_window(), None);
 }
 
 #[open_gpui::test]
