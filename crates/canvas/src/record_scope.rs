@@ -7,6 +7,12 @@ pub(crate) struct CanvasRecordScopeOptions {
 }
 
 impl CanvasRecordScopeOptions {
+    pub(crate) const fn structural() -> Self {
+        Self {
+            include_internal_edges: false,
+        }
+    }
+
     pub(crate) const fn structural_with_internal_edges() -> Self {
         Self {
             include_internal_edges: true,

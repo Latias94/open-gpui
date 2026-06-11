@@ -2,6 +2,7 @@ use crate::transform::{CanvasResizeHandle, resize_bounds_by_handle};
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasGeometryFacts, CanvasKindRegistry,
     CanvasRecordGeometry, CanvasRecordId, CanvasSelection,
+    record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope},
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px};
@@ -43,7 +44,7 @@ pub fn snap_delta_for_selection(
     };
 
     let moved_bounds = Bounds::new(active_bounds.origin + delta, active_bounds.size);
-    let selected_record_ids = selected_record_ids(selection);
+    let selected_record_ids = selected_record_ids(document, selection);
     let mut horizontal = None;
     let mut vertical = None;
 
@@ -105,7 +106,7 @@ pub fn snap_delta_for_resize_selection(
     };
 
     let resized_bounds = resize_bounds_by_handle(active_bounds, handle, delta);
-    let selected_record_ids = selected_record_ids(selection);
+    let selected_record_ids = selected_record_ids(document, selection);
     let mut horizontal = None;
     let mut vertical = None;
 
@@ -153,16 +154,24 @@ pub fn snap_delta_for_resize_selection(
     }
 }
 
-fn selected_record_ids(selection: &CanvasSelection) -> IndexSet<CanvasRecordId> {
-    selection
-        .selected_nodes()
-        .map(|id| CanvasRecordId::Node(id.clone()))
-        .chain(
-            selection
-                .selected_shapes()
-                .map(|id| CanvasRecordId::Shape(id.clone())),
-        )
-        .collect()
+fn selected_record_ids(
+    document: &CanvasDocument,
+    selection: &CanvasSelection,
+) -> IndexSet<CanvasRecordId> {
+    collect_selection_record_scope(
+        document,
+        selection,
+        CanvasRecordScopeOptions::structural(),
+        |record_id| is_snap_scope_record(document, record_id),
+    )
+}
+
+fn is_snap_scope_record(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
+    match record_id {
+        CanvasRecordId::Node(id) => document.contains_node(id),
+        CanvasRecordId::Shape(id) => document.contains_shape(id),
+        CanvasRecordId::Edge(_) => false,
+    }
 }
 
 fn selection_bounds(
@@ -381,8 +390,8 @@ fn snap_guide(
 mod tests {
     use super::*;
     use crate::{
-        CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasShape, NodeId, ShapeId,
-        test_support::document_fixture,
+        CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeKind, CanvasShape, CanvasTransaction,
+        DocumentCommand, NodeId, ShapeId, test_support::document_fixture,
     };
     use open_gpui::{point, size};
 
@@ -444,6 +453,79 @@ mod tests {
         );
 
         assert_eq!(result.delta, point(px(96.0), px(0.0)));
+        assert!(result.guides.is_empty());
+    }
+
+    #[test]
+    fn ignores_related_descendants_for_selection_snap() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(40.0), px(40.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(100.0), px(0.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+
+        let result = snap_delta_for_selection(
+            &document,
+            &selection,
+            point(px(96.0), px(0.0)),
+            DEFAULT_SNAP_THRESHOLD,
+            None,
+        );
+
+        assert_eq!(result.delta, point(px(96.0), px(0.0)));
+        assert!(result.guides.is_empty());
+    }
+
+    #[test]
+    fn ignores_related_descendants_for_resize_snap() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(100.0), px(0.0)), size(px(40.0), px(40.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(50.0), px(0.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+
+        let result = snap_delta_for_resize_selection(
+            &document,
+            &selection,
+            CanvasResizeHandle::TopLeft,
+            point(px(-46.0), px(0.0)),
+            DEFAULT_SNAP_THRESHOLD,
+            None,
+        );
+
+        assert_eq!(result.delta, point(px(-46.0), px(0.0)));
         assert!(result.guides.is_empty());
     }
 
