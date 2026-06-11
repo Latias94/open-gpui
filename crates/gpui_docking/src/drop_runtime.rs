@@ -486,7 +486,7 @@ mod tests {
             let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(zone);
 
             runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
-            assert!(!runtime.push_scene_fact(
+            assert!(runtime.push_scene_fact(
                 position,
                 None,
                 DockHostDropSceneFact::Root(crate::drop_target::DockRootDropTarget {
@@ -495,6 +495,22 @@ mod tests {
                 }),
                 &DockPolicy::default()
             ));
+            let root_only_target = runtime
+                .resolved_target()
+                .unwrap_or_else(|| panic!("{zone:?} root-only target should resolve"));
+            assert!(
+                matches!(
+                    root_only_target.kind,
+                    DockResolvedDropTargetKind::RootEdge {
+                        root: matched_root,
+                        leaf_tabs: None,
+                        zone: matched_zone,
+                    } if matched_root == root && matched_zone == zone
+                ),
+                "{zone:?}: unexpected root-only target {:?}",
+                root_only_target
+            );
+
             assert!(runtime.push_scene_fact(
                 position,
                 None,
@@ -516,7 +532,7 @@ mod tests {
                     target.kind,
                     DockResolvedDropTargetKind::RootEdge {
                         root: matched_root,
-                        leaf_tabs,
+                        leaf_tabs: Some(leaf_tabs),
                         zone: matched_zone,
                     } if matched_root == root && leaf_tabs == leaf && matched_zone == zone
                 ),

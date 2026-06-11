@@ -1996,7 +1996,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         resolved.kind,
         DockResolvedDropTargetKind::RootEdge {
             root,
-            leaf_tabs,
+            leaf_tabs: Some(leaf_tabs),
             zone: DropZone::Right,
         } if root == target_root && leaf_tabs == target_right_tabs
     ));

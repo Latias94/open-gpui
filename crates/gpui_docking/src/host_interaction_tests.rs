@@ -492,7 +492,7 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
         target.kind,
         DockResolvedDropTargetKind::RootEdge {
             root: matched_root,
-            leaf_tabs,
+            leaf_tabs: Some(leaf_tabs),
             zone: DropZone::Right,
         } if matched_root == root && leaf_tabs == right_tabs
     ));

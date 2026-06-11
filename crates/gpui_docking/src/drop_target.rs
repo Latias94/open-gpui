@@ -44,7 +44,7 @@ pub(crate) enum DockResolvedDropTargetKind {
     },
     RootEdge {
         root: DockNodeId,
-        leaf_tabs: DockNodeId,
+        leaf_tabs: Option<DockNodeId>,
         zone: DropZone,
     },
     FloatingTitleBar {
@@ -243,10 +243,11 @@ fn resolve_root_edge_drop(
     leaf: Option<&DockLeafDropTarget>,
 ) -> Option<DockResolvedDropTarget> {
     let root = input.root?;
-    let leaf = leaf?;
-    if root.root == leaf.target_tabs || leaf.root != root.root {
-        return None;
-    }
+    let leaf_tabs = match leaf {
+        Some(leaf) if leaf.root == root.root => Some(leaf.target_tabs),
+        Some(_) => return None,
+        None => None,
+    };
 
     let geometry = geometry::resolve_drop_geometry(root.bounds, input.position)?;
     if geometry.zone == DropZone::Center {
@@ -256,7 +257,7 @@ fn resolve_root_edge_drop(
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::RootEdge {
             root: root.root,
-            leaf_tabs: leaf.target_tabs,
+            leaf_tabs,
             zone: geometry.zone,
         },
         source: DockDropResolveSource::RootEdge,
@@ -781,7 +782,7 @@ mod tests {
                 target.kind,
                 DockResolvedDropTargetKind::RootEdge {
                     root,
-                    leaf_tabs,
+                    leaf_tabs: Some(leaf_tabs),
                     zone,
                 },
                 "{zone:?}"
@@ -833,9 +834,83 @@ mod tests {
     }
 
     #[test]
-    fn leaf_from_different_root_does_not_promote_to_root_edge() {
-        let (floating_tabs, primary_tabs) = two_node_ids();
+    fn root_outer_edge_resolves_without_leaf_hit() {
         let mut graph = DockGraph::new();
+        let left = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("a")],
+            active: 0,
+        });
+        let right = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("b")],
+            active: 0,
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![left, right],
+            fractions: vec![0.5, 0.5],
+        });
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            ..DockDropResolverInput::new(point(px(598.0), px(200.0)), &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("root edge should resolve without a leaf hit");
+
+        assert_eq!(target.source, DockDropResolveSource::RootEdge);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: None,
+                zone: DropZone::Right,
+            }
+        );
+    }
+
+    #[test]
+    fn root_that_is_a_leaf_still_supports_outer_edge_docking() {
+        let root = tabs();
+        let target = resolve_layout_drop(DockDropResolverInput {
+            root: Some(DockRootDropTarget {
+                root,
+                bounds: root_bounds(),
+            }),
+            leaves: &[DockLeafDropTarget {
+                root,
+                target_tabs: root,
+                bounds: root_bounds(),
+                is_central: false,
+            }],
+            ..DockDropResolverInput::new(point(px(2.0), px(200.0)), &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("root leaf edge should resolve as a root edge");
+
+        assert_eq!(target.source, DockDropResolveSource::RootEdge);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(root),
+                zone: DropZone::Left,
+            }
+        );
+    }
+
+    #[test]
+    fn leaf_from_different_root_does_not_promote_to_root_edge() {
+        let mut graph = DockGraph::new();
+        let floating_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("floating")],
+            active: 0,
+        });
+        let primary_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("primary")],
+            active: 0,
+        });
         let primary_root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
             children: vec![primary_tabs],

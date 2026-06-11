@@ -79,6 +79,13 @@ fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_target
 }
 
 #[open_gpui::test]
+fn source_only_known_viewport_root_edge_matrix_commits_without_leaf_hit(cx: &mut TestAppContext) {
+    for case in root_only_matrix_cases() {
+        run_source_only_root_only_release_case(cx, case);
+    }
+}
+
+#[open_gpui::test]
 fn target_hover_known_viewport_release_matrix_commits_payloads_to_rendered_targets(
     cx: &mut TestAppContext,
 ) {
@@ -188,6 +195,67 @@ fn poll_matrix_cases() -> [PollMatrixCase; 2] {
     ]
 }
 
+fn root_only_matrix_cases() -> [MatrixCase; 8] {
+    [
+        MatrixCase {
+            name: "item to root-only left edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Left,
+            },
+        },
+        MatrixCase {
+            name: "tabs to root-only left edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Left,
+            },
+        },
+        MatrixCase {
+            name: "item to root-only right edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Right,
+            },
+        },
+        MatrixCase {
+            name: "tabs to root-only right edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Right,
+            },
+        },
+        MatrixCase {
+            name: "item to root-only top edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Top,
+            },
+        },
+        MatrixCase {
+            name: "tabs to root-only top edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Top,
+            },
+        },
+        MatrixCase {
+            name: "item to root-only bottom edge",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Bottom,
+            },
+        },
+        MatrixCase {
+            name: "tabs to root-only bottom edge",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::RootEdge {
+                zone: DropZone::Bottom,
+            },
+        },
+    ]
+}
+
 fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let source_space = DockSpaceId::from(format!("source:{}", case.name));
     let target_space = DockSpaceId::from(format!("target:{}", case.name));
@@ -279,6 +347,114 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     }) else {
         panic!(
             "{}: source-only release should produce an action",
+            case.name
+        );
+    };
+    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
+    let status = runtime.runtime_status();
+    let target = &status
+        .last_route
+        .as_ref()
+        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+        .target;
+    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
+    assert_eq!(target.host_position(), Some(host_position), "{}", case.name);
+
+    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+}
+
+fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
+    let source_space = DockSpaceId::from(format!("root-only source:{}", case.name));
+    let target_space = DockSpaceId::from(format!("root-only target:{}", case.name));
+    let (graph, nodes) = matrix_graph(&source_space, &target_space, case);
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace.register_panel_view(item("d"), "Panel D", test_view(cx, "D"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(120.0, 80.0, 420.0, 240.0));
+    let source_bounds = WindowBounds::Windowed(floating_bounds(640.0, 80.0, 360.0, 220.0));
+    assert!(
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            target_opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(target_bounds),
+            floating_bounds(0.0, 0.0, 420.0, 240.0),
+            point(px(0.0), px(0.0)),
+        ),
+        "{}: target scene snapshot should be registered",
+        case.name
+    );
+    assert!(
+        runtime.begin_viewport_host_scene(
+            source_space.clone(),
+            source_opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(source_bounds),
+            floating_bounds(0.0, 0.0, 360.0, 220.0),
+            point(px(0.0), px(0.0)),
+        ),
+        "{}: source scene snapshot should be registered",
+        case.name
+    );
+    let host_position = push_root_only_scene_fact(
+        &runtime,
+        &target_space,
+        target_opened.window().window_id(),
+        case,
+        &nodes,
+    );
+    let release_screen_position = point(
+        target_bounds.get_bounds().origin.x + host_position.x,
+        target_bounds.get_bounds().origin.y + host_position.y,
+    );
+    let source_release_signals = source_opened
+        .window()
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
+
+    let result = cx.update(|app| {
+        runtime.commit_payload_drop_from_screen_with_platform_signals(
+            source_space.clone(),
+            nodes.source_tabs,
+            case.payload.drop_payload(),
+            release_screen_position,
+            None,
+            source_release_signals,
+            app,
+        )
+    });
+
+    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
+        panic!(
+            "{}: root-only source release should commit: {error}",
+            case.name
+        )
+    }) else {
+        panic!(
+            "{}: root-only source release should produce an action",
             case.name
         );
     };
@@ -655,6 +831,32 @@ fn push_target_scene_facts(
     }
 }
 
+fn push_root_only_scene_fact(
+    runtime: &DockViewportRuntimeHandle,
+    target_space: &DockSpaceId,
+    window_id: open_gpui::WindowId,
+    case: MatrixCase,
+    nodes: &MatrixNodes,
+) -> Point<Pixels> {
+    let MatrixTarget::RootEdge { zone } = case.target else {
+        panic!("{}: root-only scene requires a root-edge case", case.name);
+    };
+    let root = nodes.target_root.expect("root-only case should have root");
+    assert!(
+        runtime.push_viewport_host_scene_fact(
+            target_space,
+            window_id,
+            DockHostDropSceneFact::Root(DockRootDropTarget {
+                root,
+                bounds: floating_bounds(0.0, 0.0, 420.0, 240.0),
+            }),
+        ),
+        "{}: root-only fact should publish",
+        case.name
+    );
+    root_edge_host_position(zone)
+}
+
 fn source_drag_start(
     visual: &mut VisualTestContext,
     host: &open_gpui::Entity<crate::DockHost>,
@@ -773,7 +975,7 @@ fn assert_target_hover_resolution(
             target.kind,
             DockResolvedDropTargetKind::RootEdge {
                 root: matched_root,
-                leaf_tabs: matched_leaf_tabs,
+                leaf_tabs: Some(matched_leaf_tabs),
                 zone: matched_zone,
             } if matched_root == root && matched_leaf_tabs == leaf_tabs && matched_zone == zone
         ),

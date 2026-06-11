@@ -494,7 +494,7 @@ mod tests {
                         target_space: &target_space,
                         target: resolved_target(DockResolvedDropTargetKind::RootEdge {
                             root: target_root,
-                            leaf_tabs,
+                            leaf_tabs: Some(leaf_tabs),
                             zone,
                         }),
                     })
