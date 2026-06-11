@@ -1,7 +1,9 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockFloatingContainer, DockGraph,
-    DockGraphMutationError, DockNode, DockPolicyError, DockSpaceId, DropZone, SplitAxis,
-    host_test_support::*, workspace_move_transaction::DockWorkspaceMoveTabRequest,
+    DockActionApplyError, DockActionOutcome, DockClassId, DockFloatingContainer, DockGraph,
+    DockGraphMutationError, DockNode, DockPanelDescriptor, DockPolicyError, DockSpaceId, DropZone,
+    SplitAxis,
+    host_test_support::*,
+    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 use open_gpui::TestAppContext;
 
@@ -113,6 +115,240 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
     };
     assert_eq!(items, &vec![item("b")]);
     assert_eq!(*active, 0);
+}
+
+#[open_gpui::test]
+fn workspace_move_tab_respects_target_space_dock_class_policy(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), source_tabs);
+    graph.set_root(target.clone(), target_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("A").with_dock_class("editor"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(target.clone(), "editor");
+
+    let outcome = workspace
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
+            source_tabs,
+            item: &item("a"),
+            target_space: &target,
+            target_tabs,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect("matching class should be accepted");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("b"), item("a")]
+    );
+}
+
+#[open_gpui::test]
+fn workspace_move_tab_rejects_incompatible_target_space_class(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), source_tabs);
+    graph.set_root(target.clone(), target_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("A").with_dock_class("editor"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(target.clone(), "inspector");
+
+    let err = workspace
+        .commit_tab_move(DockWorkspaceMoveTabRequest {
+            source_space: &space(),
+            source_tabs,
+            item: &item("a"),
+            target_space: &target,
+            target_tabs,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("incompatible class should be rejected before mutation");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::DockClassRejected {
+            space: target.clone(),
+            item: item("a"),
+            dock_class: Some(DockClassId::from("editor")),
+        })
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&space()),
+        vec![item("a")]
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("b")]
+    );
+}
+
+#[open_gpui::test]
+fn workspace_move_tabs_rejects_when_any_item_class_is_incompatible(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), source_tabs);
+    graph.set_root(target.clone(), target_tabs);
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[("a", "A", "A"), ("b", "B", "B"), ("c", "C", "C")],
+    );
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("A").with_dock_class("editor"),
+    );
+    workspace.register_panel_descriptor(
+        item("c"),
+        DockPanelDescriptor::new("C").with_dock_class("inspector"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(target.clone(), "inspector");
+
+    let err = workspace
+        .commit_tabs_move(DockWorkspaceMoveTabsRequest {
+            source_space: &space(),
+            source_tabs,
+            target_space: &target,
+            target_tabs,
+            zone: DropZone::Center,
+            insert_index: None,
+        })
+        .expect_err("one incompatible item should reject the full stack");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::DockClassRejected {
+            space: target.clone(),
+            item: item("a"),
+            dock_class: Some(DockClassId::from("editor")),
+        })
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&space()),
+        vec![item("a"), item("c")]
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("b")]
+    );
+}
+
+#[open_gpui::test]
+fn workspace_move_floating_rejects_when_subtree_contains_incompatible_class(
+    cx: &mut TestAppContext,
+) {
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let target_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("d")],
+        active: 0,
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    let floating_child = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_child,
+    });
+    graph.set_root(space(), source_root);
+    graph.set_root(target.clone(), target_root);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 240.0, 160.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("c", "C", "C"),
+            ("d", "D", "D"),
+        ],
+    );
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("A").with_dock_class("editor"),
+    );
+    workspace.register_panel_descriptor(
+        item("c"),
+        DockPanelDescriptor::new("C").with_dock_class("inspector"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(target.clone(), "inspector");
+
+    let err = workspace
+        .commit_floating_move(&space(), floating, &target, target_root, DropZone::Right)
+        .expect_err("incompatible floating subtree should be rejected");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::DockClassRejected {
+            space: target.clone(),
+            item: item("a"),
+            dock_class: Some(DockClassId::from("editor")),
+        })
+    );
+    assert_eq!(workspace.graph().floating_containers(&space()).len(), 1);
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("d")]
+    );
 }
 
 #[open_gpui::test]

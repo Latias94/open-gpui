@@ -1,4 +1,4 @@
-use crate::{DockPanelDescriptor, panel_view::DockPanelViewHandle};
+use crate::{DockClassId, DockPanelDescriptor, panel_view::DockPanelViewHandle};
 use open_gpui::{AnyView, App, Entity, Focusable, Render};
 use std::fmt;
 
@@ -18,6 +18,7 @@ impl fmt::Debug for DockPanel {
         f.debug_struct("DockPanel")
             .field("title", &self.title())
             .field("closable", &self.is_closable())
+            .field("dock_class", &self.dock_class())
             .field("view_lifecycle", &self.view)
             .finish()
     }
@@ -79,6 +80,12 @@ impl DockPanel {
         self
     }
 
+    /// Sets the docking compatibility class for this panel.
+    pub fn with_dock_class(mut self, dock_class: impl Into<DockClassId>) -> Self {
+        self.descriptor.set_dock_class(Some(dock_class.into()));
+        self
+    }
+
     /// Returns panel metadata without touching live view state.
     pub fn descriptor(&self) -> &DockPanelDescriptor {
         &self.descriptor
@@ -92,5 +99,10 @@ impl DockPanel {
     /// Returns whether the panel can be closed by future interaction layers.
     pub fn is_closable(&self) -> bool {
         self.descriptor().is_closable()
+    }
+
+    /// Returns the optional docking compatibility class for this panel.
+    pub fn dock_class(&self) -> Option<&DockClassId> {
+        self.descriptor().dock_class()
     }
 }

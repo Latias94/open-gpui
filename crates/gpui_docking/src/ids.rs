@@ -104,3 +104,47 @@ impl fmt::Display for DockItemId {
         f.write_str(self.as_str())
     }
 }
+
+/// Stable compatibility class for dockable panels.
+///
+/// A class is application-defined metadata used by [`DockPolicy`](crate::DockPolicy) to restrict
+/// which panels can be dropped into specific dock spaces. Panels without a class remain compatible
+/// with every dock space by default.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct DockClassId(String);
+
+impl DockClassId {
+    /// Creates a dock class id from a stable application-provided string.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Returns the underlying string id.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<str> for DockClassId {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<&str> for DockClassId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for DockClassId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl fmt::Display for DockClassId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

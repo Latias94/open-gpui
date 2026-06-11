@@ -4,6 +4,9 @@ use crate::{
 };
 use open_gpui::{Bounds, Pixels, Point, WindowBounds};
 
+pub(crate) type DockDropTargetValidator<'a> =
+    dyn Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockResolvedDropTarget {
     pub(crate) kind: DockResolvedDropTargetKind,
@@ -127,6 +130,7 @@ pub(crate) struct DockEmptySpaceDropTarget {
 pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) position: Point<Pixels>,
     pub(crate) policy: &'a DockPolicy,
+    pub(crate) target_validator: Option<&'a DockDropTargetValidator<'a>>,
     pub(crate) tab_labels: &'a [DockTabLabelDropTarget],
     pub(crate) leaves: &'a [DockLeafDropTarget],
     pub(crate) root: Option<DockRootDropTarget>,
@@ -140,6 +144,7 @@ impl<'a> DockDropResolverInput<'a> {
         Self {
             position,
             policy,
+            target_validator: None,
             tab_labels: &[],
             leaves: &[],
             root: None,
@@ -172,22 +177,38 @@ pub(crate) struct DockDropRejection {
 
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
     if let Some(target) = resolve_floating_title_bar_drop(&input) {
-        return Some(validate_target(target, input.policy));
+        return Some(validate_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
     }
 
     if let Some(target) = resolve_tab_bar_drop(&input) {
-        return Some(validate_target(target, input.policy));
+        return Some(validate_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
     }
 
     let leaf = smallest_leaf_containing(input.leaves, input.position);
     if let Some(target) = resolve_root_edge_drop(&input, leaf) {
-        return Some(validate_target(target, input.policy));
+        return Some(validate_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
     }
 
     if let Some(leaf) = leaf
         && let Some(target) = resolve_leaf_drop(leaf, input.position)
     {
-        return Some(validate_target(target, input.policy));
+        return Some(validate_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
     }
 
     if let Some(target) = resolve_empty_space_drop(&input) {
@@ -289,19 +310,26 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
         })
 }
 
-fn validate_target(target: DockResolvedDropTarget, policy: &DockPolicy) -> DockDropResolution {
+fn validate_target(
+    target: DockResolvedDropTarget,
+    policy: &DockPolicy,
+    target_validator: Option<&DockDropTargetValidator<'_>>,
+) -> DockDropResolution {
     if target.is_central_dock_over_target()
         && let Err(reason) = policy.validate_central_region_dock_over()
     {
         return DockDropResolution::Rejected(DockDropRejection { target, reason });
     }
 
-    let Some(zone) = target.zone() else {
-        return DockDropResolution::Valid(target);
-    };
-    match policy.validate_drop_zone(zone) {
-        Ok(()) => DockDropResolution::Valid(target),
-        Err(reason) => DockDropResolution::Rejected(DockDropRejection { target, reason }),
+    if let Some(zone) = target.zone()
+        && let Err(reason) = policy.validate_drop_zone(zone)
+    {
+        return DockDropResolution::Rejected(DockDropRejection { target, reason });
+    }
+
+    match target_validator.map(|validator| validator(&target)) {
+        Some(Ok(())) | None => DockDropResolution::Valid(target),
+        Some(Err(reason)) => DockDropResolution::Rejected(DockDropRejection { target, reason }),
     }
 }
 

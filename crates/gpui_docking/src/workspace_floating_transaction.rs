@@ -13,6 +13,8 @@ impl DockWorkspace {
         bounds: Bounds<Pixels>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_floating()?;
+        self.move_validation()
+            .validate_item_target_space(target_space, item)?;
         self.commit_graph_op(DockOp::FloatItemInWindow {
             source_space: source_space.clone(),
             item: item.clone(),
@@ -29,6 +31,8 @@ impl DockWorkspace {
         bounds: Bounds<Pixels>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_floating()?;
+        self.move_validation()
+            .validate_tabs_target_space(target_space, source_tabs)?;
         self.commit_graph_op(DockOp::FloatTabsInWindow {
             source_space: source_space.clone(),
             source_tabs,
@@ -70,6 +74,8 @@ impl DockWorkspace {
         target_tabs: DockNodeId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_floating()?;
+        self.move_validation()
+            .validate_floating_target_space(space, floating)?;
         self.commit_graph_op(DockOp::MergeFloatingInto {
             space: space.clone(),
             floating,
@@ -85,6 +91,8 @@ impl DockWorkspace {
         target: DockNodeId,
         zone: crate::DropZone,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.move_validation()
+            .validate_floating_target_space(target_space, floating)?;
         self.policy().validate_drop_zone(zone)?;
         self.commit_graph_op(DockOp::MoveFloating {
             source_space: source_space.clone(),
@@ -102,6 +110,8 @@ impl DockWorkspace {
         target_space: &DockSpaceId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_platform_viewports()?;
+        self.move_validation()
+            .validate_floating_target_space(target_space, floating)?;
         self.commit_graph_op(DockOp::MoveFloatingToEmptyDockSpace {
             source_space: source_space.clone(),
             floating,

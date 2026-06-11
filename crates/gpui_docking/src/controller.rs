@@ -1,10 +1,10 @@
 #[cfg(test)]
 use crate::workspace_move_transaction::DockWorkspaceMoveTabRequest;
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraph, DockGraphValidationError,
-    DockItemId, DockLayout, DockLayoutValidationError, DockNodeId, DockPanel, DockPanelAttachError,
-    DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
-    DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
+    DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
+    DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
+    DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{AnyView, Bounds, Entity, Focusable, Pixels, Render};
@@ -510,6 +510,16 @@ impl DockControllerBuilder {
     /// Enables or disables platform viewport interactions.
     pub fn allow_platform_viewports(mut self, allowed: bool) -> Self {
         self.policy.set_allow_platform_viewports(allowed);
+        self
+    }
+
+    /// Allows one dock class to be dropped into the given dock space.
+    pub fn allow_dock_class_in_space(
+        mut self,
+        space: impl Into<DockSpaceId>,
+        dock_class: impl Into<DockClassId>,
+    ) -> Self {
+        self.policy.allow_dock_class_in_space(space, dock_class);
         self
     }
 

@@ -25,6 +25,8 @@ impl DockWorkspace {
         insert_index: Option<usize>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.panel_lifecycle().validate_open(item)?;
+        self.move_validation()
+            .validate_item_target_space(space, item)?;
 
         self.commit_graph_op(DockOp::OpenItem {
             space: space.clone(),

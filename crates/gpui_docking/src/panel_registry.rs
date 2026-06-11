@@ -1,5 +1,5 @@
 use crate::{
-    DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
+    DockClassId, DockItemId, DockPanel, DockPanelCatalog, DockPanelDescriptor,
     panel_view::{DockPanelViewHandle, DockPanelViewStore},
 };
 use open_gpui::{AnyView, App, Entity, Focusable, Render, Window};
@@ -56,6 +56,11 @@ impl DockPanelRegistration {
     /// Returns whether the panel can be closed by panel lifecycle policy.
     pub fn is_closable(&self) -> bool {
         self.descriptor.is_closable()
+    }
+
+    /// Returns the optional docking compatibility class for this panel.
+    pub fn dock_class(&self) -> Option<&DockClassId> {
+        self.descriptor.dock_class()
     }
 }
 
@@ -275,7 +280,7 @@ impl DockPanelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockItemId, DockPanelDescriptor};
+    use crate::{DockClassId, DockItemId, DockPanelDescriptor};
 
     fn item(id: &str) -> DockItemId {
         DockItemId::from(id)
@@ -341,7 +346,9 @@ mod tests {
         let item = item("restored");
         registry.register_descriptor(
             item.clone(),
-            DockPanelDescriptor::new("Restored").closable(false),
+            DockPanelDescriptor::new("Restored")
+                .closable(false)
+                .with_dock_class("editor"),
         );
 
         assert!(matches!(
@@ -355,6 +362,10 @@ mod tests {
         assert!(registry.has_view_lifecycle(&item));
         assert_eq!(registration.title(), "Restored");
         assert!(!registration.is_closable());
+        assert_eq!(
+            registration.dock_class(),
+            Some(&DockClassId::from("editor"))
+        );
     }
 
     #[test]

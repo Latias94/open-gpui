@@ -1,8 +1,9 @@
-use crate::DropZone;
+use crate::{DockClassId, DockItemId, DockSpaceId, DropZone};
+use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 /// Workspace-level policy for docking interactions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockPolicy {
     allow_center_merge: bool,
     allow_edge_split: bool,
@@ -11,6 +12,7 @@ pub struct DockPolicy {
     allow_floating: bool,
     allow_platform_viewports: bool,
     allow_central_region_dock_over: bool,
+    allowed_dock_classes_by_space: BTreeMap<DockSpaceId, BTreeSet<DockClassId>>,
 }
 
 impl DockPolicy {
@@ -89,6 +91,56 @@ impl DockPolicy {
         self.allow_central_region_dock_over = allowed;
     }
 
+    /// Allows one dock class to be dropped into a specific dock space.
+    ///
+    /// A dock space without an allow-list accepts every class. Once an allow-list exists for a
+    /// space, classed panels must match one of its entries. Unclassed panels remain accepted.
+    pub fn allow_dock_class_in_space(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        dock_class: impl Into<DockClassId>,
+    ) {
+        self.allowed_dock_classes_by_space
+            .entry(space.into())
+            .or_default()
+            .insert(dock_class.into());
+    }
+
+    /// Replaces the allowed dock classes for a specific dock space.
+    ///
+    /// Passing an empty iterator creates a space rule that rejects every classed panel while still
+    /// allowing unclassed panels.
+    pub fn set_allowed_dock_classes_for_space(
+        &mut self,
+        space: impl Into<DockSpaceId>,
+        dock_classes: impl IntoIterator<Item = impl Into<DockClassId>>,
+    ) {
+        self.allowed_dock_classes_by_space.insert(
+            space.into(),
+            dock_classes.into_iter().map(Into::into).collect(),
+        );
+    }
+
+    /// Clears class restrictions for a specific dock space.
+    pub fn clear_allowed_dock_classes_for_space(&mut self, space: &DockSpaceId) {
+        self.allowed_dock_classes_by_space.remove(space);
+    }
+
+    /// Returns true when the class is accepted by the target dock space.
+    pub fn allows_dock_class_in_space(
+        &self,
+        space: &DockSpaceId,
+        dock_class: Option<&DockClassId>,
+    ) -> bool {
+        let Some(allowed) = self.allowed_dock_classes_by_space.get(space) else {
+            return true;
+        };
+        match dock_class {
+            Some(dock_class) => allowed.contains(dock_class),
+            None => true,
+        }
+    }
+
     pub(crate) fn validate_drop_zone(&self, zone: DropZone) -> Result<(), DockPolicyError> {
         match zone {
             DropZone::Center if !self.allow_center_merge => {
@@ -144,6 +196,23 @@ impl DockPolicy {
             Err(DockPolicyError::CentralRegionDockOverDisabled)
         }
     }
+
+    pub(crate) fn validate_dock_class_for_item(
+        &self,
+        space: &DockSpaceId,
+        item: &DockItemId,
+        dock_class: Option<&DockClassId>,
+    ) -> Result<(), DockPolicyError> {
+        if self.allows_dock_class_in_space(space, dock_class) {
+            Ok(())
+        } else {
+            Err(DockPolicyError::DockClassRejected {
+                space: space.clone(),
+                item: item.clone(),
+                dock_class: dock_class.cloned(),
+            })
+        }
+    }
 }
 
 impl Default for DockPolicy {
@@ -156,12 +225,13 @@ impl Default for DockPolicy {
             allow_floating: false,
             allow_platform_viewports: false,
             allow_central_region_dock_over: true,
+            allowed_dock_classes_by_space: BTreeMap::new(),
         }
     }
 }
 
 /// Reason a docking interaction is rejected by workspace policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DockPolicyError {
     /// Center tab merging is disabled.
     #[error("center tab merge is disabled by docking policy")]
@@ -184,6 +254,16 @@ pub enum DockPolicyError {
     /// Docking over the central region is disabled.
     #[error("central region dock-over is disabled by docking policy")]
     CentralRegionDockOverDisabled,
+    /// A panel class is not accepted by the target dock space.
+    #[error("dock item {item} with class {dock_class:?} is not allowed in dock space {space}")]
+    DockClassRejected {
+        /// The target dock space.
+        space: DockSpaceId,
+        /// The item that was being docked.
+        item: DockItemId,
+        /// The rejected dock class, or `None` for an unclassed item.
+        dock_class: Option<DockClassId>,
+    },
 }
 
 #[cfg(test)]
@@ -264,6 +344,38 @@ mod tests {
         assert_eq!(
             policy.validate_platform_viewports(),
             Err(DockPolicyError::PlatformViewportsDisabled)
+        );
+    }
+
+    #[test]
+    fn dock_class_rules_are_opt_in_per_space() {
+        let mut policy = DockPolicy::default();
+        let main = DockSpaceId::from("main");
+        let inspector = DockClassId::from("inspector");
+        let editor = DockClassId::from("editor");
+
+        assert!(policy.allows_dock_class_in_space(&main, Some(&inspector)));
+        assert!(
+            policy
+                .validate_dock_class_for_item(&main, &DockItemId::from("outline"), None)
+                .is_ok()
+        );
+
+        policy.allow_dock_class_in_space(main.clone(), inspector.clone());
+        assert!(policy.allows_dock_class_in_space(&main, Some(&inspector)));
+        assert!(!policy.allows_dock_class_in_space(&main, Some(&editor)));
+        assert!(
+            policy
+                .validate_dock_class_for_item(&main, &DockItemId::from("unclassed"), None)
+                .is_ok()
+        );
+        assert_eq!(
+            policy.validate_dock_class_for_item(&main, &DockItemId::from("editor"), Some(&editor)),
+            Err(DockPolicyError::DockClassRejected {
+                space: main,
+                item: DockItemId::from("editor"),
+                dock_class: Some(editor),
+            })
         );
     }
 }

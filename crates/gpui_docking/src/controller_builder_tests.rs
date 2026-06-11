@@ -22,8 +22,11 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
         })
         .panel_descriptor(
             "terminal",
-            DockPanelDescriptor::new("Terminal").closable(false),
+            DockPanelDescriptor::new("Terminal")
+                .closable(false)
+                .with_dock_class("tool"),
         )
+        .allow_dock_class_in_space(space(), "tool")
         .allow_floating(true)
         .allow_platform_viewports(true)
         .options(options)
@@ -48,9 +51,15 @@ fn controller_builder_sets_layout_panels_policy_and_options() {
         .expect("builder should register descriptor-only metadata");
     assert_eq!(terminal.title(), "Terminal");
     assert!(!terminal.is_closable());
+    assert_eq!(terminal.dock_class(), Some(&DockClassId::from("tool")));
     assert!(
         !controller.panels().has_view_lifecycle(&item("terminal")),
         "descriptor-only builder entries should not bind view lifecycle"
+    );
+    assert!(
+        controller
+            .policy()
+            .allows_dock_class_in_space(&space(), Some(&DockClassId::from("tool")))
     );
 }
 

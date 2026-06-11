@@ -1,4 +1,4 @@
-use crate::DockItemId;
+use crate::{DockClassId, DockItemId};
 use std::collections::HashMap;
 
 /// Metadata for one dock panel that can be read without instantiating its view.
@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub struct DockPanelDescriptor {
     title: String,
     closable: bool,
+    dock_class: Option<DockClassId>,
 }
 
 impl DockPanelDescriptor {
@@ -14,6 +15,7 @@ impl DockPanelDescriptor {
         Self {
             title: title.into(),
             closable: true,
+            dock_class: None,
         }
     }
 
@@ -27,13 +29,34 @@ impl DockPanelDescriptor {
         self.closable
     }
 
+    /// Returns the optional docking compatibility class for this panel.
+    pub fn dock_class(&self) -> Option<&DockClassId> {
+        self.dock_class.as_ref()
+    }
+
     pub(crate) fn set_closable(&mut self, closable: bool) {
         self.closable = closable;
+    }
+
+    pub(crate) fn set_dock_class(&mut self, dock_class: Option<DockClassId>) {
+        self.dock_class = dock_class;
     }
 
     /// Sets whether the panel can be closed by panel lifecycle policy.
     pub fn closable(mut self, closable: bool) -> Self {
         self.set_closable(closable);
+        self
+    }
+
+    /// Sets the docking compatibility class for this panel.
+    pub fn with_dock_class(mut self, dock_class: impl Into<DockClassId>) -> Self {
+        self.set_dock_class(Some(dock_class.into()));
+        self
+    }
+
+    /// Clears the docking compatibility class for this panel.
+    pub fn unclassed(mut self) -> Self {
+        self.set_dock_class(None);
         self
     }
 }

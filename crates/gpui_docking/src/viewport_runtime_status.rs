@@ -238,7 +238,7 @@ impl DockViewportRouteTarget {
     /// Returns the policy rejection reason for rejected routes.
     pub fn rejection_reason(&self) -> Option<DockPolicyError> {
         match self {
-            Self::Rejected { reason } => Some(*reason),
+            Self::Rejected { reason } => Some(reason.clone()),
             Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff { .. } => None,
         }
     }
@@ -257,7 +257,9 @@ impl DockViewportRouteTarget {
             DockViewportDropRoute::TearOff(request) => Self::TearOff {
                 release_position: request.release_position(),
             },
-            DockViewportDropRoute::Rejected(reason) => Self::Rejected { reason: *reason },
+            DockViewportDropRoute::Rejected(reason) => Self::Rejected {
+                reason: reason.clone(),
+            },
         }
     }
 }

@@ -1,9 +1,9 @@
 use crate::{
     DockNodeId, DockPolicy,
     drop_target::{
-        self, DockDropResolution, DockDropResolverInput, DockEmptySpaceDropTarget,
-        DockFloatingTitleBarDropTarget, DockLeafDropTarget, DockResolvedDropTarget,
-        DockRootDropTarget, DockTabLabelDropTarget,
+        self, DockDropResolution, DockDropResolverInput, DockDropTargetValidator,
+        DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
+        DockResolvedDropTarget, DockRootDropTarget, DockTabLabelDropTarget,
     },
 };
 use open_gpui::{Bounds, Pixels, Point};
@@ -86,9 +86,18 @@ impl DockHostDropScene {
     }
 
     pub(crate) fn resolve_drop(&self, policy: &DockPolicy) -> Option<DockDropResolution> {
+        self.resolve_drop_with_validator(policy, None)
+    }
+
+    pub(crate) fn resolve_drop_with_validator(
+        &self,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> Option<DockDropResolution> {
         drop_target::resolve_layout_drop(DockDropResolverInput {
             position: self.position,
             policy,
+            target_validator,
             tab_labels: &self.tab_labels,
             leaves: &self.leaves,
             root: self.root,
@@ -118,12 +127,23 @@ impl DockHostDropSceneFact {
 }
 
 impl DockDropRuntime {
+    #[cfg(test)]
     pub(crate) fn begin_scene(&mut self, scene: DockHostDropScene, policy: &DockPolicy) -> bool {
-        let changed = self.resolve_scene(&scene, policy);
+        self.begin_scene_with_validator(scene, policy, None)
+    }
+
+    pub(crate) fn begin_scene_with_validator(
+        &mut self,
+        scene: DockHostDropScene,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> bool {
+        let changed = self.resolve_scene(&scene, policy, target_validator);
         self.scene = Some(scene);
         changed
     }
 
+    #[cfg(test)]
     pub(crate) fn push_scene_fact(
         &mut self,
         position: Point<Pixels>,
@@ -131,14 +151,30 @@ impl DockDropRuntime {
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
     ) -> bool {
+        self.push_scene_fact_with_validator(position, excluded_tabs, fact, policy, None)
+    }
+
+    pub(crate) fn push_scene_fact_with_validator(
+        &mut self,
+        position: Point<Pixels>,
+        excluded_tabs: Option<DockNodeId>,
+        fact: DockHostDropSceneFact,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> bool {
         let scene = self.scene_for_position(position, excluded_tabs);
         scene.push_fact(fact);
         let scene = scene.clone();
-        self.resolve_scene(&scene, policy)
+        self.resolve_scene(&scene, policy, target_validator)
     }
 
-    fn resolve_scene(&mut self, scene: &DockHostDropScene, policy: &DockPolicy) -> bool {
-        let mut resolution = match scene.resolve_drop(policy) {
+    fn resolve_scene(
+        &mut self,
+        scene: &DockHostDropScene,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> bool {
+        let mut resolution = match scene.resolve_drop_with_validator(policy, target_validator) {
             Some(resolution) => Some(resolution),
             None if scene.clear_on_miss => None,
             None => return false,

@@ -39,6 +39,8 @@ impl DockWorkspace {
 
         self.move_validation()
             .validate_move_tab_source(source_space, source_tabs, item)?;
+        self.move_validation()
+            .validate_item_target_space(target_space, item)?;
         self.policy().validate_drop_zone(zone)?;
         if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
             self.policy().validate_same_stack_center_drop()?;
@@ -70,6 +72,8 @@ impl DockWorkspace {
             insert_index,
         } = request;
 
+        self.move_validation()
+            .validate_tabs_target_space(target_space, source_tabs)?;
         self.policy().validate_drop_zone(zone)?;
         if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
             self.policy().validate_same_stack_center_drop()?;
@@ -93,6 +97,8 @@ impl DockWorkspace {
         target_space: &DockSpaceId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_platform_viewports()?;
+        self.move_validation()
+            .validate_item_target_space(target_space, item)?;
         self.commit_graph_op(DockOp::MoveItemToEmptyDockSpace {
             source_space: source_space.clone(),
             item: item.clone(),
@@ -107,6 +113,8 @@ impl DockWorkspace {
         target_space: &DockSpaceId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.policy().validate_platform_viewports()?;
+        self.move_validation()
+            .validate_tabs_target_space(target_space, source_tabs)?;
         self.commit_graph_op(DockOp::MoveTabsToEmptyDockSpace {
             source_space: source_space.clone(),
             source_tabs,

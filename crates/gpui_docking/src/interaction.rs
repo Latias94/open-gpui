@@ -3,7 +3,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPayloadIdentity},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
-    drop_target::DockResolvedDropTarget,
+    drop_target::{DockDropTargetValidator, DockResolvedDropTarget},
     geometry,
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
@@ -352,6 +352,7 @@ impl DockInteractionRuntime {
         self.floating_drag.take().is_some()
     }
 
+    #[cfg(test)]
     pub(crate) fn begin_drop_scene(
         &mut self,
         scene: DockHostDropScene,
@@ -360,6 +361,17 @@ impl DockInteractionRuntime {
         self.drop.begin_scene(scene, policy)
     }
 
+    pub(crate) fn begin_drop_scene_with_validator(
+        &mut self,
+        scene: DockHostDropScene,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> bool {
+        self.drop
+            .begin_scene_with_validator(scene, policy, target_validator)
+    }
+
+    #[cfg(test)]
     pub(crate) fn push_drop_scene_fact(
         &mut self,
         position: Point<Pixels>,
@@ -369,6 +381,23 @@ impl DockInteractionRuntime {
     ) -> bool {
         self.drop
             .push_scene_fact(position, excluded_tabs, fact, policy)
+    }
+
+    pub(crate) fn push_drop_scene_fact_with_validator(
+        &mut self,
+        position: Point<Pixels>,
+        excluded_tabs: Option<DockNodeId>,
+        fact: DockHostDropSceneFact,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> bool {
+        self.drop.push_scene_fact_with_validator(
+            position,
+            excluded_tabs,
+            fact,
+            policy,
+            target_validator,
+        )
     }
 
     pub(crate) fn set_viewport_host_scene_frame(

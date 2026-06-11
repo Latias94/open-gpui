@@ -616,7 +616,7 @@ impl DockViewportRuntime {
         host_position: Point<Pixels>,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
-        let policy = *self.controller.read(cx).workspace().policy();
+        let policy = self.controller.read(cx).workspace().policy().clone();
         let Some(target) = self.host_scenes.resolve_for_window(
             target_space,
             target_window_id,
@@ -779,7 +779,7 @@ impl DockViewportRuntime {
         host_position: Point<Pixels>,
         cx: &App,
     ) -> Option<crate::drop_target::DockResolvedDropTarget> {
-        let policy = *self.controller.read(cx).workspace().policy();
+        let policy = self.controller.read(cx).workspace().policy().clone();
         self.host_scenes.resolve(space, host_position, &policy)
     }
 
