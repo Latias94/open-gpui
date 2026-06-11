@@ -619,7 +619,7 @@ mod tests {
     fn incremental_index_matches_rebuild_after_random_diffs() {
         let mut rng = TestRng::new(0x4b65_9072_e9c1_fab3);
         let mut generator = CanvasCommandGenerator::default();
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let mut index = SpatialIndex::rebuild(&document);
 
         for _ in 0..192 {

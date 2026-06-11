@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn failed_transaction_leaves_document_unchanged() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let before = document.clone();
         let transaction = CanvasTransaction::new([
             DocumentCommand::InsertNode(CanvasNode::new(
@@ -516,7 +516,7 @@ mod tests {
 
     #[test]
     fn committed_mutation_preserves_transaction_metadata() {
-        let mut document = CanvasDocument::default();
+        let mut document = document_fixture().build();
         let mut transaction = CanvasTransaction::single(DocumentCommand::InsertNode(
             CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0))),
         ));

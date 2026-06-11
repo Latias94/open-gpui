@@ -742,7 +742,6 @@ mod tests {
             point(px(0.0), px(50.0)),
         ));
 
-        let mut document = document_fixture().node(source).node(target).build();
         let mut edge = CanvasEdge::new(
             "edge",
             CanvasEndpoint::new("source", Some("json_canvas:right")),
@@ -755,7 +754,11 @@ mod tests {
             TO_END_FIELD.to_string(),
             json!(JsonCanvasEndpointShape::Arrow.as_str()),
         );
-        document.insert_edge(edge).unwrap();
+        let document = document_fixture()
+            .node(source)
+            .node(target)
+            .edge(edge)
+            .build();
 
         let json_canvas = JsonCanvas::from_document(&document).unwrap();
         let edge = &json_canvas.edges[0];

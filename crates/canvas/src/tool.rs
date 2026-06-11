@@ -3951,7 +3951,7 @@ mod tests {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
         let mut editor =
-            CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
+            CanvasEditor::try_new_with_kind_registry(document_fixture().build(), registry).unwrap();
 
         let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         note.kind = "note".to_string();
@@ -4112,7 +4112,7 @@ mod tests {
         let mut registry = CanvasKindRegistry::open();
         registry.register_node_kind("note", required_title_node_kind());
         let mut editor =
-            CanvasEditor::try_new_with_kind_registry(CanvasDocument::default(), registry).unwrap();
+            CanvasEditor::try_new_with_kind_registry(document_fixture().build(), registry).unwrap();
         let mut note = CanvasNode::new("note", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         note.kind = "note".to_string();
         note.data.insert("title".to_string(), json!("Valid"));
