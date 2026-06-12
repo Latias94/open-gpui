@@ -1,12 +1,54 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
-use crate::tool::{CanvasSelection, CanvasTool, ToolState};
+use crate::tool::{CanvasSelection, CanvasTool};
 use crate::{
-    CanvasDocument, CanvasKindRegistry, CanvasTransaction, CanvasViewport, DocumentError, HitTarget,
+    CanvasDocument, CanvasKindRegistry, CanvasResizeHandle, CanvasSnapGuide, CanvasTransaction,
+    CanvasViewport, DocumentError, HitTarget, NodeId, ShapeId,
 };
-use open_gpui::{Pixels, Point};
+use open_gpui::{Axis, Pixels, Point};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum ToolState {
+    Idle,
+    Pointing {
+        origin: Point<Pixels>,
+        selection_mode: crate::tool::CanvasSelectionMode,
+        base_selection: CanvasSelection,
+    },
+    Selecting {
+        origin: Point<Pixels>,
+        current: Point<Pixels>,
+        selection_mode: crate::tool::CanvasSelectionMode,
+        base_selection: CanvasSelection,
+    },
+    Translating {
+        origin: Point<Pixels>,
+        last: Point<Pixels>,
+        constraint_axis: Option<Axis>,
+        node_ids: Vec<NodeId>,
+        shape_ids: Vec<ShapeId>,
+        snap_guides: Vec<CanvasSnapGuide>,
+    },
+    Resizing {
+        origin: Point<Pixels>,
+        last: Point<Pixels>,
+        handle: CanvasResizeHandle,
+        node_ids: Vec<NodeId>,
+        shape_ids: Vec<ShapeId>,
+        snap_guides: Vec<CanvasSnapGuide>,
+    },
+    Panning {
+        origin: Point<Pixels>,
+        last: Point<Pixels>,
+    },
+    Connecting {
+        source: crate::CanvasEndpoint,
+        current: Point<Pixels>,
+    },
+}
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CanvasEditorSession {
+pub(crate) struct CanvasToolSession {
     pub(crate) viewport: CanvasViewport,
     pub(crate) tool: CanvasTool,
     pub(crate) state: ToolState,
@@ -14,7 +56,7 @@ pub(crate) struct CanvasEditorSession {
     gesture: Option<CanvasGestureSession>,
 }
 
-impl CanvasEditorSession {
+impl CanvasToolSession {
     pub(crate) fn new() -> Self {
         Self {
             viewport: CanvasViewport::default(),
@@ -41,8 +83,8 @@ impl CanvasEditorSession {
         &self.selection
     }
 
-    pub(crate) fn snapshot(&self) -> CanvasEditorSessionSnapshot {
-        CanvasEditorSessionSnapshot {
+    pub(crate) fn snapshot(&self) -> CanvasToolSessionSnapshot {
+        CanvasToolSessionSnapshot {
             viewport: self.viewport,
             selection: self.selection.clone(),
             state: self.state.clone(),
@@ -62,33 +104,37 @@ impl CanvasEditorSession {
         self.selection = selection;
     }
 
-    pub(crate) fn apply_effect(&mut self, effect: CanvasSessionEffect, document: &CanvasDocument) {
+    pub(crate) fn apply_effect(
+        &mut self,
+        effect: CanvasToolSessionEffect,
+        document: &CanvasDocument,
+    ) {
         match effect {
-            CanvasSessionEffect::SetSelection(selection) => {
+            CanvasToolSessionEffect::SetSelection(selection) => {
                 self.set_selection(selection, document);
             }
-            CanvasSessionEffect::ReplaceSelection(target) => {
+            CanvasToolSessionEffect::ReplaceSelection(target) => {
                 self.replace_selection(target, document);
             }
-            CanvasSessionEffect::AddSelection(target) => {
+            CanvasToolSessionEffect::AddSelection(target) => {
                 self.add_selection(target, document);
             }
-            CanvasSessionEffect::RemoveSelection(target) => {
+            CanvasToolSessionEffect::RemoveSelection(target) => {
                 self.remove_selection(&target, document);
             }
-            CanvasSessionEffect::ToggleSelection(target) => {
+            CanvasToolSessionEffect::ToggleSelection(target) => {
                 self.toggle_selection(target, document);
             }
-            CanvasSessionEffect::ClearSelection => {
+            CanvasToolSessionEffect::ClearSelection => {
                 self.clear_selection();
             }
-            CanvasSessionEffect::SetState(state) => {
+            CanvasToolSessionEffect::SetState(state) => {
                 self.set_state(state);
             }
-            CanvasSessionEffect::PanViewport(delta) => {
+            CanvasToolSessionEffect::PanViewport(delta) => {
                 self.pan_viewport(delta);
             }
-            CanvasSessionEffect::SetViewport(viewport) => {
+            CanvasToolSessionEffect::SetViewport(viewport) => {
                 self.set_viewport(viewport);
             }
         }
@@ -184,21 +230,21 @@ impl CanvasEditorSession {
     }
 }
 
-impl Default for CanvasEditorSession {
+impl Default for CanvasToolSession {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CanvasEditorSessionSnapshot {
+pub(crate) struct CanvasToolSessionSnapshot {
     pub(crate) viewport: CanvasViewport,
     pub(crate) selection: CanvasSelection,
     pub(crate) state: ToolState,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum CanvasSessionEffect {
+pub(crate) enum CanvasToolSessionEffect {
     SetSelection(CanvasSelection),
     ReplaceSelection(HitTarget),
     AddSelection(HitTarget),

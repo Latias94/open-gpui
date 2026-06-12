@@ -3,7 +3,9 @@ use crate::layer::{
     CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
 };
 use crate::record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope};
-use crate::session::{CanvasEditorSession, CanvasEditorSessionSnapshot, CanvasSessionEffect};
+use crate::session::{
+    CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot, ToolState,
+};
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
 };
@@ -11,9 +13,9 @@ use crate::{
     CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
     CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts,
     CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRecordScope, CanvasRuntime,
-    CanvasSnapGuide, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
-    CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions,
-    HitRecord, HitTarget, NodeId, ShapeId, connection_hit_options, selection_record_scope,
+    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
+    DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions, HitRecord,
+    HitTarget, NodeId, ShapeId, connection_hit_options, selection_record_scope,
     snap_delta_for_resize_selection, snap_delta_for_selection,
 };
 use indexmap::{IndexMap, IndexSet};
@@ -153,46 +155,6 @@ impl CanvasTool {
             _ => None,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ToolState {
-    Idle,
-    Pointing {
-        origin: Point<Pixels>,
-        selection_mode: CanvasSelectionMode,
-        base_selection: CanvasSelection,
-    },
-    Selecting {
-        origin: Point<Pixels>,
-        current: Point<Pixels>,
-        selection_mode: CanvasSelectionMode,
-        base_selection: CanvasSelection,
-    },
-    Translating {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-        constraint_axis: Option<Axis>,
-        node_ids: Vec<NodeId>,
-        shape_ids: Vec<ShapeId>,
-        snap_guides: Vec<CanvasSnapGuide>,
-    },
-    Resizing {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-        handle: CanvasResizeHandle,
-        node_ids: Vec<NodeId>,
-        shape_ids: Vec<ShapeId>,
-        snap_guides: Vec<CanvasSnapGuide>,
-    },
-    Panning {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-    },
-    Connecting {
-        source: CanvasEndpoint,
-        current: Point<Pixels>,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -403,7 +365,7 @@ enum CanvasEditorAction {
     CommitGesture,
     CancelGesture,
     SetTool(CanvasTool),
-    Session(CanvasSessionEffect),
+    Session(CanvasToolSessionEffect),
 }
 
 impl From<CanvasToolEffect> for CanvasEditorAction {
@@ -416,29 +378,31 @@ impl From<CanvasToolEffect> for CanvasEditorAction {
             CanvasToolEffect::CancelGesture => Self::CancelGesture,
             CanvasToolEffect::SetTool(tool) => Self::SetTool(tool),
             CanvasToolEffect::SetSelection(selection) => {
-                Self::Session(CanvasSessionEffect::SetSelection(selection))
+                Self::Session(CanvasToolSessionEffect::SetSelection(selection))
             }
             CanvasToolEffect::ReplaceSelection(target) => {
-                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
+                Self::Session(CanvasToolSessionEffect::ReplaceSelection(target))
             }
             CanvasToolEffect::AddSelection(target) => {
-                Self::Session(CanvasSessionEffect::AddSelection(target))
+                Self::Session(CanvasToolSessionEffect::AddSelection(target))
             }
             CanvasToolEffect::RemoveSelection(target) => {
-                Self::Session(CanvasSessionEffect::RemoveSelection(target))
+                Self::Session(CanvasToolSessionEffect::RemoveSelection(target))
             }
             CanvasToolEffect::ToggleSelection(target) => {
-                Self::Session(CanvasSessionEffect::ToggleSelection(target))
+                Self::Session(CanvasToolSessionEffect::ToggleSelection(target))
             }
-            CanvasToolEffect::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
+            CanvasToolEffect::ClearSelection => {
+                Self::Session(CanvasToolSessionEffect::ClearSelection)
+            }
             CanvasToolEffect::SetState(state) => {
-                Self::Session(CanvasSessionEffect::SetState(state))
+                Self::Session(CanvasToolSessionEffect::SetState(state))
             }
             CanvasToolEffect::PanViewport(delta) => {
-                Self::Session(CanvasSessionEffect::PanViewport(delta))
+                Self::Session(CanvasToolSessionEffect::PanViewport(delta))
             }
             CanvasToolEffect::SetViewport(viewport) => {
-                Self::Session(CanvasSessionEffect::SetViewport(viewport))
+                Self::Session(CanvasToolSessionEffect::SetViewport(viewport))
             }
         }
     }
@@ -452,26 +416,28 @@ impl From<CanvasToolIntent> for CanvasEditorAction {
             CanvasToolIntent::CancelTransaction => Self::CancelGesture,
             CanvasToolIntent::SetTool(tool) => Self::SetTool(tool),
             CanvasToolIntent::SetSelection(selection) => {
-                Self::Session(CanvasSessionEffect::SetSelection(selection))
+                Self::Session(CanvasToolSessionEffect::SetSelection(selection))
             }
             CanvasToolIntent::ReplaceSelection(target) => {
-                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
+                Self::Session(CanvasToolSessionEffect::ReplaceSelection(target))
             }
             CanvasToolIntent::AddSelection(target) => {
-                Self::Session(CanvasSessionEffect::AddSelection(target))
+                Self::Session(CanvasToolSessionEffect::AddSelection(target))
             }
             CanvasToolIntent::RemoveSelection(target) => {
-                Self::Session(CanvasSessionEffect::RemoveSelection(target))
+                Self::Session(CanvasToolSessionEffect::RemoveSelection(target))
             }
             CanvasToolIntent::ToggleSelection(target) => {
-                Self::Session(CanvasSessionEffect::ToggleSelection(target))
+                Self::Session(CanvasToolSessionEffect::ToggleSelection(target))
             }
-            CanvasToolIntent::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
+            CanvasToolIntent::ClearSelection => {
+                Self::Session(CanvasToolSessionEffect::ClearSelection)
+            }
             CanvasToolIntent::PanViewport(delta) => {
-                Self::Session(CanvasSessionEffect::PanViewport(delta))
+                Self::Session(CanvasToolSessionEffect::PanViewport(delta))
             }
             CanvasToolIntent::SetViewport(viewport) => {
-                Self::Session(CanvasSessionEffect::SetViewport(viewport))
+                Self::Session(CanvasToolSessionEffect::SetViewport(viewport))
             }
         }
     }
@@ -1090,7 +1056,7 @@ impl CanvasHistory {
 
 pub struct CanvasEditor {
     store: CanvasStore,
-    session: CanvasEditorSession,
+    session: CanvasToolSession,
 }
 
 impl Default for CanvasEditor {
@@ -1110,7 +1076,7 @@ impl CanvasEditor {
     {
         Self {
             store: CanvasStore::new_with_router(document, edge_router),
-            session: CanvasEditorSession::default(),
+            session: CanvasToolSession::default(),
         }
     }
 
@@ -1139,7 +1105,7 @@ impl CanvasEditor {
                 edge_router,
                 kind_registry,
             )?,
-            session: CanvasEditorSession::default(),
+            session: CanvasToolSession::default(),
         })
     }
 
@@ -1186,7 +1152,7 @@ impl CanvasEditor {
         self.store.kind_registry_snapshot()
     }
 
-    pub(crate) fn session_snapshot(&self) -> CanvasEditorSessionSnapshot {
+    pub(crate) fn session_snapshot(&self) -> CanvasToolSessionSnapshot {
         self.session.snapshot()
     }
 
@@ -1321,7 +1287,7 @@ impl CanvasEditor {
         Ok(())
     }
 
-    fn apply_session_effect(&mut self, effect: CanvasSessionEffect) {
+    fn apply_session_effect(&mut self, effect: CanvasToolSessionEffect) {
         let document = self.store.document_snapshot();
         self.session.apply_effect(effect, document.as_ref());
     }

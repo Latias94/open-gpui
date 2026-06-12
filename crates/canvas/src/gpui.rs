@@ -33,8 +33,9 @@ mod tests {
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle, CanvasTransaction,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
+        session::ToolState,
         test_support::{connected_pair_fixture, document_fixture},
-        tool::{CanvasToolEffect, ToolState},
+        tool::CanvasToolEffect,
     };
     use open_gpui::{
         Bounds, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
