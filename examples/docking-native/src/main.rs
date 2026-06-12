@@ -548,7 +548,7 @@ fn restored_demo_layout() -> DockLayout {
         .panel_descriptor("outline", dogfood_descriptor("Outline", PRIMARY_DOCK_CLASS))
         .panel_descriptor(
             "workspace",
-            dogfood_descriptor("Workspace", PRIMARY_DOCK_CLASS).closable(false),
+            dogfood_descriptor("Workspace", PRIMARY_DOCK_CLASS),
         )
         .panel_descriptor("editor", dogfood_descriptor("Editor", PRIMARY_DOCK_CLASS))
         .panel_descriptor(
@@ -690,7 +690,6 @@ fn build_controller() -> DockController {
                 })
                 .into()
             })
-            .closable(false)
             .with_dock_class(PRIMARY_DOCK_CLASS),
         )
         .panel(
@@ -1082,7 +1081,10 @@ mod tests {
             .panels()
             .descriptor(&item("workspace"))
             .expect("workspace descriptor should be registered");
-        assert!(!workspace.is_closable());
+        assert!(
+            workspace.is_closable(),
+            "demo default should let the primary window close; Prevent policy remains available in the runtime panel"
+        );
         assert_eq!(
             workspace.dock_class(),
             Some(&DockClassId::from(PRIMARY_DOCK_CLASS))
@@ -1109,6 +1111,27 @@ mod tests {
             &DockSpaceId::from(CENTRAL_SPACE),
             Some(&DockClassId::from(SECONDARY_DOCK_CLASS)),
         ));
+    }
+
+    #[open_gpui::test]
+    fn default_runtime_policy_allows_primary_dogfood_window_close(cx: &mut TestAppContext) {
+        let controller = cx.new(|_| build_controller());
+        let runtime = DockViewportRuntimeHandle::new(controller);
+        let (_primary_host, mut primary_visual) = open_dogfood_viewport(
+            cx,
+            &runtime,
+            SPACE,
+            Bounds::new(point(px(0.0), px(0.0)), size(px(920.0), px(640.0))),
+        );
+
+        assert_eq!(
+            runtime.close_policy(),
+            DockViewportClosePolicy::RetainLayout
+        );
+        assert!(
+            primary_visual.simulate_close(),
+            "default dogfood close policy should not veto the primary window"
+        );
     }
 
     #[test]
