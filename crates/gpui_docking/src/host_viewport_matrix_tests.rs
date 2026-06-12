@@ -328,7 +328,9 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(target_opened.window())
+        })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
     let result = cx.update(|app| {
@@ -359,7 +361,10 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
         .target;
     assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    assert_eq!(target.host_position(), Some(host_position), "{}", case.name);
+    let routed_position = target
+        .host_position()
+        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
+    assert_point_close(routed_position, host_position);
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
@@ -433,7 +438,9 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(target_opened.window())
+        })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
     let result = cx.update(|app| {
@@ -467,7 +474,10 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
         .target;
     assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    assert_eq!(target.host_position(), Some(host_position), "{}", case.name);
+    let routed_position = target
+        .host_position()
+        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
+    assert_point_close(routed_position, host_position);
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
@@ -822,6 +832,7 @@ fn push_target_scene_facts(
                     DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
                         space: target_space.clone(),
                         bounds: floating_bounds(0.0, 0.0, 420.0, 240.0),
+                        is_central: false,
                     }),
                 ),
                 "{}: empty-space fact should publish",

@@ -362,10 +362,7 @@ fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) 
         .expect("target tabs selector should be emitted");
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        start.y,
-    );
+    let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
     simulate_left_drag(&mut visual, start, end);
     cx.run_until_parked();
@@ -414,10 +411,7 @@ fn dragging_tab_to_edge_renders_drop_preview(cx: &mut TestAppContext) {
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        start.y,
-    );
+    let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -472,10 +466,7 @@ fn dragging_tab_to_root_edge_resolves_from_render_leaf_fact_root(cx: &mut TestAp
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        target_bounds.center().y,
-    );
+    let end = outer_edge_drop_position(target_bounds, DropZone::Right);
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -561,10 +552,7 @@ fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut Test
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        target_bounds.center().y,
-    );
+    let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -584,7 +572,7 @@ fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut Test
             root: matched_root,
             target_tabs,
             zone: DropZone::Right,
-        } if matched_root == floating_tabs && target_tabs == floating_tabs
+        } if matched_root == floating && target_tabs == floating_tabs
     ));
 }
 
@@ -1331,6 +1319,88 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
+fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
+    cx: &mut TestAppContext,
+) {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    graph.set_root(space(), root);
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        active: 0,
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(crate::DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 260.0, 150.0),
+        });
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    workspace.policy_mut().set_allow_floating(true);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(420.0), px(260.0)));
+
+    let floating_handle = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::FloatingHandle { node: floating },
+    )
+    .expect("floating handle selector should be emitted");
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
+        .expect("root tabs selector should be emitted");
+    let start = debug_bounds(&mut visual, &floating_handle).center();
+    let end = debug_bounds(&mut visual, &target_tabs).center();
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "first floating subtree item should be active in the root stack"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert!(
+            controller.graph().floating_containers(&space()).is_empty(),
+            "floating container should be removed after the full subtree merges into root"
+        );
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(root)
+            .expect("root tabs should still exist")
+        else {
+            panic!("root should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
+        assert_eq!(*active, 1);
+    });
+}
+
+#[open_gpui::test]
 fn policy_rejected_edge_hover_renders_rejected_drop_preview_without_commit(
     cx: &mut TestAppContext,
 ) {
@@ -1354,10 +1424,7 @@ fn policy_rejected_edge_hover_renders_rejected_drop_preview_without_commit(
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        start.y,
-    );
+    let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
@@ -1412,10 +1479,7 @@ fn class_rejected_edge_hover_renders_rejected_drop_preview_without_commit(cx: &m
     let target_bounds = debug_bounds(&mut visual, &target_tabs);
     let start = debug_bounds(&mut visual, &source_tab).center();
     let threshold = point(start.x + px(24.0), start.y);
-    let end = point(
-        target_bounds.origin.x + target_bounds.size.width - px(2.0),
-        start.y,
-    );
+    let end = inner_edge_drop_position(target_bounds, DropZone::Right);
 
     visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());

@@ -1078,7 +1078,8 @@ fn viewport_runtime_window_closed_clears_host_scene_without_adapter_mapping(
     let controller = cx.new(|_| DockController::new(workspace));
     let mut runtime = DockViewportRuntime::new(controller);
     let target_window = handle(49);
-    let host_position = point(px(120.0), px(100.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
 
     runtime.register_opened_viewport(target_space.clone(), target_window);
     assert!(runtime.begin_viewport_host_scene(
@@ -1087,7 +1088,7 @@ fn viewport_runtime_window_closed_clears_host_scene_without_adapter_mapping(
         DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(floating_bounds(
             100.0, 100.0, 360.0, 220.0,
         ))),
-        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        host_bounds,
         host_position,
     ));
     assert!(runtime.push_viewport_host_scene_fact(
@@ -1143,12 +1144,13 @@ fn viewport_runtime_window_closed_clears_routed_preview(cx: &mut TestAppContext)
     );
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let host_position = point(px(120.0), px(100.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
         DockViewportWindowFacts::from_window_bounds(window_bounds),
-        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        host_bounds,
         host_position,
     ));
     assert!(runtime.push_viewport_host_scene_fact(
@@ -1227,12 +1229,13 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
     );
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let host_position = point(px(120.0), px(100.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         old_window.window_id(),
         DockViewportWindowFacts::from_window_bounds(window_bounds),
-        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        host_bounds,
         host_position,
     ));
     assert!(runtime.push_viewport_host_scene_fact(
@@ -1309,7 +1312,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         old_window.window_id(),
@@ -1400,7 +1403,7 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
@@ -1491,7 +1494,7 @@ fn viewport_runtime_rejects_cached_target_after_window_facts_go_stale(cx: &mut T
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
@@ -1651,7 +1654,7 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
@@ -1674,7 +1677,7 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
         source_space.clone(),
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        screen_position_for_host_position(window_bounds, host_position),
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
@@ -1682,6 +1685,21 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
     assert!(
         resolution.commit().routed_preview_target().is_some(),
         "preview should cache the accepted central target"
+    );
+    let (_, _, cached_target) = resolution
+        .commit()
+        .routed_preview_target()
+        .expect("preview target should be cached");
+    assert!(
+        matches!(
+            cached_target.kind,
+            crate::drop_target::DockResolvedDropTargetKind::LeafCenter { .. }
+        ),
+        "cached target should be the central leaf body, got {cached_target:?}"
+    );
+    assert!(
+        cached_target.is_central_region,
+        "cached target should retain the central-region marker"
     );
 
     controller.update(cx, |controller, _| {
@@ -1749,7 +1767,7 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),
@@ -1995,13 +2013,23 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         })
         .expect("target viewport should open");
 
-    let target_window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_window_bounds = target_opened
+        .window()
+        .update(cx, |_, window, _| window.window_bounds())
+        .expect("target window should be live");
+    let target_window_bounds = WindowBounds::Windowed(target_window_bounds.get_bounds());
+    let target_leaf_bounds = floating_bounds(0.0, 0.0, 180.0, 120.0);
+    let preview_host_position = center_drop_position(target_leaf_bounds);
+    let preview_screen_position = point(
+        target_window_bounds.get_bounds().origin.x + preview_host_position.x,
+        target_window_bounds.get_bounds().origin.y + preview_host_position.y,
+    );
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_opened.window().window_id(),
         DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
-        point(px(120.0), px(100.0)),
+        preview_host_position,
     ));
     assert!(runtime.push_viewport_host_scene_fact(
         &target_space,
@@ -2009,7 +2037,7 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         DockHostDropSceneFact::Leaf(DockLeafDropTarget {
             root: target_tabs,
             target_tabs,
-            bounds: floating_bounds(0.0, 0.0, 180.0, 120.0),
+            bounds: target_leaf_bounds,
             is_central: false,
         }),
     ));
@@ -2025,7 +2053,7 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         source_space.clone(),
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        preview_screen_position,
         None,
         DockViewportTargetContext::new().with_hovered_window(target_opened.window()),
     )
@@ -2046,18 +2074,21 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         target_opened.window().window_id(),
         DockViewportWindowFacts::from_window_bounds(target_window_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
-        point(px(120.0), px(100.0)),
+        preview_host_position,
     ));
 
     let release_request = DockViewportDropRouteRequest::from_target_context(
         source_space.clone(),
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        screen_position_for_host_position(
+            target_window_bounds,
+            center_drop_position(floating_bounds(180.0, 120.0, 180.0, 100.0)),
+        ),
         None,
         DockViewportTargetContext::new()
-            .with_active_window(source_opened.window())
-            .with_window_stack([source_opened.window(), target_opened.window()]),
+            .with_active_window(target_opened.window())
+            .with_window_stack([target_opened.window(), source_opened.window()]),
     )
     .with_drag_session(Some(session.clone()));
     let release_resolution =
@@ -2187,7 +2218,7 @@ fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &m
 
     let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
     let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = point(px(120.0), px(100.0));
+    let host_position = center_drop_position(host_bounds);
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
         target_window.window_id(),

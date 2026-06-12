@@ -115,24 +115,19 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     zeta_window
         .update(cx, |_, window, _| window.activate_window())
         .expect("zeta window should be live");
-    let (context, expected_window_stack) = alpha_window
+    let (context, capabilities) = alpha_window
         .update(cx, |_, _, app| {
-            let expected_window_stack = app
-                .window_stack()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|window| window.window_id())
-                .collect::<Vec<_>>();
             (
                 DockViewportPlatformSignals::from_app(app).target_context(),
-                expected_window_stack,
+                app.viewport_capabilities(),
             )
         })
         .expect("alpha window should be live");
 
+    assert!(!capabilities.window_stack);
     assert_eq!(context.hovered_window(), None);
     assert_eq!(context.active_window(), Some(zeta_handle.window_id()));
-    assert_eq!(context.window_stack(), expected_window_stack.as_slice());
+    assert_eq!(context.window_stack(), &[]);
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
