@@ -540,6 +540,11 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
         host_bounds,
         point(px(0.0), px(0.0))
     ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
     let target_point = point(
         target_window_bounds.get_bounds().origin.x + px(20.0),
         target_window_bounds.get_bounds().origin.y + px(40.0),
@@ -897,17 +902,17 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             None,
             DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
         );
-        let route = runtime.resolve_payload_drop_route(&request, app);
-        assert!(
-            matches!(
-                &route,
-                DockViewportDropRoute::KnownViewport { target }
-                    if target.window_id() == opened.window().window_id()
-            ),
-            "known viewport route should carry the destination window"
+        let resolution = runtime.resolve_payload_drop_route_with_commit(&request, app);
+        assert_eq!(
+            resolution.route(),
+            &DockViewportDropRoute::Unavailable,
+            "a registered viewport without host scene facts should not preview as droppable"
         );
-        let commit = DockViewportDropRouteCommit::from_route_request(&request, route);
-        runtime.commit_payload_drop_route_with_outcome(commit, app)
+        assert!(
+            resolution.commit().routed_preview_target().is_none(),
+            "unavailable viewport routes must not render accepted cross-window previews"
+        );
+        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
     });
 
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
@@ -1268,6 +1273,11 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         DockViewportWindowFacts::from_window_bounds(target_bounds),
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(120.0), px(100.0)),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
     ));
 
     let source_bounds = WindowBounds::Windowed(floating_bounds(520.0, 100.0, 360.0, 220.0));

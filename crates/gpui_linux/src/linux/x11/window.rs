@@ -1285,6 +1285,7 @@ impl X11WindowStatePtr {
     }
 
     pub fn set_hovered(&self, focus: bool) {
+        self.state.borrow_mut().hovered = focus;
         let callback = self.callbacks.borrow_mut().hovered_status_change.take();
         if let Some(mut fun) = callback {
             fun(focus);

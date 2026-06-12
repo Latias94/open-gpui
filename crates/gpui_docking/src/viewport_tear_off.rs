@@ -236,6 +236,8 @@ pub(crate) struct DockViewportTearOffCompleted {
     pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome.
     registration: crate::DockViewportRegisterOutcome,
+    /// Runtime-owned windows superseded while completing this tear-off.
+    replaced_windows: Vec<AnyWindowHandle>,
     /// Graph transaction outcome.
     action: crate::DockActionOutcome,
 }
@@ -244,11 +246,13 @@ impl DockViewportTearOffCompleted {
     pub(crate) fn new(
         pending: DockViewportTearOffPending,
         registration: crate::DockViewportRegisterOutcome,
+        replaced_windows: Vec<AnyWindowHandle>,
         action: crate::DockActionOutcome,
     ) -> Self {
         Self {
             pending,
             registration,
+            replaced_windows,
             action,
         }
     }
@@ -259,6 +263,10 @@ impl DockViewportTearOffCompleted {
 
     pub(crate) fn registration(&self) -> &crate::DockViewportRegisterOutcome {
         &self.registration
+    }
+
+    pub(crate) fn replaced_windows(&self) -> &[AnyWindowHandle] {
+        &self.replaced_windows
     }
 
     pub(crate) fn action(&self) -> crate::DockActionOutcome {

@@ -425,6 +425,9 @@ impl DockInteractionRuntime {
         host_position: Point<Pixels>,
         commit: DockViewportDropRouteCommit,
     ) -> bool {
+        if matches!(route, DockViewportDropRoute::Unavailable) {
+            return self.clear_drop_route_preview();
+        }
         let preview_changed =
             self.set_drop_route_preview(DockDropPreview::from_viewport_route(route, host_position));
         let commit_changed = if self.drop_route_commit.as_ref() == Some(&commit) {

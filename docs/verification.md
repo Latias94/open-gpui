@@ -84,11 +84,24 @@ Manual native docking dogfood should use the same example after the automated ch
    activate and the moved item must become the selected tab.
 8. Move runtime-opened windows across displays, choose `Save placement`, then use `Reopen closed
    demo viewports`; restored placement should use saved bounds only as placement input while live
-   drag routing continues to use current viewport bounds.
+   drag routing continues to use current viewport bounds. On macOS, windows on a secondary display
+   should keep non-overlapping desktop-space bounds while routing between viewports.
 9. Exercise the runtime panel close-policy controls for prevent, retain, and merge-back behavior;
-   closing a viewport must match the selected policy without losing descriptor-backed panel restore.
-10. Drag over the empty central dogfood window; empty central-space preview, rejection, and
+   closing a viewport must match the selected policy without losing descriptor-backed panel restore
+   or leaving a stale cross-window route preview in another viewport.
+10. Start a cross-window drag, hover a valid target, then move to an area of the same viewport with
+   no current dock target before releasing; the previous preview must not commit from stale target
+   state.
+11. Drag over the empty central dogfood window; empty central-space preview, rejection, and
    passthrough behavior must match the visible policy state.
+
+Current platform caveats for docking multi-viewport dogfood:
+
+- Windows mixed-DPI displays and Wayland global toplevel positions are not yet normalized into one
+  explicit GPUI coordinate type. Treat cross-display routing results on those backends as areas for
+  follow-up platform API work, not as proof of full ImGui PlatformIO parity.
+- No-input, no-focus-on-appearing, alpha, topmost, and no-taskbar viewport flags are not modeled in
+  GPUI's platform trait yet.
 
 Before publishing a crate, confirm that the packaged archive carries the expected attribution files:
 

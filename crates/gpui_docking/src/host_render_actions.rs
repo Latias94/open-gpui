@@ -95,6 +95,9 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
+            .merge(
+                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
+            )
             .finish(cx)
     }
 
@@ -126,6 +129,9 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_root_drop_scene_interaction(payload, root, bounds, position, window, cx)
+            .merge(
+                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
+            )
             .finish(cx)
     }
 
@@ -138,6 +144,9 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.update_empty_space_drop_scene_interaction(payload, position, bounds, window, cx)
+            .merge(
+                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
+            )
             .finish(cx)
     }
 

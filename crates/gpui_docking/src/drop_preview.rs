@@ -70,6 +70,7 @@ impl DockDropPreview {
                 (DockDropPreviewKind::KnownViewportRoute, false)
             }
             DockViewportDropRoute::TearOff(_) => (DockDropPreviewKind::TearOffRoute, false),
+            DockViewportDropRoute::Unavailable => return None,
             DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled) => {
                 (DockDropPreviewKind::RejectedRoute, true)
             }
@@ -167,5 +168,16 @@ mod tests {
         assert_eq!(preview.kind, DockDropPreviewKind::RejectedRoute);
         assert!(preview.rejected);
         assert!(preview.bounds.contains(&point(px(12.0), px(34.0))));
+    }
+
+    #[test]
+    fn unavailable_route_preview_is_hidden() {
+        assert_eq!(
+            DockDropPreview::from_viewport_route(
+                &DockViewportDropRoute::Unavailable,
+                point(px(12.0), px(34.0)),
+            ),
+            None
+        );
     }
 }

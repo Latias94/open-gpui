@@ -112,7 +112,7 @@ impl PlatformDisplay for MacDisplay {
             let bounds = CGDisplayBounds(self.0);
 
             Bounds {
-                origin: Default::default(),
+                origin: point(px(bounds.origin.x as f32), px(bounds.origin.y as f32)),
                 size: size(px(bounds.size.width as f32), px(bounds.size.height as f32)),
             }
         }
@@ -130,15 +130,12 @@ impl PlatformDisplay for MacDisplay {
             let visible_frame = NSScreen::visibleFrame(dominated_screen);
 
             // Convert from bottom-left origin (AppKit) to top-left origin
-            let origin_y =
-                screen_frame.size.height - visible_frame.origin.y - visible_frame.size.height
-                    + screen_frame.origin.y;
+            let origin_y = screen_frame.origin.y + screen_frame.size.height
+                - visible_frame.origin.y
+                - visible_frame.size.height;
 
             Bounds {
-                origin: point(
-                    px(visible_frame.origin.x as f32 - screen_frame.origin.x as f32),
-                    px(origin_y as f32),
-                ),
+                origin: point(px(visible_frame.origin.x as f32), px(origin_y as f32)),
                 size: size(
                     px(visible_frame.size.width as f32),
                     px(visible_frame.size.height as f32),

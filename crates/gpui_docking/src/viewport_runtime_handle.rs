@@ -295,6 +295,9 @@ impl DockViewportRuntimeHandle {
             runtime.record_tear_off_outcome(&outcome);
             outcome
         };
+        if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
+            close_windows_quietly(completed.replaced_windows().to_vec(), cx);
+        }
         if !matches!(outcome, DockViewportTearOffOpenOutcome::Completed(_)) {
             close_window_quietly(opened.window(), cx);
         }
@@ -483,6 +486,7 @@ impl DockViewportRuntimeHandle {
             .routed_drop_preview_for(space, window_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn routed_drop_commit_for_drag_session(
         &self,
         session: Option<&DockRuntimeDragSession>,

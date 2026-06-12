@@ -66,6 +66,7 @@ struct DockViewportLastHoveredWindow {
 
 enum DockViewportWorkspaceRouteTarget {
     Valid(Option<crate::DockViewportCachedDropTarget>),
+    Unavailable,
     Rejected(DockPolicyError),
 }
 
@@ -228,6 +229,12 @@ impl DockViewportRuntime {
     /// Returns the low-level viewport adapter.
     pub(crate) fn adapter(&self) -> &DockViewportAdapter {
         &self.adapter
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unregister_adapter_window_for_test(&mut self, window_id: WindowId) {
+        let _ = self.adapter.unregister_window_id_snapshot(window_id);
+        self.close_gate.sync_adapter(&self.adapter);
     }
 
     /// Returns the latest read-only runtime diagnostic snapshot.
@@ -470,7 +477,7 @@ impl DockViewportRuntime {
             ),
         )?;
         if hit.space() == target.space() && hit.window_id() == target.window_id() {
-            Some(target)
+            Some(hit)
         } else {
             None
         }
@@ -492,6 +499,7 @@ impl DockViewportRuntime {
             }
             DockViewportDropRoute::Local { .. }
             | DockViewportDropRoute::TearOff(_)
+            | DockViewportDropRoute::Unavailable
             | DockViewportDropRoute::Rejected(_) => {
                 self.clear_last_hovered_window_for_drag_id(resolution.drag_session_id());
                 None
@@ -538,6 +546,27 @@ impl DockViewportRuntime {
         (true, windows)
     }
 
+    fn clear_routed_drop_preview_if_window_matches(
+        &mut self,
+        window_id: WindowId,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        if self
+            .routed_drop_preview
+            .as_ref()
+            .is_some_and(|preview| preview.window_id() == window_id)
+        {
+            self.replace_routed_drop_preview(None)
+        } else {
+            (false, Vec::new())
+        }
+    }
+
+    fn clear_runtime_window_state(&mut self, space: &DockSpaceId, window_id: WindowId) {
+        self.clear_last_hovered_window_if_matches(window_id);
+        let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
+        self.host_scenes.unregister_space(space);
+    }
+
     pub(crate) fn reusable_window_for_space(
         &mut self,
         space: &DockSpaceId,
@@ -570,8 +599,7 @@ impl DockViewportRuntime {
         let replaced = self.adapter.register_viewport_with_outcome(space, window);
         let mut replaced_windows = Vec::new();
         for removed in replaced.replaced() {
-            self.clear_last_hovered_window_if_matches(removed.window.window_id());
-            self.host_scenes.unregister_space(&removed.space);
+            self.clear_runtime_window_state(&removed.space, removed.window.window_id());
             if removed.window != window
                 && self.discard_owned_window(removed.window.window_id())
                 && !replaced_windows.contains(&removed.window)
@@ -649,6 +677,9 @@ impl DockViewportRuntime {
                         "tear-off viewport commits must be opened through DockViewportRuntimeHandle"
                             .to_string(),
                 });
+            }
+            DockViewportDropRouteCommit::Unavailable => {
+                return Err(DockActionApplyError::DropTargetUnavailable);
             }
             DockViewportDropRouteCommit::Rejected(error) => return Err(error.into()),
         };
@@ -911,6 +942,10 @@ impl DockViewportRuntime {
             &payload_classes,
         ) {
             DockViewportWorkspaceRouteTarget::Valid(target) => target,
+            DockViewportWorkspaceRouteTarget::Unavailable => {
+                route = DockViewportDropRoute::Unavailable;
+                None
+            }
             DockViewportWorkspaceRouteTarget::Rejected(error) => {
                 if matches!(route, DockViewportDropRoute::KnownViewport { .. }) {
                     route = DockViewportDropRoute::Rejected(error);
@@ -929,6 +964,10 @@ impl DockViewportRuntime {
                 &payload_classes,
             ) {
                 DockViewportWorkspaceRouteTarget::Valid(target) => target,
+                DockViewportWorkspaceRouteTarget::Unavailable => {
+                    route = DockViewportDropRoute::Unavailable;
+                    None
+                }
                 DockViewportWorkspaceRouteTarget::Rejected(error) => {
                     route = DockViewportDropRoute::Rejected(error);
                     None
@@ -977,16 +1016,16 @@ impl DockViewportRuntime {
                     policy,
                     Some(&target_validator),
                 ) else {
-                    return DockViewportWorkspaceRouteTarget::Valid(None);
+                    return DockViewportWorkspaceRouteTarget::Unavailable;
                 };
                 match cached_route_target(frame, resolution) {
                     Ok(target) => DockViewportWorkspaceRouteTarget::Valid(Some(target)),
                     Err(error) => DockViewportWorkspaceRouteTarget::Rejected(error),
                 }
             }
-            DockViewportDropRoute::TearOff(_) | DockViewportDropRoute::Rejected(_) => {
-                DockViewportWorkspaceRouteTarget::Valid(None)
-            }
+            DockViewportDropRoute::TearOff(_)
+            | DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::Valid(None),
         }
     }
 
@@ -1062,10 +1101,15 @@ impl DockViewportRuntime {
             .adapter
             .register_viewport_with_outcome(pending.target_space().clone(), window);
         self.owned_windows.insert(window.window_id());
+        let mut replaced_windows = Vec::new();
         for removed in registration.replaced() {
-            self.clear_last_hovered_window_if_matches(removed.window.window_id());
-            self.discard_owned_window(removed.window.window_id());
-            self.host_scenes.unregister_space(&removed.space);
+            self.clear_runtime_window_state(&removed.space, removed.window.window_id());
+            if removed.window != window
+                && self.discard_owned_window(removed.window.window_id())
+                && !replaced_windows.contains(&removed.window)
+            {
+                replaced_windows.push(removed.window);
+            }
         }
         self.close_gate.sync_adapter(&self.adapter);
         match self.commit_tear_off_move(&pending, cx) {
@@ -1076,6 +1120,7 @@ impl DockViewportRuntime {
                 DockViewportTearOffCompletionOutcome::Completed(DockViewportTearOffCompleted::new(
                     pending,
                     registration,
+                    replaced_windows,
                     action,
                 ))
             }
@@ -1130,9 +1175,9 @@ impl DockViewportRuntime {
 
     fn discard_tear_off_target(&mut self, target_space: &DockSpaceId) {
         if let Some(snapshot) = self.adapter.unregister_space(target_space) {
+            self.clear_runtime_window_state(target_space, snapshot.window.window_id());
             self.discard_owned_window(snapshot.window.window_id());
         }
-        self.host_scenes.unregister_space(target_space);
         self.close_gate.sync_adapter(&self.adapter);
     }
 
@@ -1182,6 +1227,7 @@ impl DockViewportRuntime {
     /// Once a closed notification arrives, the platform window is already gone and docking must
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
+        let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.clear_last_hovered_window_if_matches(window_id);
         self.discard_owned_window(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);

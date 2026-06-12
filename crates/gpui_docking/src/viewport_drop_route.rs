@@ -22,6 +22,8 @@ pub(crate) enum DockViewportDropRoute {
     },
     /// The release landed outside all registered viewports and may open a new platform viewport.
     TearOff(DockViewportTearOffRequest),
+    /// The release landed in a registered viewport that has no current dock target.
+    Unavailable,
     /// The release landed outside all registered viewports, but policy forbids opening one.
     Rejected(DockPolicyError),
 }
@@ -45,6 +47,8 @@ pub(crate) enum DockViewportDropRouteCommit {
     Workspace(DockViewportDropWorkspaceCommit),
     /// Open and commit into a new platform viewport.
     TearOff(DockViewportTearOffRequest),
+    /// Reject the commit because the target viewport has no current dock target.
+    Unavailable,
     /// Reject the commit for the same policy reason as routing.
     Rejected(DockPolicyError),
 }
@@ -214,6 +218,7 @@ impl DockViewportDropRouteCommit {
                 )
             }
             DockViewportDropRoute::TearOff(_) => Self::TearOff(request.tear_off_request()),
+            DockViewportDropRoute::Unavailable => Self::Unavailable,
             DockViewportDropRoute::Rejected(error) => Self::Rejected(error),
         }
     }
@@ -223,18 +228,18 @@ impl DockViewportDropRouteCommit {
     ) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
         match self {
             DockViewportDropRouteCommit::Workspace(commit) => commit.routed_preview_target(),
-            DockViewportDropRouteCommit::TearOff(_) | DockViewportDropRouteCommit::Rejected(_) => {
-                None
-            }
+            DockViewportDropRouteCommit::TearOff(_)
+            | DockViewportDropRouteCommit::Unavailable
+            | DockViewportDropRouteCommit::Rejected(_) => None,
         }
     }
 
     pub(crate) fn routed_preview_target_hit(&self) -> Option<DockViewportTargetHit> {
         match self {
             DockViewportDropRouteCommit::Workspace(commit) => commit.routed_preview_target_hit(),
-            DockViewportDropRouteCommit::TearOff(_) | DockViewportDropRouteCommit::Rejected(_) => {
-                None
-            }
+            DockViewportDropRouteCommit::TearOff(_)
+            | DockViewportDropRouteCommit::Unavailable
+            | DockViewportDropRouteCommit::Rejected(_) => None,
         }
     }
 
@@ -246,6 +251,7 @@ impl DockViewportDropRouteCommit {
             DockViewportDropRouteCommit::TearOff(request) => {
                 request.drag_session().map(DockRuntimeDragSession::id)
             }
+            DockViewportDropRouteCommit::Unavailable => None,
             DockViewportDropRouteCommit::Rejected(_) => None,
         }
     }

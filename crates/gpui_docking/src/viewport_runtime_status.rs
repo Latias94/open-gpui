@@ -80,6 +80,8 @@ pub enum DockViewportRouteTarget {
         /// Screen position where the payload was released.
         release_position: Point<Pixels>,
     },
+    /// The release hit a registered viewport that had no current dock target.
+    Unavailable,
     /// The release was rejected by policy before mutation.
     Rejected {
         /// Policy reason that rejected the route.
@@ -205,7 +207,7 @@ impl DockViewportRouteTarget {
     pub fn space(&self) -> Option<&DockSpaceId> {
         match self {
             Self::Local { space, .. } | Self::KnownViewport { space, .. } => Some(space),
-            Self::TearOff { .. } | Self::Rejected { .. } => None,
+            Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => None,
         }
     }
 
@@ -213,7 +215,10 @@ impl DockViewportRouteTarget {
     pub fn window_id(&self) -> Option<WindowId> {
         match self {
             Self::KnownViewport { window_id, .. } => Some(*window_id),
-            Self::Local { .. } | Self::TearOff { .. } | Self::Rejected { .. } => None,
+            Self::Local { .. }
+            | Self::TearOff { .. }
+            | Self::Unavailable
+            | Self::Rejected { .. } => None,
         }
     }
 
@@ -223,7 +228,7 @@ impl DockViewportRouteTarget {
             Self::Local { host_position, .. } | Self::KnownViewport { host_position, .. } => {
                 Some(*host_position)
             }
-            Self::TearOff { .. } | Self::Rejected { .. } => None,
+            Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => None,
         }
     }
 
@@ -231,7 +236,10 @@ impl DockViewportRouteTarget {
     pub fn release_position(&self) -> Option<Point<Pixels>> {
         match self {
             Self::TearOff { release_position } => Some(*release_position),
-            Self::Local { .. } | Self::KnownViewport { .. } | Self::Rejected { .. } => None,
+            Self::Local { .. }
+            | Self::KnownViewport { .. }
+            | Self::Unavailable
+            | Self::Rejected { .. } => None,
         }
     }
 
@@ -239,7 +247,10 @@ impl DockViewportRouteTarget {
     pub fn rejection_reason(&self) -> Option<DockPolicyError> {
         match self {
             Self::Rejected { reason } => Some(reason.clone()),
-            Self::Local { .. } | Self::KnownViewport { .. } | Self::TearOff { .. } => None,
+            Self::Local { .. }
+            | Self::KnownViewport { .. }
+            | Self::TearOff { .. }
+            | Self::Unavailable => None,
         }
     }
 
@@ -257,6 +268,7 @@ impl DockViewportRouteTarget {
             DockViewportDropRoute::TearOff(request) => Self::TearOff {
                 release_position: request.release_position(),
             },
+            DockViewportDropRoute::Unavailable => Self::Unavailable,
             DockViewportDropRoute::Rejected(reason) => Self::Rejected {
                 reason: reason.clone(),
             },

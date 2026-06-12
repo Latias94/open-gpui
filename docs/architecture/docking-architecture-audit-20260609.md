@@ -81,11 +81,14 @@ Viewport productization:
   `DockViewportTargetContext` arbitration input, even when callers choose an empty fallback
   context.
 - Runtime-opened viewports publish host scenes through the handle path; known-viewport routes are
-  resolved again in the destination host scene before commit, and successful routed drops activate
-  the destination viewport.
+  resolved from the destination host scene before preview and again before commit. A viewport hit
+  without a current host-scene target is treated as unavailable rather than as an accepted
+  cross-window route.
 - Tear-off pending state tracks item and tabs-stack payloads, duplicate requests, expiration,
   source-moved/source-missing cancellation, commit failure cleanup, and controller-backed viewport
   registration.
+- Tear-off completion uses the same runtime-owned replacement cleanup as ordinary viewport open, so
+  a window rebound between open and completion does not leave the superseded runtime window alive.
 - Viewport close policy now covers retain, prevent, and merge-back behavior. Merge-back close moves
   closing viewport content into an explicit fallback dock space before unregistering the runtime
   mapping.
@@ -96,6 +99,12 @@ Viewport productization:
   platforms return `None`.
 - `runtime_poll_released_left_button_tears_off_without_mouse_up_event` covers the product path
   where no GPUI mouse-up event is delivered but the platform reports the left button was released.
+- Platform viewport routing assumes live window bounds are in a shared desktop coordinate space.
+  macOS now preserves CoreGraphics display origins for `PlatformDisplay::bounds()` and live
+  `PlatformWindow::bounds()`, while saved `WindowOptions` placement remains an application input
+  rather than a live hit-test source.
+- Linux X11 and Wayland update their stored hover state when platform enter/leave events fire, so
+  `PlatformWindow::is_hovered()` matches the registered hover callbacks.
 
 Panel lifecycle:
 
@@ -157,6 +166,13 @@ Test locality:
 - The rendered release-outside path now has a platform button-state polling seam for macOS,
   Windows, and tests; Linux/Wayland and other unsupported backends intentionally return `None`
   until a reliable platform primitive is available.
+- Full Dear ImGui PlatformIO parity is intentionally not claimed. DPI-scale conversion, monitor
+  work-area scale, live programmatic window move, input passthrough, no-focus-on-appearing, alpha,
+  topmost/no-taskbar flags, and reliable Wayland global window position need a future GPUI platform
+  capability design.
+- Windows uses per-monitor logical bounds that can diverge across mixed-DPI displays, and Wayland
+  does not expose compositor global toplevel positions. Docking runtime tests should keep using
+  live host-scene facts and should not treat saved placement snapshots as a global routing source.
 - macOS build, native-launch smoke, and TestApp-level rendered cross-window drag have been verified
   for `examples/docking-native`. The repository's Windows workflow already checks the verification
   gate, `xtask`, `open-gpui-windows --all-features`, and the shared WGPU font-kit path on a

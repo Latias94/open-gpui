@@ -613,7 +613,7 @@ impl MacWindowState {
 
         Bounds::new(
             point(
-                px((window_frame.origin.x - screen_frame.origin.x) as f32),
+                px(window_frame.origin.x as f32),
                 px((window_frame.origin.y + screen_frame.origin.y) as f32),
             ),
             size(
