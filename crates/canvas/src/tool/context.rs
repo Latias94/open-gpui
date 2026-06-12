@@ -622,13 +622,20 @@ impl CanvasToolReducerContext<'_> {
 
     fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
         let mut selection = CanvasSelection::default();
+        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
+            self.document,
+            self.edge_router,
+            Some(self.kind_registry),
+        );
         for record in self
             .runtime
             .query_with_options(bounds, HitOptions::default())
         {
             match &record.target {
                 HitTarget::Node(_) | HitTarget::Edge(_) | HitTarget::Shape(_) => {
-                    selection.insert_target(record.target.clone());
+                    if selection_query_matches_precise_geometry(&facts, record, bounds) {
+                        selection.insert_target(record.target.clone());
+                    }
                 }
                 HitTarget::Handle { .. } => {}
             }
@@ -673,6 +680,71 @@ fn record_id_for_selection_target(target: &HitTarget) -> Option<CanvasRecordId> 
         HitTarget::Shape(id) => Some(CanvasRecordId::Shape(id.clone())),
         HitTarget::Edge(_) | HitTarget::Handle { .. } => None,
     }
+}
+
+fn selection_query_matches_precise_geometry<R>(
+    facts: &CanvasGeometryFacts<'_, R>,
+    record: &HitRecord,
+    selection_bounds: Bounds<Pixels>,
+) -> bool
+where
+    R: CanvasEdgeRouter,
+{
+    if !matches!(record.target, HitTarget::Node(_) | HitTarget::Shape(_)) {
+        return true;
+    }
+
+    let Some(intersection) = intersect_bounds(record.bounds, selection_bounds) else {
+        return false;
+    };
+
+    selection_sample_points(intersection)
+        .into_iter()
+        .any(|point| facts.record_contains_point(record, point, HitOptions::default()))
+}
+
+fn intersect_bounds(left: Bounds<Pixels>, right: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
+    let left_min_x = left.origin.x;
+    let left_min_y = left.origin.y;
+    let left_max_x = left.origin.x + left.size.width;
+    let left_max_y = left.origin.y + left.size.height;
+    let right_min_x = right.origin.x;
+    let right_min_y = right.origin.y;
+    let right_max_x = right.origin.x + right.size.width;
+    let right_max_y = right.origin.y + right.size.height;
+
+    let min_x = left_min_x.max(right_min_x);
+    let min_y = left_min_y.max(right_min_y);
+    let max_x = left_max_x.min(right_max_x);
+    let max_y = left_max_y.min(right_max_y);
+    if max_x < min_x || max_y < min_y {
+        return None;
+    }
+
+    Some(Bounds::from_corners(
+        Point::new(min_x, min_y),
+        Point::new(max_x, max_y),
+    ))
+}
+
+fn selection_sample_points(bounds: Bounds<Pixels>) -> [Point<Pixels>; 9] {
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = bounds.origin.x + bounds.size.width;
+    let bottom = bounds.origin.y + bounds.size.height;
+    let center = bounds.center();
+
+    [
+        Point::new(left, top),
+        Point::new(center.x, top),
+        Point::new(right, top),
+        Point::new(left, center.y),
+        center,
+        Point::new(right, center.y),
+        Point::new(left, bottom),
+        Point::new(center.x, bottom),
+        Point::new(right, bottom),
+    ]
 }
 
 fn resize_bounds_within(

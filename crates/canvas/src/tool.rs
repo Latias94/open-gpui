@@ -3177,6 +3177,64 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_box_select_respects_group_transparent_interior() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(80.0), px(80.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "c",
+                point(px(170.0), px(170.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor.session.selection.nodes.insert(NodeId::from("c"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(75.0), px(75.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(115.0), px(115.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(115.0), px(115.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+        assert!(editor.selection().selected_shapes().next().is_none());
+    }
+
+    #[test]
     fn select_tool_cancel_restores_selection_after_box_select() {
         let document = document_fixture()
             .node(CanvasNode::new(
