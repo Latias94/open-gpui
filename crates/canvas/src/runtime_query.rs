@@ -1,7 +1,7 @@
 use crate::spatial_cache::{CanvasSpatialCache, IndexedHitRecord};
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
-    CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasGraphIndex,
+    CanvasKindRegistry, CanvasResolvedEdgeGeometry, EdgeId, HitOptions, HitRecord, HitTarget,
 };
 use indexmap::IndexMap;
 use open_gpui::{Bounds, Pixels, Point};
@@ -51,54 +51,41 @@ impl CanvasRuntimeQuery {
         Self { spatial_cache }
     }
 
-    pub(crate) fn apply_diff_with_router<R>(
+    pub(crate) fn apply_diff_with_graph_index_and_router<R>(
         &mut self,
         document: &CanvasDocument,
         diff: &CanvasDocumentDiff,
+        graph_index: &CanvasGraphIndex,
         router: &R,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_router_and_optional_kind_registry(document, diff, router, None);
+        self.spatial_cache.apply_diff_with_graph_index_and_router(
+            document,
+            diff,
+            graph_index,
+            router,
+        );
     }
 
-    pub(crate) fn apply_diff_with_router_and_kind_registry<R>(
+    pub(crate) fn apply_diff_with_graph_index_router_and_kind_registry<R>(
         &mut self,
         document: &CanvasDocument,
         diff: &CanvasDocumentDiff,
+        graph_index: &CanvasGraphIndex,
         router: &R,
         kind_registry: &CanvasKindRegistry,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_router_and_optional_kind_registry(
-            document,
-            diff,
-            router,
-            Some(kind_registry),
-        );
-    }
-
-    fn apply_diff_with_router_and_optional_kind_registry<R>(
-        &mut self,
-        document: &CanvasDocument,
-        diff: &CanvasDocumentDiff,
-        router: &R,
-        kind_registry: Option<&CanvasKindRegistry>,
-    ) where
-        R: CanvasEdgeRouter + ?Sized,
-    {
-        match kind_registry {
-            Some(kind_registry) => self.spatial_cache.apply_diff_with_router_and_kind_registry(
+        self.spatial_cache
+            .apply_diff_with_graph_index_router_and_kind_registry(
                 document,
                 diff,
+                graph_index,
                 router,
                 kind_registry,
-            ),
-            None => self
-                .spatial_cache
-                .apply_diff_with_router(document, diff, router),
-        }
+            );
     }
 
     pub(crate) fn query(&self, viewport: Bounds<Pixels>) -> impl Iterator<Item = &HitRecord> {
@@ -277,7 +264,13 @@ mod tests {
                 moved,
             )))
             .unwrap();
-        query.apply_diff_with_router(&document, &diff, &CanvasDefaultEdgeRouter);
+        let graph_index = document.graph_index();
+        query.apply_diff_with_graph_index_and_router(
+            &document,
+            &diff,
+            &graph_index,
+            &CanvasDefaultEdgeRouter,
+        );
 
         assert!(
             query

@@ -162,6 +162,8 @@ pub struct CanvasGraphIndex {
     incoming: IndexMap<NodeId, IndexSet<EdgeId>>,
     incident: IndexMap<NodeId, IndexSet<EdgeId>>,
     edge_endpoints: IndexMap<EdgeId, CanvasGraphEndpointIds>,
+    #[serde(default, skip)]
+    edge_ordinals: IndexMap<EdgeId, usize>,
 }
 
 impl CanvasGraphIndex {
@@ -170,6 +172,7 @@ impl CanvasGraphIndex {
         for edge in document.edges() {
             index.insert_edge(edge);
         }
+        index.refresh_edge_ordinals(document);
         index
     }
 
@@ -178,39 +181,48 @@ impl CanvasGraphIndex {
             return;
         }
 
-        let mut affected_nodes = IndexSet::new();
+        let mut graph_changed = false;
 
         for record_id in &diff.removed {
-            if let CanvasRecordId::Edge(edge_id) = record_id
-                && let Some(endpoints) = self.edge_endpoints.shift_remove(edge_id)
-            {
-                affected_nodes.insert(endpoints.source);
-                affected_nodes.insert(endpoints.target);
+            match record_id {
+                CanvasRecordId::Edge(edge_id) => {
+                    graph_changed |= self.remove_edge_id(edge_id);
+                }
+                CanvasRecordId::Node(node_id) => {
+                    let edge_ids = self.incident_edge_ids(node_id).cloned().collect::<Vec<_>>();
+                    for edge_id in edge_ids {
+                        graph_changed |= self.remove_edge_id(&edge_id);
+                    }
+                }
+                CanvasRecordId::Shape(_) => {}
             }
         }
 
         for record_id in &diff.updated {
             if let CanvasRecordId::Edge(edge_id) = record_id
-                && let Some(endpoints) = self.edge_endpoints.get(edge_id)
+                && let Some(endpoints) = self.edge_endpoints.get(edge_id).cloned()
+                && document.edge(edge_id).is_some_and(|edge| {
+                    edge.source.node_id != endpoints.source
+                        || edge.target.node_id != endpoints.target
+                })
             {
-                affected_nodes.insert(endpoints.source.clone());
-                affected_nodes.insert(endpoints.target.clone());
+                graph_changed |= self.remove_edge_id(edge_id);
             }
         }
 
         for record_id in diff.updated.iter().chain(&diff.inserted) {
             if let CanvasRecordId::Edge(edge_id) = record_id
                 && let Some(edge) = document.edge(edge_id)
+                && !self.edge_endpoints.contains_key(edge_id)
             {
-                let endpoints = CanvasGraphEndpointIds::from_edge(edge);
-                affected_nodes.insert(endpoints.source.clone());
-                affected_nodes.insert(endpoints.target.clone());
-                self.edge_endpoints.insert(edge.id.clone(), endpoints);
+                self.insert_edge(edge);
+                graph_changed = true;
             }
         }
 
-        for node_id in affected_nodes {
-            self.rebuild_node(document, &node_id);
+        if graph_changed {
+            self.refresh_edge_ordinals(document);
+            self.sort_adjacency_by_edge_ordinals();
         }
     }
 
@@ -330,6 +342,9 @@ impl CanvasGraphIndex {
     }
 
     fn insert_edge(&mut self, edge: &CanvasEdge) {
+        if self.edge_endpoints.contains_key(&edge.id) {
+            self.remove_edge_id(&edge.id);
+        }
         let endpoints = CanvasGraphEndpointIds::from_edge(edge);
         self.outgoing
             .entry(endpoints.source.clone())
@@ -352,31 +367,38 @@ impl CanvasGraphIndex {
         self.edge_endpoints.insert(edge.id.clone(), endpoints);
     }
 
-    fn rebuild_node(&mut self, document: &CanvasDocument, node_id: &NodeId) {
-        let mut outgoing = IndexSet::new();
-        let mut incoming = IndexSet::new();
-        let mut incident = IndexSet::new();
-
-        for edge in document.edges() {
-            let is_source = edge.source.node_id == *node_id;
-            let is_target = edge.target.node_id == *node_id;
-
-            if is_source {
-                outgoing.insert(edge.id.clone());
-            }
-
-            if is_target {
-                incoming.insert(edge.id.clone());
-            }
-
-            if is_source || is_target {
-                incident.insert(edge.id.clone());
-            }
+    fn remove_edge_id(&mut self, edge_id: &EdgeId) -> bool {
+        let Some(endpoints) = self.edge_endpoints.shift_remove(edge_id) else {
+            return false;
+        };
+        self.edge_ordinals.shift_remove(edge_id);
+        remove_edge_from_node(&mut self.outgoing, &endpoints.source, edge_id);
+        remove_edge_from_node(&mut self.incoming, &endpoints.target, edge_id);
+        remove_edge_from_node(&mut self.incident, &endpoints.source, edge_id);
+        if endpoints.source != endpoints.target {
+            remove_edge_from_node(&mut self.incident, &endpoints.target, edge_id);
         }
+        true
+    }
 
-        replace_edge_ids(&mut self.outgoing, node_id, outgoing);
-        replace_edge_ids(&mut self.incoming, node_id, incoming);
-        replace_edge_ids(&mut self.incident, node_id, incident);
+    fn refresh_edge_ordinals(&mut self, document: &CanvasDocument) {
+        self.edge_ordinals.clear();
+        for (ordinal, edge_id) in document.edge_ids().enumerate() {
+            self.edge_ordinals.insert(edge_id.clone(), ordinal);
+        }
+    }
+
+    fn sort_adjacency_by_edge_ordinals(&mut self) {
+        let ordinals = &self.edge_ordinals;
+        for edge_ids in self
+            .outgoing
+            .values_mut()
+            .chain(self.incoming.values_mut())
+            .chain(self.incident.values_mut())
+        {
+            edge_ids
+                .sort_by_cached_key(|edge_id| ordinals.get(edge_id).copied().unwrap_or(usize::MAX));
+        }
     }
 }
 
@@ -534,15 +556,17 @@ impl<'a> CanvasIndexedGraph<'a> {
     }
 }
 
-fn replace_edge_ids(
+fn remove_edge_from_node(
     edges_by_node: &mut IndexMap<NodeId, IndexSet<EdgeId>>,
     node_id: &NodeId,
-    edge_ids: IndexSet<EdgeId>,
+    edge_id: &EdgeId,
 ) {
+    let Some(edge_ids) = edges_by_node.get_mut(node_id) else {
+        return;
+    };
+    edge_ids.shift_remove(edge_id);
     if edge_ids.is_empty() {
         edges_by_node.shift_remove(node_id);
-    } else {
-        edges_by_node.insert(node_id.clone(), edge_ids);
     }
 }
 
@@ -777,6 +801,27 @@ mod tests {
         index.apply_diff(&document, &diff);
         assert!(!index.contains_edge(&EdgeId::from("a-b")));
         assert!(!index.contains_edge(&EdgeId::from("b-c")));
+        assert_eq!(index, document.graph_index());
+    }
+
+    #[test]
+    fn graph_index_preserves_adjacency_when_edge_metadata_changes() {
+        let mut document = sample_document();
+        let mut index = document.graph_index();
+        let mut edge = document.edge(&EdgeId::from("a-b")).unwrap().clone();
+        edge.z_index = 42;
+
+        let diff = document
+            .apply_transaction_with_diff(CanvasTransaction::single(DocumentCommand::UpdateEdge(
+                edge,
+            )))
+            .unwrap();
+        index.apply_diff(&document, &diff);
+
+        assert_eq!(
+            edge_id_strings(index.outgoing_edge_ids(&NodeId::from("a"))),
+            vec!["a-b".to_string(), "a-a".to_string()]
+        );
         assert_eq!(index, document.graph_index());
     }
 

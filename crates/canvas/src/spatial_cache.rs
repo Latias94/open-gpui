@@ -1,15 +1,15 @@
 use crate::{
-    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasKindRegistry,
-    CanvasRecordId, HitRecord, HitTarget,
+    CanvasDocument, CanvasDocumentDiff, CanvasEdgeRouter, CanvasGeometryFacts, CanvasGraphIndex,
+    CanvasKindRegistry, CanvasRecordId, HitRecord, HitTarget,
 };
 use indexmap::{IndexMap, IndexSet};
-use open_gpui::{Bounds, Pixels, Point};
+use open_gpui::{Bounds, Pixels, Point, Size, px};
+use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CanvasSpatialCache {
-    base: SpatialRecordSet,
+    base: StaticSpatialRecordSet,
     overlay: SpatialRecordSet,
-    merged: SpatialRecordSet,
     stale: IndexSet<CanvasRecordId>,
     ordinals: IndexMap<HitTarget, usize>,
     compact_after: usize,
@@ -18,9 +18,8 @@ pub(crate) struct CanvasSpatialCache {
 impl Default for CanvasSpatialCache {
     fn default() -> Self {
         Self {
-            base: SpatialRecordSet::default(),
+            base: StaticSpatialRecordSet::default(),
             overlay: SpatialRecordSet::default(),
-            merged: SpatialRecordSet::default(),
             stale: IndexSet::new(),
             ordinals: IndexMap::new(),
             compact_after: 256,
@@ -57,9 +56,8 @@ impl CanvasSpatialCache {
     {
         let records = facts.hit_records();
         let ordinals = ordinals_for_records(&records);
-        let base = SpatialRecordSet::new(records);
+        let base = StaticSpatialRecordSet::new(records);
         Self {
-            merged: base.clone(),
             base,
             overlay: SpatialRecordSet::default(),
             stale: IndexSet::new(),
@@ -68,40 +66,48 @@ impl CanvasSpatialCache {
         }
     }
 
-    pub(crate) fn apply_diff_with_router<R>(
+    pub(crate) fn apply_diff_with_graph_index_and_router<R>(
         &mut self,
         document: &CanvasDocument,
         diff: &CanvasDocumentDiff,
+        graph_index: &CanvasGraphIndex,
         router: &R,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_facts(CanvasGeometryFacts::with_router(document, router), diff);
+        self.apply_diff_with_graph_index_and_facts(
+            CanvasGeometryFacts::with_router(document, router),
+            diff,
+            graph_index,
+        );
     }
 
-    pub(crate) fn apply_diff_with_router_and_kind_registry<R>(
+    pub(crate) fn apply_diff_with_graph_index_router_and_kind_registry<R>(
         &mut self,
         document: &CanvasDocument,
         diff: &CanvasDocumentDiff,
+        graph_index: &CanvasGraphIndex,
         router: &R,
         kind_registry: &CanvasKindRegistry,
     ) where
         R: CanvasEdgeRouter + ?Sized,
     {
-        self.apply_diff_with_facts(
+        self.apply_diff_with_graph_index_and_facts(
             CanvasGeometryFacts::with_router_and_kind_registry(
                 document,
                 router,
                 Some(kind_registry),
             ),
             diff,
+            graph_index,
         );
     }
 
-    fn apply_diff_with_facts<R>(
+    fn apply_diff_with_graph_index_and_facts<R>(
         &mut self,
         facts: CanvasGeometryFacts<'_, R>,
         diff: &CanvasDocumentDiff,
+        graph_index: &CanvasGraphIndex,
     ) where
         R: CanvasEdgeRouter + Copy,
     {
@@ -109,7 +115,7 @@ impl CanvasSpatialCache {
             return;
         }
 
-        let dirty = dirty_record_ids(facts.document(), diff);
+        let dirty = dirty_record_ids_with_graph_index(diff, graph_index);
         if dirty.is_empty() {
             return;
         }
@@ -122,7 +128,6 @@ impl CanvasSpatialCache {
             self.overlay.extend(records, &self.ordinals);
         }
         self.overlay.sort();
-        self.refresh_merged();
 
         if self.stale.len() > self.compact_after {
             self.compact(facts);
@@ -133,10 +138,10 @@ impl CanvasSpatialCache {
         &self,
         viewport: Bounds<Pixels>,
     ) -> impl Iterator<Item = &IndexedHitRecord> {
-        self.merged
-            .records
-            .iter()
-            .filter(move |record| record.record.bounds.intersects(&viewport))
+        self.base
+            .query(viewport)
+            .filter(|record| !self.is_stale(record))
+            .chain(self.overlay.query(viewport))
     }
 
     pub(crate) fn hit_test_candidates(
@@ -144,40 +149,25 @@ impl CanvasSpatialCache {
         point: Point<Pixels>,
         margin: Pixels,
     ) -> impl Iterator<Item = &IndexedHitRecord> {
-        self.merged.records.iter().filter(move |record| {
-            let bounds = if margin == Pixels::ZERO {
-                record.record.bounds
-            } else {
-                record.record.bounds.dilate(margin)
-            };
-            bounds.contains(&point)
-        })
-    }
-
-    fn refresh_merged(&mut self) {
-        let records = self
-            .base
-            .records
-            .iter()
-            .filter(|record| {
-                !self
-                    .stale
-                    .contains(&record_id_for_target(&record.record.target))
+        let viewport = point_query_bounds(point, margin);
+        self.base
+            .query(viewport)
+            .filter(move |record| {
+                !self.is_stale(record) && record_contains_point(record, point, margin)
             })
-            .cloned()
-            .chain(self.overlay.records.iter().cloned())
-            .collect::<Vec<_>>();
-        self.merged = SpatialRecordSet { records };
-        self.merged.sort();
+            .chain(
+                self.overlay
+                    .query(viewport)
+                    .filter(move |record| record_contains_point(record, point, margin)),
+            )
     }
 
     fn compact<R>(&mut self, facts: CanvasGeometryFacts<'_, R>)
     where
         R: CanvasEdgeRouter + Copy,
     {
-        self.base = SpatialRecordSet::new(facts.hit_records());
+        self.base = StaticSpatialRecordSet::new(facts.hit_records());
         self.overlay = SpatialRecordSet::default();
-        self.merged = self.base.clone();
         self.stale.clear();
     }
 
@@ -189,6 +179,57 @@ impl CanvasSpatialCache {
             self.ordinals
                 .insert(record.target.clone(), self.ordinals.len());
         }
+    }
+
+    fn is_stale(&self, record: &IndexedHitRecord) -> bool {
+        self.stale
+            .contains(&record_id_for_target(&record.record.target))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct StaticSpatialRecordSet {
+    records: Vec<IndexedHitRecord>,
+    index: StaticAABB2DIndex<f32>,
+}
+
+impl PartialEq for StaticSpatialRecordSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.records == other.records
+    }
+}
+
+impl Default for StaticSpatialRecordSet {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
+}
+
+impl StaticSpatialRecordSet {
+    pub(crate) fn new(records: Vec<HitRecord>) -> Self {
+        let records = SpatialRecordSet::new(records).records;
+        let mut builder = StaticAABB2DIndexBuilder::new(records.len());
+        for record in &records {
+            let [min_x, min_y, max_x, max_y] = aabb_extents(record.record.bounds);
+            builder.add(min_x, min_y, max_x, max_y);
+        }
+
+        Self {
+            records,
+            index: builder
+                .build()
+                .expect("static spatial cache should add every hit record extent"),
+        }
+    }
+
+    pub(crate) fn query(
+        &self,
+        viewport: Bounds<Pixels>,
+    ) -> impl Iterator<Item = &IndexedHitRecord> {
+        let [min_x, min_y, max_x, max_y] = aabb_extents(viewport);
+        self.index
+            .query_iter(min_x, min_y, max_x, max_y)
+            .map(|index| &self.records[index])
     }
 }
 
@@ -230,6 +271,15 @@ impl SpatialRecordSet {
             .retain(|record| record_id_for_target(&record.record.target) != *record_id);
     }
 
+    pub(crate) fn query(
+        &self,
+        viewport: Bounds<Pixels>,
+    ) -> impl Iterator<Item = &IndexedHitRecord> {
+        self.records
+            .iter()
+            .filter(move |record| record.record.bounds.intersects(&viewport))
+    }
+
     pub(crate) fn sort(&mut self) {
         self.records.sort_by(|left, right| {
             left.record
@@ -263,6 +313,26 @@ pub(crate) fn dirty_record_ids(
     document: &CanvasDocument,
     diff: &CanvasDocumentDiff,
 ) -> IndexSet<CanvasRecordId> {
+    dirty_record_ids_with_edges(diff, |node_id, dirty| {
+        dirty_incident_edges(document, node_id, dirty);
+    })
+}
+
+pub(crate) fn dirty_record_ids_with_graph_index(
+    diff: &CanvasDocumentDiff,
+    graph_index: &CanvasGraphIndex,
+) -> IndexSet<CanvasRecordId> {
+    dirty_record_ids_with_edges(diff, |node_id, dirty| {
+        for edge_id in graph_index.incident_edge_ids(node_id) {
+            dirty.insert(CanvasRecordId::Edge(edge_id.clone()));
+        }
+    })
+}
+
+fn dirty_record_ids_with_edges(
+    diff: &CanvasDocumentDiff,
+    mut dirty_edges_for_node: impl FnMut(&crate::NodeId, &mut IndexSet<CanvasRecordId>),
+) -> IndexSet<CanvasRecordId> {
     let mut dirty = IndexSet::new();
 
     for record_id in diff
@@ -273,7 +343,7 @@ pub(crate) fn dirty_record_ids(
     {
         dirty.insert(record_id.clone());
         if let CanvasRecordId::Node(id) = record_id {
-            dirty_incident_edges(document, id, &mut dirty);
+            dirty_edges_for_node(id, &mut dirty);
         }
     }
 
@@ -298,6 +368,30 @@ fn ordinals_for_records(records: &[HitRecord]) -> IndexMap<HitTarget, usize> {
         .enumerate()
         .map(|(ordinal, record)| (record.target.clone(), ordinal))
         .collect()
+}
+
+fn record_contains_point(record: &IndexedHitRecord, point: Point<Pixels>, margin: Pixels) -> bool {
+    let bounds = if margin == Pixels::ZERO {
+        record.record.bounds
+    } else {
+        record.record.bounds.dilate(margin)
+    };
+    bounds.contains(&point)
+}
+
+fn point_query_bounds(point: Point<Pixels>, margin: Pixels) -> Bounds<Pixels> {
+    let extent = margin.max(px(1.0));
+    Bounds::centered_at(point, Size::new(extent * 2.0, extent * 2.0))
+}
+
+fn aabb_extents(bounds: Bounds<Pixels>) -> [f32; 4] {
+    let bottom_right = bounds.bottom_right();
+    [
+        bounds.origin.x.as_f32(),
+        bounds.origin.y.as_f32(),
+        bottom_right.x.as_f32(),
+        bottom_right.y.as_f32(),
+    ]
 }
 
 #[cfg(test)]
@@ -355,7 +449,13 @@ mod tests {
                 DocumentCommand::UpdateNode(moved),
             ))
             .unwrap();
-        cache.apply_diff_with_router(&document, &diff, &crate::CanvasDefaultEdgeRouter);
+        let graph_index = document.graph_index();
+        cache.apply_diff_with_graph_index_and_router(
+            &document,
+            &diff,
+            &graph_index,
+            &crate::CanvasDefaultEdgeRouter,
+        );
 
         assert!(
             cache
@@ -399,7 +499,13 @@ mod tests {
                 DocumentCommand::UpdateNode(moved),
             ))
             .unwrap();
-        cache.apply_diff_with_router(&document, &diff, &crate::CanvasDefaultEdgeRouter);
+        let graph_index = document.graph_index();
+        cache.apply_diff_with_graph_index_and_router(
+            &document,
+            &diff,
+            &graph_index,
+            &crate::CanvasDefaultEdgeRouter,
+        );
 
         assert!(
             cache
