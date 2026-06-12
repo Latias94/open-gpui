@@ -215,6 +215,11 @@ impl DockViewportRuntimeHandle {
             .is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn viewport_route_ready(&self, space: &DockSpaceId) -> bool {
+        self.runtime.borrow().viewport_route_ready(space)
+    }
+
     /// Replaces the shared close policy used by runtime-opened viewport windows.
     pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
         self.runtime.borrow_mut().set_close_policy(close_policy);

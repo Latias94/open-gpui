@@ -360,6 +360,11 @@ impl DockViewportRuntime {
         self.close_gate.sync_adapter(&self.adapter);
     }
 
+    #[cfg(test)]
+    pub(crate) fn viewport_route_ready(&self, space: &DockSpaceId) -> bool {
+        self.adapter.route_ready(space)
+    }
+
     /// Returns the latest read-only runtime diagnostic snapshot.
     pub(crate) fn runtime_status(&self) -> DockViewportRuntimeStatus {
         self.status.clone()

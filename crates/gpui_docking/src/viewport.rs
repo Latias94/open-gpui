@@ -41,6 +41,17 @@ impl DockViewportAdapter {
         self.registry.snapshot_mut(space)
     }
 
+    #[cfg(test)]
+    pub(crate) fn route_ready(&self, space: &DockSpaceId) -> bool {
+        self.snapshot(space)
+            .is_some_and(|snapshot| snapshot.route_ready)
+    }
+
+    pub(crate) fn window_route_ready(&self, window_id: WindowId) -> Option<bool> {
+        let space = self.space_for_window_id(window_id)?;
+        self.snapshot(space).map(|snapshot| snapshot.route_ready)
+    }
+
     pub(crate) fn unregister_window_id_snapshot(
         &mut self,
         window_id: WindowId,
@@ -236,6 +247,7 @@ mod tests {
         assert_eq!(snapshot.display_id, display_id);
         assert_eq!(snapshot.window_bounds, Some(window_bounds));
         assert_eq!(snapshot.host_bounds, Some(host_bounds));
+        assert!(snapshot.route_ready);
     }
 
     #[test]

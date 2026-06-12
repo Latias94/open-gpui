@@ -70,7 +70,6 @@ impl DockViewportTargetContext {
             || self.window_stack.contains(&window_id)
     }
 
-    #[cfg(test)]
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
         self.hovered_window
     }

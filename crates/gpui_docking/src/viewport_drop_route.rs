@@ -388,6 +388,11 @@ impl DockViewportAdapter {
         policy: &DockPolicy,
     ) -> DockViewportDropRoute {
         let target_context = request.target_context();
+        if let Some(hovered_window) = target_context.hovered_window()
+            && self.window_route_ready(hovered_window) == Some(false)
+        {
+            return DockViewportDropRoute::Unavailable;
+        }
         if let Some(resolution) =
             self.resolve_viewport_route_target(request.release_position(), target_context)
         {

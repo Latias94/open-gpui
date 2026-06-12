@@ -23,6 +23,7 @@ impl DockViewportAdapter {
             && snapshot.screen_bounds == screen_bounds
             && snapshot.host_bounds == host_bounds
             && !snapshot.facts_stale
+            && snapshot.route_ready
         {
             return false;
         }
@@ -33,6 +34,7 @@ impl DockViewportAdapter {
         snapshot.host_bounds = host_bounds;
         snapshot.facts_generation = snapshot.facts_generation.wrapping_add(1);
         snapshot.facts_stale = false;
+        snapshot.route_ready = true;
         true
     }
 
@@ -50,6 +52,7 @@ impl DockViewportAdapter {
             return false;
         }
         snapshot.facts_stale = true;
+        snapshot.route_ready = false;
         snapshot.facts_generation = snapshot.facts_generation.wrapping_add(1);
         true
     }
@@ -60,7 +63,8 @@ impl DockViewportAdapter {
         window_id: WindowId,
     ) -> Option<u64> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.window.window_id() != window_id || snapshot.facts_stale {
+        if snapshot.window.window_id() != window_id || snapshot.facts_stale || !snapshot.route_ready
+        {
             return None;
         }
         Some(snapshot.facts_generation)
@@ -76,7 +80,7 @@ impl DockViewportAdapter {
         position: Point<Pixels>,
     ) -> Option<Point<Pixels>> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.facts_stale {
+        if snapshot.facts_stale || !snapshot.route_ready {
             return None;
         }
         let host_bounds = snapshot.host_bounds?;
@@ -100,7 +104,7 @@ impl DockViewportAdapter {
         position: Point<Pixels>,
     ) -> Option<Point<Pixels>> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.facts_stale {
+        if snapshot.facts_stale || !snapshot.route_ready {
             return None;
         }
         let screen_bounds = snapshot.screen_bounds?;

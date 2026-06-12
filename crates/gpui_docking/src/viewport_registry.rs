@@ -56,6 +56,8 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) facts_generation: u64,
     /// True after the platform reports a bounds change and before a render frame republishes facts.
     pub(crate) facts_stale: bool,
+    /// True after a rendered host scene has published current window and host facts.
+    pub(crate) route_ready: bool,
 }
 
 impl DockViewportSnapshot {
@@ -69,6 +71,7 @@ impl DockViewportSnapshot {
             host_bounds: None,
             facts_generation: 0,
             facts_stale: false,
+            route_ready: false,
         }
     }
 

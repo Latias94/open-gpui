@@ -496,6 +496,97 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
 }
 
 #[open_gpui::test]
+fn viewport_runtime_handle_tear_off_is_not_route_ready_before_first_host_scene(
+    cx: &mut TestAppContext,
+) {
+    let primary_space = DockSpaceId::from("primary");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        active: 0,
+    });
+    graph.set_root(primary_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let outcome = cx
+        .update(|app| {
+            runtime.open_tear_off_viewport(
+                tear_off_request(primary_space.clone(), source_tabs, item("a")),
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("tear-off viewport should open through runtime handle");
+    let DockViewportTearOffOpenOutcome::Completed(completed) = outcome else {
+        panic!("tear-off should complete through the handle");
+    };
+    let detached_window = completed.registration().window();
+    let detached_bounds = detached_window
+        .update(cx, |_, window, _| window.window_bounds())
+        .expect("detached window should be live");
+    let detached_bounds = WindowBounds::Windowed(detached_bounds.get_bounds());
+    let target_point = point(
+        detached_bounds.get_bounds().origin.x + px(120.0),
+        detached_bounds.get_bounds().origin.y + px(100.0),
+    );
+
+    assert!(
+        !runtime.viewport_route_ready(&detached_space),
+        "completed tear-off windows must wait for a rendered host scene before route hits"
+    );
+    let route_before_scene = cx.update(|app| {
+        runtime.resolve_payload_drop_route_with_platform_signals(
+            primary_space.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item("b")),
+            target_point,
+            None,
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(detached_window),
+            app,
+        )
+    });
+    assert_eq!(
+        route_before_scene,
+        DockViewportDropRoute::Unavailable,
+        "opened-but-not-rendered tear-off viewports must not be route targets"
+    );
+
+    assert!(runtime.begin_viewport_host_scene(
+        detached_space.clone(),
+        detached_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(detached_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        point(px(120.0), px(100.0))
+    ));
+    assert!(runtime.viewport_route_ready(&detached_space));
+
+    let route_after_scene_without_target = cx.update(|app| {
+        runtime.resolve_payload_drop_route_with_platform_signals(
+            primary_space,
+            source_tabs,
+            DockViewportDropPayload::Item(item("b")),
+            target_point,
+            None,
+            DockViewportPlatformSignals::from_app(app).with_hovered_window(detached_window),
+            app,
+        )
+    });
+    assert_eq!(
+        route_after_scene_without_target,
+        DockViewportDropRoute::Unavailable,
+        "route-ready only makes the viewport hittable; it still needs a current drop target"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
