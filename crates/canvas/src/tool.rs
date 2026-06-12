@@ -16,6 +16,7 @@ mod action;
 mod builtin;
 mod clipboard;
 mod context;
+mod group;
 mod history;
 mod registry;
 mod select;
@@ -721,6 +722,22 @@ impl CanvasEditor {
         self.apply_paste_transaction(pasted)
     }
 
+    pub fn group_selection(&mut self, group_id: impl Into<ShapeId>) -> Result<bool, DocumentError> {
+        let Some(edit) =
+            group::group_selection_edit(self.document(), self.selection(), group_id.into())
+        else {
+            return Ok(false);
+        };
+        self.apply_group_edit(edit)
+    }
+
+    pub fn ungroup_selection(&mut self) -> Result<bool, DocumentError> {
+        let Some(edit) = group::ungroup_selection_edit(self.document(), self.selection()) else {
+            return Ok(false);
+        };
+        self.apply_group_edit(edit)
+    }
+
     pub fn reorder_selection(
         &mut self,
         command: CanvasZOrderCommand,
@@ -854,6 +871,14 @@ impl CanvasEditor {
         self.apply_transaction(transaction)?;
         let document = self.store.document_snapshot();
         self.session.set_selection(selection, document.as_ref());
+        Ok(true)
+    }
+
+    fn apply_group_edit(&mut self, edit: group::CanvasGroupEdit) -> Result<bool, DocumentError> {
+        self.apply_transaction(edit.transaction)?;
+        let document = self.store.document_snapshot();
+        self.session
+            .set_selection(edit.selection, document.as_ref());
         Ok(true)
     }
 
@@ -1855,6 +1880,321 @@ mod tests {
             vec![ShapeId::from("shape-copy")]
         );
         assert_eq!(editor.history().undo_depth(), 2);
+    }
+
+    #[test]
+    fn editor_groups_selection_with_internal_edges_and_selects_group() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(400.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .edge(CanvasEdge::new(
+                "a-outside",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("outside", None::<&str>),
+            ))
+            .shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(50.0), px(160.0)), size(px(80.0), px(40.0))),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let member_a = CanvasRecordId::Node(NodeId::from("a"));
+        let member_b = CanvasRecordId::Node(NodeId::from("b"));
+        let member_shape = CanvasRecordId::Shape(ShapeId::from("shape"));
+        let internal_edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
+        let external_edge = CanvasRecordId::Edge(EdgeId::from("a-outside"));
+        assert_eq!(
+            editor
+                .document()
+                .shape(&ShapeId::from("group"))
+                .unwrap()
+                .kind,
+            "group"
+        );
+        for member in [&member_a, &member_b, &member_shape, &internal_edge] {
+            assert_eq!(
+                editor.document().relations().parent_of(member),
+                Some(&group)
+            );
+            assert!(
+                editor
+                    .document()
+                    .relations()
+                    .members_of(&group)
+                    .any(|candidate| candidate == member)
+            );
+        }
+        assert_eq!(
+            editor.document().relations().parent_of(&external_edge),
+            None
+        );
+        assert!(
+            !editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .any(|candidate| candidate == &external_edge)
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("group")]
+        );
+        assert!(editor.session.selection.nodes.is_empty());
+        assert!(editor.session.selection.edges.is_empty());
+        assert_eq!(editor.history().undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(editor.document().relations().is_empty());
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
+    }
+
+    #[test]
+    fn editor_ungroups_selected_groups_and_selects_members() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+
+        assert!(editor.ungroup_selection().unwrap());
+
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(editor.document().relations().is_empty());
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a"), NodeId::from("b")]
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .edges
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![EdgeId::from("a-b")]
+        );
+        assert!(editor.session.selection.shapes.is_empty());
+
+        assert!(editor.undo().unwrap());
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        assert!(editor.document().contains_shape(&ShapeId::from("group")));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+    }
+
+    #[test]
+    fn editor_group_selection_skips_locked_and_hidden_records() {
+        let mut locked = CanvasNode::new(
+            "locked",
+            point(px(400.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        locked.locked = true;
+        let mut hidden = CanvasShape::new(
+            "hidden",
+            Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+        );
+        hidden.hidden = true;
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(locked)
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .shape(hidden)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .nodes
+            .insert(NodeId::from("locked"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("hidden"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("locked"))),
+            None
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Shape(ShapeId::from("hidden"))),
+            None
+        );
+    }
+
+    #[test]
+    fn editor_groups_existing_group_as_atomic_member() {
+        let mut inner_group = CanvasShape::new(
+            "inner-group",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(120.0))),
+        );
+        inner_group.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(inner_group)
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("leaf")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("inner-group"));
+        editor.session.selection.nodes.insert(NodeId::from("peer"));
+
+        assert!(editor.group_selection("outer-group").unwrap());
+
+        let outer_group = CanvasRecordId::Shape(ShapeId::from("outer-group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("peer")),
+            CanvasRecordId::Shape(ShapeId::from("inner-group")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&outer_group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("leaf"))),
+            Some(&CanvasRecordId::Shape(ShapeId::from("inner-group")))
+        );
     }
 
     #[test]
