@@ -368,10 +368,38 @@ where
             return false;
         };
 
-        match record.target {
-            HitTarget::Node(_) | HitTarget::Shape(_) => selection_sample_points(intersection)
-                .into_iter()
-                .any(|point| self.record_contains_point(record, point, options)),
+        match &record.target {
+            HitTarget::Node(id) => {
+                if let Some(intersects) = self.document.node(id).and_then(|node| {
+                    self.kind_registry.and_then(|registry| {
+                        registry.node_intersects_bounds(node, record.bounds, bounds, options.margin)
+                    })
+                }) {
+                    return intersects;
+                }
+
+                selection_sample_points(intersection)
+                    .into_iter()
+                    .any(|point| self.record_contains_point(record, point, options))
+            }
+            HitTarget::Shape(id) => {
+                if let Some(intersects) = self.document.shape(id).and_then(|shape| {
+                    self.kind_registry.and_then(|registry| {
+                        registry.shape_intersects_bounds(
+                            shape,
+                            record.bounds,
+                            bounds,
+                            options.margin,
+                        )
+                    })
+                }) {
+                    return intersects;
+                }
+
+                selection_sample_points(intersection)
+                    .into_iter()
+                    .any(|point| self.record_contains_point(record, point, options))
+            }
             HitTarget::Edge(_) | HitTarget::Handle { .. } => true,
         }
     }
@@ -713,8 +741,8 @@ pub fn connection_hit_options() -> HitOptions {
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle, HandleRole,
-        test_support::document_fixture,
+        CanvasEdge, CanvasHandle, CanvasNode, CanvasNodeBoundsHitTest, CanvasNodeInteractionPolicy,
+        CanvasNodeKind, CanvasShape, CanvasStyle, HandleRole, test_support::document_fixture,
     };
     use open_gpui::{point, px, size};
 
@@ -877,6 +905,50 @@ mod tests {
         assert!(facts.record_intersects_bounds(
             &group_record,
             Bounds::new(point(px(0.0), px(40.0)), size(px(8.0), px(20.0))),
+            HitOptions::default()
+        ));
+    }
+
+    #[test]
+    fn record_intersects_bounds_uses_node_bounds_interaction_policy() {
+        struct RightHalfBoundsKind;
+
+        impl CanvasNodeInteractionPolicy for RightHalfBoundsKind {
+            fn node_intersects_bounds(&self, hit: CanvasNodeBoundsHitTest<'_>) -> Option<bool> {
+                let active = Bounds::from_corners(
+                    Point::new(hit.bounds.center().x, hit.bounds.origin.y),
+                    Point::new(
+                        hit.bounds.origin.x + hit.bounds.size.width,
+                        hit.bounds.origin.y + hit.bounds.size.height,
+                    ),
+                );
+                Some(active.intersects(&hit.query_bounds))
+            }
+        }
+
+        let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.kind = "right-half-bounds".to_string();
+        let document = document_fixture().node(node).build();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind(
+            "right-half-bounds",
+            CanvasNodeKind::new().with_interaction_policy(RightHalfBoundsKind),
+        );
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let node_record = facts
+            .hit_records()
+            .into_iter()
+            .find(|record| record.target == HitTarget::Node("node".into()))
+            .unwrap();
+
+        assert!(!facts.record_intersects_bounds(
+            &node_record,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
+        assert!(facts.record_intersects_bounds(
+            &node_record,
+            Bounds::new(point(px(60.0), px(10.0)), size(px(20.0), px(20.0))),
             HitOptions::default()
         ));
     }
