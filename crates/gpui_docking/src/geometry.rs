@@ -180,9 +180,11 @@ fn resolve_drop_geometry(
         return None;
     }
 
-    drop_boxes(bounds, set)
-        .into_iter()
-        .find(|drop_box| drop_box.hit_bounds.contains(&position))
+    let boxes = drop_boxes(bounds, set);
+    boxes
+        .iter()
+        .copied()
+        .find(|drop_box| drop_box_contains_position(bounds, *drop_box, position, set))
         .map(|drop_box| DockDropGeometry { drop_box })
 }
 
@@ -533,6 +535,57 @@ fn edge_drop_box(
     })
 }
 
+fn drop_box_contains_position(
+    bounds: Bounds<Pixels>,
+    drop_box: DockDropBox,
+    position: Point<Pixels>,
+    set: DockDropBoxSet,
+) -> bool {
+    if drop_box.hit_bounds.contains(&position) {
+        return true;
+    }
+    if set != DockDropBoxSet::Inner {
+        return false;
+    }
+
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let metrics = drop_box_metrics(width, height);
+    let center = bounds.center();
+    let local_x = f32::from(position.x - bounds.origin.x);
+    let local_y = f32::from(position.y - bounds.origin.y);
+    let center_x = f32::from(center.x - bounds.origin.x);
+    let center_y = f32::from(center.y - bounds.origin.y);
+    let delta_x = local_x - center_x;
+    let delta_y = local_y - center_y;
+    let distance_squared = delta_x * delta_x + delta_y * delta_y;
+    let center_threshold = metrics.center_half * 1.4;
+    if distance_squared < center_threshold * center_threshold {
+        return drop_box.kind == DockDropBoxKind::Center;
+    }
+
+    let side_threshold = metrics.center_half * (1.4 + 1.2);
+    if distance_squared < side_threshold * side_threshold {
+        return drop_box.kind == DockDropBoxKind::InnerEdge(quadrant_zone(delta_x, delta_y));
+    }
+
+    false
+}
+
+fn quadrant_zone(delta_x: f32, delta_y: f32) -> DropZone {
+    if delta_x.abs() > delta_y.abs() {
+        if delta_x < 0.0 {
+            DropZone::Left
+        } else {
+            DropZone::Right
+        }
+    } else if delta_y < 0.0 {
+        DropZone::Top
+    } else {
+        DropZone::Bottom
+    }
+}
+
 fn drop_box(
     bounds: Bounds<Pixels>,
     kind: DockDropBoxKind,
@@ -616,11 +669,19 @@ mod tests {
     }
 
     #[test]
-    fn inner_drop_geometry_resolves_only_explicit_edge_boxes() {
+    fn inner_drop_geometry_resolves_expanded_visible_guide_hits() {
         let bounds = bounds(300.0, 200.0);
         assert!(
             resolve_inner_drop_geometry(bounds, point(px(12.0), px(120.0))).is_none(),
-            "near-edge points outside an explicit side box must not split"
+            "near-edge points outside the visible guide cluster must not split"
+        );
+
+        let left_hit = point(px(125.0), px(120.0));
+        let near_left = resolve_inner_drop_geometry(bounds, left_hit)
+            .expect("near-left guide region should resolve without requiring exact rect hit");
+        assert_eq!(
+            near_left.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Left)
         );
 
         let left = resolve_inner_drop_geometry(

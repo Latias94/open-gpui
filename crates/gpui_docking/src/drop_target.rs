@@ -78,6 +78,14 @@ pub(crate) struct DockTabLabelDropTarget {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockTabBarDropTarget {
+    pub(crate) target_tabs: DockNodeId,
+    pub(crate) insert_index: usize,
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) is_central: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DockLeafDropTarget {
     pub(crate) root: DockNodeId,
     pub(crate) target_tabs: DockNodeId,
@@ -111,6 +119,7 @@ pub(crate) struct DockDropResolverInput<'a> {
     pub(crate) policy: &'a DockPolicy,
     pub(crate) target_validator: Option<&'a DockDropTargetValidator<'a>>,
     pub(crate) tab_labels: &'a [DockTabLabelDropTarget],
+    pub(crate) tab_bars: &'a [DockTabBarDropTarget],
     pub(crate) leaves: &'a [DockLeafDropTarget],
     pub(crate) root: Option<DockRootDropTarget>,
     pub(crate) floating_title_bars: &'a [DockFloatingTitleBarDropTarget],
@@ -125,6 +134,7 @@ impl<'a> DockDropResolverInput<'a> {
             policy,
             target_validator: None,
             tab_labels: &[],
+            tab_bars: &[],
             leaves: &[],
             root: None,
             floating_title_bars: &[],
@@ -164,6 +174,14 @@ pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<Do
     }
 
     if let Some(target) = resolve_tab_bar_drop(&input) {
+        return Some(validate_resolved_drop_target(
+            target,
+            input.policy,
+            input.target_validator,
+        ));
+    }
+
+    if let Some(target) = resolve_tab_bar_empty_drop(&input) {
         return Some(validate_resolved_drop_target(
             target,
             input.policy,
@@ -243,6 +261,24 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
                 preview_bounds: Some(target.bounds),
                 is_central_region: target.is_central,
             }
+        })
+}
+
+fn resolve_tab_bar_empty_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolvedDropTarget> {
+    input
+        .tab_bars
+        .iter()
+        .rev()
+        .find(|target| target.bounds.contains(&input.position))
+        .map(|target| DockResolvedDropTarget {
+            kind: DockResolvedDropTargetKind::TabBar {
+                target_tabs: target.target_tabs,
+                insert_index: target.insert_index,
+            },
+            source: DockDropResolveSource::TabBar,
+            drop_box: None,
+            preview_bounds: Some(target.bounds),
+            is_central_region: target.is_central,
         })
 }
 
@@ -431,6 +467,26 @@ mod tests {
         }];
         resolve_layout_drop(DockDropResolverInput {
             tab_labels: &tab,
+            ..DockDropResolverInput::new(position, policy)
+        })
+    }
+
+    fn resolve_tab_bar_empty_drop_with_central(
+        target_tabs: DockNodeId,
+        insert_index: usize,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        is_central: bool,
+        policy: &DockPolicy,
+    ) -> Option<DockDropResolution> {
+        let tab_bar = [DockTabBarDropTarget {
+            target_tabs,
+            insert_index,
+            bounds,
+            is_central,
+        }];
+        resolve_layout_drop(DockDropResolverInput {
+            tab_bars: &tab_bar,
             ..DockDropResolverInput::new(position, policy)
         })
     }
@@ -665,6 +721,30 @@ mod tests {
         assert_eq!(after.zone(), Some(DropZone::Center));
         assert_eq!(
             after.kind,
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs: tabs(),
+                insert_index: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn tab_bar_empty_space_appends_to_target_tabs() {
+        let target = tabs();
+        let target = resolve_tab_bar_empty_drop_with_central(
+            target,
+            3,
+            bounds(300.0, 28.0),
+            point(px(260.0), px(30.0)),
+            false,
+            &policy(),
+        )
+        .and_then(DockDropResolution::target)
+        .expect("empty tab bar area should resolve as an append target");
+
+        assert_eq!(target.source, DockDropResolveSource::TabBar);
+        assert_eq!(
+            target.kind,
             DockResolvedDropTargetKind::TabBar {
                 target_tabs: tabs(),
                 insert_index: 3,

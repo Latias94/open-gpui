@@ -42,7 +42,7 @@ pub enum SplitAxis {
 }
 
 /// Drop zone used when docking into an existing node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DropZone {
     /// Merge into the target tabs node.
     Center,

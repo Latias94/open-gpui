@@ -2,7 +2,9 @@ use crate::{
     DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId, DockWorkspace,
     SplitAxis, debug::DockDebugRegion, host_test_support::*,
 };
-use open_gpui::{AppContext as _, Focusable, TestAppContext, px, size};
+use open_gpui::{
+    AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
+};
 use slotmap::Key;
 
 #[open_gpui::test]
@@ -42,6 +44,105 @@ fn single_tabs_render_active_panel_and_all_tab_labels(cx: &mut TestAppContext) {
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
         "inactive panel should not be mounted"
+    );
+}
+
+#[open_gpui::test]
+fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(400.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: root,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    for zone in [
+        crate::DropZone::Center,
+        crate::DropZone::Left,
+        crate::DropZone::Right,
+        crate::DropZone::Top,
+        crate::DropZone::Bottom,
+    ] {
+        let guide = selector_for(
+            &visual,
+            &host,
+            DockDebugRegion::DropGuide {
+                node: Some(root),
+                zone,
+            },
+        )
+        .unwrap_or_else(|| panic!("{zone:?} drop guide selector should be emitted"));
+        assert!(
+            debug_bounds(&mut visual, &guide).size.width > px(0.0),
+            "{zone:?} guide should have visible bounds"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (window, host, mut visual) = open_host(
+        cx,
+        graph,
+        &[("a", "Panel A", "A"), ("b", "Panel B", "B")],
+        size(px(500.0), px(240.0)),
+    );
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: left_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let right_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("right tabs selector should be emitted");
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(
+        open_gpui::point(start.x + px(24.0), start.y),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+
+    let right_bounds = debug_bounds(&mut visual, &right_stack);
+    let right_center_guide = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::DropGuide {
+            node: Some(right_tabs),
+            zone: crate::DropZone::Center,
+        },
+    )
+    .expect("right stack center guide selector should be emitted");
+    assert!(
+        right_bounds.contains(&debug_bounds(&mut visual, &right_center_guide).center()),
+        "right stack guide should be positioned inside the right tab stack"
     );
 }
 

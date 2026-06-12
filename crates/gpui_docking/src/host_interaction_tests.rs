@@ -341,6 +341,75 @@ fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn dragging_tab_to_target_tab_bar_empty_area_appends(cx: &mut TestAppContext) {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b"), item("c")],
+        active: 0,
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.4, 0.6],
+    });
+    graph.set_root(space(), root);
+    let workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("a", "Panel A", "A"),
+            ("b", "Panel B", "B"),
+            ("c", "Panel C", "C"),
+        ],
+    );
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(640.0), px(240.0)));
+
+    let source_tab = selector_for(
+        &visual,
+        &host,
+        DockDebugRegion::Tab {
+            tabs: source_tabs,
+            item: item("a"),
+        },
+    )
+    .expect("source tab selector should be emitted");
+    let target_stack = selector_for(&visual, &host, DockDebugRegion::Tabs { node: target_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_stack);
+    let start = debug_bounds(&mut visual, &source_tab).center();
+    let end = point(
+        target_bounds.origin.x + target_bounds.size.width - px(10.0),
+        target_bounds.origin.y + px(12.0),
+    );
+
+    simulate_left_drag(&mut visual, start, end);
+    cx.run_until_parked();
+    let visual = VisualTestContext::from_window(window.into(), cx);
+
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
+        "panel A should be active after tab bar append"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, active } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
+        assert_eq!(*active, 2);
+    });
+}
+
+#[open_gpui::test]
 fn dragging_tab_to_right_edge_creates_horizontal_split(cx: &mut TestAppContext) {
     let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let workspace =

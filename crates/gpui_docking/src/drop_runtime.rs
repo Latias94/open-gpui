@@ -3,7 +3,7 @@ use crate::{
     drop_target::{
         self, DockDropResolution, DockDropResolverInput, DockDropTargetValidator,
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
-        DockResolvedDropTarget, DockRootDropTarget, DockTabLabelDropTarget,
+        DockResolvedDropTarget, DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
 };
 use open_gpui::{Bounds, Pixels, Point};
@@ -25,6 +25,7 @@ pub(crate) struct DockHostDropScene {
     pub(crate) position: Point<Pixels>,
     excluded_node: Option<DockNodeId>,
     pub(crate) tab_labels: Vec<DockTabLabelDropTarget>,
+    pub(crate) tab_bars: Vec<DockTabBarDropTarget>,
     pub(crate) leaves: Vec<DockLeafDropTarget>,
     pub(crate) root: Option<DockRootDropTarget>,
     pub(crate) floating_title_bars: Vec<DockFloatingTitleBarDropTarget>,
@@ -35,6 +36,7 @@ pub(crate) struct DockHostDropScene {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockHostDropSceneFact {
     TabLabel(DockTabLabelDropTarget),
+    TabBar(DockTabBarDropTarget),
     Leaf(DockLeafDropTarget),
     Root(DockRootDropTarget),
     FloatingTitleBar(DockFloatingTitleBarDropTarget),
@@ -47,6 +49,7 @@ impl DockHostDropScene {
             position,
             excluded_node: None,
             tab_labels: Vec::new(),
+            tab_bars: Vec::new(),
             leaves: Vec::new(),
             root: None,
             floating_title_bars: Vec::new(),
@@ -70,6 +73,7 @@ impl DockHostDropScene {
 
         match fact {
             DockHostDropSceneFact::TabLabel(target) => self.tab_labels.push(target),
+            DockHostDropSceneFact::TabBar(target) => self.tab_bars.push(target),
             DockHostDropSceneFact::Leaf(target) => self.leaves.push(target),
             DockHostDropSceneFact::Root(target) => self.root = Some(target),
             DockHostDropSceneFact::FloatingTitleBar(target) => {
@@ -95,6 +99,7 @@ impl DockHostDropScene {
             policy,
             target_validator,
             tab_labels: &self.tab_labels,
+            tab_bars: &self.tab_bars,
             leaves: &self.leaves,
             root: self.root,
             floating_title_bars: &self.floating_title_bars,
@@ -107,6 +112,7 @@ impl DockHostDropSceneFact {
     fn targets_node(&self, node: DockNodeId) -> bool {
         match self {
             DockHostDropSceneFact::TabLabel(target) => target.target_tabs == node,
+            DockHostDropSceneFact::TabBar(target) => target.target_tabs == node,
             DockHostDropSceneFact::Leaf(target) => {
                 target.root == node || target.target_tabs == node
             }

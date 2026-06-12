@@ -3,7 +3,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_target::{
         DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
-        DockRootDropTarget, DockTabLabelDropTarget,
+        DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
     },
 };
 use open_gpui::{Bounds, Pixels};
@@ -17,6 +17,20 @@ pub(crate) fn tab_label(
     DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
         target_tabs,
         target_index,
+        bounds,
+        is_central,
+    })
+}
+
+pub(crate) fn tab_bar(
+    target_tabs: DockNodeId,
+    insert_index: usize,
+    bounds: Bounds<Pixels>,
+    is_central: bool,
+) -> DockHostDropSceneFact {
+    DockHostDropSceneFact::TabBar(DockTabBarDropTarget {
+        target_tabs,
+        insert_index,
         bounds,
         is_central,
     })

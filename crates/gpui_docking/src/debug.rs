@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId, drop_preview::DockDropPreviewKind};
+use crate::{DockItemId, DockNodeId, DropZone, drop_preview::DockDropPreviewKind};
 #[cfg(test)]
 use std::collections::HashMap;
 
@@ -35,6 +35,13 @@ pub(crate) enum DockDebugRegion {
     },
     /// The active drag/drop preview overlay for the host.
     DropPreview,
+    /// Visible guide for one local dock drop zone during a drag.
+    DropGuide {
+        /// Runtime node id that owns the guide, or None for host-level empty/root guides.
+        node: Option<DockNodeId>,
+        /// Zone advertised by the guide.
+        zone: DropZone,
+    },
     /// The payload tab label rendered inside a center/tab drop preview.
     DropPayloadTabPreview,
     /// A viewport route or tear-off preview before host-local target resolution.

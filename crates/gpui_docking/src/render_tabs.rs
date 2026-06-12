@@ -41,6 +41,7 @@ impl DockHost {
             format!("{} tabs", items.len())
         };
         let stack_payload = DockDragPayload::new_tabs(session.space().clone(), node, stack_title);
+        let tab_count = items.len();
 
         let mut tabs = div()
             .id(selector.clone())
@@ -97,12 +98,32 @@ impl DockHost {
             .flex_none()
             .overflow_hidden()
             .bg(rgb(0xe7ebf0))
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
+                    let payload = event.drag(cx).clone();
+                    let fact = drop_scene_fact::tab_bar(node, tab_count, event.bounds, is_central);
+                    this.update_drop_scene_fact_from_render(
+                        &payload,
+                        fact,
+                        event.event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .on_drag(stack_payload, move |payload, _, _, cx| {
                 stack_drag_entity.update(cx, |host, _| {
                     host.begin_payload_drag_from_render(payload);
                 });
                 cx.new(|_| DockDragPreview::new(payload.title()))
             });
+        if let Some(probe) = self
+            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+                drop_scene_fact::tab_bar(node, tab_count, bounds, is_central)
+            })
+        {
+            tab_bar = tab_bar.child(probe);
+        }
 
         for (index, item) in items.into_iter().enumerate() {
             let title = session.panel_title(&item);
@@ -242,9 +263,13 @@ impl DockHost {
             tab_bar = tab_bar.child(tab);
         }
 
-        tabs.child(tab_bar)
-            .child(self.render_panel(&active_item, session, cx))
-            .into_any_element()
+        tabs = tabs
+            .child(tab_bar)
+            .child(self.render_panel(&active_item, session, cx));
+        if let Some(guides) = self.render_drop_guides(session, Some(node), cx) {
+            tabs = tabs.child(guides);
+        }
+        tabs.into_any_element()
     }
 
     fn render_panel(

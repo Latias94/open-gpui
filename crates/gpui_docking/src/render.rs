@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DockViewportWindowFacts,
+    DockHost, DockNode, DockNodeId, DockViewportWindowFacts, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropPreviewKind},
@@ -16,7 +16,7 @@ use crate::{
 use open_gpui::{
     AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
     MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
-    px, rgb, rgba,
+    px, relative, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -241,7 +241,11 @@ impl DockHost {
         {
             root_container = root_container.child(probe);
         }
-        root_container.child(root_child).into_any_element()
+        root_container = root_container.child(root_child);
+        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+            root_container = root_container.child(guides);
+        }
+        root_container.into_any_element()
     }
 
     fn render_empty_space(
@@ -286,9 +290,11 @@ impl DockHost {
         {
             empty = empty.child(probe);
         }
-        empty
-            .child(session.empty_message().to_string())
-            .into_any_element()
+        empty = empty.child(session.empty_message().to_string());
+        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+            empty = empty.child(guides);
+        }
+        empty.into_any_element()
     }
 
     fn render_passthrough_empty_central_space(
@@ -328,6 +334,9 @@ impl DockHost {
             })
         {
             empty = empty.child(probe);
+        }
+        if let Some(guides) = self.render_drop_guides(session, None, cx) {
+            empty = empty.child(guides);
         }
         empty.into_any_element()
     }
@@ -446,6 +455,115 @@ impl DockHost {
         }
 
         Some(element.into_any_element())
+    }
+
+    pub(crate) fn render_drop_guides(
+        &mut self,
+        session: &DockHostRenderSession,
+        node: Option<DockNodeId>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if cx.active_drag_value::<DockDragPayload>().is_none() {
+            return None;
+        }
+
+        let mut overlay = div().absolute().top(px(0.0)).left(px(0.0)).size_full();
+        for zone in [
+            DropZone::Center,
+            DropZone::Left,
+            DropZone::Right,
+            DropZone::Top,
+            DropZone::Bottom,
+        ] {
+            overlay = overlay.child(self.render_drop_guide(zone, session, node));
+        }
+        Some(overlay.into_any_element())
+    }
+
+    fn render_drop_guide(
+        &mut self,
+        zone: DropZone,
+        session: &DockHostRenderSession,
+        node: Option<DockNodeId>,
+    ) -> AnyElement {
+        let selector_suffix = match node {
+            Some(node) => format!("{}:{zone:?}", node.as_u64()),
+            None => format!("{zone:?}"),
+        };
+        let selector = self.record_debug_selector(
+            DockDebugRegion::DropGuide { node, zone },
+            format!("{}:drop-guide:{selector_suffix}", session.selector_prefix()),
+        );
+
+        let center_size = px(48.0);
+        let side_long = px(48.0);
+        let side_short = px(43.2);
+        let offset = px(57.6);
+        let half_center = -center_size / 2.0;
+        let half_long = -side_long / 2.0;
+        let half_short = -side_short / 2.0;
+
+        let mut guide = div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .flex()
+            .items_center()
+            .justify_center()
+            .border_1()
+            .border_color(rgb(0x1d4ed8))
+            .rounded_sm()
+            .bg(if zone == DropZone::Center {
+                rgba(0xbfdbfecc)
+            } else {
+                rgba(0xdbeafecc)
+            })
+            .opacity(0.92);
+
+        guide = match zone {
+            DropZone::Center => guide
+                .left(relative(0.5))
+                .top(relative(0.5))
+                .w(center_size)
+                .h(center_size)
+                .ml(half_center)
+                .mt(half_center)
+                .child(div().w(px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
+            DropZone::Left => guide
+                .left(relative(0.5))
+                .top(relative(0.5))
+                .w(side_short)
+                .h(side_long)
+                .ml(-offset + half_short)
+                .mt(half_long)
+                .child(div().w(px(1.0)).h(side_long - px(8.0)).bg(rgb(0x1d4ed8))),
+            DropZone::Right => guide
+                .left(relative(0.5))
+                .top(relative(0.5))
+                .w(side_short)
+                .h(side_long)
+                .ml(offset + half_short)
+                .mt(half_long)
+                .child(div().w(px(1.0)).h(side_long - px(8.0)).bg(rgb(0x1d4ed8))),
+            DropZone::Top => guide
+                .left(relative(0.5))
+                .top(relative(0.5))
+                .w(side_long)
+                .h(side_short)
+                .ml(half_long)
+                .mt(-offset + half_short)
+                .child(div().w(side_long - px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
+            DropZone::Bottom => guide
+                .left(relative(0.5))
+                .top(relative(0.5))
+                .w(side_long)
+                .h(side_short)
+                .ml(half_long)
+                .mt(offset + half_short)
+                .child(div().w(side_long - px(8.0)).h(px(1.0)).bg(rgb(0x1d4ed8))),
+        };
+
+        guide.into_any_element()
     }
 
     /// Publishes viewport bounds during prepaint so cross-window releases can resolve even when
