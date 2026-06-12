@@ -1,4 +1,6 @@
 use super::*;
+use crate::{CanvasResizeHandle, HitOptions};
+use open_gpui::Axis;
 
 pub(super) struct SelectToolStateMachine;
 
@@ -363,5 +365,31 @@ impl SelectToolStateMachine {
                 base_selection: base_selection.clone(),
             }),
         ]
+    }
+}
+
+fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pixels> {
+    Bounds::from_corners(
+        Point::new(origin.x.min(current.x), origin.y.min(current.y)),
+        Point::new(origin.x.max(current.x), origin.y.max(current.y)),
+    )
+}
+
+fn constrained_drag_position(
+    origin: Point<Pixels>,
+    current: Point<Pixels>,
+    axis: Axis,
+) -> Point<Pixels> {
+    match axis {
+        Axis::Horizontal => Point::new(current.x, origin.y),
+        Axis::Vertical => Point::new(origin.x, current.y),
+    }
+}
+
+fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
+    if delta.x.abs() >= delta.y.abs() {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
     }
 }
