@@ -9,6 +9,7 @@ use crate::{
         DockDropResolveSource, DockEmptySpaceDropTarget, DockLeafDropTarget,
         DockResolvedDropTargetKind, DockRootDropTarget,
     },
+    geometry::{self, DockDropBoxKind, DockDropBoxSet},
     host_test_support::*,
 };
 use open_gpui::{
@@ -910,11 +911,8 @@ fn target_hover_position(
             debug_bounds(visual, &selector).center()
         }
         MatrixTarget::RootEdge { zone } => {
-            let target_tabs = nodes
-                .target_tabs
-                .expect("root-edge case should have target tabs");
-            let selector = selector_for(visual, host, DockDebugRegion::Tabs { node: target_tabs })
-                .unwrap_or_else(|| panic!("{}: target tabs selector should be emitted", case.name));
+            let selector = selector_for(visual, host, DockDebugRegion::Host)
+                .unwrap_or_else(|| panic!("{}: target host selector should be emitted", case.name));
             let bounds = debug_bounds(visual, &selector);
             root_edge_position_in_bounds(zone, bounds)
         }
@@ -1037,42 +1035,27 @@ fn assert_case_graph(
 }
 
 fn root_edge_leaf_bounds(zone: DropZone) -> Bounds<Pixels> {
-    match zone {
-        DropZone::Left => floating_bounds(0.0, 0.0, 210.0, 240.0),
-        DropZone::Right => floating_bounds(210.0, 0.0, 210.0, 240.0),
-        DropZone::Top => floating_bounds(210.0, 0.0, 210.0, 240.0),
-        DropZone::Bottom => floating_bounds(210.0, 0.0, 210.0, 240.0),
-        DropZone::Center => unreachable!(),
-    }
+    let position = root_edge_host_position(zone);
+    Bounds::new(
+        point(position.x - px(60.0), position.y - px(60.0)),
+        open_gpui::size(px(120.0), px(120.0)),
+    )
 }
 
 fn root_edge_host_position(zone: DropZone) -> Point<Pixels> {
-    match zone {
-        DropZone::Left => point(px(2.0), px(120.0)),
-        DropZone::Right => point(px(418.0), px(120.0)),
-        DropZone::Top => point(px(315.0), px(2.0)),
-        DropZone::Bottom => point(px(315.0), px(238.0)),
-        DropZone::Center => unreachable!(),
-    }
+    outer_drop_box_center(zone, floating_bounds(0.0, 0.0, 420.0, 240.0))
 }
 
 fn root_edge_position_in_bounds(zone: DropZone, bounds: Bounds<Pixels>) -> Point<Pixels> {
-    match zone {
-        DropZone::Left => point(bounds.origin.x + px(2.0), bounds.center().y),
-        DropZone::Right => point(
-            bounds.origin.x + bounds.size.width - px(2.0),
-            bounds.center().y,
-        ),
-        DropZone::Top => point(
-            bounds.origin.x + bounds.size.width - px(64.0),
-            bounds.origin.y + px(2.0),
-        ),
-        DropZone::Bottom => point(
-            bounds.origin.x + bounds.size.width - px(64.0),
-            bounds.origin.y + bounds.size.height - px(2.0),
-        ),
-        DropZone::Center => unreachable!(),
-    }
+    outer_drop_box_center(zone, bounds)
+}
+
+fn outer_drop_box_center(zone: DropZone, bounds: Bounds<Pixels>) -> Point<Pixels> {
+    geometry::drop_boxes(bounds, DockDropBoxSet::Outer)
+        .into_iter()
+        .find(|drop_box| drop_box.kind == DockDropBoxKind::OuterEdge(zone))
+        .map(|drop_box| drop_box.hit_bounds.center())
+        .unwrap_or_else(|| panic!("{zone:?} outer box should exist"))
 }
 
 fn assert_root_edge_graph(

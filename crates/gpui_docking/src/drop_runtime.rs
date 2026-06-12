@@ -272,6 +272,7 @@ mod tests {
     use crate::{
         DropZone,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+        geometry::{self, DockDropBoxKind, DockDropBoxSet},
     };
     use open_gpui::{point, px, size};
     use slotmap::Key;
@@ -290,19 +291,17 @@ mod tests {
     }
 
     fn root_edge_leaf_bounds_and_position(zone: DropZone) -> (Bounds<Pixels>, Point<Pixels>) {
-        match zone {
-            DropZone::Left => (bounds(0.0, 20.0, 160.0, 180.0), point(px(2.0), px(100.0))),
-            DropZone::Right => (
-                bounds(240.0, 20.0, 160.0, 180.0),
-                point(px(398.0), px(100.0)),
-            ),
-            DropZone::Top => (bounds(120.0, 0.0, 160.0, 120.0), point(px(200.0), px(2.0))),
-            DropZone::Bottom => (
-                bounds(120.0, 120.0, 160.0, 120.0),
-                point(px(200.0), px(238.0)),
-            ),
-            DropZone::Center => unreachable!(),
-        }
+        let root_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = geometry::drop_boxes(root_bounds, DockDropBoxSet::Outer)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::OuterEdge(zone))
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .unwrap_or_else(|| panic!("{zone:?} outer box should exist"));
+        let leaf_bounds = Bounds::new(
+            point(position.x - px(60.0), position.y - px(60.0)),
+            size(px(120.0), px(120.0)),
+        );
+        (leaf_bounds, position)
     }
 
     #[test]

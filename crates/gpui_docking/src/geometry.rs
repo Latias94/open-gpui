@@ -1,13 +1,104 @@
 use crate::{DropZone, SplitAxis, split_fraction};
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
-const MAX_EDGE_BAND: f32 = 48.0;
-const MIN_EDGE_BAND: f32 = 8.0;
+const ASSUMED_DOCK_WIDGET_FONT_SIZE: f32 = 16.0;
+const MAX_SPLIT_PREVIEW_EXTENT: f32 = 48.0;
+const MIN_SPLIT_PREVIEW_EXTENT: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DockDropGeometry {
-    pub(crate) zone: DropZone,
+    pub(crate) drop_box: DockDropBox,
+}
+
+impl DockDropGeometry {
+    pub(crate) fn zone(&self) -> DropZone {
+        self.drop_box.kind.zone()
+    }
+
+    pub(crate) fn preview_bounds(&self) -> Bounds<Pixels> {
+        self.drop_box.preview_bounds
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockDropBox {
+    pub(crate) kind: DockDropBoxKind,
+    pub(crate) hit_bounds: Bounds<Pixels>,
     pub(crate) preview_bounds: Bounds<Pixels>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockDropBoxKind {
+    Center,
+    InnerEdge(DropZone),
+    OuterEdge(DropZone),
+}
+
+impl DockDropBoxKind {
+    pub(crate) fn zone(self) -> DropZone {
+        match self {
+            Self::Center => DropZone::Center,
+            Self::InnerEdge(zone) | Self::OuterEdge(zone) => zone,
+        }
+    }
+
+    pub(crate) fn is_center(self) -> bool {
+        matches!(self, Self::Center)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockDropBoxSet {
+    Inner,
+    Outer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockDropBoxMetrics {
+    center_half: f32,
+    inner_side_half_long: f32,
+    inner_side_half_short: f32,
+    inner_offset: f32,
+    outer_side_half_long: f32,
+    outer_side_half_short: f32,
+    outer_offset_x: f32,
+    outer_offset_y: f32,
+    split_preview_extent: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LocalRect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl LocalRect {
+    fn from_center(center_x: f32, center_y: f32, half_width: f32, half_height: f32) -> Self {
+        Self {
+            x: center_x - half_width,
+            y: center_y - half_height,
+            width: half_width * 2.0,
+            height: half_height * 2.0,
+        }
+    }
+
+    fn clamp_to_bounds(self, width: f32, height: f32) -> Option<Self> {
+        let min_x = self.x.clamp(0.0, width);
+        let min_y = self.y.clamp(0.0, height);
+        let max_x = (self.x + self.width).clamp(0.0, width);
+        let max_y = (self.y + self.height).clamp(0.0, height);
+        if max_x <= min_x || max_y <= min_y {
+            return None;
+        }
+        Some(Self {
+            x: min_x,
+            y: min_y,
+            width: max_x - min_x,
+            height: max_y - min_y,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,42 +121,69 @@ pub(crate) struct DockSplitHandleLayout {
     pub(crate) center_share: f32,
 }
 
-pub(crate) fn resolve_drop_geometry(
+pub(crate) fn resolve_inner_drop_geometry(
     bounds: Bounds<Pixels>,
     position: Point<Pixels>,
+) -> Option<DockDropGeometry> {
+    resolve_drop_geometry(bounds, position, DockDropBoxSet::Inner)
+}
+
+pub(crate) fn resolve_outer_drop_geometry(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+) -> Option<DockDropGeometry> {
+    resolve_drop_geometry(bounds, position, DockDropBoxSet::Outer)
+}
+
+pub(crate) fn drop_boxes(bounds: Bounds<Pixels>, set: DockDropBoxSet) -> Vec<DockDropBox> {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    if !valid_extent(width) || !valid_extent(height) {
+        return Vec::new();
+    }
+
+    let metrics = drop_box_metrics(width, height);
+    let mut boxes = Vec::new();
+    match set {
+        DockDropBoxSet::Inner => {
+            boxes.push(drop_box(
+                bounds,
+                DockDropBoxKind::Center,
+                LocalRect::from_center(
+                    width / 2.0,
+                    height / 2.0,
+                    metrics.center_half,
+                    metrics.center_half,
+                ),
+                preview_bounds(
+                    DropZone::Center,
+                    width,
+                    height,
+                    metrics.split_preview_extent,
+                ),
+            ));
+            boxes.extend(edge_drop_boxes(bounds, DockDropBoxKind::InnerEdge, metrics));
+        }
+        DockDropBoxSet::Outer => {
+            boxes.extend(edge_drop_boxes(bounds, DockDropBoxKind::OuterEdge, metrics));
+        }
+    }
+    boxes
+}
+
+fn resolve_drop_geometry(
+    bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    set: DockDropBoxSet,
 ) -> Option<DockDropGeometry> {
     if !bounds.contains(&position) {
         return None;
     }
 
-    let width = f32::from(bounds.size.width);
-    let height = f32::from(bounds.size.height);
-    if !valid_extent(width) || !valid_extent(height) {
-        return None;
-    }
-
-    let edge_band = edge_band(width, height);
-    let x = f32::from(position.x - bounds.origin.x);
-    let y = f32::from(position.y - bounds.origin.y);
-    let distances = [
-        (DropZone::Left, x),
-        (DropZone::Right, width - x),
-        (DropZone::Top, y),
-        (DropZone::Bottom, height - y),
-    ];
-
-    let zone = distances
+    drop_boxes(bounds, set)
         .into_iter()
-        .filter(|(_, distance)| *distance <= edge_band)
-        .min_by(|(_, left), (_, right)| left.total_cmp(right))
-        .map(|(zone, _)| zone)
-        .unwrap_or(DropZone::Center);
-
-    let preview = preview_bounds(zone, width, height, edge_band);
-    Some(DockDropGeometry {
-        zone,
-        preview_bounds: offset_bounds(bounds.origin, preview),
-    })
+        .find(|drop_box| drop_box.hit_bounds.contains(&position))
+        .map(|drop_box| DockDropGeometry { drop_box })
 }
 
 fn split_shares(child_count: usize, fractions: &[f32]) -> Vec<f32> {
@@ -287,28 +405,186 @@ fn axis_origin(axis: SplitAxis, split_bounds: Bounds<Pixels>) -> Pixels {
     }
 }
 
-fn edge_band(width: f32, height: f32) -> f32 {
+fn drop_box_metrics(width: f32, height: f32) -> DockDropBoxMetrics {
     let shortest = width.min(height);
-    (shortest * 0.25)
-        .clamp(MIN_EDGE_BAND, MAX_EDGE_BAND)
+    let central_half = (ASSUMED_DOCK_WIDGET_FONT_SIZE * 1.5)
+        .min((ASSUMED_DOCK_WIDGET_FONT_SIZE * 0.5).max(shortest / 8.0));
+    let center_half = central_half.min(width / 2.0).min(height / 2.0);
+    let inner_side_half_long = center_half;
+    let inner_side_half_short = (center_half * 0.9).min(width / 2.0).min(height / 2.0);
+    let inner_offset = center_half * 2.4;
+    let outer_side_half_long = (central_half * 1.5).min(width / 2.0).min(height / 2.0);
+    let outer_side_half_short = (central_half * 0.8).min(width / 2.0).min(height / 2.0);
+    let outer_offset_x = (width / 2.0 - outer_side_half_short).max(0.0);
+    let outer_offset_y = (height / 2.0 - outer_side_half_short).max(0.0);
+    let split_preview_extent = (shortest * 0.25)
+        .clamp(MIN_SPLIT_PREVIEW_EXTENT, MAX_SPLIT_PREVIEW_EXTENT)
         .min(width / 3.0)
-        .min(height / 3.0)
+        .min(height / 3.0);
+    DockDropBoxMetrics {
+        center_half,
+        inner_side_half_long,
+        inner_side_half_short,
+        inner_offset,
+        outer_side_half_long,
+        outer_side_half_short,
+        outer_offset_x,
+        outer_offset_y,
+        split_preview_extent,
+    }
 }
 
-fn preview_bounds(zone: DropZone, width: f32, height: f32, edge_band: f32) -> Bounds<Pixels> {
+fn edge_drop_boxes(
+    bounds: Bounds<Pixels>,
+    kind: fn(DropZone) -> DockDropBoxKind,
+    metrics: DockDropBoxMetrics,
+) -> impl Iterator<Item = DockDropBox> {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    [
+        edge_drop_box(bounds, kind(DropZone::Left), metrics),
+        edge_drop_box(bounds, kind(DropZone::Right), metrics),
+        edge_drop_box(bounds, kind(DropZone::Top), metrics),
+        edge_drop_box(bounds, kind(DropZone::Bottom), metrics),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(move |drop_box| {
+        let hit = drop_box.hit_bounds;
+        f32::from(hit.size.width) > 0.0
+            && f32::from(hit.size.height) > 0.0
+            && f32::from(hit.origin.x - bounds.origin.x) <= width
+            && f32::from(hit.origin.y - bounds.origin.y) <= height
+    })
+}
+
+fn edge_drop_box(
+    bounds: Bounds<Pixels>,
+    kind: DockDropBoxKind,
+    metrics: DockDropBoxMetrics,
+) -> Option<DockDropBox> {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let center_x = width / 2.0;
+    let center_y = height / 2.0;
+    let zone = kind.zone();
+    let hit = match kind {
+        DockDropBoxKind::Center => return None,
+        DockDropBoxKind::InnerEdge(DropZone::Left) => LocalRect::from_center(
+            center_x - metrics.inner_offset,
+            center_y,
+            metrics.inner_side_half_short,
+            metrics.inner_side_half_long,
+        ),
+        DockDropBoxKind::InnerEdge(DropZone::Right) => LocalRect::from_center(
+            center_x + metrics.inner_offset,
+            center_y,
+            metrics.inner_side_half_short,
+            metrics.inner_side_half_long,
+        ),
+        DockDropBoxKind::InnerEdge(DropZone::Top) => LocalRect::from_center(
+            center_x,
+            center_y - metrics.inner_offset,
+            metrics.inner_side_half_long,
+            metrics.inner_side_half_short,
+        ),
+        DockDropBoxKind::InnerEdge(DropZone::Bottom) => LocalRect::from_center(
+            center_x,
+            center_y + metrics.inner_offset,
+            metrics.inner_side_half_long,
+            metrics.inner_side_half_short,
+        ),
+        DockDropBoxKind::OuterEdge(DropZone::Left) => LocalRect::from_center(
+            center_x - metrics.outer_offset_x,
+            center_y,
+            metrics.outer_side_half_short,
+            metrics.outer_side_half_long,
+        ),
+        DockDropBoxKind::OuterEdge(DropZone::Right) => LocalRect::from_center(
+            center_x + metrics.outer_offset_x,
+            center_y,
+            metrics.outer_side_half_short,
+            metrics.outer_side_half_long,
+        ),
+        DockDropBoxKind::OuterEdge(DropZone::Top) => LocalRect::from_center(
+            center_x,
+            center_y - metrics.outer_offset_y,
+            metrics.outer_side_half_long,
+            metrics.outer_side_half_short,
+        ),
+        DockDropBoxKind::OuterEdge(DropZone::Bottom) => LocalRect::from_center(
+            center_x,
+            center_y + metrics.outer_offset_y,
+            metrics.outer_side_half_long,
+            metrics.outer_side_half_short,
+        ),
+        DockDropBoxKind::InnerEdge(DropZone::Center)
+        | DockDropBoxKind::OuterEdge(DropZone::Center) => return None,
+    };
+    let hit_bounds = local_bounds(bounds.origin, hit.clamp_to_bounds(width, height)?);
+    let preview_bounds = offset_bounds(
+        bounds.origin,
+        preview_bounds(zone, width, height, metrics.split_preview_extent),
+    );
+    Some(DockDropBox {
+        kind,
+        hit_bounds,
+        preview_bounds,
+    })
+}
+
+fn drop_box(
+    bounds: Bounds<Pixels>,
+    kind: DockDropBoxKind,
+    hit: LocalRect,
+    preview: Bounds<Pixels>,
+) -> DockDropBox {
+    let width = f32::from(bounds.size.width);
+    let height = f32::from(bounds.size.height);
+    let hit_bounds = local_bounds(
+        bounds.origin,
+        hit.clamp_to_bounds(width, height)
+            .expect("center drop box should fit inside valid bounds"),
+    );
+    DockDropBox {
+        kind,
+        hit_bounds,
+        preview_bounds: offset_bounds(bounds.origin, preview),
+    }
+}
+
+fn preview_bounds(
+    zone: DropZone,
+    width: f32,
+    height: f32,
+    split_preview_extent: f32,
+) -> Bounds<Pixels> {
     match zone {
         DropZone::Center => Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height))),
-        DropZone::Left => Bounds::new(point(px(0.0), px(0.0)), size(px(edge_band), px(height))),
-        DropZone::Right => Bounds::new(
-            point(px(width - edge_band), px(0.0)),
-            size(px(edge_band), px(height)),
+        DropZone::Left => Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(split_preview_extent), px(height)),
         ),
-        DropZone::Top => Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(edge_band))),
+        DropZone::Right => Bounds::new(
+            point(px(width - split_preview_extent), px(0.0)),
+            size(px(split_preview_extent), px(height)),
+        ),
+        DropZone::Top => Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(width), px(split_preview_extent)),
+        ),
         DropZone::Bottom => Bounds::new(
-            point(px(0.0), px(height - edge_band)),
-            size(px(width), px(edge_band)),
+            point(px(0.0), px(height - split_preview_extent)),
+            size(px(width), px(split_preview_extent)),
         ),
     }
+}
+
+fn local_bounds(origin: Point<Pixels>, rect: LocalRect) -> Bounds<Pixels> {
+    Bounds::new(
+        point(origin.x + px(rect.x), origin.y + px(rect.y)),
+        size(px(rect.width), px(rect.height)),
+    )
 }
 
 fn offset_bounds(origin: Point<Pixels>, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
@@ -330,47 +606,167 @@ mod tests {
     #[test]
     fn drop_geometry_resolves_center_and_preview_bounds() {
         let bounds = bounds(300.0, 200.0);
-        let geometry = resolve_drop_geometry(bounds, point(px(160.0), px(120.0)))
+        let geometry = resolve_inner_drop_geometry(bounds, point(px(160.0), px(120.0)))
             .expect("point should resolve");
 
-        assert_eq!(geometry.zone, DropZone::Center);
-        assert_eq!(geometry.preview_bounds.origin, bounds.origin);
-        assert_eq!(geometry.preview_bounds.size, size(px(300.0), px(200.0)));
+        assert_eq!(geometry.drop_box.kind, DockDropBoxKind::Center);
+        assert_eq!(geometry.zone(), DropZone::Center);
+        assert_eq!(geometry.preview_bounds().origin, bounds.origin);
+        assert_eq!(geometry.preview_bounds().size, size(px(300.0), px(200.0)));
     }
 
     #[test]
-    fn drop_geometry_resolves_edges_and_preview_bounds() {
+    fn inner_drop_geometry_resolves_only_explicit_edge_boxes() {
         let bounds = bounds(300.0, 200.0);
-        let left = resolve_drop_geometry(bounds, point(px(12.0), px(120.0)))
-            .expect("left edge should resolve");
-        let right = resolve_drop_geometry(bounds, point(px(308.0), px(120.0)))
-            .expect("right edge should resolve");
-        let top = resolve_drop_geometry(bounds, point(px(160.0), px(22.0)))
-            .expect("top edge should resolve");
-        let bottom = resolve_drop_geometry(bounds, point(px(160.0), px(218.0)))
-            .expect("bottom edge should resolve");
+        assert!(
+            resolve_inner_drop_geometry(bounds, point(px(12.0), px(120.0))).is_none(),
+            "near-edge points outside an explicit side box must not split"
+        );
 
-        assert_eq!(left.zone, DropZone::Left);
-        assert_eq!(right.zone, DropZone::Right);
-        assert_eq!(top.zone, DropZone::Top);
-        assert_eq!(bottom.zone, DropZone::Bottom);
-        assert_eq!(left.preview_bounds.origin, bounds.origin);
-        assert!(right.preview_bounds.origin.x > left.preview_bounds.origin.x);
-        assert_eq!(top.preview_bounds.origin.x, bounds.origin.x);
-        assert!(bottom.preview_bounds.origin.y > top.preview_bounds.origin.y);
+        let left = resolve_inner_drop_geometry(
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Inner,
+                DockDropBoxKind::InnerEdge(DropZone::Left),
+            ),
+        )
+        .expect("left edge should resolve");
+        let right = resolve_inner_drop_geometry(
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Inner,
+                DockDropBoxKind::InnerEdge(DropZone::Right),
+            ),
+        )
+        .expect("right edge should resolve");
+        let top = resolve_inner_drop_geometry(
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Inner,
+                DockDropBoxKind::InnerEdge(DropZone::Top),
+            ),
+        )
+        .expect("top edge should resolve");
+        let bottom = resolve_inner_drop_geometry(
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Inner,
+                DockDropBoxKind::InnerEdge(DropZone::Bottom),
+            ),
+        )
+        .expect("bottom edge should resolve");
+
+        assert_eq!(
+            left.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Left)
+        );
+        assert_eq!(
+            right.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Right)
+        );
+        assert_eq!(top.drop_box.kind, DockDropBoxKind::InnerEdge(DropZone::Top));
+        assert_eq!(
+            bottom.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Bottom)
+        );
+        assert_eq!(left.preview_bounds().origin, bounds.origin);
+        assert!(right.preview_bounds().origin.x > left.preview_bounds().origin.x);
+        assert_eq!(top.preview_bounds().origin.x, bounds.origin.x);
+        assert!(bottom.preview_bounds().origin.y > top.preview_bounds().origin.y);
+    }
+
+    #[test]
+    fn outer_drop_geometry_resolves_only_outer_edge_boxes() {
+        let bounds = bounds(300.0, 200.0);
+        assert!(resolve_outer_drop_geometry(bounds, point(px(160.0), px(120.0))).is_none());
+
+        let left = resolve_outer_drop_geometry(
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Outer,
+                DockDropBoxKind::OuterEdge(DropZone::Left),
+            ),
+        )
+        .expect("left outer edge should resolve");
+
+        assert_eq!(
+            left.drop_box.kind,
+            DockDropBoxKind::OuterEdge(DropZone::Left)
+        );
+        assert_eq!(left.zone(), DropZone::Left);
+    }
+
+    #[test]
+    fn inner_box_corners_use_explicit_candidate_order() {
+        let bounds = bounds(300.0, 200.0);
+        let left = drop_boxes(bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::InnerEdge(DropZone::Left))
+            .expect("left box should exist");
+        let corner = point(left.hit_bounds.origin.x, left.hit_bounds.origin.y);
+        let geometry = resolve_inner_drop_geometry(bounds, corner).expect("corner should resolve");
+
+        assert_eq!(
+            geometry.drop_box.kind,
+            DockDropBoxKind::InnerEdge(DropZone::Left)
+        );
+    }
+
+    #[test]
+    fn overlapping_corner_points_prefer_first_outer_candidate() {
+        let bounds = bounds(30.0, 30.0);
+        let boxes = drop_boxes(bounds, DockDropBoxSet::Outer);
+        let left = boxes
+            .iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::OuterEdge(DropZone::Left))
+            .expect("left box should exist");
+        let top = boxes
+            .iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::OuterEdge(DropZone::Top))
+            .expect("top box should exist");
+        let overlap = point(
+            left.hit_bounds.origin.x + px(4.0),
+            top.hit_bounds.origin.y + px(4.0),
+        );
+        let geometry =
+            resolve_outer_drop_geometry(bounds, overlap).expect("overlap should resolve");
+
+        assert_eq!(
+            geometry.drop_box.kind,
+            DockDropBoxKind::OuterEdge(DropZone::Left)
+        );
     }
 
     #[test]
     fn small_targets_keep_center_space() {
-        let geometry = resolve_drop_geometry(bounds(36.0, 36.0), point(px(28.0), px(38.0)))
+        let geometry = resolve_inner_drop_geometry(bounds(36.0, 36.0), point(px(28.0), px(38.0)))
             .expect("point should resolve");
 
-        assert_eq!(geometry.zone, DropZone::Center);
+        assert_eq!(geometry.drop_box.kind, DockDropBoxKind::Center);
     }
 
     #[test]
     fn invalid_drop_bounds_do_not_resolve() {
-        assert!(resolve_drop_geometry(bounds(0.0, 36.0), point(px(10.0), px(20.0))).is_none());
+        assert!(
+            resolve_inner_drop_geometry(bounds(0.0, 36.0), point(px(10.0), px(20.0))).is_none()
+        );
+    }
+
+    fn drop_box_center(
+        bounds: Bounds<Pixels>,
+        set: DockDropBoxSet,
+        kind: DockDropBoxKind,
+    ) -> Point<Pixels> {
+        drop_boxes(bounds, set)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == kind)
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .unwrap_or_else(|| panic!("{kind:?} should exist"))
     }
 
     #[test]

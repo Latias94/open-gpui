@@ -1,6 +1,6 @@
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DropZone,
-    geometry::{self, DockDropGeometry},
+    geometry::{self, DockDropBox, DockDropGeometry},
 };
 use open_gpui::{Bounds, Pixels, Point};
 
@@ -11,6 +11,7 @@ pub(crate) type DockDropTargetValidator<'a> =
 pub(crate) struct DockResolvedDropTarget {
     pub(crate) kind: DockResolvedDropTargetKind,
     pub(crate) source: DockDropResolveSource,
+    pub(crate) drop_box: Option<DockDropBox>,
     pub(crate) preview_bounds: Option<Bounds<Pixels>>,
     pub(crate) is_central_region: bool,
 }
@@ -212,6 +213,7 @@ fn resolve_floating_title_bar_drop(
                 target_tabs: target.target_tabs,
             },
             source: DockDropResolveSource::FloatingTitleBar,
+            drop_box: None,
             preview_bounds: Some(target.preview_bounds),
             is_central_region: false,
         })
@@ -235,6 +237,7 @@ fn resolve_tab_bar_drop(input: &DockDropResolverInput<'_>) -> Option<DockResolve
                     insert_index,
                 },
                 source: DockDropResolveSource::TabBar,
+                drop_box: None,
                 preview_bounds: Some(target.bounds),
                 is_central_region: target.is_central,
             }
@@ -252,19 +255,17 @@ fn resolve_root_edge_drop(
         None => None,
     };
 
-    let geometry = geometry::resolve_drop_geometry(root.bounds, input.position)?;
-    if geometry.zone == DropZone::Center {
-        return None;
-    }
+    let geometry = geometry::resolve_outer_drop_geometry(root.bounds, input.position)?;
 
     Some(DockResolvedDropTarget {
         kind: DockResolvedDropTargetKind::RootEdge {
             root: root.root,
             leaf_tabs,
-            zone: geometry.zone,
+            zone: geometry.zone(),
         },
         source: DockDropResolveSource::RootEdge,
-        preview_bounds: Some(geometry.preview_bounds),
+        drop_box: Some(geometry.drop_box),
+        preview_bounds: Some(geometry.preview_bounds()),
         is_central_region: false,
     })
 }
@@ -273,7 +274,7 @@ fn resolve_leaf_drop(
     leaf: &DockLeafDropTarget,
     position: Point<Pixels>,
 ) -> Option<DockResolvedDropTarget> {
-    let geometry = geometry::resolve_drop_geometry(leaf.bounds, position)?;
+    let geometry = geometry::resolve_inner_drop_geometry(leaf.bounds, position)?;
     Some(target_from_leaf_geometry(leaf, geometry))
 }
 
@@ -288,6 +289,7 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
                 space: target.space.clone(),
             },
             source: DockDropResolveSource::EmptyDockSpace,
+            drop_box: None,
             preview_bounds: Some(target.bounds),
             is_central_region: false,
         })
@@ -331,7 +333,7 @@ fn target_from_leaf_geometry(
     leaf: &DockLeafDropTarget,
     geometry: DockDropGeometry,
 ) -> DockResolvedDropTarget {
-    let kind = if geometry.zone == DropZone::Center {
+    let kind = if geometry.drop_box.kind.is_center() {
         DockResolvedDropTargetKind::LeafCenter {
             root: leaf.root,
             target_tabs: leaf.target_tabs,
@@ -340,10 +342,10 @@ fn target_from_leaf_geometry(
         DockResolvedDropTargetKind::InnerEdge {
             root: leaf.root,
             target_tabs: leaf.target_tabs,
-            zone: geometry.zone,
+            zone: geometry.zone(),
         }
     };
-    let source = if geometry.zone == DropZone::Center {
+    let source = if geometry.drop_box.kind.is_center() {
         DockDropResolveSource::LeafBody
     } else {
         DockDropResolveSource::InnerEdge
@@ -352,7 +354,8 @@ fn target_from_leaf_geometry(
     DockResolvedDropTarget {
         kind,
         source,
-        preview_bounds: Some(geometry.preview_bounds),
+        drop_box: Some(geometry.drop_box),
+        preview_bounds: Some(geometry.preview_bounds()),
         is_central_region: leaf.is_central,
     }
 }
@@ -370,7 +373,10 @@ fn topmost_leaf_containing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockGraph, DockItemId, DockNode, SplitAxis};
+    use crate::{
+        DockGraph, DockItemId, DockNode, SplitAxis,
+        geometry::{DockDropBoxKind, DockDropBoxSet},
+    };
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -447,6 +453,18 @@ mod tests {
         (first, second)
     }
 
+    fn drop_box_center(
+        bounds: Bounds<Pixels>,
+        set: DockDropBoxSet,
+        kind: DockDropBoxKind,
+    ) -> Point<Pixels> {
+        geometry::drop_boxes(bounds, set)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == kind)
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .unwrap_or_else(|| panic!("{kind:?} should exist"))
+    }
+
     #[test]
     fn center_point_resolves_to_center_zone() {
         let target = resolve_tabs_drop_with_central(
@@ -467,14 +485,32 @@ mod tests {
     }
 
     #[test]
-    fn edge_points_resolve_to_matching_zones() {
+    fn points_outside_explicit_side_boxes_do_not_split() {
+        assert!(
+            resolve_tabs_drop_with_central(
+                tabs(),
+                bounds(300.0, 200.0),
+                point(px(12.0), px(120.0)),
+                false,
+                &policy()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn inner_side_boxes_resolve_to_matching_zones() {
         let bounds = bounds(300.0, 200.0);
 
         assert_eq!(
             resolve_tabs_drop_with_central(
                 tabs(),
                 bounds,
-                point(px(12.0), px(120.0)),
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Left)
+                ),
                 false,
                 &policy()
             )
@@ -486,7 +522,11 @@ mod tests {
             resolve_tabs_drop_with_central(
                 tabs(),
                 bounds,
-                point(px(308.0), px(120.0)),
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Right)
+                ),
                 false,
                 &policy()
             )
@@ -498,7 +538,11 @@ mod tests {
             resolve_tabs_drop_with_central(
                 tabs(),
                 bounds,
-                point(px(160.0), px(22.0)),
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Top)
+                ),
                 false,
                 &policy()
             )
@@ -510,7 +554,11 @@ mod tests {
             resolve_tabs_drop_with_central(
                 tabs(),
                 bounds,
-                point(px(160.0), px(218.0)),
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Bottom)
+                ),
                 false,
                 &policy()
             )
@@ -556,10 +604,15 @@ mod tests {
     fn disabled_edge_split_returns_rejection_without_preview_projection() {
         let mut policy = DockPolicy::default();
         policy.set_allow_edge_split(false);
+        let bounds = bounds(300.0, 200.0);
         let resolution = resolve_tabs_drop_with_central(
             tabs(),
-            bounds(300.0, 200.0),
-            point(px(12.0), px(120.0)),
+            bounds,
+            drop_box_center(
+                bounds,
+                DockDropBoxSet::Inner,
+                DockDropBoxKind::InnerEdge(DropZone::Left),
+            ),
             false,
             &policy,
         )
@@ -687,22 +740,29 @@ mod tests {
     #[test]
     fn overlapping_leaf_hits_follow_render_order_rather_than_area() {
         let (background_tabs, foreground_tabs) = two_node_ids();
+        let background_bounds = bounds(180.0, 180.0);
+        let foreground_bounds = bounds(100.0, 100.0);
+        let position = drop_box_center(
+            foreground_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::Center,
+        );
         let target = resolve_layout_drop(DockDropResolverInput {
             leaves: &[
                 DockLeafDropTarget {
                     root: background_tabs,
                     target_tabs: background_tabs,
-                    bounds: bounds(100.0, 100.0),
+                    bounds: background_bounds,
                     is_central: false,
                 },
                 DockLeafDropTarget {
                     root: foreground_tabs,
                     target_tabs: foreground_tabs,
-                    bounds: bounds(180.0, 180.0),
+                    bounds: foreground_bounds,
                     is_central: false,
                 },
             ],
-            ..DockDropResolverInput::new(point(px(60.0), px(70.0)), &policy())
+            ..DockDropResolverInput::new(position, &policy())
         })
         .and_then(DockDropResolution::target)
         .expect("overlapping leaves should resolve");
@@ -720,9 +780,20 @@ mod tests {
     #[test]
     fn leaf_edge_resolves_to_inner_edge_split_target() {
         let root = tabs();
+        let bounds = bounds(300.0, 200.0);
         let target = resolve_layout_drop(DockDropResolverInput {
-            leaves: &[leaf(root, root)],
-            ..DockDropResolverInput::new(point(px(12.0), px(120.0)), &policy())
+            leaves: &[DockLeafDropTarget {
+                bounds,
+                ..leaf(root, root)
+            }],
+            ..DockDropResolverInput::new(
+                drop_box_center(
+                    bounds,
+                    DockDropBoxSet::Inner,
+                    DockDropBoxKind::InnerEdge(DropZone::Left),
+                ),
+                &policy(),
+            )
         })
         .and_then(DockDropResolution::target)
         .expect("leaf edge should resolve");
@@ -742,26 +813,19 @@ mod tests {
         Bounds::new(point(px(0.0), px(0.0)), size(px(600.0), px(400.0)))
     }
 
-    fn root_edge_leaf_bounds_and_position(zone: DropZone) -> (Bounds<Pixels>, Point<Pixels>) {
-        match zone {
-            DropZone::Left => (
-                Bounds::new(point(px(0.0), px(40.0)), size(px(220.0), px(320.0))),
-                point(px(2.0), px(200.0)),
-            ),
-            DropZone::Right => (
-                Bounds::new(point(px(380.0), px(40.0)), size(px(220.0), px(320.0))),
-                point(px(598.0), px(200.0)),
-            ),
-            DropZone::Top => (
-                Bounds::new(point(px(180.0), px(0.0)), size(px(240.0), px(180.0))),
-                point(px(300.0), px(2.0)),
-            ),
-            DropZone::Bottom => (
-                Bounds::new(point(px(180.0), px(220.0)), size(px(240.0), px(180.0))),
-                point(px(300.0), px(398.0)),
-            ),
-            DropZone::Center => unreachable!(),
-        }
+    fn root_edge_position(zone: DropZone) -> Point<Pixels> {
+        drop_box_center(
+            root_bounds(),
+            DockDropBoxSet::Outer,
+            DockDropBoxKind::OuterEdge(zone),
+        )
+    }
+
+    fn leaf_bounds_containing(position: Point<Pixels>) -> Bounds<Pixels> {
+        Bounds::new(
+            point(position.x - px(60.0), position.y - px(60.0)),
+            size(px(120.0), px(120.0)),
+        )
     }
 
     fn expected_root_edge_preview_bounds(zone: DropZone) -> Bounds<Pixels> {
@@ -796,7 +860,8 @@ mod tests {
             DropZone::Top,
             DropZone::Bottom,
         ] {
-            let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(zone);
+            let position = root_edge_position(zone);
+            let leaf_bounds = leaf_bounds_containing(position);
             let target = resolve_layout_drop(DockDropResolverInput {
                 root: Some(DockRootDropTarget {
                     root,
@@ -814,6 +879,11 @@ mod tests {
             .unwrap_or_else(|| panic!("{zone:?} root edge should resolve"));
 
             assert_eq!(target.source, DockDropResolveSource::RootEdge, "{zone:?}");
+            assert_eq!(
+                target.drop_box.map(|drop_box| drop_box.kind),
+                Some(DockDropBoxKind::OuterEdge(zone)),
+                "{zone:?}"
+            );
             assert_eq!(
                 target.kind,
                 DockResolvedDropTargetKind::RootEdge {
@@ -842,6 +912,11 @@ mod tests {
             fractions: vec![0.5, 0.5],
         });
         let leaf_bounds = Bounds::new(point(px(240.0), px(60.0)), size(px(120.0), px(280.0)));
+        let position = drop_box_center(
+            leaf_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::InnerEdge(DropZone::Left),
+        );
         let target = resolve_layout_drop(DockDropResolverInput {
             root: Some(DockRootDropTarget {
                 root,
@@ -853,7 +928,7 @@ mod tests {
                 bounds: leaf_bounds,
                 is_central: false,
             }],
-            ..DockDropResolverInput::new(point(px(242.0), px(200.0)), &policy())
+            ..DockDropResolverInput::new(position, &policy())
         })
         .and_then(DockDropResolution::target)
         .expect("leaf edge inside the root center should resolve");
@@ -890,7 +965,7 @@ mod tests {
                 root,
                 bounds: root_bounds(),
             }),
-            ..DockDropResolverInput::new(point(px(598.0), px(200.0)), &policy())
+            ..DockDropResolverInput::new(root_edge_position(DropZone::Right), &policy())
         })
         .and_then(DockDropResolution::target)
         .expect("root edge should resolve without a leaf hit");
@@ -920,7 +995,7 @@ mod tests {
                 bounds: root_bounds(),
                 is_central: false,
             }],
-            ..DockDropResolverInput::new(point(px(2.0), px(200.0)), &policy())
+            ..DockDropResolverInput::new(root_edge_position(DropZone::Left), &policy())
         })
         .and_then(DockDropResolution::target)
         .expect("root leaf edge should resolve as a root edge");
@@ -952,7 +1027,12 @@ mod tests {
             children: vec![primary_tabs],
             fractions: vec![1.0],
         });
-        let (leaf_bounds, position) = root_edge_leaf_bounds_and_position(DropZone::Right);
+        let leaf_bounds = bounds(300.0, 200.0);
+        let position = drop_box_center(
+            leaf_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::InnerEdge(DropZone::Right),
+        );
         let target = resolve_layout_drop(DockDropResolverInput {
             root: Some(DockRootDropTarget {
                 root: primary_root,
@@ -1150,12 +1230,19 @@ mod tests {
         let root = tabs();
         let mut policy = DockPolicy::default();
         policy.set_allow_central_region_dock_over(false);
+        let leaf_bounds = bounds(300.0, 200.0);
+        let position = drop_box_center(
+            leaf_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::InnerEdge(DropZone::Left),
+        );
         let target = resolve_layout_drop(DockDropResolverInput {
             leaves: &[DockLeafDropTarget {
                 is_central: true,
+                bounds: leaf_bounds,
                 ..leaf(root, root)
             }],
-            ..DockDropResolverInput::new(point(px(12.0), px(120.0)), &policy)
+            ..DockDropResolverInput::new(position, &policy)
         })
         .and_then(DockDropResolution::target)
         .expect("central inner edge should still be accepted");
@@ -1167,9 +1254,10 @@ mod tests {
         let DockDropResolution::Rejected(rejection) = resolve_layout_drop(DockDropResolverInput {
             leaves: &[DockLeafDropTarget {
                 is_central: true,
+                bounds: leaf_bounds,
                 ..leaf(root, root)
             }],
-            ..DockDropResolverInput::new(point(px(12.0), px(120.0)), &policy)
+            ..DockDropResolverInput::new(position, &policy)
         })
         .expect("central inner edge should still resolve to edge policy") else {
             panic!("disabled edge split should reject central inner edge");

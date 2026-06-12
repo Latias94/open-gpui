@@ -2,6 +2,7 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId, DockWorkspace,
     DropZone,
     drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
+    geometry::DockDropBoxKind,
     workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 
@@ -67,6 +68,8 @@ impl DockWorkspace {
             target_space,
             target,
         } = request;
+
+        validate_resolved_target_drop_box(&target)?;
 
         match target.kind {
             DockResolvedDropTargetKind::TabBar {
@@ -161,6 +164,35 @@ impl DockWorkspace {
     }
 }
 
+fn validate_resolved_target_drop_box(
+    target: &DockResolvedDropTarget,
+) -> Result<(), DockActionApplyError> {
+    let Some(expected) = expected_drop_box_kind(&target.kind) else {
+        return Ok(());
+    };
+    if target
+        .drop_box
+        .is_some_and(|drop_box| drop_box.kind == expected)
+    {
+        Ok(())
+    } else {
+        Err(DockActionApplyError::DropTargetUnavailable)
+    }
+}
+
+fn expected_drop_box_kind(kind: &DockResolvedDropTargetKind) -> Option<DockDropBoxKind> {
+    match *kind {
+        DockResolvedDropTargetKind::LeafCenter { .. } => Some(DockDropBoxKind::Center),
+        DockResolvedDropTargetKind::InnerEdge { zone, .. } => {
+            Some(DockDropBoxKind::InnerEdge(zone))
+        }
+        DockResolvedDropTargetKind::RootEdge { zone, .. } => Some(DockDropBoxKind::OuterEdge(zone)),
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,9 +280,16 @@ mod tests {
     }
 
     fn resolved_target(kind: DockResolvedDropTargetKind) -> DockResolvedDropTarget {
+        let drop_box =
+            super::expected_drop_box_kind(&kind).map(|kind| crate::geometry::DockDropBox {
+                kind,
+                hit_bounds: bounds(),
+                preview_bounds: bounds(),
+            });
         DockResolvedDropTarget {
             kind,
             source: DockDropResolveSource::LeafBody,
+            drop_box,
             preview_bounds: Some(bounds()),
             is_central_region: false,
         }
@@ -342,6 +381,75 @@ mod tests {
         assert_eq!(
             workspace.graph().collect_items_in_space(&space()),
             vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
+    fn resolved_edge_target_requires_matching_drop_box_metadata() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let mut target = resolved_target(DockResolvedDropTargetKind::InnerEdge {
+            root: right,
+            target_tabs: right,
+            zone: DropZone::Right,
+        });
+        target.drop_box = None;
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target,
+            })
+            .expect_err("edge target without drop box should not commit");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
+    fn resolved_root_edge_rejects_inner_drop_box_metadata() {
+        let (
+            mut workspace,
+            source_space,
+            target_space,
+            source_tabs,
+            target_root,
+            target_left,
+            _target_right,
+        ) = root_edge_workspace(vec![item("a")]);
+        let item_a = item("a");
+        let mut target = resolved_target(DockResolvedDropTargetKind::RootEdge {
+            root: target_root,
+            leaf_tabs: Some(target_left),
+            zone: DropZone::Left,
+        });
+        target.drop_box = Some(crate::geometry::DockDropBox {
+            kind: crate::geometry::DockDropBoxKind::InnerEdge(DropZone::Left),
+            hit_bounds: bounds(),
+            preview_bounds: bounds(),
+        });
+
+        let err = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                source_space: &source_space,
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs,
+                    item: &item_a,
+                },
+                target_space: &target_space,
+                target,
+            })
+            .expect_err("root edge with inner box metadata should not commit");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&source_space),
+            vec![item("a")]
         );
     }
 
