@@ -483,6 +483,15 @@ impl DockViewportRuntimeHandle {
             .routed_drop_preview_for(space, window_id)
     }
 
+    pub(crate) fn routed_drop_commit_for_drag_session(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockViewportDropRouteCommit> {
+        self.runtime
+            .borrow()
+            .routed_drop_commit_for_drag_session(session)
+    }
+
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]

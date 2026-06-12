@@ -1,11 +1,11 @@
 use crate::DockViewportTargetContext;
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockHost, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
     DockViewportTearOffRequest, drop_target::DockResolvedDropTarget,
     interaction::DockRuntimeDragSession, viewport_drop_scene::DockViewportHostSceneFrame,
 };
-use open_gpui::{Pixels, Point, WindowBounds, WindowId};
+use open_gpui::{Pixels, Point, WindowBounds, WindowHandle, WindowId};
 
 /// Runtime route for a rendered drag release before workspace mutation.
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +147,14 @@ impl DockViewportDropWorkspaceCommit {
             self.resolved_target.as_ref()?.target(),
         ))
     }
+
+    fn routed_preview_target_hit(&self) -> Option<DockViewportTargetHit> {
+        Some(DockViewportTargetHit::new(
+            self.target_space.clone(),
+            WindowHandle::<DockHost>::new(self.target_window_id?).into(),
+            self.host_position,
+        ))
+    }
 }
 
 impl DockViewportCachedDropTarget {
@@ -221,7 +229,16 @@ impl DockViewportDropRouteCommit {
         }
     }
 
-    fn drag_session_id(&self) -> Option<u64> {
+    pub(crate) fn routed_preview_target_hit(&self) -> Option<DockViewportTargetHit> {
+        match self {
+            DockViewportDropRouteCommit::Workspace(commit) => commit.routed_preview_target_hit(),
+            DockViewportDropRouteCommit::TearOff(_) | DockViewportDropRouteCommit::Rejected(_) => {
+                None
+            }
+        }
+    }
+
+    pub(crate) fn drag_session_id(&self) -> Option<u64> {
         match self {
             DockViewportDropRouteCommit::Workspace(commit) => {
                 commit.drag_session().map(DockRuntimeDragSession::id)

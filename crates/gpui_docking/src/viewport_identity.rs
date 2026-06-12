@@ -22,6 +22,11 @@ impl DockViewportIdentity {
         &self.space
     }
 
+    /// Returns the runtime window id that owns the viewport.
+    pub(crate) fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
     /// Reports whether these facts still describe the same runtime viewport binding.
     pub(crate) fn matches(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
         self.space() == space && self.window_id == window_id
