@@ -1,14 +1,11 @@
 use crate::gesture::CanvasPreparedGestureCommit;
-use crate::layer::{
-    CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
-};
-use crate::record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope};
+use crate::layer::CanvasZOrderCommand;
 use crate::session::{CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot};
 use crate::{
     CanvasClipboardPayload, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId,
-    CanvasRuntime, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
-    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRuntime,
+    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
+    DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point};
@@ -17,9 +14,12 @@ use std::{fmt, sync::Arc};
 
 mod action;
 mod builtin;
+mod clipboard;
 mod context;
+mod history;
 mod registry;
 mod select;
+mod z_order;
 
 use crate::session::ToolState;
 pub use action::CanvasToolIntent;
@@ -27,6 +27,7 @@ pub(crate) use action::{CanvasEditorAction, CanvasToolEffect};
 use builtin::BuiltInCanvasTool;
 pub use context::CanvasToolContext;
 pub(crate) use context::CanvasToolReducerContext;
+pub use history::CanvasHistory;
 pub use registry::{CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -320,64 +321,6 @@ impl CanvasSelection {
         self.shapes.retain(|id| document.contains_shape(id));
         self.handles
             .retain(|endpoint| document.validate_endpoint(endpoint).is_ok());
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct CanvasHistory {
-    undo_stack: Vec<CanvasTransaction>,
-    redo_stack: Vec<CanvasTransaction>,
-}
-
-impl CanvasHistory {
-    pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo_stack.is_empty()
-    }
-
-    pub fn undo_depth(&self) -> usize {
-        self.undo_stack.len()
-    }
-
-    pub fn redo_depth(&self) -> usize {
-        self.redo_stack.len()
-    }
-
-    pub fn clear(&mut self) {
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-    }
-
-    pub fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.undo_stack.last()
-    }
-
-    pub fn next_redo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.redo_stack.last()
-    }
-
-    pub(crate) fn push_undo(&mut self, transaction: CanvasTransaction) {
-        if !transaction.is_empty() {
-            self.undo_stack.push(transaction);
-            self.redo_stack.clear();
-        }
-    }
-
-    pub(crate) fn pop_undo(&mut self) -> Option<CanvasTransaction> {
-        self.undo_stack.pop()
-    }
-
-    pub(crate) fn push_redo(&mut self, transaction: CanvasTransaction) {
-        if !transaction.is_empty() {
-            self.redo_stack.push(transaction);
-        }
-    }
-
-    pub(crate) fn pop_redo(&mut self) -> Option<CanvasTransaction> {
-        self.redo_stack.pop()
     }
 }
 
@@ -749,9 +692,7 @@ impl CanvasEditor {
     }
 
     pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
-        let payload =
-            CanvasClipboardPayload::from_document_selection(self.document(), self.selection());
-        (!payload.is_empty()).then_some(payload)
+        clipboard::copy_selection(self.document(), self.selection())
     }
 
     pub fn cut_selection(&mut self) -> Result<Option<CanvasClipboardPayload>, DocumentError> {
@@ -767,15 +708,17 @@ impl CanvasEditor {
         payload: &CanvasClipboardPayload,
         offset: Point<Pixels>,
     ) -> Result<bool, DocumentError> {
-        let pasted = payload.paste_transaction(self.document(), offset);
+        let pasted = clipboard::paste_clipboard(self.document(), payload, offset);
         self.apply_paste_transaction(pasted)
     }
 
     pub fn duplicate_selection(&mut self, offset: Point<Pixels>) -> Result<bool, DocumentError> {
-        let Some(payload) = self.copy_selection() else {
+        let Some(pasted) =
+            clipboard::duplicate_selection(self.document(), self.selection(), offset)
+        else {
             return Ok(false);
         };
-        self.paste_clipboard(&payload, offset)
+        self.apply_paste_transaction(pasted)
     }
 
     pub fn reorder_selection(
@@ -904,111 +847,18 @@ impl CanvasEditor {
         &mut self,
         pasted: CanvasPasteTransaction,
     ) -> Result<bool, DocumentError> {
-        if pasted.transaction.is_empty() {
+        let Some((transaction, selection)) = clipboard::paste_transaction_parts(pasted) else {
             return Ok(false);
-        }
+        };
 
-        self.apply_transaction(pasted.transaction)?;
+        self.apply_transaction(transaction)?;
         let document = self.store.document_snapshot();
-        self.session
-            .set_selection(pasted.selection, document.as_ref());
+        self.session.set_selection(selection, document.as_ref());
         Ok(true)
     }
 
     fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
-        let selection_records = self.z_order_selection_record_ids();
-        let mut records = self.z_order_records(&selection_records);
-        let commands = reorder_layer_z_indices(&mut records, command)
-            .into_iter()
-            .filter_map(|(record_id, z_index)| self.z_order_update_command(&record_id, z_index))
-            .collect::<Vec<_>>();
-
-        CanvasTransaction::new(commands)
-    }
-
-    fn z_order_selection_record_ids(&self) -> IndexSet<CanvasRecordId> {
-        collect_selection_record_scope(
-            self.document(),
-            self.selection(),
-            CanvasRecordScopeOptions::structural_with_internal_edges(),
-            |record_id| self.is_reorderable_record(record_id),
-        )
-    }
-
-    fn is_reorderable_record(&self, record_id: &CanvasRecordId) -> bool {
-        match record_id {
-            CanvasRecordId::Node(id) => self.document().node(id).is_some_and(|node| !node.locked),
-            CanvasRecordId::Edge(id) => self.document().edge(id).is_some_and(|edge| !edge.locked),
-            CanvasRecordId::Shape(id) => {
-                self.document().shape(id).is_some_and(|shape| !shape.locked)
-            }
-        }
-    }
-
-    fn z_order_records(
-        &self,
-        selection_records: &IndexSet<CanvasRecordId>,
-    ) -> Vec<CanvasLayerRecord> {
-        let mut ordinal = 0;
-        let mut records = Vec::new();
-
-        records.extend(self.document().nodes().map(|node| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Node(node.id.clone()),
-                z_index: node.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Node(node.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-        records.extend(self.document().shapes().map(|shape| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Shape(shape.id.clone()),
-                z_index: shape.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Shape(shape.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-        records.extend(self.document().edges().map(|edge| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Edge(edge.id.clone()),
-                z_index: edge.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Edge(edge.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-
-        sort_layer_records(&mut records);
-        records
-    }
-
-    fn z_order_update_command(
-        &self,
-        record_id: &CanvasRecordId,
-        z_index: i32,
-    ) -> Option<DocumentCommand> {
-        match record_id {
-            CanvasRecordId::Node(id) => {
-                let mut node = self.document().node(id)?.clone();
-                node.z_index = z_index;
-                Some(DocumentCommand::UpdateNode(node))
-            }
-            CanvasRecordId::Edge(id) => {
-                let mut edge = self.document().edge(id)?.clone();
-                edge.z_index = z_index;
-                Some(DocumentCommand::UpdateEdge(edge))
-            }
-            CanvasRecordId::Shape(id) => {
-                let mut shape = self.document().shape(id)?.clone();
-                shape.z_index = z_index;
-                Some(DocumentCommand::UpdateShape(shape))
-            }
-        }
+        z_order::reorder_selection_transaction(self.document(), self.selection(), command)
     }
 }
 
@@ -1020,9 +870,10 @@ mod tests {
     use crate::{
         CanvasEdge, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
         CanvasNodeInteractionPolicy, CanvasNodeKind, CanvasNodeResizeProposal,
-        CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordKind, CanvasResizeHandle,
-        CanvasRoutePath, CanvasRouteRequest, CanvasSchemaError, CanvasShape, CanvasTransformTarget,
-        CanvasValue, HandleId, HitOptions, canvas_transform_handles,
+        CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordId, CanvasRecordKind,
+        CanvasRecordScopeOptions, CanvasResizeHandle, CanvasRoutePath, CanvasRouteRequest,
+        CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId, HitOptions,
+        canvas_transform_handles,
         test_support::{connected_pair_fixture, document_fixture},
     };
     use open_gpui::{point, px, size};
