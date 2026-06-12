@@ -117,7 +117,7 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
-        let floating_tabs = session.first_tabs_in_subtree(floating);
+        let primary_tabs = session.first_tabs_in_subtree(floating);
 
         let mut handle = div()
             .id(selector.clone())
@@ -135,7 +135,7 @@ impl DockHost {
             .text_sm()
             .cursor_pointer();
 
-        if let Some(target_tabs) = floating_tabs {
+        if let Some(target_tabs) = primary_tabs {
             if let Some(probe) = self.render_viewport_drop_scene_fact_probe(
                 viewport_host_scene_frame,
                 move |title_bounds| {
@@ -144,8 +144,7 @@ impl DockHost {
             ) {
                 handle = handle.child(probe);
             }
-            let payload =
-                DockDragPayload::new_floating(space.clone(), floating, target_tabs, title.clone());
+            let payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             let drag_entity = entity.clone();
             let drag_space = space.clone();
             let drag_surface_id = format!(

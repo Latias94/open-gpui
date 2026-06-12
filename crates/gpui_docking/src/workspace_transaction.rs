@@ -1,7 +1,10 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId, DockWorkspace,
-    DropZone,
-    drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
+    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicy, DockSpaceId,
+    DockWorkspace, DropZone,
+    drop_target::{
+        DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind,
+        validate_resolved_drop_target,
+    },
     geometry::DockDropBoxKind,
     workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
@@ -69,6 +72,7 @@ impl DockWorkspace {
             target,
         } = request;
 
+        let target = validate_resolved_target_policy(target, self.policy())?;
         validate_resolved_target_drop_box(&target)?;
 
         match target.kind {
@@ -112,17 +116,22 @@ impl DockWorkspace {
                     zone,
                     None,
                 ),
-            DockResolvedDropTargetKind::EmptyDockSpace { space } => match payload {
-                DockWorkspaceDropPayload::Item { item, .. } => {
-                    self.commit_item_to_empty_dock_space(source_space, item, &space)
+            DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
+                if is_central {
+                    self.policy().validate_central_region_dock_over()?;
                 }
-                DockWorkspaceDropPayload::Tabs { source_tabs } => {
-                    self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
+                match payload {
+                    DockWorkspaceDropPayload::Item { item, .. } => {
+                        self.commit_item_to_empty_dock_space(source_space, item, &space)
+                    }
+                    DockWorkspaceDropPayload::Tabs { source_tabs } => {
+                        self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
+                    }
+                    DockWorkspaceDropPayload::Floating { floating } => {
+                        self.commit_floating_to_empty_dock_space(source_space, floating, &space)
+                    }
                 }
-                DockWorkspaceDropPayload::Floating { floating } => {
-                    self.commit_floating_to_empty_dock_space(source_space, floating, &space)
-                }
-            },
+            }
         }
     }
 
@@ -177,6 +186,18 @@ fn validate_resolved_target_drop_box(
         Ok(())
     } else {
         Err(DockActionApplyError::DropTargetUnavailable)
+    }
+}
+
+fn validate_resolved_target_policy(
+    target: DockResolvedDropTarget,
+    policy: &DockPolicy,
+) -> Result<DockResolvedDropTarget, DockActionApplyError> {
+    match validate_resolved_drop_target(target, policy, None) {
+        DockDropResolution::Valid(target) => Ok(target),
+        DockDropResolution::Rejected(rejection) => {
+            Err(DockActionApplyError::Policy(rejection.reason))
+        }
     }
 }
 
@@ -356,6 +377,79 @@ mod tests {
     }
 
     #[test]
+    fn resolved_central_center_target_respects_policy_before_mutation() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        workspace
+            .policy_mut()
+            .set_allow_central_region_dock_over(false);
+        let mut target = resolved_target(DockResolvedDropTargetKind::LeafCenter {
+            root: right,
+            target_tabs: right,
+        });
+        target.is_central_region = true;
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target,
+            })
+            .expect_err("central center target should obey current policy");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::Policy(DockPolicyError::CentralRegionDockOverDisabled)
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
+    fn resolved_central_tab_bar_target_respects_policy_before_mutation() {
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("b"), item("c")],
+            active: 0,
+        });
+        graph.set_root(space(), tabs);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace
+            .policy_mut()
+            .set_allow_central_region_dock_over(false);
+        let mut target = resolved_target(DockResolvedDropTargetKind::TabBar {
+            target_tabs: tabs,
+            insert_index: 3,
+        });
+        target.is_central_region = true;
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: tabs,
+                item: &item("a"),
+                target_space: &space(),
+                target,
+            })
+            .expect_err("central tab bar target should obey current policy");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::Policy(DockPolicyError::CentralRegionDockOverDisabled)
+        );
+        let DockNode::Tabs { items, active } =
+            workspace.graph().node(tabs).expect("tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("a"), item("b"), item("c")]);
+        assert_eq!(*active, 0);
+    }
+
+    #[test]
     fn resolved_edge_target_respects_policy_before_mutation() {
         let (mut workspace, _root, left, right) = split_workspace();
         workspace.policy_mut().set_allow_edge_split(false);
@@ -467,6 +561,7 @@ mod tests {
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
+                    is_central: false,
                 }),
             })
             .expect("empty-space target should commit");
@@ -476,6 +571,39 @@ mod tests {
             workspace.graph().collect_items_in_space(&detached),
             vec![item("a")]
         );
+    }
+
+    #[test]
+    fn resolved_empty_central_target_respects_central_dock_over_policy_before_mutation() {
+        let (mut workspace, _root, left, _right) = split_workspace();
+        let central = DockSpaceId::from("central");
+        workspace.policy_mut().set_allow_platform_viewports(true);
+        workspace
+            .policy_mut()
+            .set_allow_central_region_dock_over(false);
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
+                    space: central.clone(),
+                    is_central: true,
+                }),
+            })
+            .expect_err("central empty-space target should obey central dock-over policy");
+
+        assert_eq!(
+            err,
+            DockActionApplyError::Policy(DockPolicyError::CentralRegionDockOverDisabled)
+        );
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+        assert_eq!(workspace.graph().root(&central), None);
     }
 
     #[test]
@@ -540,6 +668,7 @@ mod tests {
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
+                    is_central: false,
                 }),
             })
             .expect("resolved empty-space stack drop should commit");

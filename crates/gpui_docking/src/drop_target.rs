@@ -55,6 +55,7 @@ pub(crate) enum DockResolvedDropTargetKind {
     },
     EmptyDockSpace {
         space: DockSpaceId,
+        is_central: bool,
     },
 }
 
@@ -102,6 +103,7 @@ pub(crate) struct DockFloatingTitleBarDropTarget {
 pub(crate) struct DockEmptySpaceDropTarget {
     pub(crate) space: DockSpaceId,
     pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) is_central: bool,
 }
 
 pub(crate) struct DockDropResolverInput<'a> {
@@ -287,11 +289,12 @@ fn resolve_empty_space_drop(input: &DockDropResolverInput<'_>) -> Option<DockRes
         .map(|target| DockResolvedDropTarget {
             kind: DockResolvedDropTargetKind::EmptyDockSpace {
                 space: target.space.clone(),
+                is_central: target.is_central,
             },
             source: DockDropResolveSource::EmptyDockSpace,
             drop_box: None,
             preview_bounds: Some(target.bounds),
-            is_central_region: false,
+            is_central_region: target.is_central,
         })
 }
 
@@ -325,6 +328,7 @@ impl DockResolvedDropTarget {
                 self.kind,
                 DockResolvedDropTargetKind::TabBar { .. }
                     | DockResolvedDropTargetKind::LeafCenter { .. }
+                    | DockResolvedDropTargetKind::EmptyDockSpace { .. }
             )
     }
 }
@@ -1067,6 +1071,7 @@ mod tests {
             empty_spaces: &[DockEmptySpaceDropTarget {
                 space: space.clone(),
                 bounds: bounds(300.0, 200.0),
+                is_central: false,
             }],
             ..DockDropResolverInput::new(point(px(160.0), px(120.0)), &policy())
         })
@@ -1076,7 +1081,10 @@ mod tests {
         assert_eq!(target.source, DockDropResolveSource::EmptyDockSpace);
         assert_eq!(
             target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace { space }
+            DockResolvedDropTargetKind::EmptyDockSpace {
+                space,
+                is_central: false,
+            }
         );
         assert_eq!(
             target.preview_bounds,
@@ -1099,6 +1107,7 @@ mod tests {
             empty_spaces: &[DockEmptySpaceDropTarget {
                 space: space.clone(),
                 bounds: bounds(300.0, 200.0),
+                is_central: false,
             }],
             target_validator: Some(&target_validator),
             ..DockDropResolverInput::new(point(px(160.0), px(120.0)), &policy())
@@ -1115,7 +1124,8 @@ mod tests {
         assert_eq!(
             rejection.target.kind,
             DockResolvedDropTargetKind::EmptyDockSpace {
-                space: space.clone()
+                space: space.clone(),
+                is_central: false,
             }
         );
         assert_eq!(
@@ -1125,6 +1135,41 @@ mod tests {
                 item: DockItemId::from("editor"),
                 dock_class: None,
             }
+        );
+    }
+
+    #[test]
+    fn empty_central_space_respects_central_dock_over_policy() {
+        let space = DockSpaceId::from("central");
+        let mut policy = DockPolicy::default();
+        policy.set_allow_central_region_dock_over(false);
+        let resolution = resolve_layout_drop(DockDropResolverInput {
+            empty_spaces: &[DockEmptySpaceDropTarget {
+                space: space.clone(),
+                bounds: bounds(300.0, 200.0),
+                is_central: true,
+            }],
+            ..DockDropResolverInput::new(point(px(160.0), px(120.0)), &policy)
+        })
+        .expect("empty central space should resolve to a policy decision");
+
+        let DockDropResolution::Rejected(rejection) = resolution else {
+            panic!("central dock-over should be rejected");
+        };
+        assert_eq!(
+            rejection.target.source,
+            DockDropResolveSource::EmptyDockSpace
+        );
+        assert_eq!(
+            rejection.target.kind,
+            DockResolvedDropTargetKind::EmptyDockSpace {
+                space,
+                is_central: true,
+            }
+        );
+        assert_eq!(
+            rejection.reason,
+            DockPolicyError::CentralRegionDockOverDisabled
         );
     }
 

@@ -381,6 +381,7 @@ mod tests {
                     DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
                         space: space.clone(),
                         bounds: host_bounds,
+                        is_central: false,
                     })
                 )
                 .is_some()
@@ -399,7 +400,7 @@ mod tests {
         assert!(
             matches!(
                 target.kind,
-                DockResolvedDropTargetKind::EmptyDockSpace { space: ref resolved_space }
+                DockResolvedDropTargetKind::EmptyDockSpace { space: ref resolved_space, .. }
                     if resolved_space == &space
             ),
             "expected empty-space target, got {:?}",
@@ -422,6 +423,7 @@ mod tests {
         DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
             space,
             bounds: bounds(0.0, 0.0, 200.0, 120.0),
+            is_central: false,
         })
     }
 
@@ -439,7 +441,7 @@ mod tests {
         assert!(
             matches!(
                 target.kind,
-                DockResolvedDropTargetKind::EmptyDockSpace { ref space }
+                DockResolvedDropTargetKind::EmptyDockSpace { ref space, .. }
                     if space == expected_space
             ),
             "expected empty-space target, got {:?}",

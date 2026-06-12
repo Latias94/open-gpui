@@ -66,22 +66,6 @@ impl DockHost {
         self.close_item_interaction(item, cx).finish(cx)
     }
 
-    #[cfg(test)]
-    pub(crate) fn drop_payload_from_render(
-        &mut self,
-        payload: &DockDragPayload,
-        host_space: DockSpaceId,
-        release_position: Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        self.drop_payload_release_from_render(
-            DockPayloadDropRelease::hovered_host(payload.clone(), host_space, release_position),
-            window,
-            cx,
-        )
-    }
-
     pub(crate) fn drop_payload_release_from_render(
         &mut self,
         release: DockPayloadDropRelease,
@@ -162,14 +146,15 @@ impl DockHost {
         payload: &DockDragPayload,
         position: Point<Pixels>,
         bounds: Bounds<Pixels>,
+        is_central: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.update_empty_space_drop_scene_interaction(payload, position, bounds, window, cx)
-            .merge(
-                self.update_viewport_drop_route_preview_interaction(payload, position, window, cx),
-            )
-            .finish(cx)
+        self.update_empty_space_drop_scene_interaction(
+            payload, position, bounds, is_central, window, cx,
+        )
+        .merge(self.update_viewport_drop_route_preview_interaction(payload, position, window, cx))
+        .finish(cx)
     }
 
     pub(crate) fn begin_floating_drag_from_render(

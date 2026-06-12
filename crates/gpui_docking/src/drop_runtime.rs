@@ -23,7 +23,7 @@ pub(crate) struct DockDropRuntime {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockHostDropScene {
     pub(crate) position: Point<Pixels>,
-    excluded_tabs: Option<DockNodeId>,
+    excluded_node: Option<DockNodeId>,
     pub(crate) tab_labels: Vec<DockTabLabelDropTarget>,
     pub(crate) leaves: Vec<DockLeafDropTarget>,
     pub(crate) root: Option<DockRootDropTarget>,
@@ -45,7 +45,7 @@ impl DockHostDropScene {
     pub(crate) fn new(position: Point<Pixels>) -> Self {
         Self {
             position,
-            excluded_tabs: None,
+            excluded_node: None,
             tab_labels: Vec::new(),
             leaves: Vec::new(),
             root: None,
@@ -55,15 +55,15 @@ impl DockHostDropScene {
         }
     }
 
-    pub(crate) fn excluding_tabs(mut self, tabs: Option<DockNodeId>) -> Self {
-        self.excluded_tabs = tabs;
+    pub(crate) fn excluding_node(mut self, node: Option<DockNodeId>) -> Self {
+        self.excluded_node = node;
         self
     }
 
     pub(crate) fn push_fact(&mut self, fact: DockHostDropSceneFact) {
         if self
-            .excluded_tabs
-            .is_some_and(|tabs| fact.targets_tabs(tabs))
+            .excluded_node
+            .is_some_and(|node| fact.targets_node(node))
         {
             return;
         }
@@ -104,14 +104,16 @@ impl DockHostDropScene {
 }
 
 impl DockHostDropSceneFact {
-    fn targets_tabs(&self, tabs: DockNodeId) -> bool {
+    fn targets_node(&self, node: DockNodeId) -> bool {
         match self {
-            DockHostDropSceneFact::TabLabel(target) => target.target_tabs == tabs,
+            DockHostDropSceneFact::TabLabel(target) => target.target_tabs == node,
             DockHostDropSceneFact::Leaf(target) => {
-                target.root == tabs || target.target_tabs == tabs
+                target.root == node || target.target_tabs == node
             }
-            DockHostDropSceneFact::Root(target) => target.root == tabs,
-            DockHostDropSceneFact::FloatingTitleBar(target) => target.target_tabs == tabs,
+            DockHostDropSceneFact::Root(target) => target.root == node,
+            DockHostDropSceneFact::FloatingTitleBar(target) => {
+                target.floating == node || target.target_tabs == node
+            }
             DockHostDropSceneFact::EmptySpace(_) => false,
         }
     }
@@ -138,22 +140,22 @@ impl DockDropRuntime {
     pub(crate) fn push_scene_fact(
         &mut self,
         position: Point<Pixels>,
-        excluded_tabs: Option<DockNodeId>,
+        excluded_node: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
     ) -> bool {
-        self.push_scene_fact_with_validator(position, excluded_tabs, fact, policy, None)
+        self.push_scene_fact_with_validator(position, excluded_node, fact, policy, None)
     }
 
     pub(crate) fn push_scene_fact_with_validator(
         &mut self,
         position: Point<Pixels>,
-        excluded_tabs: Option<DockNodeId>,
+        excluded_node: Option<DockNodeId>,
         fact: DockHostDropSceneFact,
         policy: &DockPolicy,
         target_validator: Option<&DockDropTargetValidator<'_>>,
     ) -> bool {
-        let scene = self.scene_for_position(position, excluded_tabs);
+        let scene = self.scene_for_position(position, excluded_node);
         scene.push_fact(fact);
         let scene = scene.clone();
         self.resolve_scene(&scene, policy, target_validator)
@@ -196,14 +198,14 @@ impl DockDropRuntime {
     fn scene_for_position(
         &mut self,
         position: Point<Pixels>,
-        excluded_tabs: Option<DockNodeId>,
+        excluded_node: Option<DockNodeId>,
     ) -> &mut DockHostDropScene {
         let should_reset = self
             .scene
             .as_ref()
-            .is_none_or(|scene| scene.position != position || scene.excluded_tabs != excluded_tabs);
+            .is_none_or(|scene| scene.position != position || scene.excluded_node != excluded_node);
         if should_reset {
-            self.scene = Some(DockHostDropScene::new(position).excluding_tabs(excluded_tabs));
+            self.scene = Some(DockHostDropScene::new(position).excluding_node(excluded_node));
         }
         self.scene.as_mut().expect("scene should be initialized")
     }
@@ -270,7 +272,7 @@ fn center_target_tabs(target: &DockResolvedDropTarget) -> Option<DockNodeId> {
 mod tests {
     use super::*;
     use crate::{
-        DropZone,
+        DockPolicyError, DropZone,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
         geometry::{self, DockDropBoxKind, DockDropBoxSet},
     };
@@ -302,6 +304,14 @@ mod tests {
             size(px(120.0), px(120.0)),
         );
         (leaf_bounds, position)
+    }
+
+    fn leaf_center_position(bounds: Bounds<Pixels>) -> Point<Pixels> {
+        geometry::drop_boxes(bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::Center)
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .expect("center box should exist")
     }
 
     #[test]
@@ -400,7 +410,8 @@ mod tests {
     fn runtime_resolves_multi_fact_update_through_layout_resolver() {
         let tabs = DockNodeId::null();
         let mut runtime = DockDropRuntime::default();
-        let position = point(px(95.0), px(28.0));
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 400.0);
+        let position = leaf_center_position(leaf_bounds);
 
         runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
         assert!(runtime.push_scene_fact(
@@ -409,7 +420,7 @@ mod tests {
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: tabs,
                 target_tabs: tabs,
-                bounds: bounds(0.0, 0.0, 400.0, 400.0),
+                bounds: leaf_bounds,
                 is_central: false,
             }),
             &DockPolicy::default()
@@ -420,7 +431,7 @@ mod tests {
             DockHostDropSceneFact::TabLabel(DockTabLabelDropTarget {
                 target_tabs: tabs,
                 target_index: 2,
-                bounds: bounds(10.0, 20.0, 100.0, 24.0),
+                bounds: bounds(140.0, 188.0, 100.0, 24.0),
                 is_central: false,
             }),
             &DockPolicy::default()
@@ -450,10 +461,15 @@ mod tests {
             active: 0,
         });
         let mut runtime = DockDropRuntime::default();
-        let position = point(px(120.0), px(80.0));
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = geometry::drop_boxes(leaf_bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::Center)
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .expect("center box should exist");
 
         runtime.begin_scene(
-            DockHostDropScene::new(position).excluding_tabs(Some(source_tabs)),
+            DockHostDropScene::new(position).excluding_node(Some(source_tabs)),
             &DockPolicy::default(),
         );
         assert!(runtime.push_scene_fact(
@@ -462,7 +478,7 @@ mod tests {
             DockHostDropSceneFact::Leaf(DockLeafDropTarget {
                 root: target_tabs,
                 target_tabs,
-                bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                bounds: leaf_bounds,
                 is_central: false,
             }),
             &DockPolicy::default()
@@ -482,6 +498,67 @@ mod tests {
         let target = runtime
             .take_resolved_target()
             .expect("underlying target should remain after excluding source tabs");
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: target_tabs,
+                target_tabs,
+            }
+        );
+    }
+
+    #[test]
+    fn floating_drop_excludes_source_floating_during_scene_resolution() {
+        let mut graph = crate::DockGraph::new();
+        let floating_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("floating")],
+            active: 0,
+        });
+        let floating = graph.insert_node(crate::DockNode::Floating {
+            child: floating_tabs,
+        });
+        let target_tabs = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("target")],
+            active: 0,
+        });
+        let mut runtime = DockDropRuntime::default();
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = geometry::drop_boxes(leaf_bounds, DockDropBoxSet::Inner)
+            .into_iter()
+            .find(|drop_box| drop_box.kind == DockDropBoxKind::Center)
+            .map(|drop_box| drop_box.hit_bounds.center())
+            .expect("center box should exist");
+
+        runtime.begin_scene(
+            DockHostDropScene::new(position).excluding_node(Some(floating)),
+            &DockPolicy::default(),
+        );
+        assert!(!runtime.push_scene_fact(
+            position,
+            Some(floating),
+            DockHostDropSceneFact::FloatingTitleBar(DockFloatingTitleBarDropTarget {
+                floating,
+                target_tabs: floating_tabs,
+                title_bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                preview_bounds: bounds(0.0, 0.0, 400.0, 240.0),
+            }),
+            &DockPolicy::default()
+        ));
+        runtime.push_scene_fact(
+            position,
+            Some(floating),
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: target_tabs,
+                target_tabs,
+                bounds: leaf_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+
+        let target = runtime
+            .take_resolved_target()
+            .expect("target leaf should resolve");
         assert_eq!(
             target.kind,
             DockResolvedDropTargetKind::LeafCenter {
@@ -579,6 +656,7 @@ mod tests {
             DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
                 space: space.clone(),
                 bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                is_central: false,
             }),
             &DockPolicy::default()
         ));
@@ -588,7 +666,46 @@ mod tests {
             .expect("empty-space target should resolve without receiver bounds");
         assert!(matches!(
             target.kind,
-            DockResolvedDropTargetKind::EmptyDockSpace { space: target_space } if target_space == space
+            DockResolvedDropTargetKind::EmptyDockSpace { space: target_space, .. } if target_space == space
+        ));
+    }
+
+    #[test]
+    fn central_empty_space_target_records_rejected_resolution() {
+        let space = crate::DockSpaceId::from("central");
+        let mut runtime = DockDropRuntime::default();
+        let position = point(px(40.0), px(40.0));
+        let mut policy = DockPolicy::default();
+        policy.set_allow_central_region_dock_over(false);
+
+        runtime.begin_scene(DockHostDropScene::new(position), &policy);
+        assert!(runtime.push_scene_fact(
+            position,
+            None,
+            DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                space: space.clone(),
+                bounds: bounds(0.0, 0.0, 400.0, 240.0),
+                is_central: true,
+            }),
+            &policy
+        ));
+
+        let DockDropResolution::Rejected(rejection) = runtime
+            .drop_resolution()
+            .expect("central empty-space target should resolve to a policy decision")
+        else {
+            panic!("central empty-space dock-over should be rejected");
+        };
+        assert_eq!(
+            rejection.reason,
+            DockPolicyError::CentralRegionDockOverDisabled
+        );
+        assert!(matches!(
+            rejection.target.kind,
+            DockResolvedDropTargetKind::EmptyDockSpace {
+                space: ref target_space,
+                is_central: true,
+            } if target_space == &space
         ));
     }
 }

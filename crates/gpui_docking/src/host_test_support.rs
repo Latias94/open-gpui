@@ -1,6 +1,8 @@
 use crate::{
     DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockNodeId,
-    DockSpaceId, DockWorkspace, SplitAxis, debug::DockDebugRegion,
+    DockSpaceId, DockWorkspace, DropZone, SplitAxis,
+    debug::DockDebugRegion,
+    geometry::{self, DockDropBoxKind, DockDropBoxSet},
 };
 use open_gpui::{
     App, AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, InteractiveElement,
@@ -207,6 +209,62 @@ pub(crate) fn assert_close(actual: f32, expected: f32) {
         (actual - expected).abs() <= 2.0,
         "expected {actual} to be within 2px of {expected}"
     );
+}
+
+pub(crate) fn assert_point_close(
+    actual: open_gpui::Point<Pixels>,
+    expected: open_gpui::Point<Pixels>,
+) {
+    assert_close(f32::from(actual.x), f32::from(expected.x));
+    assert_close(f32::from(actual.y), f32::from(expected.y));
+}
+
+pub(crate) fn center_drop_position(bounds: Bounds<Pixels>) -> open_gpui::Point<Pixels> {
+    drop_box_position(bounds, DockDropBoxSet::Inner, DockDropBoxKind::Center)
+}
+
+pub(crate) fn screen_position_for_host_position(
+    window_bounds: WindowBounds,
+    host_position: open_gpui::Point<Pixels>,
+) -> open_gpui::Point<Pixels> {
+    point(
+        window_bounds.get_bounds().origin.x + host_position.x,
+        window_bounds.get_bounds().origin.y + host_position.y,
+    )
+}
+
+pub(crate) fn inner_edge_drop_position(
+    bounds: Bounds<Pixels>,
+    zone: DropZone,
+) -> open_gpui::Point<Pixels> {
+    drop_box_position(
+        bounds,
+        DockDropBoxSet::Inner,
+        DockDropBoxKind::InnerEdge(zone),
+    )
+}
+
+pub(crate) fn outer_edge_drop_position(
+    bounds: Bounds<Pixels>,
+    zone: DropZone,
+) -> open_gpui::Point<Pixels> {
+    drop_box_position(
+        bounds,
+        DockDropBoxSet::Outer,
+        DockDropBoxKind::OuterEdge(zone),
+    )
+}
+
+fn drop_box_position(
+    bounds: Bounds<Pixels>,
+    set: DockDropBoxSet,
+    kind: DockDropBoxKind,
+) -> open_gpui::Point<Pixels> {
+    geometry::drop_boxes(bounds, set)
+        .into_iter()
+        .find(|drop_box| drop_box.kind == kind)
+        .map(|drop_box| drop_box.hit_bounds.center())
+        .unwrap_or_else(|| panic!("{kind:?} drop box should exist"))
 }
 
 pub(crate) fn simulate_left_drag(

@@ -56,7 +56,7 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
-                    if payload.source_space == source_space && payload.source_tabs == node {
+                    if payload.source_space == source_space && payload.source_node == node {
                         let mut geometry = DockDragTearOffGeometry::from_source_bounds(
                             event.bounds,
                             event.event.position,
@@ -162,7 +162,7 @@ impl DockHost {
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
-                        if payload.source_space == source_space && payload.source_tabs == node {
+                        if payload.source_space == source_space && payload.source_node == node {
                             let mut geometry = DockDragTearOffGeometry::from_source_bounds(
                                 event.bounds,
                                 event.event.position,

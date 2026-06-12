@@ -46,8 +46,8 @@ pub enum DockViewportPayloadRecord {
 pub struct DockViewportRouteRecord {
     /// Source dock space where the payload drag started.
     pub source_space: DockSpaceId,
-    /// Source tabs node where the payload drag started.
-    pub source_tabs: DockNodeId,
+    /// Source graph node that owns the routed payload.
+    pub source_node: DockNodeId,
     /// Payload being routed.
     pub payload: DockViewportPayloadRecord,
     /// Runtime drag session that produced this route, when known.
@@ -166,7 +166,7 @@ impl DockViewportRuntimeStatus {
     ) {
         self.last_route = Some(DockViewportRouteRecord {
             source_space: request.source_space().clone(),
-            source_tabs: request.source_tabs(),
+            source_node: request.source_node(),
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
             drag_session_id: request.drag_session().map(|session| session.id()),
             target: DockViewportRouteTarget::from_route(request.source_space(), route),

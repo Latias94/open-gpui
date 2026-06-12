@@ -100,7 +100,7 @@ impl DockGraph {
     }
 
     /// Returns the active item of a reachable subtree in stable depth-first order.
-    pub(in crate::graph) fn active_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
+    pub(crate) fn active_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         match self.nodes.get(root)? {
             DockNode::Tabs { items, active } => items
                 .get((*active).min(items.len().checked_sub(1)?))

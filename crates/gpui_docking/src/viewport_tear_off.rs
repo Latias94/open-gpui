@@ -20,13 +20,16 @@ pub(crate) enum DockViewportDropPayload {
 impl DockViewportDropPayload {
     pub(crate) fn as_workspace_payload(
         &self,
-        source_tabs: DockNodeId,
+        source_node: DockNodeId,
     ) -> DockWorkspaceDropPayload<'_> {
         match self {
-            DockViewportDropPayload::Item(item) => {
-                DockWorkspaceDropPayload::Item { source_tabs, item }
-            }
-            DockViewportDropPayload::Tabs => DockWorkspaceDropPayload::Tabs { source_tabs },
+            DockViewportDropPayload::Item(item) => DockWorkspaceDropPayload::Item {
+                source_tabs: source_node,
+                item,
+            },
+            DockViewportDropPayload::Tabs => DockWorkspaceDropPayload::Tabs {
+                source_tabs: source_node,
+            },
             DockViewportDropPayload::Floating(floating) => DockWorkspaceDropPayload::Floating {
                 floating: *floating,
             },
@@ -36,13 +39,13 @@ impl DockViewportDropPayload {
     pub(crate) fn key(
         &self,
         source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
+        source_node: DockNodeId,
     ) -> DockViewportTearOffKey {
         match self {
             DockViewportDropPayload::Item(item) => DockViewportTearOffKey::Item(item.clone()),
             DockViewportDropPayload::Tabs => DockViewportTearOffKey::Tabs {
                 source_space: source_space.clone(),
-                source_tabs: source_tabs.as_u64(),
+                source_tabs: source_node.as_u64(),
             },
             DockViewportDropPayload::Floating(floating) => DockViewportTearOffKey::Floating {
                 source_space: source_space.clone(),
@@ -65,8 +68,8 @@ impl DockViewportDropPayload {
 pub(crate) struct DockViewportTearOffRequest {
     /// Source dock space containing the dragged payload.
     source_space: DockSpaceId,
-    /// Source tabs node where the drag started.
-    source_tabs: DockNodeId,
+    /// Source graph node that owns the dragged payload.
+    source_node: DockNodeId,
     /// Payload being torn off.
     payload: DockViewportDropPayload,
     /// Runtime drag session that produced this tear-off, when known.
@@ -82,14 +85,14 @@ pub(crate) struct DockViewportTearOffRequest {
 impl DockViewportTearOffRequest {
     pub(crate) fn new(
         source_space: impl Into<DockSpaceId>,
-        source_tabs: DockNodeId,
+        source_node: DockNodeId,
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
     ) -> Self {
         Self {
             source_space: source_space.into(),
-            source_tabs,
+            source_node,
             payload,
             drag_session: None,
             release_position,
@@ -118,8 +121,8 @@ impl DockViewportTearOffRequest {
         &self.source_space
     }
 
-    pub(crate) fn source_tabs(&self) -> DockNodeId {
-        self.source_tabs
+    pub(crate) fn source_node(&self) -> DockNodeId {
+        self.source_node
     }
 
     pub(crate) fn payload(&self) -> &DockViewportDropPayload {
@@ -143,7 +146,7 @@ impl DockViewportTearOffRequest {
     }
 
     pub(crate) fn key(&self) -> DockViewportTearOffKey {
-        self.payload.key(&self.source_space, self.source_tabs)
+        self.payload.key(&self.source_space, self.source_node)
     }
 }
 

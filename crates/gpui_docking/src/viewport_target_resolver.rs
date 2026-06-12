@@ -35,6 +35,7 @@ pub(crate) struct DockViewportTargetHit {
 }
 
 impl DockViewportTargetHit {
+    #[cfg(test)]
     pub(crate) fn new(
         space: impl Into<DockSpaceId>,
         window: AnyWindowHandle,
@@ -102,6 +103,7 @@ impl DockViewportTargetResolution {
         Self { target, confidence }
     }
 
+    #[cfg(test)]
     pub(crate) fn target(&self) -> &DockViewportTargetHit {
         &self.target
     }
@@ -110,6 +112,7 @@ impl DockViewportTargetResolution {
         self.target
     }
 
+    #[cfg(test)]
     pub(crate) fn confidence(&self) -> DockViewportTargetConfidence {
         self.confidence
     }
@@ -135,7 +138,9 @@ pub(crate) fn resolve_viewport_target_with_confidence(
 ) -> Option<DockViewportTargetResolution> {
     let hit_count = hits.len();
     let target = choose_viewport_target(hits, context)?;
-    let confidence = if hit_count == 1 || context.is_trusted_window(target.window_id()) {
+    let confidence = if context.is_trusted_window(target.window_id())
+        || (hit_count == 1 && !context.has_unmatched_arbitration_signal(target.window_id()))
+    {
         DockViewportTargetConfidence::Trusted
     } else if context.has_arbitration_signal() {
         DockViewportTargetConfidence::FallbackOnly
@@ -237,5 +242,17 @@ mod tests {
         )
         .expect("single hit should resolve");
         assert_eq!(single.confidence(), DockViewportTargetConfidence::Trusted);
+
+        let single_unmatched_signal = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", first)],
+            &DockViewportTargetContext::new().with_active_window(second),
+        )
+        .expect("single hit should still be reported for diagnostics");
+        assert_eq!(
+            single_unmatched_signal.confidence(),
+            DockViewportTargetConfidence::FallbackOnly,
+            "a single rectangle hit is not trusted when platform arbitration points elsewhere"
+        );
+        assert!(!single_unmatched_signal.is_trusted());
     }
 }

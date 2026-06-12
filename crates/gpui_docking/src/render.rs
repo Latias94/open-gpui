@@ -273,6 +273,7 @@ impl DockHost {
                         &payload,
                         event.event.position,
                         event.bounds,
+                        false,
                         window,
                         cx,
                     );
@@ -315,6 +316,7 @@ impl DockHost {
                         &payload,
                         event.event.position,
                         event.bounds,
+                        true,
                         window,
                         cx,
                     );
@@ -322,7 +324,7 @@ impl DockHost {
             ));
         if let Some(probe) = self
             .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::empty_space(space, bounds)
+                drop_scene_fact::empty_central_space(space, bounds)
             })
         {
             empty = empty.child(probe);

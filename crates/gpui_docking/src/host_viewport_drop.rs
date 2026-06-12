@@ -89,9 +89,11 @@ impl DockHost {
             window,
             cx,
             release.origin(),
-            self.viewport_runtime().and_then(|runtime| {
-                runtime.last_hovered_window_for_drag_session(release.drag_session())
-            }),
+            self.viewport_runtime()
+                .and_then(|runtime| match release.drag_session() {
+                    Some(session) => runtime.last_hovered_window_for_drag_session(Some(session)),
+                    None => runtime.last_hovered_window(),
+                }),
             drag_session,
             tear_off_geometry,
         );
@@ -120,7 +122,7 @@ fn viewport_drop_route_request_from_host(
     };
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
-        payload.source_tabs,
+        payload.source_node,
         viewport_payload(payload),
         window_screen_position(window, host_position),
         None,

@@ -127,7 +127,7 @@ impl DockWorkspace {
     ) -> DockPayloadDockClasses {
         match &payload.kind {
             DockDragPayloadKind::Item { item } => self.payload_dock_classes_for_item(item),
-            DockDragPayloadKind::Tabs => self.payload_dock_classes_for_tabs(payload.source_tabs),
+            DockDragPayloadKind::Tabs => self.payload_dock_classes_for_tabs(payload.source_node),
             DockDragPayloadKind::Floating { floating } => {
                 self.payload_dock_classes_for_floating(*floating)
             }
@@ -188,7 +188,7 @@ pub(crate) fn dock_target_space<'a>(
     target: &'a DockResolvedDropTarget,
 ) -> &'a DockSpaceId {
     match &target.kind {
-        DockResolvedDropTargetKind::EmptyDockSpace { space } => space,
+        DockResolvedDropTargetKind::EmptyDockSpace { space, .. } => space,
         DockResolvedDropTargetKind::TabBar { .. }
         | DockResolvedDropTargetKind::LeafCenter { .. }
         | DockResolvedDropTargetKind::InnerEdge { .. }

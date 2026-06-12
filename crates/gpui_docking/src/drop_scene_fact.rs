@@ -41,7 +41,22 @@ pub(crate) fn root(root: DockNodeId, bounds: Bounds<Pixels>) -> DockHostDropScen
 }
 
 pub(crate) fn empty_space(space: DockSpaceId, bounds: Bounds<Pixels>) -> DockHostDropSceneFact {
-    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget { space, bounds })
+    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+        space,
+        bounds,
+        is_central: false,
+    })
+}
+
+pub(crate) fn empty_central_space(
+    space: DockSpaceId,
+    bounds: Bounds<Pixels>,
+) -> DockHostDropSceneFact {
+    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+        space,
+        bounds,
+        is_central: true,
+    })
 }
 
 pub(crate) fn floating_title_bar(

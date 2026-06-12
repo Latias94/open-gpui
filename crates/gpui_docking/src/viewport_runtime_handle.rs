@@ -135,7 +135,6 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().runtime_status()
     }
 
-    #[cfg(test)]
     pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
         self.runtime.borrow().last_hovered_window()
     }

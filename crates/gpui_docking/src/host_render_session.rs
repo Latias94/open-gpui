@@ -190,8 +190,18 @@ impl DockHostRenderSession {
     }
 
     pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> DockNodeId {
-        self.root
-            .filter(|root| self.subtree_contains(*root, tabs))
+        if let Some(root) = self.root
+            && self.subtree_contains(root, tabs)
+        {
+            return root;
+        }
+
+        self.floating_containers
+            .iter()
+            .find_map(|container| {
+                self.subtree_contains(container.node, tabs)
+                    .then_some(container.node)
+            })
             .unwrap_or(tabs)
     }
 
@@ -311,6 +321,46 @@ mod tests {
 
         assert!(session.floating_child(floating).is_some());
         assert_eq!(session.floating_title(floating), "Floating A");
+    }
+
+    #[test]
+    fn render_session_uses_floating_root_as_drop_root_for_floating_tabs() {
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("root")],
+            active: 0,
+        });
+        graph.set_root(space(), root);
+        let left = graph.insert_node(DockNode::Tabs {
+            items: vec![item("left")],
+            active: 0,
+        });
+        let right = graph.insert_node(DockNode::Tabs {
+            items: vec![item("right")],
+            active: 0,
+        });
+        let split = graph.insert_node(DockNode::Split {
+            axis: crate::SplitAxis::Horizontal,
+            children: vec![left, right],
+            fractions: vec![0.5, 0.5],
+        });
+        let floating = graph.insert_node(DockNode::Floating { child: split });
+        graph
+            .floating_containers_mut(space())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: open_gpui::Bounds::new(
+                    open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                    open_gpui::size(open_gpui::px(320.0), open_gpui::px(200.0)),
+                ),
+            });
+        let workspace = DockWorkspace::new(space(), graph);
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert_eq!(session.drop_root_for_tabs(left), floating);
+        assert_eq!(session.drop_root_for_tabs(right), floating);
+        assert_eq!(session.drop_root_for_tabs(root), root);
     }
 
     #[test]

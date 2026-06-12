@@ -1,14 +1,16 @@
+#[cfg(test)]
+use crate::viewport_target_resolver::choose_viewport_target;
 use crate::{
     DockViewportAdapter, DockViewportTargetContext, DockViewportTargetHit,
     viewport_target_resolver::{
-        DockViewportTargetResolution, choose_viewport_target,
-        resolve_viewport_target_with_confidence,
+        DockViewportTargetResolution, resolve_viewport_target_with_confidence,
     },
 };
 use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
     /// Resolves a registered viewport target using explicit platform arbitration inputs.
+    #[cfg(test)]
     pub(crate) fn resolve_viewport_target(
         &self,
         position: Point<Pixels>,

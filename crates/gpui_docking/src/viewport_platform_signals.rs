@@ -1,5 +1,5 @@
 use crate::DockViewportTargetContext;
-use open_gpui::{AnyWindowHandle, App, Window, WindowId};
+use open_gpui::{AnyWindowHandle, App, PlatformViewportCapabilities, Window, WindowId};
 
 /// Snapshot of platform window signals used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -10,20 +10,30 @@ pub(crate) struct DockViewportPlatformSignals {
     active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
+    /// Platform capabilities used to decide which signals are reliable.
+    capabilities: PlatformViewportCapabilities,
 }
 
 impl DockViewportPlatformSignals {
     /// Captures GPUI application-level platform signals.
     pub(crate) fn from_app(cx: &App) -> Self {
+        let capabilities = cx.viewport_capabilities();
         Self {
             hovered_window: None,
-            active_window: cx.active_window().map(|window| window.window_id()),
-            window_stack: cx
-                .window_stack()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|window| window.window_id())
-                .collect(),
+            active_window: capabilities
+                .active_window
+                .then(|| cx.active_window().map(|window| window.window_id()))
+                .flatten(),
+            window_stack: if capabilities.window_stack {
+                cx.window_stack()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|window| window.window_id())
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            capabilities,
         }
     }
 
@@ -44,6 +54,10 @@ impl DockViewportPlatformSignals {
         self
     }
 
+    pub(crate) fn has_global_window_bounds(&self) -> bool {
+        self.capabilities.global_window_bounds
+    }
+
     /// Converts the platform snapshot into the pure resolver context.
     #[cfg(test)]
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
@@ -61,7 +75,19 @@ impl DockViewportPlatformSignals {
             hovered_window,
             active_window,
             window_stack,
+            capabilities: PlatformViewportCapabilities {
+                global_window_bounds: true,
+                active_window: true,
+                window_stack: true,
+                ..Default::default()
+            },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_global_window_bounds(mut self, supported: bool) -> Self {
+        self.capabilities.global_window_bounds = supported;
+        self
     }
 }
 

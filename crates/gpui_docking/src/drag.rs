@@ -7,7 +7,7 @@ use open_gpui::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockDragPayload {
     pub(crate) source_space: DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
+    pub(crate) source_node: DockNodeId,
     pub(crate) kind: DockDragPayloadKind,
     title: String,
 }
@@ -22,7 +22,7 @@ pub(crate) enum DockDragPayloadKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockDragPayloadIdentity {
     source_space: DockSpaceId,
-    source_tabs: DockNodeId,
+    source_node: DockNodeId,
     kind: DockDragPayloadKind,
 }
 
@@ -43,7 +43,7 @@ impl DockDragPayload {
     ) -> Self {
         Self {
             source_space,
-            source_tabs,
+            source_node: source_tabs,
             kind: DockDragPayloadKind::Item { item },
             title,
         }
@@ -56,7 +56,7 @@ impl DockDragPayload {
     ) -> Self {
         Self {
             source_space,
-            source_tabs,
+            source_node: source_tabs,
             kind: DockDragPayloadKind::Tabs,
             title,
         }
@@ -65,12 +65,11 @@ impl DockDragPayload {
     pub(crate) fn new_floating(
         source_space: DockSpaceId,
         floating: DockNodeId,
-        source_tabs: DockNodeId,
         title: String,
     ) -> Self {
         Self {
             source_space,
-            source_tabs,
+            source_node: floating,
             kind: DockDragPayloadKind::Floating { floating },
             title,
         }
@@ -104,16 +103,16 @@ impl DockDragPayload {
     pub(crate) fn identity(&self) -> DockDragPayloadIdentity {
         DockDragPayloadIdentity {
             source_space: self.source_space.clone(),
-            source_tabs: self.source_tabs,
+            source_node: self.source_node,
             kind: self.kind.clone(),
         }
     }
 
-    pub(crate) fn excluded_tabs_for_drop_scene(&self) -> Option<DockNodeId> {
+    pub(crate) fn excluded_node_for_drop_scene(&self) -> Option<DockNodeId> {
         match self.kind {
             DockDragPayloadKind::Item { .. } => None,
             DockDragPayloadKind::Tabs | DockDragPayloadKind::Floating { .. } => {
-                Some(self.source_tabs)
+                Some(self.source_node)
             }
         }
     }
@@ -207,21 +206,18 @@ mod tests {
         let floating = DockNodeId::null();
         let tabs_payload =
             DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
-        let floating_payload = DockDragPayload::new_floating(
-            source_space,
-            floating,
-            source_tabs,
-            "Floating".to_string(),
-        );
+        let floating_payload =
+            DockDragPayload::new_floating(source_space, floating, "Floating".to_string());
 
         assert_eq!(item_payload.item(), Some(&DockItemId::from("a")));
         assert!(!item_payload.is_tabs_stack());
         assert_eq!(tabs_payload.item(), None);
         assert!(tabs_payload.is_tabs_stack());
         assert_eq!(floating_payload.floating(), Some(floating));
+        assert_eq!(floating_payload.source_node, floating);
         assert_eq!(
-            floating_payload.excluded_tabs_for_drop_scene(),
-            Some(source_tabs)
+            floating_payload.excluded_node_for_drop_scene(),
+            Some(floating)
         );
     }
 

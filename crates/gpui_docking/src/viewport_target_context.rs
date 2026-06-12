@@ -70,6 +70,10 @@ impl DockViewportTargetContext {
             || self.window_stack.contains(&window_id)
     }
 
+    pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
+        self.has_arbitration_signal() && !self.is_trusted_window(window_id)
+    }
+
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
         self.hovered_window
     }

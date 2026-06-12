@@ -26,7 +26,7 @@ impl DockHost {
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut().begin_drop_scene_with_validator(
                 DockHostDropScene::new(position)
-                    .excluding_tabs(payload.excluded_tabs_for_drop_scene()),
+                    .excluding_node(payload.excluded_node_for_drop_scene()),
                 &policy,
                 Some(&target_validator),
             ),
@@ -51,7 +51,7 @@ impl DockHost {
         let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
         DockHostInteractionOutcome::from_session_changed(self.push_drop_scene_fact_interaction(
             position,
-            payload.excluded_tabs_for_drop_scene(),
+            payload.excluded_node_for_drop_scene(),
             fact,
             window,
             &policy,
@@ -77,11 +77,16 @@ impl DockHost {
         payload: &DockDragPayload,
         position: Point<Pixels>,
         bounds: Bounds<Pixels>,
+        is_central: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> DockHostInteractionOutcome {
         let space = self.space().clone();
-        let fact = drop_scene_fact::empty_space(space, bounds);
+        let fact = if is_central {
+            drop_scene_fact::empty_central_space(space, bounds)
+        } else {
+            drop_scene_fact::empty_space(space, bounds)
+        };
         self.update_drop_scene_fact_interaction(payload, fact, position, window, cx)
     }
 

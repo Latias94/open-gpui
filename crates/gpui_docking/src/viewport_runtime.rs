@@ -241,6 +241,7 @@ impl DockViewportRoutedDropPreview {
         self.identity.window_id()
     }
 
+    #[cfg(test)]
     fn commit(&self) -> &DockViewportDropRouteCommit {
         &self.commit
     }
@@ -449,7 +450,6 @@ impl DockViewportRuntime {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
         self.last_hovered_window.map(|hovered| hovered.window_id)
     }
@@ -616,6 +616,7 @@ impl DockViewportRuntime {
             .cloned()
     }
 
+    #[cfg(test)]
     pub(crate) fn routed_drop_commit_for_drag_session(
         &self,
         session: Option<&DockRuntimeDragSession>,
@@ -787,12 +788,12 @@ impl DockViewportRuntime {
         commit: DockViewportDropRouteCommit,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let (source_space, source_tabs, payload, target_space) = match commit {
+        let (source_space, source_node, payload, target_space) = match commit {
             DockViewportDropRouteCommit::Workspace(commit) => {
                 self.validate_payload_drag_session(commit.drag_session())?;
                 let (
                     source_space,
-                    source_tabs,
+                    source_node,
                     payload,
                     route_space,
                     target_window_id,
@@ -812,7 +813,7 @@ impl DockViewportRuntime {
                         &route_space,
                         target.into_target(),
                         &payload,
-                        source_tabs,
+                        source_node,
                         cx,
                     )?,
                     None => self.resolve_route_target(
@@ -821,11 +822,11 @@ impl DockViewportRuntime {
                         target_facts_generation,
                         host_position,
                         &payload,
-                        source_tabs,
+                        source_node,
                         cx,
                     )?,
                 };
-                (source_space, source_tabs, payload, target_space)
+                (source_space, source_node, payload, target_space)
             }
             DockViewportDropRouteCommit::TearOff(request) => {
                 self.validate_payload_drag_session(request.drag_session())?;
@@ -842,12 +843,12 @@ impl DockViewportRuntime {
         };
 
         let (target_space, target) = target_space;
-        let focus_item = self.focus_item_for_payload(&payload, source_tabs, cx);
+        let focus_item = self.focus_item_for_payload(&payload, source_node, cx);
         let action = self.controller.update(cx, |controller, cx| {
             let outcome =
                 controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                     source_space: &source_space,
-                    payload: payload.as_workspace_payload(source_tabs),
+                    payload: payload.as_workspace_payload(source_node),
                     target_space: &target_space,
                     target,
                 });
@@ -871,14 +872,14 @@ impl DockViewportRuntime {
         target_space: &DockSpaceId,
         target: DockResolvedDropTarget,
         payload: &DockViewportDropPayload,
-        source_tabs: DockNodeId,
+        source_node: DockNodeId,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
         let controller = self.controller.read(cx);
         let workspace = controller.workspace();
         let policy = workspace.policy().clone();
         let payload_classes =
-            workspace.payload_dock_classes_for_viewport_payload(payload, source_tabs);
+            workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
         let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
         match validate_resolved_drop_target(target, &policy, Some(&target_validator)) {
             DockDropResolution::Valid(target) => Ok((target_space.clone(), target)),
@@ -895,7 +896,7 @@ impl DockViewportRuntime {
         target_facts_generation: Option<u64>,
         host_position: Point<Pixels>,
         payload: &DockViewportDropPayload,
-        source_tabs: DockNodeId,
+        source_node: DockNodeId,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
         if !self.target_facts_generation_is_current(
@@ -910,7 +911,7 @@ impl DockViewportRuntime {
         let workspace = controller.workspace();
         let policy = workspace.policy().clone();
         let payload_classes =
-            workspace.payload_dock_classes_for_viewport_payload(payload, source_tabs);
+            workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
         let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
         let Some((_, resolution)) = self.host_scenes.resolve_frame_for_window(
             target_space,
@@ -966,37 +967,46 @@ impl DockViewportRuntime {
             let graph = self.controller.read(cx).graph();
             match request.payload() {
                 DockViewportDropPayload::Item(item) => {
+                    let source_tabs = request.source_node();
                     if graph
                         .find_item_in_space(request.source_space(), item)
-                        .is_none_or(|(tabs, _)| tabs != request.source_tabs())
+                        .is_none_or(|(tabs, _)| tabs != source_tabs)
                     {
                         return Err(DockActionApplyError::ItemNotInTabs {
-                            tabs: request.source_tabs(),
+                            tabs: source_tabs,
                             item: item.clone(),
                         });
                     }
                 }
                 DockViewportDropPayload::Tabs => {
+                    let source_tabs = request.source_node();
                     if graph
-                        .root_for_node_in_space(request.source_space(), request.source_tabs())
+                        .root_for_node_in_space(request.source_space(), source_tabs)
                         .is_none()
                     {
                         return Err(tear_off_payload_mismatch(
                             request.source_space(),
-                            request.source_tabs(),
+                            source_tabs,
                         ));
                     }
                     if !matches!(
-                        graph.node(request.source_tabs()),
+                        graph.node(source_tabs),
                         Some(DockNode::Tabs { items, .. }) if !items.is_empty()
                     ) {
                         return Err(tear_off_payload_mismatch(
                             request.source_space(),
-                            request.source_tabs(),
+                            source_tabs,
                         ));
                     }
                 }
                 DockViewportDropPayload::Floating(floating) => {
+                    let source_floating = request.source_node();
+                    if source_floating != *floating {
+                        return Err(tear_off_payload_mismatch(
+                            request.source_space(),
+                            source_floating,
+                        ));
+                    }
                     if graph
                         .floating_containers(request.source_space())
                         .iter()
@@ -1008,16 +1018,10 @@ impl DockViewportRuntime {
                         }
                         .into());
                     }
-                    if !matches!(
-                        graph.node(request.source_tabs()),
-                        Some(DockNode::Tabs { items, .. }) if !items.is_empty()
-                    ) || graph
-                        .root_for_node_in_space(request.source_space(), request.source_tabs())
-                        != Some(*floating)
-                    {
+                    if graph.collect_items_in_subtree(*floating).is_empty() {
                         return Err(tear_off_payload_mismatch(
                             request.source_space(),
-                            request.source_tabs(),
+                            source_floating,
                         ));
                     }
                 }
@@ -1120,7 +1124,7 @@ impl DockViewportRuntime {
         let policy = workspace.policy().to_owned();
         let mut route = self.adapter.resolve_payload_drop_route(request, &policy);
         let payload_classes = workspace
-            .payload_dock_classes_for_viewport_payload(request.payload(), request.source_tabs());
+            .payload_dock_classes_for_viewport_payload(request.payload(), request.source_node());
         let resolved_target = match self.resolved_workspace_target_for_route(
             &route,
             request,
@@ -1367,22 +1371,27 @@ impl DockViewportRuntime {
         request: &DockViewportTearOffRequest,
         cx: &App,
     ) -> Option<DockItemId> {
-        self.focus_item_for_payload(request.payload(), request.source_tabs(), cx)
+        self.focus_item_for_payload(request.payload(), request.source_node(), cx)
     }
 
     fn focus_item_for_payload(
         &self,
         payload: &DockViewportDropPayload,
-        source_tabs: crate::DockNodeId,
+        source_node: crate::DockNodeId,
         cx: &App,
     ) -> Option<DockItemId> {
         match payload {
             DockViewportDropPayload::Item(item) => Some(item.clone()),
-            DockViewportDropPayload::Tabs | DockViewportDropPayload::Floating(_) => self
+            DockViewportDropPayload::Tabs => self
                 .controller
                 .read(cx)
                 .graph()
-                .active_item_in_tabs(source_tabs),
+                .active_item_in_tabs(source_node),
+            DockViewportDropPayload::Floating(floating) => self
+                .controller
+                .read(cx)
+                .graph()
+                .active_item_in_subtree(*floating),
         }
     }
 
@@ -1570,7 +1579,7 @@ impl DockViewportRuntime {
             DockViewportDropPayload::Item(item) => graph
                 .find_item_in_space(request.source_space(), item)
                 .map(|(tabs, _)| {
-                    if tabs == request.source_tabs() {
+                    if tabs == request.source_node() {
                         DockViewportTearOffSourceStatus::Ready
                     } else {
                         DockViewportTearOffSourceStatus::Moved
@@ -1584,7 +1593,7 @@ impl DockViewportRuntime {
                     }
                 }),
             DockViewportDropPayload::Tabs => {
-                let source_tabs = request.source_tabs();
+                let source_tabs = request.source_node();
                 let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
                     return DockViewportTearOffSourceStatus::Missing;
                 };
@@ -1599,10 +1608,10 @@ impl DockViewportRuntime {
                 }
             }
             DockViewportDropPayload::Floating(floating) => {
-                let source_tabs = request.source_tabs();
-                let Some(DockNode::Tabs { items, .. }) = graph.node(source_tabs) else {
+                let source_floating = request.source_node();
+                if source_floating != *floating {
                     return DockViewportTearOffSourceStatus::Missing;
-                };
+                }
                 if graph
                     .floating_containers(request.source_space())
                     .iter()
@@ -1610,10 +1619,7 @@ impl DockViewportRuntime {
                 {
                     return DockViewportTearOffSourceStatus::Missing;
                 }
-                if !items.is_empty()
-                    && graph.root_for_node_in_space(request.source_space(), source_tabs)
-                        == Some(*floating)
-                {
+                if !graph.collect_items_in_subtree(*floating).is_empty() {
                     DockViewportTearOffSourceStatus::Ready
                 } else {
                     DockViewportTearOffSourceStatus::Moved
@@ -1637,7 +1643,7 @@ impl DockViewportRuntime {
                 ),
                 DockViewportDropPayload::Tabs => controller.commit_tabs_to_empty_dock_space(
                     request.source_space(),
-                    request.source_tabs(),
+                    request.source_node(),
                     pending.target_space(),
                 ),
                 DockViewportDropPayload::Floating(floating) => controller
