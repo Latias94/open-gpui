@@ -2198,6 +2198,173 @@ mod tests {
     }
 
     #[test]
+    fn editor_group_selection_preserves_common_parent_membership() {
+        let mut frame = CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(-20.0), px(-20.0)), size(px(360.0), px(180.0))),
+        );
+        frame.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(frame)
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+        ] {
+            document
+                .apply_transaction(CanvasTransaction::new([
+                    DocumentCommand::SetRecordParent {
+                        child: member.clone(),
+                        parent: frame.clone(),
+                    },
+                    DocumentCommand::AddRecordToGroup {
+                        group: frame.clone(),
+                        member,
+                    },
+                ]))
+                .unwrap();
+        }
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        assert_eq!(
+            editor.document().relations().parent_of(&group),
+            Some(&frame)
+        );
+        assert!(
+            editor
+                .document()
+                .relations()
+                .members_of(&frame)
+                .any(|member| member == &group)
+        );
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ] {
+            assert_eq!(
+                editor.document().relations().parent_of(&member),
+                Some(&group)
+            );
+            assert!(
+                !editor
+                    .document()
+                    .relations()
+                    .members_of(&frame)
+                    .any(|candidate| candidate == &member)
+            );
+        }
+
+        assert!(editor.ungroup_selection().unwrap());
+
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ] {
+            assert_eq!(
+                editor.document().relations().parent_of(&member),
+                Some(&frame)
+            );
+            assert!(
+                editor
+                    .document()
+                    .relations()
+                    .members_of(&frame)
+                    .any(|candidate| candidate == &member)
+            );
+        }
+    }
+
+    #[test]
+    fn editor_group_selection_ignores_selected_descendant_of_selected_group() {
+        let mut inner_group = CanvasShape::new(
+            "inner-group",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(120.0))),
+        );
+        inner_group.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(inner_group)
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("leaf")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("inner-group"));
+        editor.session.selection.nodes.insert(NodeId::from("leaf"));
+        editor.session.selection.nodes.insert(NodeId::from("peer"));
+
+        assert!(editor.group_selection("outer-group").unwrap());
+
+        let outer_group = CanvasRecordId::Shape(ShapeId::from("outer-group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("peer")),
+            CanvasRecordId::Shape(ShapeId::from("inner-group")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&outer_group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("leaf"))),
+            Some(&CanvasRecordId::Shape(ShapeId::from("inner-group")))
+        );
+    }
+
+    #[test]
     fn editor_reorders_selected_records_and_supports_undo() {
         let mut back = CanvasNode::new("back", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
         back.z_index = 1;

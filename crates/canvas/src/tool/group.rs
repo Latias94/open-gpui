@@ -21,8 +21,9 @@ pub(crate) fn group_selection_edit(
     }
 
     let group_record = CanvasRecordId::Shape(group_id.clone());
-    let members = groupable_selection_records(document, selection, &group_record);
-    let node_shape_members = members
+    let groupable = groupable_selection_records(document, selection, &group_record);
+    let node_shape_members = groupable
+        .records
         .iter()
         .filter(|record_id| is_node_or_shape(record_id))
         .count();
@@ -32,7 +33,8 @@ pub(crate) fn group_selection_edit(
 
     let Some(bounds) = group_bounds(
         document,
-        members
+        groupable
+            .records
             .iter()
             .filter(|record_id| is_node_or_shape(record_id)),
     ) else {
@@ -44,9 +46,37 @@ pub(crate) fn group_selection_edit(
     group.style.fill = Some("#00000000".to_string());
     group.style.stroke = Some("#8c959f".to_string());
     group.style.stroke_width = px(1.0);
+    if let Some(z_index) = group_z_index(document, groupable.records.iter()) {
+        group.z_index = z_index;
+    }
 
     let mut commands = vec![DocumentCommand::InsertShape(group)];
-    for member in members {
+    if let Some(parent) = groupable.inherited_parent.clone() {
+        commands.push(DocumentCommand::SetRecordParent {
+            child: group_record.clone(),
+            parent,
+        });
+    }
+    for external_group in &groupable.inherited_groups {
+        commands.push(DocumentCommand::AddRecordToGroup {
+            group: external_group.clone(),
+            member: group_record.clone(),
+        });
+    }
+
+    for member in groupable.records {
+        for external_group in &groupable.inherited_groups {
+            if document
+                .relations()
+                .groups_for(&member)
+                .any(|group| group == external_group)
+            {
+                commands.push(DocumentCommand::RemoveRecordFromGroup {
+                    group: external_group.clone(),
+                    member: member.clone(),
+                });
+            }
+        }
         commands.push(DocumentCommand::SetRecordParent {
             child: member.clone(),
             parent: group_record.clone(),
@@ -81,10 +111,22 @@ pub(crate) fn ungroup_selection_edit(
     let mut commands = Vec::new();
     let mut next_selection = CanvasSelection::default();
     for group in group_records {
+        let inherited_parent = document.relations().parent_of(&group).cloned();
+        let inherited_groups = document
+            .relations()
+            .groups_for(&group)
+            .cloned()
+            .collect::<Vec<_>>();
         for child in document.relations().children_of(&group) {
-            commands.push(DocumentCommand::ClearRecordParent {
-                child: child.clone(),
-            });
+            match inherited_parent.clone() {
+                Some(parent) => commands.push(DocumentCommand::SetRecordParent {
+                    child: child.clone(),
+                    parent,
+                }),
+                None => commands.push(DocumentCommand::ClearRecordParent {
+                    child: child.clone(),
+                }),
+            }
             select_record(&mut next_selection, child);
         }
         for member in document.relations().members_of(&group) {
@@ -92,7 +134,19 @@ pub(crate) fn ungroup_selection_edit(
                 group: group.clone(),
                 member: member.clone(),
             });
+            for external_group in &inherited_groups {
+                commands.push(DocumentCommand::AddRecordToGroup {
+                    group: external_group.clone(),
+                    member: member.clone(),
+                });
+            }
             select_record(&mut next_selection, member);
+        }
+        for external_group in inherited_groups {
+            commands.push(DocumentCommand::RemoveRecordFromGroup {
+                group: external_group,
+                member: group.clone(),
+            });
         }
         if let CanvasRecordId::Shape(id) = group {
             commands.push(DocumentCommand::RemoveShape(id));
@@ -105,19 +159,37 @@ pub(crate) fn ungroup_selection_edit(
     })
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+struct GroupSelectionRecords {
+    records: Vec<CanvasRecordId>,
+    inherited_parent: Option<CanvasRecordId>,
+    inherited_groups: Vec<CanvasRecordId>,
+}
+
 fn groupable_selection_records(
     document: &CanvasDocument,
     selection: &CanvasSelection,
     group_record: &CanvasRecordId,
-) -> Vec<CanvasRecordId> {
+) -> GroupSelectionRecords {
     let mut records = IndexSet::new();
 
-    for record_id in directly_selected_record_ids(selection) {
+    let direct_records = directly_selected_record_ids(selection)
+        .filter(|record_id| can_group_record(document, record_id, group_record))
+        .collect::<IndexSet<_>>();
+    for record_id in &direct_records {
+        if record_has_selected_ancestor(document, record_id, &direct_records) {
+            continue;
+        }
         if can_group_record(document, &record_id, group_record) {
-            records.insert(record_id);
+            records.insert(record_id.clone());
         }
     }
 
+    let primary_records = records
+        .iter()
+        .filter(|record_id| is_node_or_shape(record_id))
+        .cloned()
+        .collect::<Vec<_>>();
     let selected_nodes = records
         .iter()
         .filter_map(|record_id| match record_id {
@@ -137,7 +209,15 @@ fn groupable_selection_records(
         }
     }
 
-    records.into_iter().collect()
+    let inherited_parent = common_parent(document, &primary_records, &records, group_record);
+    let inherited_groups =
+        common_group_memberships(document, &primary_records, &records, group_record);
+
+    GroupSelectionRecords {
+        records: records.into_iter().collect(),
+        inherited_parent,
+        inherited_groups,
+    }
 }
 
 fn directly_selected_record_ids(
@@ -180,6 +260,79 @@ fn can_group_record(
         && !record_would_contain_group(document, record_id, group_record)
 }
 
+fn record_has_selected_ancestor(
+    document: &CanvasDocument,
+    record_id: &CanvasRecordId,
+    selected_records: &IndexSet<CanvasRecordId>,
+) -> bool {
+    let mut pending = document
+        .relations()
+        .parent_of(record_id)
+        .cloned()
+        .into_iter()
+        .chain(document.relations().groups_for(record_id).cloned())
+        .collect::<Vec<_>>();
+    let mut visited = IndexSet::new();
+
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        if selected_records.contains(&current) {
+            return true;
+        }
+        pending.extend(document.relations().parent_of(&current).cloned());
+        pending.extend(document.relations().groups_for(&current).cloned());
+    }
+
+    false
+}
+
+fn common_parent(
+    document: &CanvasDocument,
+    primary_records: &[CanvasRecordId],
+    member_records: &IndexSet<CanvasRecordId>,
+    group_record: &CanvasRecordId,
+) -> Option<CanvasRecordId> {
+    let (first, rest) = primary_records.split_first()?;
+    let parent = document.relations().parent_of(first)?.clone();
+    if &parent == group_record || member_records.contains(&parent) {
+        return None;
+    }
+
+    rest.iter()
+        .all(|record_id| document.relations().parent_of(record_id) == Some(&parent))
+        .then_some(parent)
+}
+
+fn common_group_memberships(
+    document: &CanvasDocument,
+    primary_records: &[CanvasRecordId],
+    member_records: &IndexSet<CanvasRecordId>,
+    group_record: &CanvasRecordId,
+) -> Vec<CanvasRecordId> {
+    let Some((first, rest)) = primary_records.split_first() else {
+        return Vec::new();
+    };
+    let mut groups = document
+        .relations()
+        .groups_for(first)
+        .filter(|group| *group != group_record && !member_records.contains(*group))
+        .cloned()
+        .collect::<IndexSet<_>>();
+
+    for record_id in rest {
+        groups.retain(|group| {
+            document
+                .relations()
+                .groups_for(record_id)
+                .any(|id| id == group)
+        });
+    }
+
+    groups.into_iter().collect()
+}
+
 fn selected_group_records(
     document: &CanvasDocument,
     selection: &CanvasSelection,
@@ -198,6 +351,16 @@ fn group_bounds<'a>(
     members: impl IntoIterator<Item = &'a CanvasRecordId>,
 ) -> Option<Bounds<Pixels>> {
     CanvasGeometryFacts::new(document).node_shape_bounds_for_records(members)
+}
+
+fn group_z_index<'a>(
+    document: &CanvasDocument,
+    members: impl IntoIterator<Item = &'a CanvasRecordId>,
+) -> Option<i32> {
+    members
+        .into_iter()
+        .filter_map(|record_id| record_z_index(document, record_id))
+        .max()
 }
 
 fn is_node_or_shape(record_id: &CanvasRecordId) -> bool {
@@ -242,6 +405,14 @@ fn record_is_hidden(document: &CanvasDocument, record_id: &CanvasRecordId) -> bo
         CanvasRecordId::Node(id) => document.node(id).is_some_and(|node| node.hidden),
         CanvasRecordId::Edge(id) => document.edge(id).is_some_and(|edge| edge.hidden),
         CanvasRecordId::Shape(id) => document.shape(id).is_some_and(|shape| shape.hidden),
+    }
+}
+
+fn record_z_index(document: &CanvasDocument, record_id: &CanvasRecordId) -> Option<i32> {
+    match record_id {
+        CanvasRecordId::Node(id) => document.node(id).map(|node| node.z_index),
+        CanvasRecordId::Edge(id) => document.edge(id).map(|edge| edge.z_index),
+        CanvasRecordId::Shape(id) => document.shape(id).map(|shape| shape.z_index),
     }
 }
 
