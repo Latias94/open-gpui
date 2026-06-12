@@ -3,7 +3,7 @@ use crate::{
     DocumentCommand,
 };
 use indexmap::IndexMap;
-use open_gpui::{Bounds, Pixels, Point};
+use open_gpui::{Bounds, Pixels, Point, Size, px};
 use std::{fmt, sync::Arc};
 use thiserror::Error;
 
@@ -493,8 +493,12 @@ impl fmt::Debug for CanvasKindRegistry {
 }
 
 impl CanvasKindRegistry {
+    pub const GROUP_SHAPE_KIND: &'static str = "group";
+
     pub fn open() -> Self {
-        Self::default()
+        let mut registry = Self::default();
+        registry.register_shape_kind(Self::GROUP_SHAPE_KIND, built_in_group_shape_kind());
+        registry
     }
 
     pub fn register_node_kind(&mut self, kind: impl Into<String>, node_kind: CanvasNodeKind) {
@@ -773,6 +777,36 @@ impl CanvasKindRegistry {
             bounds,
         )?;
         Ok(bounds)
+    }
+}
+
+fn built_in_group_shape_kind() -> CanvasShapeKind {
+    CanvasShapeKind::new().with_interaction_policy(GroupShapeKind)
+}
+
+struct GroupShapeKind;
+
+impl CanvasShapeInteractionPolicy for GroupShapeKind {
+    fn shape_contains_point(&self, hit: CanvasShapeHitTest<'_>) -> Option<bool> {
+        let border = hit.shape.style.stroke_width.max(px(4.0)) + hit.margin;
+        let outer = hit.bounds.dilate(hit.margin);
+        if !outer.contains(&hit.point) {
+            return Some(false);
+        }
+
+        let inner_size = Size {
+            width: (hit.bounds.size.width - border * 2.0).max(Pixels::ZERO),
+            height: (hit.bounds.size.height - border * 2.0).max(Pixels::ZERO),
+        };
+        if inner_size.width == Pixels::ZERO || inner_size.height == Pixels::ZERO {
+            return Some(true);
+        }
+
+        let inner = Bounds::new(
+            Point::new(hit.bounds.origin.x + border, hit.bounds.origin.y + border),
+            inner_size,
+        );
+        Some(!inner.contains(&hit.point))
     }
 }
 
@@ -1370,6 +1404,40 @@ mod tests {
             Some(false)
         );
         assert_eq!(registry.shape_paint(&interaction_shape), None);
+    }
+
+    #[test]
+    fn built_in_group_shape_kind_hits_border_but_not_interior() {
+        let registry = CanvasKindRegistry::open();
+        let mut group = CanvasShape::new(
+            "group",
+            Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0))),
+        );
+        group.kind = CanvasKindRegistry::GROUP_SHAPE_KIND.to_string();
+        group.style.stroke_width = px(1.0);
+
+        assert_eq!(
+            registry.shape_contains_point(
+                &group,
+                point(px(12.0), px(22.0)),
+                group.bounds,
+                Pixels::ZERO,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            registry.shape_contains_point(
+                &group,
+                point(px(60.0), px(60.0)),
+                group.bounds,
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            registry.shape_contains_point(&group, point(px(60.0), px(60.0)), group.bounds, px(8.0)),
+            Some(false)
+        );
     }
 
     #[test]

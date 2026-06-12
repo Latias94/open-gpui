@@ -1985,6 +1985,76 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_hits_group_border_but_not_transparent_interior() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(120.0), px(10.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(
+            editor
+                .runtime()
+                .precise_hit_test_with_kind_registry(
+                    editor.document(),
+                    editor.kind_registry(),
+                    point(px(20.0), px(20.0)),
+                    HitOptions::default(),
+                )
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("a"))]
+        );
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(20.0), px(20.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(85.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_shapes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("group")]
+        );
+    }
+
+    #[test]
     fn editor_ungroups_selected_groups_and_selects_members() {
         let document = document_fixture()
             .node(CanvasNode::new(
