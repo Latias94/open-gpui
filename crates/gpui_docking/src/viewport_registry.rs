@@ -52,6 +52,10 @@ pub(crate) struct DockViewportSnapshot {
     pub(crate) screen_bounds: Option<Bounds<Pixels>>,
     /// Last known dock host bounds in window-local coordinates.
     pub(crate) host_bounds: Option<Bounds<Pixels>>,
+    /// Generation of the live platform facts used for coordinate conversion.
+    pub(crate) facts_generation: u64,
+    /// True after the platform reports a bounds change and before a render frame republishes facts.
+    pub(crate) facts_stale: bool,
 }
 
 impl DockViewportSnapshot {
@@ -63,6 +67,8 @@ impl DockViewportSnapshot {
             window_bounds: None,
             screen_bounds: None,
             host_bounds: None,
+            facts_generation: 0,
+            facts_stale: false,
         }
     }
 

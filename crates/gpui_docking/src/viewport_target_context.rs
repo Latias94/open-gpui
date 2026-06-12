@@ -58,6 +58,18 @@ impl DockViewportTargetContext {
         }
     }
 
+    pub(crate) fn has_arbitration_signal(&self) -> bool {
+        self.hovered_window.is_some()
+            || self.active_window.is_some()
+            || !self.window_stack.is_empty()
+    }
+
+    pub(crate) fn is_trusted_window(&self, window_id: WindowId) -> bool {
+        self.hovered_window == Some(window_id)
+            || self.active_window == Some(window_id)
+            || self.window_stack.contains(&window_id)
+    }
+
     #[cfg(test)]
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
         self.hovered_window

@@ -42,6 +42,7 @@ pub struct DockHost {
     space: DockSpaceId,
     viewport_runtime: Option<DockViewportRuntimeHandle>,
     viewport_activation_subscription: Option<Subscription>,
+    viewport_bounds_subscription: Option<Subscription>,
     pending_panel_focus: Option<DockItemId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
@@ -61,6 +62,7 @@ impl DockHost {
             space: space.into(),
             viewport_runtime: None,
             viewport_activation_subscription: None,
+            viewport_bounds_subscription: None,
             pending_panel_focus: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
@@ -207,6 +209,25 @@ impl DockHost {
                 if window.is_window_active() {
                     activation_runtime.record_window_focus(window.window_handle().window_id());
                 }
+            }));
+    }
+
+    pub(crate) fn ensure_viewport_bounds_subscription(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.viewport_bounds_subscription.is_some() {
+            return;
+        }
+
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return;
+        };
+
+        self.viewport_bounds_subscription =
+            Some(cx.observe_window_bounds(window, move |_, window, cx| {
+                runtime.mark_viewport_window_snapshot_stale(window.window_handle().window_id(), cx);
             }));
     }
 

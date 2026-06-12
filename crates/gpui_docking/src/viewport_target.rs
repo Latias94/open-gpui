@@ -1,6 +1,9 @@
 use crate::{
     DockViewportAdapter, DockViewportTargetContext, DockViewportTargetHit,
-    viewport_target_resolver::choose_viewport_target,
+    viewport_target_resolver::{
+        DockViewportTargetResolution, choose_viewport_target,
+        resolve_viewport_target_with_confidence,
+    },
 };
 use open_gpui::{Pixels, Point};
 
@@ -15,13 +18,30 @@ impl DockViewportAdapter {
         choose_viewport_target(hits, context)
     }
 
+    /// Resolves a registered viewport target with confidence for drop-route commit decisions.
+    pub(crate) fn resolve_viewport_route_target(
+        &self,
+        position: Point<Pixels>,
+        context: &DockViewportTargetContext,
+    ) -> Option<DockViewportTargetResolution> {
+        let hits = self.viewport_hits(position);
+        resolve_viewport_target_with_confidence(hits, context)
+    }
+
     fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportTargetHit> {
         self.spaces_by_fallback_priority()
             .into_iter()
             .filter_map(|space| {
-                let window = self.snapshot(&space)?.window;
+                let snapshot = self.snapshot(&space)?;
+                let window = snapshot.window;
+                let facts_generation = snapshot.facts_generation;
                 let host_position = self.screen_to_host(&space, position)?;
-                Some(DockViewportTargetHit::new(space, window, host_position))
+                Some(DockViewportTargetHit::with_facts_generation(
+                    space,
+                    window,
+                    host_position,
+                    facts_generation,
+                ))
             })
             .collect()
     }
@@ -86,5 +106,42 @@ mod tests {
             Some(alpha),
             "hovered-window context should beat active-window context"
         );
+    }
+
+    #[test]
+    fn route_target_marks_overlapping_fallback_hits_as_ambiguous() {
+        let alpha = space("alpha");
+        let zeta = space("zeta");
+        let alpha_window = handle(1);
+        let zeta_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(alpha.clone(), alpha_window);
+        adapter.register_viewport(zeta.clone(), zeta_window);
+
+        for space in [&alpha, &zeta] {
+            adapter.update_snapshot(
+                space,
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let position = point(px(120.0), px(140.0));
+        let ambiguous = adapter
+            .resolve_viewport_route_target(position, &DockViewportTargetContext::new())
+            .expect("overlapping live viewports should still expose a diagnostic fallback");
+        assert_eq!(ambiguous.target().space(), &alpha);
+        assert!(!ambiguous.is_trusted());
+
+        let trusted = adapter
+            .resolve_viewport_route_target(
+                position,
+                &DockViewportTargetContext::new().with_window_stack([zeta_window, alpha_window]),
+            )
+            .expect("window stack should arbitrate overlapping live viewports");
+        assert_eq!(trusted.target().space(), &zeta);
+        assert!(trusted.is_trusted());
     }
 }

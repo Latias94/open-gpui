@@ -3,13 +3,13 @@ use crate::{
     DockViewportPlacementValidationError, DockViewportWindowBounds,
 };
 
-/// Summary of applying saved viewport placement to runtime windows.
+/// Summary of checking saved placement against currently registered runtime windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DockViewportRestoreOutcome {
-    /// Number of saved placement entries matched to registered windows.
-    pub applied: usize,
-    /// Number of saved placement entries skipped because no runtime window was registered.
-    pub skipped: usize,
+pub struct DockViewportRestoreReadiness {
+    /// Number of saved placement entries with a currently registered runtime window.
+    pub matched: usize,
+    /// Number of saved placement entries without a currently registered runtime window.
+    pub missing: usize,
 }
 
 impl DockViewportAdapter {
@@ -33,27 +33,27 @@ impl DockViewportAdapter {
         )
     }
 
-    /// Validates placement snapshots against already registered viewport windows.
+    /// Checks placement snapshots against already registered viewport windows.
     ///
     /// This does not open, move, or resize windows. Saved placement should be converted into
     /// `WindowOptions` before opening a viewport; live snapshots are then refreshed by render
     /// frames from real platform window facts.
-    pub(crate) fn apply_placement(
+    pub(crate) fn check_placement_restore(
         &mut self,
         placement: &DockViewportPlacementLayout,
-    ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
+    ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
         placement.validate()?;
 
-        let mut applied = 0;
-        let mut skipped = 0;
+        let mut matched = 0;
+        let mut missing = 0;
         for viewport in &placement.viewports {
             if self.snapshot(&viewport.space).is_none() {
-                skipped += 1;
+                missing += 1;
                 continue;
             }
-            applied += 1;
+            matched += 1;
         }
 
-        Ok(DockViewportRestoreOutcome { applied, skipped })
+        Ok(DockViewportRestoreReadiness { matched, missing })
     }
 }

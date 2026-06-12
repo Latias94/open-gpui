@@ -107,7 +107,7 @@ mod tests {
     use super::*;
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportPlacementValidationError,
-        DockViewportRestoreOutcome, DockViewportTargetContext, DockViewportWindowFacts,
+        DockViewportRestoreReadiness, DockViewportTargetContext, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, WindowOptions, point, px};
@@ -143,11 +143,11 @@ mod tests {
         restored.register_viewport(main.clone(), handle(99));
         assert_eq!(
             restored
-                .apply_placement(&placement)
-                .expect("placement should apply"),
-            DockViewportRestoreOutcome {
-                applied: 1,
-                skipped: 1,
+                .check_placement_restore(&placement)
+                .expect("placement restore readiness should be checked"),
+            DockViewportRestoreReadiness {
+                matched: 1,
+                missing: 1,
             }
         );
 
@@ -192,11 +192,11 @@ mod tests {
 
         assert_eq!(
             restored
-                .apply_placement(&placement)
-                .expect("saved placement should apply to registered restore windows"),
-            DockViewportRestoreOutcome {
-                applied: 2,
-                skipped: 0,
+                .check_placement_restore(&placement)
+                .expect("saved placement should validate registered restore windows"),
+            DockViewportRestoreReadiness {
+                matched: 2,
+                missing: 0,
             }
         );
         assert_eq!(restored.window_for_space(&main), Some(handle(101)));
@@ -432,7 +432,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .apply_placement(&invalid_host)
+                .check_placement_restore(&invalid_host)
                 .expect_err("invalid host bounds should reject before snapshot mutation"),
             DockViewportPlacementValidationError::InvalidHostBounds {
                 space: main.clone()

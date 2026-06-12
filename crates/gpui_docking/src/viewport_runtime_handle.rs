@@ -3,7 +3,7 @@ use crate::{
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteCommit,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportResolvedDropRoute, DockViewportRestoreOutcome, DockViewportRoutedDropPreview,
+    DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
@@ -151,6 +151,20 @@ impl DockViewportRuntimeHandle {
 
     pub(crate) fn record_window_focus(&self, window_id: WindowId) {
         self.runtime.borrow_mut().record_window_focus(window_id);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn mark_viewport_window_snapshot_stale(
+        &self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> bool {
+        let (changed, windows) = self
+            .runtime
+            .borrow_mut()
+            .mark_viewport_window_snapshot_stale(window_id);
+        refresh_windows(windows, cx);
+        changed
     }
 
     pub(crate) fn begin_payload_drag(&self, payload: &DockDragPayload) -> DockRuntimeDragSession {
@@ -658,11 +672,15 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().export_placement()
     }
 
-    /// Applies saved placement snapshots through the shared runtime.
-    pub fn apply_placement(
+    /// Checks saved placement snapshots against windows currently registered in the runtime.
+    ///
+    /// This does not open, move, or resize platform windows. Use
+    /// [`DockViewportPlacementLayout::window_options_for_space`] when opening a viewport from
+    /// saved placement.
+    pub fn check_placement_restore(
         &self,
         placement: &DockViewportPlacementLayout,
-    ) -> Result<DockViewportRestoreOutcome, DockViewportPlacementValidationError> {
-        self.runtime.borrow_mut().apply_placement(placement)
+    ) -> Result<DockViewportRestoreReadiness, DockViewportPlacementValidationError> {
+        self.runtime.borrow_mut().check_placement_restore(placement)
     }
 }

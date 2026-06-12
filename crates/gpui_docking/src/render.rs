@@ -26,6 +26,7 @@ impl Render for DockHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.clear_debug_selectors();
         self.ensure_viewport_activation_subscription(window, cx);
+        self.ensure_viewport_bounds_subscription(window, cx);
         let session = self.render_session(cx);
         self.focus_pending_panel_from_render(&session, window, cx);
         let drop_host_space = session.space().clone();

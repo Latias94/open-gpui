@@ -85,12 +85,12 @@ impl RuntimeStatusPanel {
         }
     }
 
-    fn apply_saved_placement(&mut self, cx: &mut Context<Self>) {
-        match self.runtime.apply_placement(&self.placement) {
-            Ok(outcome) => {
-                self.set_operation_log(format!("applied saved placement: {outcome:?}"), cx)
+    fn check_saved_placement_restore(&mut self, cx: &mut Context<Self>) {
+        match self.runtime.check_placement_restore(&self.placement) {
+            Ok(readiness) => {
+                self.set_operation_log(format!("placement restore readiness: {readiness:?}"), cx)
             }
-            Err(error) => self.set_operation_log(format!("apply placement failed: {error}"), cx),
+            Err(error) => self.set_operation_log(format!("check placement failed: {error}"), cx),
         }
     }
 
@@ -277,9 +277,9 @@ impl Render for RuntimeStatusPanel {
                                 }),
                             ))
                             .child(control_button(
-                                "Apply placement",
+                                "Check placement",
                                 cx.listener(|this, _, _, cx| {
-                                    this.apply_saved_placement(cx);
+                                    this.check_saved_placement_restore(cx);
                                 }),
                             )),
                     )
