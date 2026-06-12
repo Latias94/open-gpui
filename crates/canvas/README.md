@@ -558,17 +558,24 @@ cargo run -p open-gpui-canvas-notes
 The crate includes a focused stress regression for the default GPUI culling path and a Criterion
 benchmark for larger documents. The regression builds a 12,288-node document and verifies that a
 paint frame only carries visible records. The benchmark builds a 20,000-node graph with horizontal
-edges and measures spatial-index rebuild, visible query, and paint-frame culling.
+edges and measures spatial-index rebuild, visible query, and paint-frame culling. A separate
+relation traversal benchmark measures parent, group, and mixed structural selection scopes before
+adding any read-side relation index.
 
 ```sh
 cargo nextest run -p open-gpui-canvas gpui::tests::collect_visible_records_keeps_large_canvas_frame_bounded
 cargo bench -p open-gpui-canvas --bench large_canvas
+cargo bench -p open-gpui-canvas --bench relation_traversal -- --sample-size 10
 ```
 
 Use this before and after changing the runtime candidate cache, such as replacing the internal base
 with an R-tree, tile index, packed AABB index, or GPU-assisted culling adapter. The important signal
 is not the absolute number on one machine; it is whether large documents continue to route
 rendering work through visible-record culling instead of per-record GPUI elements.
+
+Use the relation traversal benchmark before adding parent/group read indexes. `CanvasRecordRelations`
+keeps ordered vectors as the serialized source of truth; derived indexes should stay internal until
+selection, paint, copy, resize, or grouping workloads show a measured bottleneck.
 
 ## Add A Custom Tool
 

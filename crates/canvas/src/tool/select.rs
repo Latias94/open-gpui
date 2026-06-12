@@ -164,30 +164,17 @@ impl SelectToolStateMachine {
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         if let Some(handle) = context.transform_handle_at(document_position) {
-            let (node_ids, shape_ids) = context.resizable_selection_ids();
-            let structural =
-                context.selection_has_structural_resize_descendants(context.selection());
-            let (node_ids, edge_ids, shape_ids) = if structural {
-                let (structural_node_ids, structural_edge_ids, structural_shape_ids) =
-                    context.structural_resize_record_ids(context.selection());
-                (
-                    structural_node_ids,
-                    structural_edge_ids,
-                    structural_shape_ids,
-                )
-            } else {
-                (node_ids, Vec::new(), shape_ids)
-            };
+            let resize_scope = context.resize_selection_scope();
             return Ok(vec![
                 CanvasToolEffect::BeginGesture,
                 CanvasToolEffect::SetState(ToolState::Resizing {
                     origin: document_position,
                     last: document_position,
                     handle: handle.handle,
-                    node_ids,
-                    edge_ids,
-                    shape_ids,
-                    structural,
+                    node_ids: resize_scope.node_ids,
+                    edge_ids: resize_scope.edge_ids,
+                    shape_ids: resize_scope.shape_ids,
+                    structural: resize_scope.structural,
                     snap_guides: Vec::new(),
                 }),
             ]);

@@ -1,6 +1,8 @@
 use std::fmt;
 
-use crate::record_scope::{CanvasRecordScopeOptions, resolve_selection_scope_with_predicates};
+use crate::record_scope::{
+    CanvasRecordScopeOptions, include_internal_edges, resolve_selection_scope_with_predicates,
+};
 use crate::session::ToolState;
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
@@ -16,6 +18,14 @@ use crate::{
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point, px};
+
+#[derive(Debug)]
+pub(crate) struct CanvasResizeSelectionScope {
+    pub(crate) node_ids: Vec<NodeId>,
+    pub(crate) edge_ids: Vec<EdgeId>,
+    pub(crate) shape_ids: Vec<ShapeId>,
+    pub(crate) structural: bool,
+}
 
 #[derive(Clone, Copy)]
 pub struct CanvasToolContext<'a> {
@@ -284,36 +294,47 @@ impl CanvasToolReducerContext<'_> {
         .find(|handle| handle.document_bounds.contains(&point))
     }
 
-    pub(crate) fn resizable_selection_ids(&self) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let node_ids = self
-            .selection
-            .selected_nodes()
-            .filter_map(|id| self.document.node(id))
-            .filter(|node| !node.locked && !node.hidden)
-            .map(|node| node.id.clone())
-            .collect();
-        let shape_ids = self
-            .selection
-            .selected_shapes()
-            .filter_map(|id| self.document.shape(id))
-            .filter(|shape| !shape.locked && !shape.hidden)
-            .map(|shape| shape.id.clone())
-            .collect();
-
-        (node_ids, shape_ids)
-    }
-
-    pub(crate) fn structural_resize_record_ids(
-        &self,
-        selection: &CanvasSelection,
-    ) -> (Vec<NodeId>, Vec<EdgeId>, Vec<ShapeId>) {
-        let records = self.selection_action_records(
-            selection,
-            CanvasRecordScopeOptions::structural_with_internal_edges(),
+    pub(crate) fn resize_selection_scope(&self) -> CanvasResizeSelectionScope {
+        let scope = resolve_selection_scope_with_predicates(
+            self.document,
+            self.selection,
+            CanvasRecordScopeOptions::structural(),
             |record_id| self.document.contains_record(record_id),
             |record_id| self.is_resizable_record(record_id),
         );
+        let structural = !scope.structural_records().is_empty();
+        let mut records = scope
+            .action_records()
+            .records()
+            .cloned()
+            .collect::<IndexSet<_>>();
 
+        if !structural {
+            let node_ids = records
+                .iter()
+                .filter_map(|id| match id {
+                    CanvasRecordId::Node(id) => Some(id.clone()),
+                    CanvasRecordId::Edge(_) | CanvasRecordId::Shape(_) => None,
+                })
+                .collect();
+            let shape_ids = records
+                .iter()
+                .filter_map(|id| match id {
+                    CanvasRecordId::Shape(id) => Some(id.clone()),
+                    CanvasRecordId::Node(_) | CanvasRecordId::Edge(_) => None,
+                })
+                .collect();
+            return CanvasResizeSelectionScope {
+                node_ids,
+                edge_ids: Vec::new(),
+                shape_ids,
+                structural,
+            };
+        }
+
+        include_internal_edges(self.document, &mut records, &mut |record_id| {
+            self.is_resizable_record(record_id)
+        });
         let node_ids = records
             .iter()
             .filter_map(|id| match id {
@@ -336,21 +357,12 @@ impl CanvasToolReducerContext<'_> {
             })
             .collect();
 
-        (node_ids, edge_ids, shape_ids)
-    }
-
-    pub(crate) fn selection_has_structural_resize_descendants(
-        &self,
-        selection: &CanvasSelection,
-    ) -> bool {
-        let scope = resolve_selection_scope_with_predicates(
-            self.document,
-            selection,
-            CanvasRecordScopeOptions::structural(),
-            |record_id| self.document.contains_record(record_id),
-            |record_id| self.is_resizable_record(record_id),
-        );
-        scope.has_action_descendants()
+        CanvasResizeSelectionScope {
+            node_ids,
+            edge_ids,
+            shape_ids,
+            structural,
+        }
     }
 
     pub(crate) fn structural_resize_bounds(

@@ -39,5 +39,9 @@ harness = false
 name = "spatial_index_strategies"
 harness = false
 
+[[bench]]
+name = "relation_traversal"
+harness = false
+
 [lints]
 workspace = true

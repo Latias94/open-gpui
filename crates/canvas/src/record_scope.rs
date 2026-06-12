@@ -117,12 +117,6 @@ impl CanvasResolvedSelectionScope {
         self.action_records.contains(record_id)
     }
 
-    pub(crate) fn has_action_descendants(&self) -> bool {
-        self.action_records
-            .records()
-            .any(|record_id| !self.explicit_records.contains(record_id))
-    }
-
     pub(crate) fn contains_paint_structural_record(&self, record_id: &CanvasRecordId) -> bool {
         !self.explicit_records.contains(record_id) && self.action_records.contains(record_id)
     }
@@ -254,7 +248,7 @@ pub fn selection_record_scope(
     resolve_selection_scope(document, selection, options).into_action_records()
 }
 
-fn include_internal_edges(
+pub(crate) fn include_internal_edges(
     document: &CanvasDocument,
     records: &mut IndexSet<CanvasRecordId>,
     can_include: &mut impl FnMut(&CanvasRecordId) -> bool,
