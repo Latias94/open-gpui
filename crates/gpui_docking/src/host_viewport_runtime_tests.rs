@@ -6,9 +6,9 @@ use crate::{
     DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
     DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
     DockViewportTargetContext, DockViewportTargetHit, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace,
-    drag::DockDragPayload,
+    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
     host_test_support::*,
@@ -2291,7 +2291,60 @@ fn viewport_runtime_rejects_tear_off_commit_from_stale_drag_session(cx: &mut Tes
 }
 
 #[open_gpui::test]
-fn viewport_runtime_default_tear_off_bounds_keep_cursor_inside_window(cx: &mut TestAppContext) {
+fn viewport_runtime_drag_geometry_is_bound_to_active_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "A".to_string(),
+    );
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(200.0, 120.0, 480.0, 300.0),
+        point(px(260.0), px(150.0)),
+    );
+
+    let stale_session = runtime.begin_payload_drag(&payload);
+    assert!(runtime.update_payload_drag_tear_off_geometry(&stale_session, geometry));
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&stale_session)),
+        Some(geometry)
+    );
+
+    let active_session = runtime.begin_payload_drag(&payload);
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&stale_session)),
+        None,
+        "starting a new drag must not expose the previous session's source geometry"
+    );
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&active_session)),
+        None
+    );
+    assert!(
+        !runtime.update_payload_drag_tear_off_geometry(&stale_session, geometry),
+        "stale drag sessions must not update tear-off geometry"
+    );
+    assert!(runtime.update_payload_drag_tear_off_geometry(&active_session, geometry));
+    assert!(runtime.finish_payload_drag(&active_session));
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&active_session)),
+        None,
+        "finishing a drag must discard its geometry"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_bounds_fallback_is_marked_degraded(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
@@ -2314,17 +2367,130 @@ fn viewport_runtime_default_tear_off_bounds_keep_cursor_inside_window(cx: &mut T
         None,
     );
 
-    let options = runtime.tear_off_window_options(&request);
+    let placement = runtime.tear_off_window_placement(&request);
     assert_eq!(
-        options.window_bounds,
-        Some(WindowBounds::Windowed(floating_bounds(
-            876.0, 882.0, 360.0, 240.0
-        )))
+        placement.source(),
+        DockViewportTearOffPlacementSource::Fallback
     );
-    if let Some(WindowBounds::Windowed(bounds)) = options.window_bounds {
+    assert_eq!(
+        placement.window_bounds(),
+        WindowBounds::Windowed(floating_bounds(876.0, 882.0, 360.0, 240.0))
+    );
+    if let WindowBounds::Windowed(bounds) = placement.window_bounds() {
         assert!(bounds.contains(&release_position));
         assert_ne!(bounds.origin, release_position);
     } else {
         panic!("tear-off should use windowed bounds");
     }
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_bounds_preserve_drag_cursor_offset(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let release_position = point(px(900.0), px(900.0));
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(200.0, 120.0, 480.0, 300.0),
+        point(px(260.0), px(150.0)),
+    );
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime.tear_off_window_placement(&request);
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::DragGeometry
+    );
+    assert_eq!(
+        placement.window_bounds(),
+        WindowBounds::Windowed(floating_bounds(840.0, 870.0, 480.0, 300.0))
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_suggested_bounds_override_drag_geometry(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let suggested = WindowBounds::Windowed(floating_bounds(700.0, 710.0, 420.0, 260.0));
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(200.0, 120.0, 480.0, 300.0),
+        point(px(260.0), px(150.0)),
+    );
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(900.0), px(900.0)),
+        Some(suggested),
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime.tear_off_window_placement(&request);
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::Suggested
+    );
+    assert_eq!(placement.window_bounds(), suggested);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_tear_off_drag_bounds_clamp_to_work_area(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        active: 0,
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let workspace = DockWorkspace::new(source_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntime::new(controller);
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(200.0, 120.0, 480.0, 300.0),
+        point(px(260.0), px(150.0)),
+    )
+    .with_display_work_area(floating_bounds(0.0, 0.0, 1000.0, 800.0));
+    let request = DockViewportTearOffRequest::new(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(980.0), px(790.0)),
+        None,
+    )
+    .with_tear_off_geometry(Some(geometry));
+
+    let placement = runtime.tear_off_window_placement(&request);
+    assert_eq!(
+        placement.source(),
+        DockViewportTearOffPlacementSource::DragGeometry
+    );
+    assert_eq!(
+        placement.window_bounds(),
+        WindowBounds::Windowed(floating_bounds(520.0, 500.0, 480.0, 300.0))
+    );
 }

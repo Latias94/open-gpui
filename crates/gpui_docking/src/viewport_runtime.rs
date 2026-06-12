@@ -14,7 +14,7 @@ use crate::{
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
     DockViewportWindowFacts,
-    drag::DockDragPayload,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_preview::DockDropPreview,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
@@ -51,6 +51,7 @@ pub(crate) struct DockViewportRuntime {
     tear_off: DockViewportTearOffMachine,
     tear_off_tick: DockViewportTearOffTick,
     drag_session: Option<DockRuntimeDragSession>,
+    drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
     last_hovered_window: Option<DockViewportLastHoveredWindow>,
@@ -62,6 +63,32 @@ pub(crate) struct DockViewportRuntime {
 struct DockViewportLastHoveredWindow {
     window_id: WindowId,
     drag_session_id: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockRuntimeDragTearOffGeometry {
+    drag_session_id: u64,
+    geometry: DockDragTearOffGeometry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportTearOffPlacementSource {
+    Suggested,
+    DragGeometry,
+    Fallback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockViewportTearOffPlacement {
+    window_bounds: WindowBounds,
+    source: DockViewportTearOffPlacementSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DockViewportTearOffPlacementPolicy {
+    minimum_size: open_gpui::Size<Pixels>,
+    fallback_size: open_gpui::Size<Pixels>,
+    fallback_cursor_offset: Point<Pixels>,
 }
 
 enum DockViewportWorkspaceRouteTarget {
@@ -84,6 +111,97 @@ impl DockViewportLastHoveredWindow {
 
     fn matches_drag_session_id(&self, drag_session_id: Option<u64>) -> bool {
         self.drag_session_id == drag_session_id
+    }
+}
+
+impl DockRuntimeDragTearOffGeometry {
+    fn new(drag_session_id: u64, geometry: DockDragTearOffGeometry) -> Self {
+        Self {
+            drag_session_id,
+            geometry,
+        }
+    }
+
+    fn matches_drag_session(&self, session: &DockRuntimeDragSession) -> bool {
+        self.drag_session_id == session.id()
+    }
+}
+
+impl DockViewportTearOffPlacement {
+    fn new(window_bounds: WindowBounds, source: DockViewportTearOffPlacementSource) -> Self {
+        Self {
+            window_bounds,
+            source,
+        }
+    }
+
+    pub(crate) fn window_bounds(&self) -> WindowBounds {
+        self.window_bounds
+    }
+
+    #[cfg(test)]
+    pub(crate) fn source(&self) -> DockViewportTearOffPlacementSource {
+        self.source
+    }
+}
+
+impl Default for DockViewportTearOffPlacementPolicy {
+    fn default() -> Self {
+        Self {
+            minimum_size: DEFAULT_TEAR_OFF_WINDOW_SIZE,
+            fallback_size: DEFAULT_TEAR_OFF_WINDOW_SIZE,
+            fallback_cursor_offset: DEFAULT_TEAR_OFF_CURSOR_OFFSET,
+        }
+    }
+}
+
+impl DockViewportTearOffPlacementPolicy {
+    fn resolve(&self, request: &DockViewportTearOffRequest) -> DockViewportTearOffPlacement {
+        if let Some(window_bounds) = request.suggested_window_bounds() {
+            return DockViewportTearOffPlacement::new(
+                window_bounds,
+                DockViewportTearOffPlacementSource::Suggested,
+            );
+        }
+
+        if let Some(geometry) = request.tear_off_geometry() {
+            return DockViewportTearOffPlacement::new(
+                WindowBounds::Windowed(self.bounds_from_drag_geometry(request, geometry)),
+                DockViewportTearOffPlacementSource::DragGeometry,
+            );
+        }
+
+        DockViewportTearOffPlacement::new(
+            WindowBounds::Windowed(Bounds::new(
+                request.release_position() - self.fallback_cursor_offset,
+                self.fallback_size,
+            )),
+            DockViewportTearOffPlacementSource::Fallback,
+        )
+    }
+
+    fn bounds_from_drag_geometry(
+        &self,
+        request: &DockViewportTearOffRequest,
+        geometry: DockDragTearOffGeometry,
+    ) -> Bounds<Pixels> {
+        let mut size = geometry
+            .preferred_size()
+            .unwrap_or_else(|| geometry.source_bounds().size)
+            .max(&self.minimum_size);
+        if let Some(work_area) = geometry.display_work_area() {
+            let minimum_size = self.minimum_size.min(&work_area.size);
+            size = size.max(&minimum_size).min(&work_area.size);
+        }
+
+        let cursor_offset = geometry
+            .cursor_offset()
+            .clamp(&point(px(0.0), px(0.0)), &point(size.width, size.height));
+        let mut bounds = Bounds::new(request.release_position() - cursor_offset, size);
+        if let Some(work_area) = geometry.display_work_area() {
+            bounds = clamp_bounds_to_work_area(bounds, work_area);
+        }
+        bounds
     }
 }
 
@@ -187,6 +305,7 @@ impl DockViewportRuntime {
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
             drag_session: None,
+            drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             last_hovered_window: None,
@@ -212,6 +331,7 @@ impl DockViewportRuntime {
             tear_off: DockViewportTearOffMachine::default(),
             tear_off_tick: DockViewportTearOffTick::default(),
             drag_session: None,
+            drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             last_hovered_window: None,
@@ -253,8 +373,35 @@ impl DockViewportRuntime {
         self.next_drag_session_id = id;
         let session = DockRuntimeDragSession::new(id, payload);
         self.drag_session = Some(session.clone());
+        self.drag_tear_off_geometry = None;
         self.last_hovered_window = None;
         session
+    }
+
+    pub(crate) fn update_payload_drag_tear_off_geometry(
+        &mut self,
+        session: &DockRuntimeDragSession,
+        geometry: DockDragTearOffGeometry,
+    ) -> bool {
+        if self.drag_session.as_ref() != Some(session) {
+            return false;
+        }
+        let next = Some(DockRuntimeDragTearOffGeometry::new(session.id(), geometry));
+        if self.drag_tear_off_geometry == next {
+            return false;
+        }
+        self.drag_tear_off_geometry = next;
+        true
+    }
+
+    pub(crate) fn active_payload_drag_tear_off_geometry(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockDragTearOffGeometry> {
+        let session = session?;
+        self.drag_tear_off_geometry
+            .filter(|geometry| geometry.matches_drag_session(session))
+            .map(|geometry| geometry.geometry)
     }
 
     pub(crate) fn active_payload_drag_session(
@@ -272,6 +419,12 @@ impl DockViewportRuntime {
             return false;
         }
         self.drag_session = None;
+        if self
+            .drag_tear_off_geometry
+            .is_some_and(|geometry| geometry.matches_drag_session(session))
+        {
+            self.drag_tear_off_geometry = None;
+        }
         self.clear_last_hovered_window_for_drag_session(Some(session));
         true
     }
@@ -905,14 +1058,19 @@ impl DockViewportRuntime {
         &self,
         request: &DockViewportTearOffRequest,
     ) -> WindowOptions {
-        let window_bounds = request
-            .suggested_window_bounds()
-            .unwrap_or_else(|| default_tear_off_window_bounds(request.release_position()));
+        let window_bounds = self.tear_off_window_placement(request).window_bounds();
 
         WindowOptions {
             window_bounds: Some(window_bounds),
             ..Default::default()
         }
+    }
+
+    pub(crate) fn tear_off_window_placement(
+        &self,
+        request: &DockViewportTearOffRequest,
+    ) -> DockViewportTearOffPlacement {
+        DockViewportTearOffPlacementPolicy::default().resolve(request)
     }
 
     #[cfg(test)]
@@ -1509,11 +1667,13 @@ impl DockViewportRuntime {
     }
 }
 
-fn default_tear_off_window_bounds(release_position: Point<Pixels>) -> WindowBounds {
-    WindowBounds::Windowed(Bounds::new(
-        release_position - DEFAULT_TEAR_OFF_CURSOR_OFFSET,
-        DEFAULT_TEAR_OFF_WINDOW_SIZE,
-    ))
+fn clamp_bounds_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) -> Bounds<Pixels> {
+    let max_origin = point(
+        work_area.right() - bounds.size.width,
+        work_area.bottom() - bounds.size.height,
+    );
+    let origin = bounds.origin.clamp(&work_area.origin, &max_origin);
+    Bounds::new(origin, bounds.size)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

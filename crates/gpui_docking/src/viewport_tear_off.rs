@@ -1,6 +1,7 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
-    interaction::DockRuntimeDragSession, workspace_transaction::DockWorkspaceDropPayload,
+    drag::DockDragTearOffGeometry, interaction::DockRuntimeDragSession,
+    workspace_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
 use std::collections::BTreeMap;
@@ -72,6 +73,8 @@ pub(crate) struct DockViewportTearOffRequest {
     drag_session: Option<DockRuntimeDragSession>,
     /// Release position in screen coordinates.
     release_position: Point<Pixels>,
+    /// Geometry captured from the drag source, when the source published it.
+    tear_off_geometry: Option<DockDragTearOffGeometry>,
     /// Suggested platform window bounds for the new viewport, when known.
     suggested_window_bounds: Option<WindowBounds>,
 }
@@ -90,6 +93,7 @@ impl DockViewportTearOffRequest {
             payload,
             drag_session: None,
             release_position,
+            tear_off_geometry: None,
             suggested_window_bounds,
         }
     }
@@ -99,6 +103,14 @@ impl DockViewportTearOffRequest {
         drag_session: Option<DockRuntimeDragSession>,
     ) -> Self {
         self.drag_session = drag_session;
+        self
+    }
+
+    pub(crate) fn with_tear_off_geometry(
+        mut self,
+        tear_off_geometry: Option<DockDragTearOffGeometry>,
+    ) -> Self {
+        self.tear_off_geometry = tear_off_geometry;
         self
     }
 
@@ -120,6 +132,10 @@ impl DockViewportTearOffRequest {
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {
         self.release_position
+    }
+
+    pub(crate) fn tear_off_geometry(&self) -> Option<DockDragTearOffGeometry> {
+        self.tear_off_geometry
     }
 
     pub(crate) fn suggested_window_bounds(&self) -> Option<WindowBounds> {

@@ -2,7 +2,7 @@ use crate::DockViewportTargetContext;
 use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest, drop_target::DockResolvedDropTarget,
+    DockViewportTearOffRequest, drag::DockDragTearOffGeometry, drop_target::DockResolvedDropTarget,
     interaction::DockRuntimeDragSession, viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
@@ -36,6 +36,7 @@ pub(crate) struct DockViewportDropRouteRequest {
     payload: DockViewportDropPayload,
     drag_session: Option<DockRuntimeDragSession>,
     release_position: Point<Pixels>,
+    tear_off_geometry: Option<DockDragTearOffGeometry>,
     suggested_window_bounds: Option<WindowBounds>,
     target_context: DockViewportTargetContext,
 }
@@ -276,6 +277,7 @@ impl DockViewportDropRouteRequest {
             payload,
             drag_session: None,
             release_position,
+            tear_off_geometry: None,
             suggested_window_bounds,
             target_context,
         }
@@ -307,6 +309,14 @@ impl DockViewportDropRouteRequest {
         self
     }
 
+    pub(crate) fn with_tear_off_geometry(
+        mut self,
+        tear_off_geometry: Option<DockDragTearOffGeometry>,
+    ) -> Self {
+        self.tear_off_geometry = tear_off_geometry;
+        self
+    }
+
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
@@ -327,6 +337,10 @@ impl DockViewportDropRouteRequest {
         self.release_position
     }
 
+    pub(crate) fn tear_off_geometry(&self) -> Option<DockDragTearOffGeometry> {
+        self.tear_off_geometry
+    }
+
     pub(crate) fn suggested_window_bounds(&self) -> Option<WindowBounds> {
         self.suggested_window_bounds
     }
@@ -344,6 +358,7 @@ impl DockViewportDropRouteRequest {
             self.suggested_window_bounds(),
         )
         .with_drag_session(self.drag_session().cloned())
+        .with_tear_off_geometry(self.tear_off_geometry())
     }
 
     #[cfg(test)]
@@ -431,7 +446,7 @@ mod tests {
     use super::*;
     use crate::{
         DockPolicy, DockViewportWindowFacts,
-        drag::DockDragPayload,
+        drag::{DockDragPayload, DockDragTearOffGeometry},
         interaction::DockRuntimeDragSession,
         viewport_test_support::{bounds, handle, item, space},
     };
@@ -729,6 +744,10 @@ mod tests {
         let item = item("a");
         let release_position = point(px(900.0), px(900.0));
         let suggested_window_bounds = WindowBounds::Windowed(bounds(880.0, 880.0, 360.0, 240.0));
+        let tear_off_geometry = DockDragTearOffGeometry::from_source_bounds(
+            bounds(200.0, 120.0, 480.0, 300.0),
+            point(px(260.0), px(150.0)),
+        );
         let drag_payload =
             DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
         let drag_session = DockRuntimeDragSession::new(21, &drag_payload);
@@ -740,7 +759,8 @@ mod tests {
             Some(suggested_window_bounds),
             DockViewportTargetContext::new(),
         )
-        .with_drag_session(Some(drag_session.clone()));
+        .with_drag_session(Some(drag_session.clone()))
+        .with_tear_off_geometry(Some(tear_off_geometry));
         let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
             space("other"),
             source_tabs,
@@ -760,6 +780,7 @@ mod tests {
                     Some(suggested_window_bounds),
                 )
                 .with_drag_session(Some(drag_session))
+                .with_tear_off_geometry(Some(tear_off_geometry))
             )
         );
     }

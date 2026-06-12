@@ -1,7 +1,7 @@
 use crate::{
     DockHost, DockItemId, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockDragPayload, DockDragPreview},
+    drag::{DockDragPayload, DockDragPreview, DockDragTearOffGeometry},
     drop_scene_fact,
     host_render_session::{DockHostPanelRenderResolution, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
@@ -33,6 +33,7 @@ impl DockHost {
         let active_item = items[active].clone();
         let is_central = session.is_central_tabs(node);
         let drop_root = session.drop_root_for_tabs(node);
+        let source_space = session.space().clone();
         let entity = cx.entity();
         let stack_title = if items.len() == 1 {
             session.panel_title(&active_item)
@@ -55,6 +56,17 @@ impl DockHost {
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                     let payload = event.drag(cx).clone();
+                    if payload.source_space == source_space && payload.source_tabs == node {
+                        let mut geometry = DockDragTearOffGeometry::from_source_bounds(
+                            event.bounds,
+                            event.event.position,
+                        )
+                        .with_preferred_size(event.bounds.size);
+                        if let Some(display) = window.display(cx) {
+                            geometry = geometry.with_display_work_area(display.visible_bounds());
+                        }
+                        this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
+                    }
                     let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
                     this.update_drop_scene_fact_from_render(
                         &payload,
@@ -112,6 +124,7 @@ impl DockHost {
                 item.clone(),
                 title.clone(),
             );
+            let source_space = session.space().clone();
             let drag_entity = entity.clone();
             let target_index = index;
             let tab_item = item.clone();
@@ -149,6 +162,20 @@ impl DockHost {
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
+                        if payload.source_space == source_space && payload.source_tabs == node {
+                            let mut geometry = DockDragTearOffGeometry::from_source_bounds(
+                                event.bounds,
+                                event.event.position,
+                            )
+                            .with_preferred_size(event.bounds.size);
+                            if let Some(display) = window.display(cx) {
+                                geometry =
+                                    geometry.with_display_work_area(display.visible_bounds());
+                            }
+                            this.update_payload_drag_tear_off_geometry_from_render(
+                                &payload, geometry,
+                            );
+                        }
                         let fact = drop_scene_fact::tab_label(
                             node,
                             target_index,

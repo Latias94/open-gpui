@@ -7,7 +7,7 @@ use crate::{
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
-    drag::DockDragPayload,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
@@ -171,11 +171,30 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow_mut().begin_payload_drag(payload)
     }
 
+    pub(crate) fn update_payload_drag_tear_off_geometry(
+        &self,
+        session: &DockRuntimeDragSession,
+        geometry: DockDragTearOffGeometry,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .update_payload_drag_tear_off_geometry(session, geometry)
+    }
+
     pub(crate) fn active_payload_drag_session(
         &self,
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.runtime.borrow().active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn active_payload_drag_tear_off_geometry(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockDragTearOffGeometry> {
+        self.runtime
+            .borrow()
+            .active_payload_drag_tear_off_geometry(session)
     }
 
     pub(crate) fn finish_payload_drag(&self, session: &DockRuntimeDragSession) -> bool {

@@ -1,7 +1,7 @@
 use crate::{
     DockFloatingContainer, DockHost, DockNodeId,
     debug::DockDebugRegion,
-    drag::{DockDragPayload, DockDragPreview},
+    drag::{DockDragPayload, DockDragPayloadKind, DockDragPreview, DockDragTearOffGeometry},
     drop_scene_fact,
     host_render_session::DockHostRenderSession,
     render::DockViewportHostSceneFrameSlot,
@@ -164,8 +164,19 @@ impl DockHost {
                 .bg(rgba(0x00000001))
                 .on_drag(payload, move |payload, _, window, cx| {
                     let start_position = window.mouse_position();
+                    let mut tear_off_geometry =
+                        DockDragTearOffGeometry::from_source_bounds(bounds, start_position)
+                            .with_preferred_size(bounds.size);
+                    if let Some(display) = window.display(cx) {
+                        tear_off_geometry =
+                            tear_off_geometry.with_display_work_area(display.visible_bounds());
+                    }
                     drag_entity.update(cx, |host, cx| {
                         host.begin_payload_drag_from_render(payload);
+                        host.update_payload_drag_tear_off_geometry_from_render(
+                            payload,
+                            tear_off_geometry,
+                        );
                         host.begin_floating_drag_from_render(
                             drag_space.clone(),
                             floating,
@@ -179,6 +190,28 @@ impl DockHost {
                 .on_drag_move(cx.listener(
                     move |this, event: &DragMoveEvent<DockDragPayload>, window, cx| {
                         let payload = event.drag(cx).clone();
+                        if payload.source_space == space
+                            && matches!(
+                                payload.kind,
+                                DockDragPayloadKind::Floating { floating: payload_floating }
+                                    if payload_floating == floating
+                            )
+                        {
+                            let mut tear_off_geometry =
+                                DockDragTearOffGeometry::from_source_bounds(
+                                    bounds,
+                                    event.event.position,
+                                )
+                                .with_preferred_size(bounds.size);
+                            if let Some(display) = window.display(cx) {
+                                tear_off_geometry = tear_off_geometry
+                                    .with_display_work_area(display.visible_bounds());
+                            }
+                            this.update_payload_drag_tear_off_geometry_from_render(
+                                &payload,
+                                tear_off_geometry,
+                            );
+                        }
                         let fact = drop_scene_fact::floating_title_bar(
                             floating,
                             target_tabs,

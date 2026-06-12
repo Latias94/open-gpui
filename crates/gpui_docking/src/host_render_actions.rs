@@ -1,6 +1,6 @@
 use crate::{
     DockHost, DockItemId, DockNodeId, DockSpaceId,
-    drag::DockDragPayload,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
 };
@@ -14,12 +14,34 @@ impl DockHost {
         Some(self.viewport_runtime()?.begin_payload_drag(payload))
     }
 
+    pub(crate) fn update_payload_drag_tear_off_geometry_from_render(
+        &mut self,
+        payload: &DockDragPayload,
+        geometry: DockDragTearOffGeometry,
+    ) -> bool {
+        let Some(runtime) = self.viewport_runtime() else {
+            return false;
+        };
+        let Some(session) = runtime.active_payload_drag_session(payload) else {
+            return false;
+        };
+        runtime.update_payload_drag_tear_off_geometry(&session, geometry)
+    }
+
     pub(crate) fn active_payload_drag_session(
         &self,
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
         self.viewport_runtime()?
             .active_payload_drag_session(payload)
+    }
+
+    pub(crate) fn active_payload_drag_tear_off_geometry(
+        &self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> Option<DockDragTearOffGeometry> {
+        self.viewport_runtime()?
+            .active_payload_drag_tear_off_geometry(session)
     }
 
     pub(crate) fn finish_payload_drag_session(&self, session: &DockRuntimeDragSession) -> bool {

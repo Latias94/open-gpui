@@ -1,7 +1,7 @@
 use crate::{
     DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
     DockViewportWindowFacts,
-    drag::{DockDragPayload, DockDragPayloadKind},
+    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
@@ -50,6 +50,8 @@ impl DockHost {
             );
         };
 
+        let drag_session = self.active_payload_drag_session(payload);
+        let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
         let request = viewport_drop_route_request_from_host(
             payload,
             position,
@@ -57,7 +59,8 @@ impl DockHost {
             cx,
             DockPayloadDropReleaseOrigin::HoveredHost,
             None,
-            self.active_payload_drag_session(payload),
+            drag_session,
+            tear_off_geometry,
         );
         let resolution = runtime.resolve_payload_drop_route_with_commit(&request, cx);
         let route = resolution.route().clone();
@@ -78,6 +81,8 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
+        let drag_session = release.drag_session().cloned();
+        let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
         let request = viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
@@ -87,7 +92,8 @@ impl DockHost {
             self.viewport_runtime().and_then(|runtime| {
                 runtime.last_hovered_window_for_drag_session(release.drag_session())
             }),
-            release.drag_session().cloned(),
+            drag_session,
+            tear_off_geometry,
         );
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
@@ -102,6 +108,7 @@ fn viewport_drop_route_request_from_host(
     origin: DockPayloadDropReleaseOrigin,
     last_hovered_window: Option<open_gpui::WindowId>,
     drag_session: Option<DockRuntimeDragSession>,
+    tear_off_geometry: Option<DockDragTearOffGeometry>,
 ) -> DockViewportDropRouteRequest {
     let platform_signals = match origin {
         DockPayloadDropReleaseOrigin::HoveredHost => {
@@ -120,6 +127,7 @@ fn viewport_drop_route_request_from_host(
         platform_signals,
     )
     .with_drag_session(drag_session)
+    .with_tear_off_geometry(tear_off_geometry)
 }
 
 fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {

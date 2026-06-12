@@ -1,5 +1,8 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId};
-use open_gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div, rgb, white};
+use open_gpui::{
+    Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,
+    rgb, white,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockDragPayload {
@@ -21,6 +24,14 @@ pub(crate) struct DockDragPayloadIdentity {
     source_space: DockSpaceId,
     source_tabs: DockNodeId,
     kind: DockDragPayloadKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DockDragTearOffGeometry {
+    source_bounds: Bounds<Pixels>,
+    cursor_offset: Point<Pixels>,
+    preferred_size: Option<Size<Pixels>>,
+    display_work_area: Option<Bounds<Pixels>>,
 }
 
 impl DockDragPayload {
@@ -105,6 +116,50 @@ impl DockDragPayload {
                 Some(self.source_tabs)
             }
         }
+    }
+}
+
+impl DockDragTearOffGeometry {
+    pub(crate) fn new(source_bounds: Bounds<Pixels>, cursor_offset: Point<Pixels>) -> Self {
+        Self {
+            source_bounds,
+            cursor_offset,
+            preferred_size: None,
+            display_work_area: None,
+        }
+    }
+
+    pub(crate) fn from_source_bounds(
+        source_bounds: Bounds<Pixels>,
+        cursor_position: Point<Pixels>,
+    ) -> Self {
+        Self::new(source_bounds, cursor_position - source_bounds.origin)
+    }
+
+    pub(crate) fn with_preferred_size(mut self, preferred_size: Size<Pixels>) -> Self {
+        self.preferred_size = Some(preferred_size);
+        self
+    }
+
+    pub(crate) fn with_display_work_area(mut self, display_work_area: Bounds<Pixels>) -> Self {
+        self.display_work_area = Some(display_work_area);
+        self
+    }
+
+    pub(crate) fn source_bounds(&self) -> Bounds<Pixels> {
+        self.source_bounds
+    }
+
+    pub(crate) fn cursor_offset(&self) -> Point<Pixels> {
+        self.cursor_offset
+    }
+
+    pub(crate) fn preferred_size(&self) -> Option<Size<Pixels>> {
+        self.preferred_size
+    }
+
+    pub(crate) fn display_work_area(&self) -> Option<Bounds<Pixels>> {
+        self.display_work_area
     }
 }
 
