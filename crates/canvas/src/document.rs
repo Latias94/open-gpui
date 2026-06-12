@@ -756,6 +756,14 @@ impl CanvasDocument {
         self.shapes.contains_key(id)
     }
 
+    pub fn contains_record(&self, id: &CanvasRecordId) -> bool {
+        match id {
+            CanvasRecordId::Node(id) => self.nodes.contains_key(id),
+            CanvasRecordId::Edge(id) => self.edges.contains_key(id),
+            CanvasRecordId::Shape(id) => self.shapes.contains_key(id),
+        }
+    }
+
     pub fn nodes(&self) -> impl Iterator<Item = &CanvasNode> + '_ {
         self.nodes.values()
     }
@@ -1316,14 +1324,6 @@ impl CanvasDocument {
             Ok(())
         } else {
             Err(DocumentError::MissingRelationRecord(id.clone()))
-        }
-    }
-
-    fn contains_record(&self, id: &CanvasRecordId) -> bool {
-        match id {
-            CanvasRecordId::Node(id) => self.nodes.contains_key(id),
-            CanvasRecordId::Edge(id) => self.edges.contains_key(id),
-            CanvasRecordId::Shape(id) => self.shapes.contains_key(id),
         }
     }
 

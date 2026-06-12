@@ -181,7 +181,7 @@ impl CanvasToolReducerContext<'_> {
         let records = self.selection_action_records(
             selection,
             CanvasRecordScopeOptions::structural(),
-            |record_id| self.record_exists(record_id),
+            |record_id| self.document.contains_record(record_id),
             |record_id| self.is_deletable_record(record_id),
         );
 
@@ -220,7 +220,7 @@ impl CanvasToolReducerContext<'_> {
         let records = self.selection_action_records(
             selection,
             CanvasRecordScopeOptions::structural(),
-            |record_id| self.record_exists(record_id),
+            |record_id| self.document.contains_record(record_id),
             |record_id| self.is_translatable_record(record_id),
         );
 
@@ -255,11 +255,10 @@ impl CanvasToolReducerContext<'_> {
             self.document,
             self.selection,
             CanvasRecordScopeOptions::structural(),
-            |record_id| self.record_exists(record_id),
+            |record_id| self.document.contains_record(record_id),
             |record_id| self.is_translatable_record(record_id),
         );
-        scope.explicit_records().contains(record_id)
-            || scope.structural_records().contains(record_id)
+        scope.contains_action_record(record_id)
     }
 
     fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {
@@ -311,7 +310,7 @@ impl CanvasToolReducerContext<'_> {
         let records = self.selection_action_records(
             selection,
             CanvasRecordScopeOptions::structural_with_internal_edges(),
-            |record_id| self.record_exists(record_id),
+            |record_id| self.document.contains_record(record_id),
             |record_id| self.is_resizable_record(record_id),
         );
 
@@ -348,10 +347,10 @@ impl CanvasToolReducerContext<'_> {
             self.document,
             selection,
             CanvasRecordScopeOptions::structural(),
-            |record_id| self.record_exists(record_id),
+            |record_id| self.document.contains_record(record_id),
             |record_id| self.is_resizable_record(record_id),
         );
-        !scope.structural_records().is_empty()
+        scope.has_action_descendants()
     }
 
     pub(crate) fn structural_resize_bounds(
@@ -644,17 +643,7 @@ impl CanvasToolReducerContext<'_> {
             can_include,
         )
         .into_action_records()
-        .into_records()
-        .into_iter()
-        .collect()
-    }
-
-    fn record_exists(&self, record_id: &CanvasRecordId) -> bool {
-        match record_id {
-            CanvasRecordId::Node(id) => self.document.contains_node(id),
-            CanvasRecordId::Edge(id) => self.document.contains_edge(id),
-            CanvasRecordId::Shape(id) => self.document.contains_shape(id),
-        }
+        .into_index_set()
     }
 
     fn geometry_bounds_for_records(&self, record_ids: &[CanvasRecordId]) -> Option<Bounds<Pixels>> {

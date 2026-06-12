@@ -1,6 +1,7 @@
 use crate::{
     CanvasDocument, CanvasEndpoint, CanvasGeometryFacts, CanvasRecordId, CanvasSelection,
-    CanvasShape, CanvasTransaction, DocumentCommand, ShapeId, normalize_record_candidates,
+    CanvasShape, CanvasTransaction, DocumentCommand, ShapeId,
+    record_scope::normalize_record_candidates,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, px};
@@ -127,7 +128,7 @@ pub(crate) fn ungroup_selection_edit(
                     child: child.clone(),
                 }),
             }
-            select_record(&mut next_selection, child);
+            next_selection.insert_record(child.clone());
         }
         for member in document.relations().members_of(&group) {
             commands.push(DocumentCommand::RemoveRecordFromGroup {
@@ -140,7 +141,7 @@ pub(crate) fn ungroup_selection_edit(
                     member: member.clone(),
                 });
             }
-            select_record(&mut next_selection, member);
+            next_selection.insert_record(member.clone());
         }
         for external_group in inherited_groups {
             commands.push(DocumentCommand::RemoveRecordFromGroup {
@@ -173,7 +174,8 @@ fn groupable_selection_records(
 ) -> GroupSelectionRecords {
     let mut records = IndexSet::new();
 
-    let direct_records = directly_selected_record_ids(selection)
+    let direct_records = selection
+        .selected_records()
         .filter(|record_id| can_group_record(document, record_id, group_record))
         .collect::<IndexSet<_>>();
     for record_id in normalize_record_candidates(document, direct_records) {
@@ -217,27 +219,6 @@ fn groupable_selection_records(
     }
 }
 
-fn directly_selected_record_ids(
-    selection: &CanvasSelection,
-) -> impl Iterator<Item = CanvasRecordId> + '_ {
-    selection
-        .selected_nodes()
-        .cloned()
-        .map(CanvasRecordId::Node)
-        .chain(
-            selection
-                .selected_edges()
-                .cloned()
-                .map(CanvasRecordId::Edge),
-        )
-        .chain(
-            selection
-                .selected_shapes()
-                .cloned()
-                .map(CanvasRecordId::Shape),
-        )
-}
-
 fn endpoint_is_selected(
     endpoint: &CanvasEndpoint,
     selected_nodes: &IndexSet<crate::NodeId>,
@@ -250,7 +231,7 @@ fn can_group_record(
     record_id: &CanvasRecordId,
     group_record: &CanvasRecordId,
 ) -> bool {
-    record_exists(document, record_id)
+    document.contains_record(record_id)
         && record_id != group_record
         && !record_is_locked(document, record_id)
         && !record_is_hidden(document, record_id)
@@ -337,28 +318,6 @@ fn is_node_or_shape(record_id: &CanvasRecordId) -> bool {
         record_id,
         CanvasRecordId::Node(_) | CanvasRecordId::Shape(_)
     )
-}
-
-fn select_record(selection: &mut CanvasSelection, record_id: &CanvasRecordId) {
-    match record_id {
-        CanvasRecordId::Node(id) => {
-            selection.insert_node(id.clone());
-        }
-        CanvasRecordId::Edge(id) => {
-            selection.insert_edge(id.clone());
-        }
-        CanvasRecordId::Shape(id) => {
-            selection.insert_shape(id.clone());
-        }
-    }
-}
-
-fn record_exists(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
-    match record_id {
-        CanvasRecordId::Node(id) => document.contains_node(id),
-        CanvasRecordId::Edge(id) => document.contains_edge(id),
-        CanvasRecordId::Shape(id) => document.contains_shape(id),
-    }
 }
 
 fn record_is_locked(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {

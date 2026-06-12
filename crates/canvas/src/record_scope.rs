@@ -82,6 +82,10 @@ impl CanvasRecordScope {
     pub fn into_records(self) -> Vec<CanvasRecordId> {
         self.records.into_iter().collect()
     }
+
+    pub(crate) fn into_index_set(self) -> IndexSet<CanvasRecordId> {
+        self.records
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -109,6 +113,27 @@ impl CanvasResolvedSelectionScope {
         &self.action_records
     }
 
+    pub(crate) fn contains_action_record(&self, record_id: &CanvasRecordId) -> bool {
+        self.action_records.contains(record_id)
+    }
+
+    pub(crate) fn has_action_descendants(&self) -> bool {
+        self.action_records
+            .records()
+            .any(|record_id| !self.explicit_records.contains(record_id))
+    }
+
+    pub(crate) fn contains_paint_structural_record(&self, record_id: &CanvasRecordId) -> bool {
+        !self.explicit_records.contains(record_id) && self.action_records.contains(record_id)
+    }
+
+    pub(crate) fn paint_structural_records(&self) -> impl Iterator<Item = &CanvasRecordId> {
+        let explicit_records = &self.explicit_records;
+        self.action_records
+            .records()
+            .filter(move |record_id| !explicit_records.contains(record_id))
+    }
+
     pub fn into_action_records(self) -> CanvasRecordScope {
         self.action_records
     }
@@ -118,10 +143,10 @@ pub fn normalize_selection(
     document: &CanvasDocument,
     selection: &CanvasSelection,
 ) -> CanvasSelection {
-    let explicit_records = normalize_record_candidates(document, selected_record_ids(selection));
+    let explicit_records = normalize_record_candidates(document, selection.selected_records());
     let mut normalized = CanvasSelection::default();
     for record_id in explicit_records {
-        insert_record_in_selection(&mut normalized, record_id);
+        normalized.insert_record(record_id);
     }
     for endpoint in selection.selected_handles() {
         if document.validate_endpoint(endpoint).is_ok() {
@@ -131,17 +156,22 @@ pub fn normalize_selection(
     normalized
 }
 
-pub fn normalize_record_candidates(
+pub(crate) fn normalize_record_candidates(
     document: &CanvasDocument,
     candidates: impl IntoIterator<Item = CanvasRecordId>,
 ) -> IndexSet<CanvasRecordId> {
     let mut candidates = candidates
         .into_iter()
-        .filter(|record_id| record_exists(document, record_id))
+        .filter(|record_id| document.contains_record(record_id))
         .collect::<IndexSet<_>>();
     let snapshot = candidates.clone();
     candidates.retain(|record_id| !has_candidate_ancestor(document, record_id, &snapshot));
-    suppress_internal_edge_candidates(document, &mut candidates);
+    if candidates
+        .iter()
+        .any(|record_id| matches!(record_id, CanvasRecordId::Edge(_)))
+    {
+        suppress_internal_edge_candidates(document, &mut candidates);
+    }
     candidates
 }
 
@@ -154,8 +184,8 @@ pub fn resolve_selection_scope(
         document,
         selection,
         options,
-        |record_id| record_exists(document, record_id),
-        |record_id| record_exists(document, record_id),
+        |record_id| document.contains_record(record_id),
+        |record_id| document.contains_record(record_id),
     )
 }
 
@@ -167,11 +197,15 @@ pub(crate) fn resolve_selection_scope_with_predicates(
     mut can_include: impl FnMut(&CanvasRecordId) -> bool,
 ) -> CanvasResolvedSelectionScope {
     let normalized_selection = normalize_selection(document, selection);
-    let explicit_records = selected_record_ids(&normalized_selection).collect::<IndexSet<_>>();
+    let explicit_records = normalized_selection
+        .selected_records()
+        .collect::<IndexSet<_>>();
     let structural_records = if options.include_structural_descendants {
-        collect_structural_descendants(document, explicit_records.iter().cloned(), |record_id| {
-            can_traverse(record_id)
-        })
+        document
+            .relations()
+            .collect_descendant_records(explicit_records.iter().cloned(), |record_id| {
+                can_traverse(record_id)
+            })
     } else {
         IndexSet::new()
     };
@@ -205,13 +239,11 @@ pub(crate) fn collect_selection_record_scope(
         document,
         selection,
         options,
-        |record_id| record_exists(document, record_id),
+        |record_id| document.contains_record(record_id),
         |record_id| can_include(record_id),
     )
     .into_action_records()
-    .into_records()
-    .into_iter()
-    .collect()
+    .into_index_set()
 }
 
 pub fn selection_record_scope(
@@ -220,25 +252,6 @@ pub fn selection_record_scope(
     options: CanvasRecordScopeOptions,
 ) -> CanvasRecordScope {
     resolve_selection_scope(document, selection, options).into_action_records()
-}
-
-fn selected_record_ids(selection: &CanvasSelection) -> impl Iterator<Item = CanvasRecordId> + '_ {
-    selection
-        .selected_nodes()
-        .cloned()
-        .map(CanvasRecordId::Node)
-        .chain(
-            selection
-                .selected_edges()
-                .cloned()
-                .map(CanvasRecordId::Edge),
-        )
-        .chain(
-            selection
-                .selected_shapes()
-                .cloned()
-                .map(CanvasRecordId::Shape),
-        )
 }
 
 fn include_internal_edges(
@@ -263,46 +276,6 @@ fn include_internal_edges(
             records.insert(record_id);
         }
     }
-}
-
-fn collect_structural_descendants(
-    document: &CanvasDocument,
-    seeds: impl IntoIterator<Item = CanvasRecordId>,
-    mut can_traverse: impl FnMut(&CanvasRecordId) -> bool,
-) -> IndexSet<CanvasRecordId> {
-    let mut records = IndexSet::new();
-    let mut pending = Vec::new();
-
-    for record_id in seeds {
-        if can_traverse(&record_id) {
-            pending.push(record_id);
-        }
-    }
-
-    while let Some(record_id) = pending.pop() {
-        for child in document
-            .relations()
-            .children_of(&record_id)
-            .cloned()
-            .collect::<Vec<_>>()
-        {
-            if can_traverse(&child) && records.insert(child.clone()) {
-                pending.push(child);
-            }
-        }
-        for member in document
-            .relations()
-            .members_of(&record_id)
-            .cloned()
-            .collect::<Vec<_>>()
-        {
-            if can_traverse(&member) && records.insert(member.clone()) {
-                pending.push(member);
-            }
-        }
-    }
-
-    records
 }
 
 fn has_candidate_ancestor(
@@ -342,7 +315,7 @@ fn suppress_internal_edge_candidates(
             .iter()
             .filter(|record_id| !matches!(record_id, CanvasRecordId::Edge(_)))
             .cloned(),
-        |record_id| record_exists(document, record_id),
+        |record_id| document.contains_record(record_id),
     );
     let selected_node_ids = node_scope
         .iter()
@@ -359,28 +332,6 @@ fn suppress_internal_edge_candidates(
         }),
         CanvasRecordId::Node(_) | CanvasRecordId::Shape(_) => true,
     });
-}
-
-fn insert_record_in_selection(selection: &mut CanvasSelection, record_id: CanvasRecordId) {
-    match record_id {
-        CanvasRecordId::Node(id) => {
-            selection.insert_node(id);
-        }
-        CanvasRecordId::Edge(id) => {
-            selection.insert_edge(id);
-        }
-        CanvasRecordId::Shape(id) => {
-            selection.insert_shape(id);
-        }
-    }
-}
-
-fn record_exists(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
-    match record_id {
-        CanvasRecordId::Node(id) => document.contains_node(id),
-        CanvasRecordId::Edge(id) => document.contains_edge(id),
-        CanvasRecordId::Shape(id) => document.contains_shape(id),
-    }
 }
 
 #[cfg(test)]
@@ -649,7 +600,7 @@ mod tests {
             &document,
             &selection,
             CanvasRecordScopeOptions::structural(),
-            |record_id| record_exists(&document, record_id),
+            |record_id| document.contains_record(record_id),
             |record_id| match record_id {
                 CanvasRecordId::Shape(id) => document.shape(id).is_some_and(|shape| !shape.locked),
                 CanvasRecordId::Node(id) => document.node(id).is_some_and(|node| !node.locked),

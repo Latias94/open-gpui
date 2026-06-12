@@ -96,9 +96,8 @@ pub use persistence::{
     save_canvas_store_checkpoint, undo_persistent_store_transaction, undo_persistent_transaction,
 };
 pub use record_scope::{
-    CanvasRecordScope, CanvasRecordScopeOptions, CanvasResolvedSelectionScope,
-    normalize_record_candidates, normalize_selection, resolve_selection_scope,
-    selection_record_scope,
+    CanvasRecordScope, CanvasRecordScopeOptions, CanvasResolvedSelectionScope, normalize_selection,
+    resolve_selection_scope, selection_record_scope,
 };
 pub use relations::{
     CanvasRecordBindingRelation, CanvasRecordGroupRelation, CanvasRecordParentRelation,

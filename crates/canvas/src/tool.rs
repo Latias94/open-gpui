@@ -3,9 +3,9 @@ use crate::layer::CanvasZOrderCommand;
 use crate::session::{CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot};
 use crate::{
     CanvasClipboardPayload, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
-    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRuntime,
-    CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction, CanvasViewport,
-    DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId,
+    CanvasRuntime, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
+    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, Point};
@@ -322,6 +322,22 @@ impl CanvasSelection {
         self.shapes.retain(|id| document.contains_shape(id));
         self.handles
             .retain(|endpoint| document.validate_endpoint(endpoint).is_ok());
+    }
+
+    pub(crate) fn selected_records(&self) -> impl Iterator<Item = CanvasRecordId> + '_ {
+        self.selected_nodes()
+            .cloned()
+            .map(CanvasRecordId::Node)
+            .chain(self.selected_edges().cloned().map(CanvasRecordId::Edge))
+            .chain(self.selected_shapes().cloned().map(CanvasRecordId::Shape))
+    }
+
+    pub(crate) fn insert_record(&mut self, record_id: CanvasRecordId) -> bool {
+        match record_id {
+            CanvasRecordId::Node(id) => self.insert_node(id),
+            CanvasRecordId::Edge(id) => self.insert_edge(id),
+            CanvasRecordId::Shape(id) => self.insert_shape(id),
+        }
     }
 }
 

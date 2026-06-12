@@ -241,11 +241,34 @@ impl CanvasRecordRelations {
         }
 
         while let Some(record_id) = pending.pop() {
-            for child in self.children_of(&record_id).cloned().collect::<Vec<_>>() {
+            for child in self.children_of(&record_id).cloned() {
                 Self::insert_related_record(child, &mut records, &mut pending, &mut can_include);
             }
-            for member in self.members_of(&record_id).cloned().collect::<Vec<_>>() {
+            for member in self.members_of(&record_id).cloned() {
                 Self::insert_related_record(member, &mut records, &mut pending, &mut can_include);
+            }
+        }
+
+        records
+    }
+
+    pub(crate) fn collect_descendant_records(
+        &self,
+        seeds: impl IntoIterator<Item = CanvasRecordId>,
+        mut can_traverse: impl FnMut(&CanvasRecordId) -> bool,
+    ) -> IndexSet<CanvasRecordId> {
+        let mut records = IndexSet::new();
+        let mut pending = seeds
+            .into_iter()
+            .filter(|record_id| can_traverse(record_id))
+            .collect::<Vec<_>>();
+
+        while let Some(record_id) = pending.pop() {
+            for child in self.children_of(&record_id).cloned() {
+                Self::insert_related_record(child, &mut records, &mut pending, &mut can_traverse);
+            }
+            for member in self.members_of(&record_id).cloned() {
+                Self::insert_related_record(member, &mut records, &mut pending, &mut can_traverse);
             }
         }
 
