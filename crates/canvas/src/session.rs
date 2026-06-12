@@ -2,7 +2,7 @@ use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
 use crate::tool::{CanvasSelection, CanvasTool};
 use crate::{
     CanvasDocument, CanvasKindRegistry, CanvasResizeHandle, CanvasSnapGuide, CanvasTransaction,
-    CanvasViewport, DocumentError, HitTarget, NodeId, ShapeId,
+    CanvasViewport, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
 };
 use open_gpui::{Axis, Pixels, Point};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,9 @@ pub(crate) enum ToolState {
         last: Point<Pixels>,
         handle: CanvasResizeHandle,
         node_ids: Vec<NodeId>,
+        edge_ids: Vec<EdgeId>,
         shape_ids: Vec<ShapeId>,
+        structural: bool,
         snap_guides: Vec<CanvasSnapGuide>,
     },
     Panning {

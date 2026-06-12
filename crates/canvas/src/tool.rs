@@ -2838,6 +2838,149 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_resizes_group_and_structural_descendants() {
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = crate::CanvasEdgeRoute::polyline([point(px(30.0), px(70.0))]);
+        edge.route.control_points = vec![point(px(40.0), px(20.0))];
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(50.0), px(50.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .edge(edge)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("group"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(70.0), px(70.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(130.0), px(130.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(130.0), px(130.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        let group = editor.document().shape(&ShapeId::from("group")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(40.0), px(40.0)));
+        assert_eq!(b.position, point(px(90.0), px(90.0)));
+        assert_eq!(b.size, size(px(40.0), px(40.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(50.0), px(130.0))]);
+        assert_eq!(edge.route.control_points, vec![point(px(70.0), px(30.0))]);
+        assert_eq!(
+            group.bounds,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(120.0), px(120.0)))
+        );
+        assert_eq!(editor.history().undo_depth(), 2);
+
+        assert!(editor.undo().unwrap());
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        let group = editor.document().shape(&ShapeId::from("group")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(20.0), px(20.0)));
+        assert_eq!(b.position, point(px(50.0), px(50.0)));
+        assert_eq!(b.size, size(px(20.0), px(20.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(30.0), px(70.0))]);
+        assert_eq!(edge.route.control_points, vec![point(px(40.0), px(20.0))]);
+        assert_eq!(
+            group.bounds,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(60.0), px(60.0)))
+        );
+    }
+
+    #[test]
+    fn select_tool_direct_multi_select_resize_stays_per_record() {
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = crate::CanvasEdgeRoute::polyline([point(px(30.0), px(70.0))]);
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(50.0), px(50.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .edge(edge)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(70.0), px(70.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(90.0), px(90.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(90.0), px(90.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(40.0), px(40.0)));
+        assert_eq!(b.position, point(px(50.0), px(50.0)));
+        assert_eq!(b.size, size(px(40.0), px(40.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(30.0), px(70.0))]);
+    }
+
+    #[test]
     fn select_tool_resize_uses_registered_kind_policy() {
         let mut node =
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));

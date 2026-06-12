@@ -69,13 +69,23 @@ impl SelectToolStateMachine {
                     last,
                     handle,
                     node_ids,
+                    edge_ids,
                     shape_ids,
                     origin,
+                    structural,
                     ..
                 },
                 CanvasEvent::PointerMove { position, .. },
             ) => self.handle_resizing_pointer_move(
-                context, position, *origin, *last, *handle, node_ids, shape_ids,
+                context,
+                position,
+                *origin,
+                *last,
+                *handle,
+                node_ids,
+                edge_ids,
+                shape_ids,
+                *structural,
             )?,
             (
                 ToolState::Pointing {
@@ -155,6 +165,19 @@ impl SelectToolStateMachine {
         let document_position = context.viewport().view_to_document(position);
         if let Some(handle) = context.transform_handle_at(document_position) {
             let (node_ids, shape_ids) = context.resizable_selection_ids();
+            let structural =
+                context.selection_has_structural_resize_descendants(context.selection());
+            let (node_ids, edge_ids, shape_ids) = if structural {
+                let (structural_node_ids, structural_edge_ids, structural_shape_ids) =
+                    context.structural_resize_record_ids(context.selection());
+                (
+                    structural_node_ids,
+                    structural_edge_ids,
+                    structural_shape_ids,
+                )
+            } else {
+                (node_ids, Vec::new(), shape_ids)
+            };
             return Ok(vec![
                 CanvasToolEffect::BeginGesture,
                 CanvasToolEffect::SetState(ToolState::Resizing {
@@ -162,7 +185,9 @@ impl SelectToolStateMachine {
                     last: document_position,
                     handle: handle.handle,
                     node_ids,
+                    edge_ids,
                     shape_ids,
+                    structural,
                     snap_guides: Vec::new(),
                 }),
             ]);
@@ -320,14 +345,17 @@ impl SelectToolStateMachine {
         last: Point<Pixels>,
         handle: CanvasResizeHandle,
         node_ids: &[NodeId],
+        edge_ids: &[EdgeId],
         shape_ids: &[ShapeId],
+        structural: bool,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         let raw_delta = document_position - last;
         let snap = context.snap_delta_for_resize(handle, raw_delta, node_ids, shape_ids);
         let delta = snap.delta;
-        let transaction =
-            context.resize_selection_transaction(handle, delta, node_ids, shape_ids)?;
+        let transaction = context.resize_selection_transaction(
+            handle, delta, node_ids, edge_ids, shape_ids, structural,
+        )?;
 
         Ok(vec![
             CanvasToolEffect::UpdateGesture(transaction),
@@ -336,7 +364,9 @@ impl SelectToolStateMachine {
                 last: last + delta,
                 handle,
                 node_ids: node_ids.to_vec(),
+                edge_ids: edge_ids.to_vec(),
                 shape_ids: shape_ids.to_vec(),
+                structural,
                 snap_guides: snap.guides,
             }),
         ])
