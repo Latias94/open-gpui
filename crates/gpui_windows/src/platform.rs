@@ -522,6 +522,15 @@ impl Platform for WindowsPlatform {
             .map(|inner| inner.handle)
     }
 
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities {
+            active_window: true,
+            display_work_area: true,
+            dpi_scale: true,
+            ..Default::default()
+        }
+    }
+
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         let virtual_key = match button {
             MouseButton::Left => VK_LBUTTON,

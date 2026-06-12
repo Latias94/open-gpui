@@ -50,11 +50,11 @@ use crate::{
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
     KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, MouseButton, OwnedMenu,
     PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator,
+    PlatformKeyboardMapper, PlatformViewportCapabilities, Point, Priority, PromptBuilder,
+    PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1125,6 +1125,11 @@ impl App {
     /// This method returns None if the platform doesn't implement the method yet.
     pub fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         self.platform.window_stack()
+    }
+
+    /// Returns platform capabilities relevant to multi-viewport docking.
+    pub fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        self.platform.viewport_capabilities()
     }
 
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.

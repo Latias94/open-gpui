@@ -600,22 +600,24 @@ impl MacWindowState {
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
-        let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
+        let window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen = unsafe { NSWindow::screen(self.native_window) };
         if screen == nil {
             return Bounds::new(point(px(0.), px(0.)), open_gpui::DEFAULT_WINDOW_SIZE);
         }
         let screen_frame = unsafe { NSScreen::frame(screen) };
-
-        // Flip the y coordinate to be top-left origin
-        window_frame.origin.y =
-            screen_frame.size.height - window_frame.origin.y - window_frame.size.height;
+        let display_id = unsafe { display_id_for_screen(screen) };
+        let display_bounds = MacDisplay(display_id).bounds();
+        let window_x_in_screen = window_frame.origin.x - screen_frame.origin.x;
+        let window_y_in_screen = window_frame.origin.y - screen_frame.origin.y;
+        let global_x = display_bounds.origin.x.as_f32() as f64 + window_x_in_screen;
+        let global_y = display_bounds.origin.y.as_f32() as f64
+            + display_bounds.size.height.as_f32() as f64
+            - window_y_in_screen
+            - window_frame.size.height;
 
         Bounds::new(
-            point(
-                px(window_frame.origin.x as f32),
-                px((window_frame.origin.y + screen_frame.origin.y) as f32),
-            ),
+            point(px(global_x as f32), px(global_y as f32)),
             size(
                 px(window_frame.size.width as f32),
                 px(window_frame.size.height as f32),
@@ -744,12 +746,17 @@ impl MacWindow {
                 target_screen = screen;
                 NSScreen::frame(screen)
             });
+            let display_bounds = display.bounds();
+            let frame_top_left = NSPoint::new(
+                screen_frame.origin.x + (bounds.origin.x - display_bounds.origin.x).as_f32() as f64,
+                screen_frame.origin.y + display_bounds.size.height.as_f32() as f64
+                    - (bounds.origin.y - display_bounds.origin.y).as_f32() as f64,
+            );
 
-            let window_rect = NSRect::new(
+            let content_rect = NSRect::new(
                 NSPoint::new(
-                    screen_frame.origin.x + bounds.origin.x.as_f32() as f64,
-                    screen_frame.origin.y
-                        + (display.bounds().size.height - bounds.origin.y).as_f32() as f64,
+                    frame_top_left.x,
+                    frame_top_left.y - bounds.size.height.as_f32() as f64,
                 ),
                 NSSize::new(
                     bounds.size.width.as_f32() as f64,
@@ -758,7 +765,7 @@ impl MacWindow {
             );
 
             let native_window = native_window.initWithContentRect_styleMask_backing_defer_screen_(
-                window_rect,
+                content_rect,
                 style_mask,
                 NSBackingStoreBuffered,
                 NO,
@@ -983,7 +990,7 @@ impl MacWindow {
             // Although we already specified the position using `initWithContentRect_styleMask_backing_defer_screen_`,
             // the window position might be incorrect if the main screen (the screen that contains the window that has focus)
             //  is different from the primary screen.
-            NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
+            NSWindow::setFrameTopLeftPoint_(native_window, frame_top_left);
             {
                 let mut window_state = window.0.lock();
                 window_state.move_traffic_light();
@@ -1004,7 +1011,7 @@ impl MacWindow {
                 return None;
             }
 
-            if msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            if is_gpui_window(main_window) {
                 let handle = get_window_state(&*main_window).lock().handle;
                 Some(handle)
             } else {
@@ -1022,7 +1029,7 @@ impl MacWindow {
             let mut window_handles = Vec::new();
             for i in 0..count {
                 let window: id = msg_send![windows, objectAtIndex:i];
-                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                if is_gpui_window(window) {
                     let handle = get_window_state(&*window).lock().handle;
                     window_handles.push(handle);
                 }

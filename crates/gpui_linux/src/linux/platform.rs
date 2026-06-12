@@ -26,8 +26,8 @@ use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
-    WindowButtonLayout, WindowParams,
+    PlatformViewportCapabilities, PlatformWindow, Result, RunnableVariant, Task, ThermalState,
+    WindowAppearance, WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use open_gpui::{Pixels, Point, px};
@@ -92,6 +92,9 @@ pub(crate) trait LinuxClient {
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities::default()
+    }
     fn run(&self);
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -306,6 +309,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         self.inner.window_stack()
+    }
+
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        self.inner.viewport_capabilities()
     }
 
     fn open_window(

@@ -39,8 +39,8 @@ use open_gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
     KeyContext, Keymap, Menu, MenuItem, MouseButton, NavigationDirection, OsMenu, OwnedMenu,
     PathPromptOptions, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
-    PlatformTextSystem, PlatformWindow, Result, SystemMenuType, Task, ThermalState,
-    WindowAppearance, WindowParams,
+    PlatformTextSystem, PlatformViewportCapabilities, PlatformWindow, Result, SystemMenuType, Task,
+    ThermalState, WindowAppearance, WindowParams,
 };
 use open_gpui_util::{
     ResultExt,
@@ -621,6 +621,18 @@ impl Platform for MacPlatform {
     // window is the first one in the returned vec.
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         Some(MacWindow::ordered_windows())
+    }
+
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities {
+            global_window_bounds: true,
+            active_window: true,
+            window_stack: true,
+            display_work_area: true,
+            dpi_scale: true,
+            window_alpha: true,
+            ..Default::default()
+        }
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {

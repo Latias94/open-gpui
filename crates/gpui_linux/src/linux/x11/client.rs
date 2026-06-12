@@ -6,7 +6,7 @@ use calloop::{
 };
 use core::str;
 use log::Level;
-use open_gpui::{Capslock, profiler};
+use open_gpui::{Capslock, PlatformViewportCapabilities, profiler};
 use open_gpui_collections::HashMap;
 use open_gpui_http_client::Url;
 use open_gpui_util::ResultExt as _;
@@ -1844,6 +1844,17 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities {
+            global_window_bounds: true,
+            active_window: true,
+            window_stack: true,
+            dpi_scale: true,
+            live_window_move: true,
+            ..Default::default()
+        }
     }
 
     fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {

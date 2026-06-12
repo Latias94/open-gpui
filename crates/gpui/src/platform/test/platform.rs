@@ -374,6 +374,16 @@ impl Platform for TestPlatform {
             .map(|window| window.0.lock().handle)
     }
 
+    fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
+        crate::PlatformViewportCapabilities {
+            global_window_bounds: true,
+            active_window: true,
+            display_work_area: true,
+            dpi_scale: true,
+            ..Default::default()
+        }
+    }
+
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {
         self.pressed_mouse_buttons
             .lock()

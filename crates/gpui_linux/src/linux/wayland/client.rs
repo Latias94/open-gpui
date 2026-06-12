@@ -95,9 +95,9 @@ use open_gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout,
-    WindowParams, point, profiler, px, size,
+    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformViewportCapabilities,
+    PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TouchPhase,
+    WindowButtonLayout, WindowParams, point, profiler, px, size,
 };
 use open_gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -1000,6 +1000,14 @@ impl LinuxClient for WaylandClient {
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
+    }
+
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities {
+            active_window: true,
+            dpi_scale: true,
+            ..Default::default()
+        }
     }
 
     fn compositor_name(&self) -> &'static str {

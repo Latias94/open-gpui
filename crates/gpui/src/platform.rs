@@ -80,6 +80,31 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
 
+/// Platform support relevant to ImGui-style multi-viewport docking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PlatformViewportCapabilities {
+    /// Window bounds are reported in a shared desktop coordinate space.
+    pub global_window_bounds: bool,
+    /// The platform can report the active/focused application window.
+    pub active_window: bool,
+    /// The platform can report application windows in front-to-back order.
+    pub window_stack: bool,
+    /// Display visible bounds exclude system-reserved work areas.
+    pub display_work_area: bool,
+    /// Per-window DPI scale facts are reliable for placement decisions.
+    pub dpi_scale: bool,
+    /// Already-open windows can be moved or resized programmatically.
+    pub live_window_move: bool,
+    /// Native no-input/click-through windows are supported.
+    pub no_input_windows: bool,
+    /// Native no-focus-on-appear windows are supported.
+    pub no_focus_on_appearing: bool,
+    /// Native topmost windows are supported.
+    pub topmost_windows: bool,
+    /// Native per-window alpha is supported.
+    pub window_alpha: bool,
+}
+
 // TODO(jk): return an enum instead of a string
 /// Return which compositor we're guessing we'll use.
 /// Does not attempt to connect to the given compositor.
@@ -131,6 +156,9 @@ pub trait Platform: 'static {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
+    }
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        PlatformViewportCapabilities::default()
     }
     fn mouse_button_is_pressed(&self, _button: MouseButton) -> Option<bool> {
         None
