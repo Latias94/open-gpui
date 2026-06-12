@@ -1,6 +1,6 @@
 use crate::{
     CanvasDocument, CanvasEndpoint, CanvasGeometryFacts, CanvasRecordId, CanvasSelection,
-    CanvasShape, CanvasTransaction, DocumentCommand, ShapeId,
+    CanvasShape, CanvasTransaction, DocumentCommand, ShapeId, normalize_record_candidates,
 };
 use indexmap::IndexSet;
 use open_gpui::{Bounds, Pixels, px};
@@ -176,12 +176,9 @@ fn groupable_selection_records(
     let direct_records = directly_selected_record_ids(selection)
         .filter(|record_id| can_group_record(document, record_id, group_record))
         .collect::<IndexSet<_>>();
-    for record_id in &direct_records {
-        if record_has_selected_ancestor(document, record_id, &direct_records) {
-            continue;
-        }
+    for record_id in normalize_record_candidates(document, direct_records) {
         if can_group_record(document, &record_id, group_record) {
-            records.insert(record_id.clone());
+            records.insert(record_id);
         }
     }
 
@@ -258,34 +255,6 @@ fn can_group_record(
         && !record_is_locked(document, record_id)
         && !record_is_hidden(document, record_id)
         && !record_would_contain_group(document, record_id, group_record)
-}
-
-fn record_has_selected_ancestor(
-    document: &CanvasDocument,
-    record_id: &CanvasRecordId,
-    selected_records: &IndexSet<CanvasRecordId>,
-) -> bool {
-    let mut pending = document
-        .relations()
-        .parent_of(record_id)
-        .cloned()
-        .into_iter()
-        .chain(document.relations().groups_for(record_id).cloned())
-        .collect::<Vec<_>>();
-    let mut visited = IndexSet::new();
-
-    while let Some(current) = pending.pop() {
-        if !visited.insert(current.clone()) {
-            continue;
-        }
-        if selected_records.contains(&current) {
-            return true;
-        }
-        pending.extend(document.relations().parent_of(&current).cloned());
-        pending.extend(document.relations().groups_for(&current).cloned());
-    }
-
-    false
 }
 
 fn common_parent(

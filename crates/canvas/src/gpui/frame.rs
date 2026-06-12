@@ -4,9 +4,10 @@ use super::model::{
 use super::style::{parse_color, positive_pixels};
 use crate::{
     CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId, CanvasRecordScope,
-    CanvasRecordScopeOptions, CanvasRoutePath, CanvasRouteSegment, CanvasSelection, CanvasSnapAxis,
-    CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget, CanvasViewport, HitOptions,
-    HitTarget, canvas_transform_handles, connection_hit_options, selection_record_scope,
+    CanvasRecordScopeOptions, CanvasResolvedSelectionScope, CanvasRoutePath, CanvasRouteSegment,
+    CanvasSelection, CanvasSnapAxis, CanvasSnapGuide, CanvasTransformHandle, CanvasTransformTarget,
+    CanvasViewport, HitOptions, HitTarget, canvas_transform_handles, connection_hit_options,
+    resolve_selection_scope,
 };
 use open_gpui::{Bounds, Hsla, Pixels, Point, SharedString, TextRun, Window, WrappedLine};
 
@@ -217,16 +218,13 @@ pub fn collect_visible_records(
         include_handles: options.include_handles,
         margin: Pixels::ZERO,
     };
-    let structural_selection = options
-        .include_interaction_feedback
-        .then(|| {
-            selection_record_scope(
-                model.document.as_ref(),
-                model.interaction.selection(),
-                CanvasRecordScopeOptions::structural_with_internal_edges(),
-            )
-        })
-        .unwrap_or_default();
+    let selection_scope = options.include_interaction_feedback.then(|| {
+        resolve_selection_scope(
+            model.document.as_ref(),
+            model.interaction.selection(),
+            CanvasRecordScopeOptions::structural_with_internal_edges(),
+        )
+    });
     let records = model
         .runtime
         .query_with_options(visible_document_bounds, hit_options)
@@ -244,9 +242,9 @@ pub fn collect_visible_records(
                 locked: record.locked,
                 selected: options.include_interaction_feedback
                     && target_is_selected(&record.target, model.interaction.selection()),
-                structurally_selected: target_is_in_record_scope(
+                structurally_selected: target_is_structurally_selected(
                     &record.target,
-                    &structural_selection,
+                    selection_scope.as_ref(),
                 ),
             }
         })
@@ -256,7 +254,12 @@ pub fn collect_visible_records(
         visible_document_bounds,
         records,
         interaction: if options.include_interaction_feedback {
-            interaction_frame(model, &structural_selection)
+            interaction_frame(
+                model,
+                selection_scope
+                    .as_ref()
+                    .map(CanvasResolvedSelectionScope::structural_records),
+            )
         } else {
             CanvasPaintInteractionFrame::default()
         },
@@ -322,7 +325,7 @@ pub fn prepare_canvas_frame(
 
 fn interaction_frame(
     model: &CanvasPaintModel,
-    structural_selection: &CanvasRecordScope,
+    structural_selection: Option<&CanvasRecordScope>,
 ) -> CanvasPaintInteractionFrame {
     match model.interaction.state() {
         CanvasPaintInteractionState::Selecting { origin, current } => CanvasPaintInteractionFrame {
@@ -367,8 +370,9 @@ fn interaction_frame(
 
 fn structural_selection_bounds(
     model: &CanvasPaintModel,
-    structural_selection: &CanvasRecordScope,
+    structural_selection: Option<&CanvasRecordScope>,
 ) -> Option<Bounds<Pixels>> {
+    let structural_selection = structural_selection?;
     let facts = CanvasGeometryFacts::with_kind_registry(
         model.document.as_ref(),
         model.kind_registry.as_ref(),
@@ -452,12 +456,18 @@ fn target_is_selected(target: &HitTarget, selection: &CanvasSelection) -> bool {
     selection.contains_target(target)
 }
 
-fn target_is_in_record_scope(target: &HitTarget, scope: &CanvasRecordScope) -> bool {
+fn target_is_structurally_selected(
+    target: &HitTarget,
+    scope: Option<&CanvasResolvedSelectionScope>,
+) -> bool {
+    let Some(scope) = scope else {
+        return false;
+    };
     let Some(record_id) = record_id_for_target(target) else {
         return false;
     };
 
-    scope.contains(&record_id)
+    !scope.explicit_records().contains(&record_id) && scope.action_records().contains(&record_id)
 }
 
 fn record_id_for_target(target: &HitTarget) -> Option<CanvasRecordId> {

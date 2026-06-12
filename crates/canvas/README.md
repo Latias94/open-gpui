@@ -638,11 +638,12 @@ let cancel_intents = vec![
 Register application tools with `CanvasToolRegistry`, then call
 `CanvasEditor::handle_event_with_tool_registry`.
 
-When a tool needs to act on the same structural selection as built-in copy, move, snap, or z-order
-commands, use `CanvasToolContext::selection_record_scope` instead of walking
-`CanvasRecordRelations` directly. Parent and group descendants are expanded by the canvas-owned
-scope rules, and internal edges can be included when both endpoints are inside the selected
-structure.
+Canvas selection uses three related facts: normalized explicit selection, structural selection, and
+action scope. `CanvasSelection` stores the normalized explicit roots that the user actually owns.
+`CanvasToolContext::selection_record_scope` expands that selection into structural descendants and,
+when requested, internal edges for actions like copy, move, snap, or z-order. Parent and group
+descendants are expanded by the canvas-owned scope rules, while handles stay interaction targets
+rather than structural records.
 
 ```rust
 # use open_gpui_canvas::{CanvasRecordScopeOptions, CanvasToolContext};
@@ -656,6 +657,13 @@ fn selected_structure(context: CanvasToolContext<'_>) {
     }
 }
 ```
+
+Selection writes from built-in tools, public tool intents, paste, duplicate, and custom tools are
+normalized at the session boundary. If a parent and descendant are both submitted, the descendant is
+suppressed in `CanvasSelection`; it still participates through action scope when the action asks for
+structural descendants. Clipboard payload records represent the copied action scope, while pasted
+selection stores remapped explicit roots. Lasso selection, drill-in modifiers, and live container
+layout are intentionally left as follow-up interaction policies.
 
 ## JSON Canvas
 

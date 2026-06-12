@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope};
+use crate::record_scope::{CanvasRecordScopeOptions, resolve_selection_scope_with_predicates};
 use crate::session::ToolState;
 use crate::transform::{
     CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
@@ -178,23 +178,10 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (IndexSet<NodeId>, IndexSet<EdgeId>, IndexSet<ShapeId>) {
-        let records = self.document.relations().collect_related_records(
-            selection
-                .selected_nodes()
-                .cloned()
-                .map(CanvasRecordId::Node)
-                .chain(
-                    selection
-                        .selected_edges()
-                        .cloned()
-                        .map(CanvasRecordId::Edge),
-                )
-                .chain(
-                    selection
-                        .selected_shapes()
-                        .cloned()
-                        .map(CanvasRecordId::Shape),
-                ),
+        let records = self.selection_action_records(
+            selection,
+            CanvasRecordScopeOptions::structural(),
+            |record_id| self.record_exists(record_id),
             |record_id| self.is_deletable_record(record_id),
         );
 
@@ -230,17 +217,10 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let records = self.document.relations().collect_related_records(
-            selection
-                .selected_nodes()
-                .cloned()
-                .map(CanvasRecordId::Node)
-                .chain(
-                    selection
-                        .selected_shapes()
-                        .cloned()
-                        .map(CanvasRecordId::Shape),
-                ),
+        let records = self.selection_action_records(
+            selection,
+            CanvasRecordScopeOptions::structural(),
+            |record_id| self.record_exists(record_id),
             |record_id| self.is_translatable_record(record_id),
         );
 
@@ -271,13 +251,15 @@ impl CanvasToolReducerContext<'_> {
     }
 
     fn selection_structurally_contains_record(&self, record_id: &CanvasRecordId) -> bool {
-        collect_selection_record_scope(
+        let scope = resolve_selection_scope_with_predicates(
             self.document,
             self.selection,
             CanvasRecordScopeOptions::structural(),
+            |record_id| self.record_exists(record_id),
             |record_id| self.is_translatable_record(record_id),
-        )
-        .contains(record_id)
+        );
+        scope.explicit_records().contains(record_id)
+            || scope.structural_records().contains(record_id)
     }
 
     fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {
@@ -326,10 +308,10 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> (Vec<NodeId>, Vec<EdgeId>, Vec<ShapeId>) {
-        let records = collect_selection_record_scope(
-            self.document,
+        let records = self.selection_action_records(
             selection,
             CanvasRecordScopeOptions::structural_with_internal_edges(),
+            |record_id| self.record_exists(record_id),
             |record_id| self.is_resizable_record(record_id),
         );
 
@@ -362,27 +344,14 @@ impl CanvasToolReducerContext<'_> {
         &self,
         selection: &CanvasSelection,
     ) -> bool {
-        selection
-            .selected_nodes()
-            .cloned()
-            .map(CanvasRecordId::Node)
-            .chain(
-                selection
-                    .selected_shapes()
-                    .cloned()
-                    .map(CanvasRecordId::Shape),
-            )
-            .any(|record_id| {
-                self.document
-                    .relations()
-                    .children_of(&record_id)
-                    .any(|child| self.is_resizable_record(child))
-                    || self
-                        .document
-                        .relations()
-                        .members_of(&record_id)
-                        .any(|member| self.is_resizable_record(member))
-            })
+        let scope = resolve_selection_scope_with_predicates(
+            self.document,
+            selection,
+            CanvasRecordScopeOptions::structural(),
+            |record_id| self.record_exists(record_id),
+            |record_id| self.is_resizable_record(record_id),
+        );
+        !scope.structural_records().is_empty()
     }
 
     pub(crate) fn structural_resize_bounds(
@@ -657,6 +626,34 @@ impl CanvasToolReducerContext<'_> {
                 .document
                 .edge(id)
                 .is_some_and(|edge| !edge.locked && !edge.hidden),
+        }
+    }
+
+    fn selection_action_records(
+        &self,
+        selection: &CanvasSelection,
+        options: CanvasRecordScopeOptions,
+        can_traverse: impl FnMut(&CanvasRecordId) -> bool,
+        can_include: impl FnMut(&CanvasRecordId) -> bool,
+    ) -> IndexSet<CanvasRecordId> {
+        resolve_selection_scope_with_predicates(
+            self.document,
+            selection,
+            options,
+            can_traverse,
+            can_include,
+        )
+        .into_action_records()
+        .into_records()
+        .into_iter()
+        .collect()
+    }
+
+    fn record_exists(&self, record_id: &CanvasRecordId) -> bool {
+        match record_id {
+            CanvasRecordId::Node(id) => self.document.contains_node(id),
+            CanvasRecordId::Edge(id) => self.document.contains_edge(id),
+            CanvasRecordId::Shape(id) => self.document.contains_shape(id),
         }
     }
 

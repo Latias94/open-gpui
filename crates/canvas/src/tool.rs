@@ -1766,18 +1766,9 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![NodeId::from("a-copy"), NodeId::from("b-copy")]
+            vec![NodeId::from("b-copy")]
         );
-        assert_eq!(
-            editor
-                .session
-                .selection
-                .edges
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec![EdgeId::from("a-b-copy")]
-        );
+        assert!(editor.session.selection.edges.is_empty());
         assert_eq!(
             editor
                 .session
@@ -2100,9 +2091,10 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![EdgeId::from("a-b")]
+            Vec::<EdgeId>::new()
         );
         assert!(editor.session.selection.shapes.is_empty());
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
 
         assert!(editor.undo().unwrap());
         let group = CanvasRecordId::Shape(ShapeId::from("group"));
@@ -5049,6 +5041,122 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![EdgeId::from("a-b")]
+        );
+    }
+
+    #[test]
+    fn selection_effects_normalize_selected_ancestor_and_descendant() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(260.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+        selection.insert_node(NodeId::from("child"));
+        selection.insert_node(NodeId::from("outside"));
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetSelection(selection))
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("outside")]
+        );
+    }
+
+    #[test]
+    fn public_selection_intents_normalize_redundant_descendants() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
+                NodeId::from("child"),
+            )))
+            .unwrap();
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("child")]
+        );
+
+        editor
+            .apply_tool_intent(CanvasToolIntent::AddSelection(HitTarget::Shape(
+                ShapeId::from("frame"),
+            )))
+            .unwrap();
+
+        assert!(editor.session.selection.nodes.is_empty());
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
         );
     }
 

@@ -1,4 +1,5 @@
 use crate::gesture::{CanvasGestureSession, CanvasPreparedGestureCommit};
+use crate::record_scope::normalize_selection;
 use crate::tool::{CanvasSelection, CanvasTool};
 use crate::{
     CanvasDocument, CanvasKindRegistry, CanvasResizeHandle, CanvasSnapGuide, CanvasTransaction,
@@ -94,16 +95,11 @@ impl CanvasToolSession {
     }
 
     pub(crate) fn retain_selection_for_document(&mut self, document: &CanvasDocument) {
-        self.selection.retain_document(document);
+        self.selection = normalize_selection(document, &self.selection);
     }
 
-    pub(crate) fn set_selection(
-        &mut self,
-        mut selection: CanvasSelection,
-        document: &CanvasDocument,
-    ) {
-        selection.retain_document(document);
-        self.selection = selection;
+    pub(crate) fn set_selection(&mut self, selection: CanvasSelection, document: &CanvasDocument) {
+        self.selection = normalize_selection(document, &selection);
     }
 
     pub(crate) fn apply_effect(
@@ -143,23 +139,27 @@ impl CanvasToolSession {
     }
 
     pub(crate) fn replace_selection(&mut self, target: HitTarget, document: &CanvasDocument) {
-        self.selection.replace_with(target);
-        self.retain_selection_for_document(document);
+        let mut selection = CanvasSelection::default();
+        selection.insert_target(target);
+        self.set_selection(selection, document);
     }
 
     pub(crate) fn add_selection(&mut self, target: HitTarget, document: &CanvasDocument) {
-        self.selection.insert_target(target);
-        self.retain_selection_for_document(document);
+        let mut selection = self.selection.clone();
+        selection.insert_target(target);
+        self.set_selection(selection, document);
     }
 
     pub(crate) fn remove_selection(&mut self, target: &HitTarget, document: &CanvasDocument) {
-        self.selection.remove_target(target);
-        self.retain_selection_for_document(document);
+        let mut selection = self.selection.clone();
+        selection.remove_target(target);
+        self.set_selection(selection, document);
     }
 
     pub(crate) fn toggle_selection(&mut self, target: HitTarget, document: &CanvasDocument) {
-        self.selection.toggle_target(target);
-        self.retain_selection_for_document(document);
+        let mut selection = self.selection.clone();
+        selection.toggle_target(target);
+        self.set_selection(selection, document);
     }
 
     pub(crate) fn clear_selection(&mut self) {
