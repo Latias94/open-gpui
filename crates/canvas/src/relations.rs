@@ -262,6 +262,33 @@ impl CanvasRecordRelations {
         }
     }
 
+    pub(crate) fn subset_for_records(
+        &self,
+        mut contains_record: impl FnMut(&CanvasRecordId) -> bool,
+    ) -> CanvasRecordRelations {
+        let mut relations = CanvasRecordRelationsBuilder::new();
+
+        for relation in self.parents() {
+            if contains_record(&relation.child) && contains_record(&relation.parent) {
+                relations.add_parent(relation.child.clone(), relation.parent.clone());
+            }
+        }
+
+        for relation in self.groups() {
+            if contains_record(&relation.group) && contains_record(&relation.member) {
+                relations.add_group_member(relation.group.clone(), relation.member.clone());
+            }
+        }
+
+        for relation in self.bindings() {
+            if contains_record(&relation.source) && contains_record(&relation.target) {
+                relations.add_binding(relation.clone());
+            }
+        }
+
+        relations.build()
+    }
+
     pub(crate) fn set_parent(
         &mut self,
         child: CanvasRecordId,
@@ -452,7 +479,8 @@ impl CanvasRecordRelationsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NodeId, ShapeId};
+    use crate::{BindingId, NodeId, ShapeId};
+    use indexmap::IndexSet;
 
     #[test]
     fn relation_defaults_are_empty() {
@@ -576,6 +604,32 @@ mod tests {
         assert_eq!(relations.parent_of(&child), Some(&parent));
         assert!(relations.contains_relation(&CanvasRecordRelation::Group(
             CanvasRecordGroupRelation::new(parent, child)
+        )));
+    }
+
+    #[test]
+    fn subset_for_records_filters_relation_facts_by_scope() {
+        let child = CanvasRecordId::Node(NodeId::from("child"));
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let outsider = CanvasRecordId::Node(NodeId::from("outsider"));
+        let binding = CanvasRecordBindingRelation::new("binding", child.clone(), group.clone());
+        let mut relations = CanvasRecordRelations::default();
+        relations.set_parent(child.clone(), group.clone());
+        relations.add_to_group(group.clone(), child.clone());
+        relations.add_to_group(group.clone(), outsider.clone());
+        relations.set_binding(binding.clone());
+
+        let scope: IndexSet<CanvasRecordId> = IndexSet::from_iter([child.clone(), group.clone()]);
+        let subset = relations.subset_for_records(|record_id| scope.contains(record_id));
+
+        assert_eq!(subset.parent_of(&child), Some(&group));
+        assert_eq!(
+            subset.members_of(&group).cloned().collect::<Vec<_>>(),
+            vec![child.clone()]
+        );
+        assert_eq!(subset.binding(&BindingId::from("binding")), Some(&binding));
+        assert!(!subset.contains_relation(&CanvasRecordRelation::Group(
+            CanvasRecordGroupRelation::new(group, outsider)
         )));
     }
 

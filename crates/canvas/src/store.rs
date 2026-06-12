@@ -85,6 +85,12 @@ pub struct CanvasStore {
     next_listener_id: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CanvasStoreHistoryDirection {
+    Undo,
+    Redo,
+}
+
 impl Default for CanvasStore {
     fn default() -> Self {
         Self::new(CanvasDocument::default())
@@ -242,7 +248,7 @@ impl CanvasStore {
         ))
     }
 
-    pub fn prepare_transaction(
+    pub(crate) fn prepare_transaction(
         &self,
         transaction: CanvasTransaction,
     ) -> Result<CanvasPreparedMutation, DocumentError> {
@@ -250,7 +256,7 @@ impl CanvasStore {
             .prepare_transaction_with_kind_registry(transaction, self.kind_registry.as_ref())
     }
 
-    pub fn apply_prepared_transaction(
+    pub(crate) fn apply_prepared_transaction(
         &mut self,
         prepared: CanvasPreparedMutation,
     ) -> Option<CanvasStoreChange> {
@@ -261,64 +267,42 @@ impl CanvasStore {
         )
     }
 
-    pub fn prepare_undo(&self) -> Result<Option<CanvasPreparedMutation>, DocumentError> {
+    pub(crate) fn prepare_undo(&self) -> Result<Option<CanvasPreparedMutation>, DocumentError> {
         let Some(transaction) = self.history.next_undo_transaction().cloned() else {
             return Ok(None);
         };
         self.prepare_transaction(transaction).map(Some)
     }
 
-    pub fn apply_prepared_undo(
+    pub(crate) fn apply_prepared_undo(
         &mut self,
         prepared: CanvasPreparedMutation,
     ) -> Option<CanvasStoreChange> {
-        debug_assert_eq!(
-            self.history.next_undo_transaction(),
-            Some(prepared.committed().transaction())
-        );
-        let committed = prepared.apply_to(self.document_mut());
-        if committed.diff().is_empty() {
-            let _ = self.history.pop_undo();
-            return None;
-        }
-
-        let _ = self.history.pop_undo();
-        self.history.push_redo(committed.inverse().clone());
-        Some(self.finish_committed_mutation(
-            committed,
+        self.apply_prepared_history_mutation(
+            prepared,
             CanvasStoreMutationSource::Local,
             CanvasStoreHistoryEffect::Undo,
-        ))
+            CanvasStoreHistoryDirection::Undo,
+        )
     }
 
-    pub fn prepare_redo(&self) -> Result<Option<CanvasPreparedMutation>, DocumentError> {
+    pub(crate) fn prepare_redo(&self) -> Result<Option<CanvasPreparedMutation>, DocumentError> {
         let Some(transaction) = self.history.next_redo_transaction().cloned() else {
             return Ok(None);
         };
         self.prepare_transaction(transaction).map(Some)
     }
 
-    pub fn apply_prepared_redo(
+    pub(crate) fn apply_prepared_redo(
         &mut self,
         prepared: CanvasPreparedMutation,
     ) -> Option<CanvasStoreChange> {
-        debug_assert_eq!(
-            self.history.next_redo_transaction(),
-            Some(prepared.committed().transaction())
-        );
-        let committed = prepared.apply_to(self.document_mut());
-        if committed.diff().is_empty() {
-            let _ = self.history.pop_redo();
-            return None;
-        }
-
-        let _ = self.history.pop_redo();
-        self.history.push_undo(committed.inverse().clone());
-        Some(self.finish_committed_mutation(
-            committed,
+        self.apply_prepared_history_mutation(
+            prepared,
             CanvasStoreMutationSource::Local,
             CanvasStoreHistoryEffect::Redo,
-        ))
+            CanvasStoreHistoryDirection::Redo,
+        )
     }
 
     pub fn undo(&mut self) -> Result<bool, DocumentError> {
@@ -423,7 +407,57 @@ impl CanvasStore {
         Some(self.finish_committed_mutation(committed, source, history_effect))
     }
 
-    pub(crate) fn finish_committed_mutation(
+    fn apply_prepared_history_mutation(
+        &mut self,
+        prepared: CanvasPreparedMutation,
+        source: CanvasStoreMutationSource,
+        history_effect: CanvasStoreHistoryEffect,
+        direction: CanvasStoreHistoryDirection,
+    ) -> Option<CanvasStoreChange> {
+        let expected_transaction = prepared.committed().transaction();
+        match direction {
+            CanvasStoreHistoryDirection::Undo => {
+                debug_assert_eq!(
+                    self.history.next_undo_transaction(),
+                    Some(expected_transaction)
+                );
+            }
+            CanvasStoreHistoryDirection::Redo => {
+                debug_assert_eq!(
+                    self.history.next_redo_transaction(),
+                    Some(expected_transaction)
+                );
+            }
+        }
+
+        let committed = prepared.apply_to(self.document_mut());
+        if committed.diff().is_empty() {
+            match direction {
+                CanvasStoreHistoryDirection::Undo => {
+                    let _ = self.history.pop_undo();
+                }
+                CanvasStoreHistoryDirection::Redo => {
+                    let _ = self.history.pop_redo();
+                }
+            }
+            return None;
+        }
+
+        match direction {
+            CanvasStoreHistoryDirection::Undo => {
+                let _ = self.history.pop_undo();
+                self.history.push_redo(committed.inverse().clone());
+            }
+            CanvasStoreHistoryDirection::Redo => {
+                let _ = self.history.pop_redo();
+                self.history.push_undo(committed.inverse().clone());
+            }
+        }
+
+        Some(self.finish_committed_mutation(committed, source, history_effect))
+    }
+
+    fn finish_committed_mutation(
         &mut self,
         committed: CanvasCommittedMutation,
         source: CanvasStoreMutationSource,

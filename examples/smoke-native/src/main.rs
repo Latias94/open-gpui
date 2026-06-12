@@ -69,6 +69,7 @@ impl CanvasToolReducer for StampNodeTool {
                 DocumentCommand::InsertNode(node),
             )),
             CanvasToolIntent::SetSelection(selection),
+            CanvasToolIntent::CommitTransaction,
             CanvasToolIntent::SetTool(CanvasTool::Select),
         ])
     }

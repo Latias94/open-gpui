@@ -1,10 +1,25 @@
-use crate::tool::ToolState;
 use crate::{
-    CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter, CanvasEditor, CanvasKindRegistry,
-    CanvasRuntime, CanvasSelection, CanvasViewport,
+    CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint,
+    CanvasKindRegistry, CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport,
 };
 use open_gpui::{Hsla, Pixels, TextAlign, px, rgb};
 use std::sync::Arc;
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum CanvasPaintInteractionState {
+    Idle,
+    Selecting {
+        origin: open_gpui::Point<Pixels>,
+        current: open_gpui::Point<Pixels>,
+    },
+    Connecting {
+        source: CanvasEndpoint,
+        current: open_gpui::Point<Pixels>,
+    },
+    Transforming {
+        snap_guides: Vec<CanvasSnapGuide>,
+    },
+}
 
 #[derive(Clone, Debug)]
 pub struct CanvasPaintModel {
@@ -117,14 +132,14 @@ impl From<&CanvasEditor> for CanvasPaintModel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPaintInteraction {
     selection: CanvasSelection,
-    state: ToolState,
+    state: CanvasPaintInteractionState,
 }
 
 impl CanvasPaintInteraction {
     pub fn new(selection: CanvasSelection) -> Self {
         Self {
             selection,
-            state: ToolState::Idle,
+            state: CanvasPaintInteractionState::Idle,
         }
     }
 
@@ -132,7 +147,7 @@ impl CanvasPaintInteraction {
         &self.selection
     }
 
-    pub(crate) fn tool_state(&self) -> &ToolState {
+    pub(crate) fn state(&self) -> &CanvasPaintInteractionState {
         &self.state
     }
 
@@ -141,8 +156,8 @@ impl CanvasPaintInteraction {
         self
     }
 
-    pub(crate) fn with_internal_tool_state(mut self, state: ToolState) -> Self {
-        self.state = state;
+    pub(crate) fn with_internal_tool_state(mut self, state: crate::tool::ToolState) -> Self {
+        self.state = CanvasPaintInteractionState::from_tool_state(state);
         self
     }
 }
@@ -151,7 +166,27 @@ impl Default for CanvasPaintInteraction {
     fn default() -> Self {
         Self {
             selection: CanvasSelection::default(),
-            state: ToolState::Idle,
+            state: CanvasPaintInteractionState::Idle,
+        }
+    }
+}
+
+impl CanvasPaintInteractionState {
+    pub(crate) fn from_tool_state(state: crate::tool::ToolState) -> Self {
+        match state {
+            crate::tool::ToolState::Idle
+            | crate::tool::ToolState::Pointing { .. }
+            | crate::tool::ToolState::Panning { .. } => Self::Idle,
+            crate::tool::ToolState::Selecting {
+                origin, current, ..
+            } => Self::Selecting { origin, current },
+            crate::tool::ToolState::Connecting { source, current } => {
+                Self::Connecting { source, current }
+            }
+            crate::tool::ToolState::Translating { snap_guides, .. }
+            | crate::tool::ToolState::Resizing { snap_guides, .. } => {
+                Self::Transforming { snap_guides }
+            }
         }
     }
 }

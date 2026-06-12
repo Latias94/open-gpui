@@ -1,6 +1,7 @@
-use super::model::{CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme};
+use super::model::{
+    CanvasPaintInteractionState, CanvasPaintModel, CanvasPaintOptions, CanvasPaintTheme,
+};
 use super::style::{parse_color, positive_pixels};
-use crate::tool::ToolState;
 use crate::{
     CanvasEndpoint, CanvasGeometryFacts, CanvasKindLabel, CanvasRecordId, CanvasRecordScope,
     CanvasRecordScopeOptions, CanvasRoutePath, CanvasRouteSegment, CanvasSelection, CanvasSnapAxis,
@@ -323,10 +324,8 @@ fn interaction_frame(
     model: &CanvasPaintModel,
     structural_selection: &CanvasRecordScope,
 ) -> CanvasPaintInteractionFrame {
-    match model.interaction.tool_state() {
-        ToolState::Selecting {
-            origin, current, ..
-        } => CanvasPaintInteractionFrame {
+    match model.interaction.state() {
+        CanvasPaintInteractionState::Selecting { origin, current } => CanvasPaintInteractionFrame {
             selection_bounds: Some(
                 model
                     .viewport
@@ -337,26 +336,26 @@ fn interaction_frame(
             transform_handles: Vec::new(),
             snap_guides: Vec::new(),
         },
-        ToolState::Connecting { source, current } => CanvasPaintInteractionFrame {
-            selection_bounds: None,
-            structural_selection_bounds: structural_selection_bounds(model, structural_selection),
-            connection_preview: connection_preview(model, source, *current),
-            transform_handles: Vec::new(),
-            snap_guides: Vec::new(),
-        },
-        ToolState::Translating { snap_guides, .. } | ToolState::Resizing { snap_guides, .. } => {
+        CanvasPaintInteractionState::Connecting { source, current } => {
             CanvasPaintInteractionFrame {
                 selection_bounds: None,
                 structural_selection_bounds: structural_selection_bounds(
                     model,
                     structural_selection,
                 ),
-                connection_preview: None,
-                transform_handles: transform_handles_for_model(model),
-                snap_guides: paint_snap_guides(model, snap_guides),
+                connection_preview: connection_preview(model, source, *current),
+                transform_handles: Vec::new(),
+                snap_guides: Vec::new(),
             }
         }
-        _ => CanvasPaintInteractionFrame {
+        CanvasPaintInteractionState::Transforming { snap_guides } => CanvasPaintInteractionFrame {
+            selection_bounds: None,
+            structural_selection_bounds: structural_selection_bounds(model, structural_selection),
+            connection_preview: None,
+            transform_handles: transform_handles_for_model(model),
+            snap_guides: paint_snap_guides(model, snap_guides),
+        },
+        CanvasPaintInteractionState::Idle => CanvasPaintInteractionFrame {
             selection_bounds: None,
             structural_selection_bounds: structural_selection_bounds(model, structural_selection),
             connection_preview: None,

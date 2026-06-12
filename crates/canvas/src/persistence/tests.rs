@@ -65,13 +65,16 @@ impl CanvasToolReducer for PersistentStampTool {
             "persistent-stamp-{}",
             context.document().node_count()
         ));
-        Ok(vec![CanvasToolIntent::ApplyTransaction(
-            CanvasTransaction::single(DocumentCommand::InsertNode(CanvasNode::new(
-                node_id,
-                context.document_position(position),
-                size(px(24.0), px(24.0)),
-            ))),
-        )])
+        Ok(vec![
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
+                DocumentCommand::InsertNode(CanvasNode::new(
+                    node_id,
+                    context.document_position(position),
+                    size(px(24.0), px(24.0)),
+                )),
+            )),
+            CanvasToolIntent::CommitTransaction,
+        ])
     }
 }
 
@@ -1488,7 +1491,7 @@ fn persistent_tool_effects_commit_gesture_as_one_log_entry() {
 }
 
 #[test]
-fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry() {
+fn persistent_public_tool_intents_commit_transaction_as_one_log_entry() {
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
     let document = document_fixture().node(original.clone()).build();
 
@@ -1506,14 +1509,13 @@ fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry(
         &mut store,
         &mut cursor,
         [
-            CanvasToolIntent::BeginTransientTransaction,
-            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::UpdateNode(first),
             )),
-            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::UpdateNode(second.clone()),
             )),
-            CanvasToolIntent::CommitTransientTransaction,
+            CanvasToolIntent::CommitTransaction,
         ],
     )
     .unwrap();
@@ -1532,7 +1534,7 @@ fn persistent_public_tool_intents_commit_transient_transaction_as_one_log_entry(
 }
 
 #[test]
-fn persistent_public_tool_intents_cancel_transient_transaction_without_log() {
+fn persistent_public_tool_intents_cancel_transaction_without_log() {
     let original = CanvasNode::new("a", point(px(0.0), px(0.0)), size(px(10.0), px(10.0)));
     let document = document_fixture().node(original.clone()).build();
 
@@ -1546,11 +1548,10 @@ fn persistent_public_tool_intents_cancel_transient_transaction_without_log() {
         &mut store,
         &mut cursor,
         [
-            CanvasToolIntent::BeginTransientTransaction,
-            CanvasToolIntent::UpdateTransientTransaction(CanvasTransaction::single(
+            CanvasToolIntent::ApplyTransaction(CanvasTransaction::single(
                 DocumentCommand::UpdateNode(moved),
             )),
-            CanvasToolIntent::CancelTransientTransaction,
+            CanvasToolIntent::CancelTransaction,
         ],
     )
     .unwrap();

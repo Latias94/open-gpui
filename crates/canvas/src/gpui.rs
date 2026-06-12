@@ -903,16 +903,16 @@ mod tests {
                 .contains_node(&crate::NodeId::from("selected"))
         );
         assert!(matches!(
-            snapshot.interaction().tool_state(),
-            ToolState::Selecting { .. }
+            snapshot.interaction().state(),
+            CanvasPaintInteractionState::Selecting { .. }
         ));
 
         let new_snapshot = CanvasPaintModel::from(&editor);
         assert_eq!(new_snapshot.viewport(), CanvasViewport::default());
         assert!(new_snapshot.interaction().selection().is_empty());
         assert!(matches!(
-            new_snapshot.interaction().tool_state(),
-            ToolState::Idle
+            new_snapshot.interaction().state(),
+            CanvasPaintInteractionState::Idle
         ));
     }
 
@@ -1413,13 +1413,8 @@ mod tests {
 
     #[test]
     fn input_mapper_converts_key_down_events() {
-        let mapper = CanvasInputMapper::new(Bounds::new(
-            point(px(100.0), px(50.0)),
-            size(px(200.0), px(120.0)),
-        ));
-
         assert_eq!(
-            mapper.key_down(&KeyDownEvent {
+            CanvasInputMapper::key_down_event(&KeyDownEvent {
                 keystroke: Keystroke::parse("backspace").unwrap(),
                 is_held: false,
                 prefer_character_input: false,
@@ -1431,7 +1426,7 @@ mod tests {
             }
         );
         assert_eq!(
-            mapper.key_down(&KeyDownEvent {
+            CanvasInputMapper::key_down_event(&KeyDownEvent {
                 keystroke: Keystroke::parse("ctrl-a").unwrap(),
                 is_held: true,
                 prefer_character_input: false,
