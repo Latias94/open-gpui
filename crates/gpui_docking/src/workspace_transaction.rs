@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicy, DockSpaceId,
-    DockWorkspace,
+    DockActionApplyError, DockActionOutcome, DockItemId, DockNode, DockNodeId, DockPolicy,
+    DockSpaceId, DockWorkspace,
     drop_target::{
         DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind,
         validate_resolved_drop_target,
@@ -76,6 +76,7 @@ impl DockWorkspace {
 
         let target = validate_resolved_target_policy(target, self.policy())?;
         validate_resolved_target_drop_box(&target)?;
+        validate_resolved_target_graph_identity(self, target_space, &target)?;
 
         if let Some(move_target) = resolved_existing_move_target(&target) {
             return self.commit_resolved_payload_tabs_target_drop(
@@ -147,6 +148,72 @@ impl DockWorkspace {
                 )
             }
         }
+    }
+}
+
+fn validate_resolved_target_graph_identity(
+    workspace: &DockWorkspace,
+    target_space: &DockSpaceId,
+    target: &DockResolvedDropTarget,
+) -> Result<(), DockActionApplyError> {
+    match target.kind {
+        DockResolvedDropTargetKind::TabBar { .. }
+        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Ok(()),
+        DockResolvedDropTargetKind::LeafCenter { root, target_tabs }
+        | DockResolvedDropTargetKind::InnerEdge {
+            root, target_tabs, ..
+        } => validate_tabs_under_root(workspace, target_space, root, target_tabs),
+        DockResolvedDropTargetKind::RootEdge {
+            root, leaf_tabs, ..
+        } => {
+            validate_root_in_space(workspace, target_space, root)?;
+            if let Some(leaf_tabs) = leaf_tabs {
+                validate_tabs_under_root(workspace, target_space, root, leaf_tabs)?;
+            }
+            Ok(())
+        }
+        DockResolvedDropTargetKind::FloatingTitleBar {
+            floating,
+            target_tabs,
+        } => {
+            if !matches!(
+                workspace.graph().node(floating),
+                Some(DockNode::Floating { .. })
+            ) {
+                return Err(DockActionApplyError::DropTargetUnavailable);
+            }
+            validate_root_in_space(workspace, target_space, floating)?;
+            validate_tabs_under_root(workspace, target_space, floating, target_tabs)
+        }
+    }
+}
+
+fn validate_root_in_space(
+    workspace: &DockWorkspace,
+    target_space: &DockSpaceId,
+    root: DockNodeId,
+) -> Result<(), DockActionApplyError> {
+    if workspace.graph().root_for_node_in_space(target_space, root) == Some(root) {
+        Ok(())
+    } else {
+        Err(DockActionApplyError::DropTargetUnavailable)
+    }
+}
+
+fn validate_tabs_under_root(
+    workspace: &DockWorkspace,
+    target_space: &DockSpaceId,
+    root: DockNodeId,
+    target_tabs: DockNodeId,
+) -> Result<(), DockActionApplyError> {
+    if workspace
+        .graph()
+        .root_for_node_in_space(target_space, target_tabs)
+        == Some(root)
+    {
+        Ok(())
+    } else {
+        Err(DockActionApplyError::DropTargetUnavailable)
     }
 }
 
@@ -375,7 +442,7 @@ mod tests {
 
     #[test]
     fn resolved_center_target_moves_item_without_graph_shaped_action() {
-        let (mut workspace, _root, left, right) = split_workspace();
+        let (mut workspace, root, left, right) = split_workspace();
 
         let outcome = workspace
             .commit_resolved_drop(DockWorkspaceDropRequest {
@@ -384,7 +451,7 @@ mod tests {
                 item: &item("a"),
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
-                    root: right,
+                    root,
                     target_tabs: right,
                 }),
             })
@@ -593,6 +660,31 @@ mod tests {
     }
 
     #[test]
+    fn resolved_leaf_target_requires_target_tabs_under_declared_root() {
+        let (mut workspace, root, left, right) = split_workspace();
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
+                    root: right,
+                    target_tabs: right,
+                }),
+            })
+            .expect_err("leaf center target with a fake root should not commit");
+
+        assert_ne!(root, right);
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
     fn resolved_root_edge_rejects_inner_drop_box_metadata() {
         let (
             mut workspace,
@@ -718,7 +810,7 @@ mod tests {
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
-                    root: target_tabs,
+                    root,
                     target_tabs,
                 }),
             })
@@ -985,6 +1077,58 @@ mod tests {
         assert_eq!(
             workspace.graph().collect_items_in_subtree(floating_child),
             vec![item("a"), item("c")]
+        );
+    }
+
+    #[test]
+    fn resolved_floating_title_target_requires_tabs_inside_declared_floating() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a")],
+            selected: Some(item("a")),
+        });
+        let floating_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            selected: Some(item("b")),
+        });
+        let floating = graph.insert_node(DockNode::Floating {
+            child: floating_tabs,
+        });
+        let unrelated_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            selected: Some(item("c")),
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![source_tabs, unrelated_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space(), root);
+        graph
+            .floating_containers_mut(space())
+            .push(DockFloatingContainer {
+                node: floating,
+                bounds: bounds(),
+            });
+        let mut workspace = DockWorkspace::new(space(), graph);
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs,
+                item: &item("a"),
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::FloatingTitleBar {
+                    floating,
+                    target_tabs: unrelated_tabs,
+                }),
+            })
+            .expect_err("floating title target should bind tabs to its floating subtree");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("c"), item("b")]
         );
     }
 
