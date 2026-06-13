@@ -54,10 +54,11 @@ pub(crate) fn item(id: &str) -> DockItemId {
 
 pub(crate) fn tabs_graph(items: &[&str], active: usize) -> (DockGraph, DockNodeId) {
     let mut graph = DockGraph::new();
-    let root = graph.insert_node(DockNode::Tabs {
-        items: items.iter().copied().map(DockItemId::from).collect(),
-        active,
-    });
+    let items: Vec<DockItemId> = items.iter().copied().map(DockItemId::from).collect();
+    let selected = items
+        .get(active.min(items.len().saturating_sub(1)))
+        .cloned();
+    let root = graph.insert_node(DockNode::Tabs { items, selected });
     graph.set_root(space(), root);
     (graph, root)
 }
@@ -70,11 +71,11 @@ pub(crate) fn split_graph(
     let mut graph = DockGraph::new();
     let first = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let second = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis,
@@ -102,12 +103,12 @@ pub(crate) fn floating_overlay_graph() -> (DockGraph, DockNodeId, DockNodeId) {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), root);
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,

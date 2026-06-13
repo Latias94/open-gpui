@@ -33,7 +33,7 @@ fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContex
         })
         .expect("closable panel should close");
     assert_eq!(outcome, DockActionOutcome::Changed);
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -41,7 +41,7 @@ fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContex
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
     assert!(workspace.panels().contains(&item("b")));
 }
 
@@ -175,7 +175,7 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
         workspace.panels().has_view_lifecycle(&item("b")),
         "reopened panel registration should remain lazy without instantiating"
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -183,7 +183,7 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), items.get(1));
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn workspace_open_item_transaction_requires_registered_panel(cx: &mut TestAppCon
             item: item("missing")
         }
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -241,7 +241,7 @@ fn workspace_open_item_transaction_requires_registered_panel(cx: &mut TestAppCon
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]
@@ -260,7 +260,7 @@ fn workspace_close_item_transaction_requires_registered_panel(cx: &mut TestAppCo
         err,
         DockActionApplyError::PanelNotRegistered { item: item("a") }
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -268,5 +268,5 @@ fn workspace_close_item_transaction_requires_registered_panel(cx: &mut TestAppCo
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }

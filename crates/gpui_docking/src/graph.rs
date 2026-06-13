@@ -72,8 +72,8 @@ pub enum DockNode {
     Tabs {
         /// Items in tab order.
         items: Vec<DockItemId>,
-        /// Active item index.
-        active: usize,
+        /// Selected item identity.
+        selected: Option<DockItemId>,
     },
     /// In-window floating container.
     Floating {

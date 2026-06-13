@@ -259,7 +259,7 @@ fn missing_floating_child_renders_missing_node_placeholder(cx: &mut TestAppConte
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), root);
     let missing_child = DockNodeId::null();
@@ -379,15 +379,15 @@ fn central_split_child_uses_remaining_render_space(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
         items: vec![item("left")],
-        active: 0,
+        selected: Some(item("left")),
     });
     let main = graph.insert_node(DockNode::Tabs {
         items: vec![item("main")],
-        active: 0,
+        selected: Some(item("main")),
     });
     let right = graph.insert_node(DockNode::Tabs {
         items: vec![item("right")],
-        active: 0,
+        selected: Some(item("right")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,

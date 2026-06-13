@@ -562,9 +562,11 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 fn run_capture_loss_poll_case(cx: &mut TestAppContext, case: PollMatrixCase) {
     let source_space = DockSpaceId::from(format!("poll source:{}", case.name));
     let mut graph = DockGraph::new();
+    let source_items = case.payload.source_items();
+    let selected = source_items.first().cloned();
     let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: case.payload.source_items(),
-        active: 0,
+        items: source_items,
+        selected,
     });
     graph.set_root(source_space.clone(), source_tabs);
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
@@ -713,9 +715,11 @@ fn matrix_graph(
     case: MatrixCase,
 ) -> (DockGraph, MatrixNodes) {
     let mut graph = DockGraph::new();
+    let source_items = case.payload.source_items();
+    let selected = source_items.first().cloned();
     let source_tabs = graph.insert_node(DockNode::Tabs {
-        items: case.payload.source_items(),
-        active: 0,
+        items: source_items,
+        selected,
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -723,7 +727,7 @@ fn matrix_graph(
         MatrixTarget::LeafCenter => {
             let target_tabs = graph.insert_node(DockNode::Tabs {
                 items: vec![item("b")],
-                active: 0,
+                selected: Some(item("b")),
             });
             graph.set_root(target_space.clone(), target_tabs);
             (Some(target_tabs), Some(target_tabs))
@@ -731,11 +735,11 @@ fn matrix_graph(
         MatrixTarget::RootEdge { zone } => {
             let left_tabs = graph.insert_node(DockNode::Tabs {
                 items: vec![item("b")],
-                active: 0,
+                selected: Some(item("b")),
             });
             let right_tabs = graph.insert_node(DockNode::Tabs {
                 items: vec![item("d")],
-                active: 0,
+                selected: Some(item("d")),
             });
             let root = graph.insert_node(DockNode::Split {
                 axis: SplitAxis::Horizontal,

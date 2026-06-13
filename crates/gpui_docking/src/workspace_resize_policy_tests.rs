@@ -114,7 +114,7 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
         err,
         DockActionApplyError::Policy(DockPolicyError::EdgeSplitDisabled)
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(left_tabs)
         .expect("source tabs should remain")
@@ -122,7 +122,7 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]

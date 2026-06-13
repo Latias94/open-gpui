@@ -171,7 +171,7 @@ impl DockWorkspace {
         let Some(node) = self.graph().node(tabs) else {
             return Err(DockGraphMutationError::TabsNodeNotFound { tabs }.into());
         };
-        let DockNode::Tabs { items, active } = node else {
+        let DockNode::Tabs { items, selected } = node else {
             return Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into());
         };
         let Some(next_active) = items.iter().position(|candidate| candidate == item) else {
@@ -180,7 +180,7 @@ impl DockWorkspace {
                 item: item.clone(),
             });
         };
-        if *active == next_active {
+        if selected.as_ref() == Some(item) {
             return Ok(DockActionOutcome::Unchanged);
         }
 

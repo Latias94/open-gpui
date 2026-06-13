@@ -19,8 +19,8 @@ impl DockGraph {
         }
 
         let tabs = self.insert_node(DockNode::Tabs {
-            items: vec![item],
-            active: 0,
+            items: vec![item.clone()],
+            selected: Some(item),
         });
         let floating = self.insert_node(DockNode::Floating { child: tabs });
         self.floating_containers_mut(target_space.clone())
@@ -175,7 +175,7 @@ impl DockGraph {
         if items.is_empty() {
             return false;
         }
-        let active_item = self.active_item_in_subtree(floating);
+        let selected_item = self.active_item_in_subtree(floating);
         let mut changed = false;
         for item in items {
             changed |= self.move_item_between_spaces(
@@ -187,15 +187,13 @@ impl DockGraph {
                 None,
             );
         }
-        if let Some(active_item) = active_item
-            && let Some(active_index) = self.nodes.get(target_tabs).and_then(|node| match node {
-                DockNode::Tabs { items, .. } => {
-                    items.iter().position(|candidate| candidate == &active_item)
-                }
-                _ => None,
-            })
+        if let Some(selected_item) = selected_item
+            && let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(target_tabs)
+            && items.contains(&selected_item)
+            && selected.as_ref() != Some(&selected_item)
         {
-            changed |= self.set_active_tab(target_tabs, active_index);
+            *selected = Some(selected_item);
+            changed = true;
         }
         if let Some(floatings) = self.floatings.get_mut(source_space)
             && let Some(index) = floatings.iter().position(|entry| entry.node == floating)

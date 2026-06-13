@@ -460,11 +460,11 @@ mod tests {
         let mut graph = crate::DockGraph::new();
         let source_tabs = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("source")],
-            active: 0,
+            selected: Some(crate::DockItemId::from("source")),
         });
         let target_tabs = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("target")],
-            active: 0,
+            selected: Some(crate::DockItemId::from("target")),
         });
         let mut runtime = DockDropRuntime::default();
         let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
@@ -518,14 +518,14 @@ mod tests {
         let mut graph = crate::DockGraph::new();
         let floating_tabs = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("floating")],
-            active: 0,
+            selected: Some(crate::DockItemId::from("floating")),
         });
         let floating = graph.insert_node(crate::DockNode::Floating {
             child: floating_tabs,
         });
         let target_tabs = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("target")],
-            active: 0,
+            selected: Some(crate::DockItemId::from("target")),
         });
         let mut runtime = DockDropRuntime::default();
         let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
@@ -580,7 +580,7 @@ mod tests {
         let mut graph = crate::DockGraph::new();
         let leaf = graph.insert_node(crate::DockNode::Tabs {
             items: vec![crate::DockItemId::from("a")],
-            active: 0,
+            selected: Some(crate::DockItemId::from("a")),
         });
 
         for zone in [

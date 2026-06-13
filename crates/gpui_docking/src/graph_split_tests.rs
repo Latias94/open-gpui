@@ -52,7 +52,7 @@ fn checked_resize_reports_split_errors_without_mutation() {
     let (mut graph, split_a) = root_tabs_graph(&["a"]);
     let tabs_b = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,

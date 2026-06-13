@@ -240,11 +240,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let left = graph.insert_node(DockNode::Tabs {
             items: vec![item("a")],
-            active: 0,
+            selected: Some(item("a")),
         });
         let right = graph.insert_node(DockNode::Tabs {
             items: vec![item("b")],
-            active: 0,
+            selected: Some(item("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -269,17 +269,18 @@ mod tests {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");
         let mut graph = DockGraph::new();
+        let selected = source_items.first().cloned();
         let source_tabs = graph.insert_node(DockNode::Tabs {
             items: source_items,
-            active: 0,
+            selected,
         });
         let target_left = graph.insert_node(DockNode::Tabs {
             items: vec![item("b")],
-            active: 0,
+            selected: Some(item("b")),
         });
         let target_right = graph.insert_node(DockNode::Tabs {
             items: vec![item("d")],
-            active: 0,
+            selected: Some(item("d")),
         });
         let target_root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -334,13 +335,13 @@ mod tests {
             .expect("resolved center drop should commit");
 
         assert_eq!(outcome, DockActionOutcome::Changed);
-        let DockNode::Tabs { items, active } =
+        let DockNode::Tabs { items, selected } =
             workspace.graph().node(right).expect("target should exist")
         else {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     }
 
     #[test]
@@ -348,7 +349,7 @@ mod tests {
         let mut graph = DockGraph::new();
         let tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("b"), item("c")],
-            active: 0,
+            selected: Some(item("a")),
         });
         graph.set_root(space(), tabs);
         let mut workspace = DockWorkspace::new(space(), graph);
@@ -367,13 +368,13 @@ mod tests {
             .expect("same-stack reorder should commit");
 
         assert_eq!(outcome, DockActionOutcome::Changed);
-        let DockNode::Tabs { items, active } =
+        let DockNode::Tabs { items, selected } =
             workspace.graph().node(tabs).expect("tabs should exist")
         else {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     }
 
     #[test]
@@ -413,7 +414,7 @@ mod tests {
         let mut graph = DockGraph::new();
         let tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("b"), item("c")],
-            active: 0,
+            selected: Some(item("a")),
         });
         graph.set_root(space(), tabs);
         let mut workspace = DockWorkspace::new(space(), graph);
@@ -440,13 +441,13 @@ mod tests {
             err,
             DockActionApplyError::Policy(DockPolicyError::CentralRegionDockOverDisabled)
         );
-        let DockNode::Tabs { items, active } =
+        let DockNode::Tabs { items, selected } =
             workspace.graph().node(tabs).expect("tabs should exist")
         else {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("a"), item("b"), item("c")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     }
 
     #[test]
@@ -611,11 +612,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("c")],
-            active: 1,
+            selected: Some(item("c")),
         });
         let target_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("b")],
-            active: 0,
+            selected: Some(item("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -638,7 +639,7 @@ mod tests {
             .expect("resolved center stack drop should commit");
 
         assert_eq!(outcome, DockActionOutcome::Changed);
-        let DockNode::Tabs { items, active } = workspace
+        let DockNode::Tabs { items, selected } = workspace
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -646,7 +647,7 @@ mod tests {
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     }
 
     #[test]
@@ -654,7 +655,7 @@ mod tests {
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("c")],
-            active: 1,
+            selected: Some(item("c")),
         });
         graph.set_root(space(), source_tabs);
         let mut workspace = DockWorkspace::new(space(), graph);
@@ -678,7 +679,7 @@ mod tests {
             .graph()
             .root(&detached)
             .expect("detached space should have a root");
-        let DockNode::Tabs { items, active } = workspace
+        let DockNode::Tabs { items, selected } = workspace
             .graph()
             .node(detached_root)
             .expect("detached root should exist")
@@ -686,7 +687,7 @@ mod tests {
             panic!("detached root should be tabs");
         };
         assert_eq!(items, &vec![item("a"), item("c")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     }
 
     #[test]
@@ -762,11 +763,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("c")],
-            active: 1,
+            selected: Some(item("c")),
         });
         let target_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("b")],
-            active: 0,
+            selected: Some(item("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -803,7 +804,7 @@ mod tests {
             workspace.graph().find_item_in_space(&space(), &item("c")),
             Some((moved_tabs, 1))
         );
-        let DockNode::Tabs { items, active } = workspace
+        let DockNode::Tabs { items, selected } = workspace
             .graph()
             .node(moved_tabs)
             .expect("moved tabs should remain present")
@@ -811,7 +812,7 @@ mod tests {
             panic!("moved root-edge payload should stay a tabs node");
         };
         assert_eq!(items, &vec![item("a"), item("c")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     }
 
     #[test]
@@ -821,11 +822,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let floating_left = graph.insert_node(DockNode::Tabs {
             items: vec![item("a")],
-            active: 0,
+            selected: Some(item("a")),
         });
         let floating_right = graph.insert_node(DockNode::Tabs {
             items: vec![item("c")],
-            active: 0,
+            selected: Some(item("c")),
         });
         let floating_child = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Vertical,
@@ -843,11 +844,11 @@ mod tests {
             });
         let target_left = graph.insert_node(DockNode::Tabs {
             items: vec![item("b")],
-            active: 0,
+            selected: Some(item("b")),
         });
         let target_right = graph.insert_node(DockNode::Tabs {
             items: vec![item("d")],
-            active: 0,
+            selected: Some(item("d")),
         });
         let target_root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,

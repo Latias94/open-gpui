@@ -64,15 +64,19 @@ pub enum DockGraphValidationError {
         /// Empty tabs node.
         tabs: DockNodeId,
     },
-    /// A tabs node has an invalid active index.
-    #[error("tabs node {tabs:?} active index {active} out of bounds for length {len}")]
-    TabsActiveOutOfBounds {
+    /// A tabs node has no selected item.
+    #[error("tabs node {tabs:?} has no selected item")]
+    TabsSelectedMissing {
         /// Tabs node id.
         tabs: DockNodeId,
-        /// Invalid active index.
-        active: usize,
-        /// Item count.
-        len: usize,
+    },
+    /// A tabs node selected an item that is not in the tab order.
+    #[error("tabs node {tabs:?} selected item {selected} is not present")]
+    TabsSelectedItemMissing {
+        /// Tabs node id.
+        tabs: DockNodeId,
+        /// Missing selected item.
+        selected: DockItemId,
     },
     /// A dock item appears in more than one reachable tab position.
     #[error(
@@ -223,8 +227,8 @@ impl<'a> DockGraphValidator<'a> {
             .node(node)
             .ok_or(DockGraphValidationError::MissingNode { node })?;
         match graph_node {
-            DockNode::Tabs { items, active } => {
-                self.validate_tabs(node, items, *active)?;
+            DockNode::Tabs { items, selected } => {
+                self.validate_tabs(node, items, selected)?;
             }
             DockNode::Floating { child } => {
                 self.validate_subtree(*child)?;
@@ -248,16 +252,18 @@ impl<'a> DockGraphValidator<'a> {
         &mut self,
         tabs: DockNodeId,
         items: &[DockItemId],
-        active: usize,
+        selected: &Option<DockItemId>,
     ) -> Result<(), DockGraphValidationError> {
         if items.is_empty() {
             return Err(DockGraphValidationError::EmptyTabs { tabs });
         }
-        if active >= items.len() {
-            return Err(DockGraphValidationError::TabsActiveOutOfBounds {
+        let Some(selected) = selected else {
+            return Err(DockGraphValidationError::TabsSelectedMissing { tabs });
+        };
+        if !items.contains(selected) {
+            return Err(DockGraphValidationError::TabsSelectedItemMissing {
                 tabs,
-                active,
-                len: items.len(),
+                selected: selected.clone(),
             });
         }
 

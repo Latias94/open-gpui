@@ -234,7 +234,7 @@ mod tests {
         let main = space("main");
         let tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
-            active: 0,
+            selected: Some(DockItemId::from("a")),
         });
         graph.set_root(main.clone(), tabs);
 

@@ -136,7 +136,11 @@ pub enum DockLayoutNode {
         id: u32,
         /// Dock items in tab order.
         items: Vec<DockItemId>,
-        /// Active item index.
+        /// Selected item identity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected: Option<DockItemId>,
+        /// Legacy active item index, derived from `selected` during export.
+        #[serde(default)]
         active: usize,
     },
 }
@@ -251,10 +255,14 @@ impl LayoutExporter {
         };
 
         let layout_node = match graph_node {
-            DockNode::Tabs { items, active } => DockLayoutNode::Tabs {
+            DockNode::Tabs { items, selected } => DockLayoutNode::Tabs {
                 id,
                 items: items.clone(),
-                active: *active,
+                selected: selected.clone(),
+                active: selected
+                    .as_ref()
+                    .and_then(|selected| items.iter().position(|item| item == selected))
+                    .unwrap_or(0),
             },
             DockNode::Floating { child } => return self.export_subtree(graph, *child),
             DockNode::Split {
@@ -294,9 +302,19 @@ impl LayoutImporter<'_> {
             .get(&id)
             .expect("layout must be validated before import");
         let node = match layout_node {
-            DockLayoutNode::Tabs { items, active, .. } => DockNode::Tabs {
+            DockLayoutNode::Tabs {
+                items,
+                selected,
+                active,
+                ..
+            } => DockNode::Tabs {
                 items: items.clone(),
-                active: *active,
+                selected: selected
+                    .as_ref()
+                    .filter(|selected| items.contains(selected))
+                    .cloned()
+                    .or_else(|| items.get(*active).cloned())
+                    .or_else(|| items.first().cloned()),
             },
             DockLayoutNode::Split {
                 axis,

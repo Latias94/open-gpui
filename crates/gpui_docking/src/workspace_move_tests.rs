@@ -25,7 +25,7 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
         .expect("tab move transaction should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(right_tabs)
         .expect("target tabs should still exist")
@@ -33,7 +33,7 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
         panic!("target should be tabs");
     };
     assert_eq!(items, &vec![item("b"), item("a")]);
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), items.get(1));
 }
 
 #[open_gpui::test]
@@ -60,7 +60,7 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
             item: item("a"),
         }
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(left_tabs)
         .expect("source tabs should remain unchanged")
@@ -68,7 +68,7 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]
@@ -76,11 +76,11 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
     let mut graph = DockGraph::new();
     let main_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), main_tabs);
     let secondary = DockSpaceId::from("secondary");
@@ -106,7 +106,7 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
             node: secondary_tabs,
         })
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(secondary_tabs)
         .expect("secondary tabs should remain unchanged")
@@ -114,7 +114,7 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
         panic!("secondary root should be tabs");
     };
     assert_eq!(items, &vec![item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]
@@ -123,11 +123,11 @@ fn workspace_move_tab_respects_target_space_dock_class_policy(cx: &mut TestAppCo
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), source_tabs);
     graph.set_root(target.clone(), target_tabs);
@@ -165,11 +165,11 @@ fn workspace_move_tab_rejects_incompatible_target_space_class(cx: &mut TestAppCo
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), source_tabs);
     graph.set_root(target.clone(), target_tabs);
@@ -218,11 +218,11 @@ fn workspace_move_tabs_rejects_when_any_item_class_is_incompatible(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), source_tabs);
     graph.set_root(target.clone(), target_tabs);
@@ -280,19 +280,19 @@ fn workspace_move_floating_rejects_when_subtree_contains_incompatible_class(
     let mut graph = DockGraph::new();
     let source_root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let target_root = graph.insert_node(DockNode::Tabs {
         items: vec![item("d")],
-        active: 0,
+        selected: Some(item("d")),
     });
     let floating_left = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating_right = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let floating_child = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Vertical,
@@ -363,7 +363,7 @@ fn workspace_move_item_to_empty_space_transaction_creates_detached_root(cx: &mut
         .expect("move to empty dock space should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -371,13 +371,13 @@ fn workspace_move_item_to_empty_space_transaction_creates_detached_root(cx: &mut
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 
     let detached_root = workspace
         .graph()
         .root(&detached)
         .expect("detached space should get root");
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(detached_root)
         .expect("detached root should exist")
@@ -385,7 +385,7 @@ fn workspace_move_item_to_empty_space_transaction_creates_detached_root(cx: &mut
         panic!("detached root should be tabs");
     };
     assert_eq!(items, &vec![item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
     assert!(workspace.panels().contains(&item("b")));
 }
 
@@ -394,11 +394,11 @@ fn workspace_move_tabs_to_empty_space_transaction_preserves_stack(cx: &mut TestA
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let sibling_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -427,7 +427,7 @@ fn workspace_move_tabs_to_empty_space_transaction_preserves_stack(cx: &mut TestA
         .graph()
         .root(&detached)
         .expect("detached space should get root");
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(detached_root)
         .expect("detached root should exist")
@@ -435,7 +435,7 @@ fn workspace_move_tabs_to_empty_space_transaction_preserves_stack(cx: &mut TestA
         panic!("detached root should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("c")]);
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), items.get(1));
 }
 
 #[open_gpui::test]
@@ -444,7 +444,7 @@ fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppCon
     let detached = DockSpaceId::from("detached");
     let detached_root = graph.insert_node(DockNode::Tabs {
         items: vec![item("existing")],
-        active: 0,
+        selected: Some(item("existing")),
     });
     graph.set_root(detached.clone(), detached_root);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
@@ -460,7 +460,7 @@ fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppCon
             space: detached.clone()
         })
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -468,7 +468,7 @@ fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppCon
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
     assert_eq!(
         workspace.graph().collect_items_in_space(&detached),
         vec![item("existing")]
@@ -481,7 +481,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
     let detached = DockSpaceId::from("detached");
     let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("existing")],
-        active: 0,
+        selected: Some(item("existing")),
     });
     let detached_floating = graph.insert_node(DockNode::Floating {
         child: detached_floating_tabs,
@@ -515,7 +515,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
         })
     );
 
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -523,7 +523,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
     assert!(workspace.graph().root(&detached).is_none());
     assert_eq!(workspace.graph().floating_containers(&detached).len(), 1);
     assert_eq!(
@@ -547,7 +547,7 @@ fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut 
         DockActionApplyError::Policy(DockPolicyError::PlatformViewportsDisabled)
     );
     assert!(workspace.graph().root(&detached).is_none());
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(root)
         .expect("source tabs should remain")
@@ -555,7 +555,7 @@ fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut 
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 #[open_gpui::test]
 fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
@@ -575,7 +575,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
         .expect("same-stack center drop should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Unchanged);
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(tabs)
         .expect("tabs should still exist")
@@ -583,7 +583,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
         panic!("target should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]
@@ -608,7 +608,7 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
         .expect("same-stack center drop with an index should reorder");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(tabs)
         .expect("tabs should still exist")
@@ -616,5 +616,5 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
         panic!("target should be tabs");
     };
     assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
-    assert_eq!(*active, 2);
+    assert_eq!(selected.as_ref(), items.get(2));
 }

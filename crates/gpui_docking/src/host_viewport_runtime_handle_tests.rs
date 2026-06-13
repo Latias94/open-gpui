@@ -117,7 +117,7 @@ fn viewport_runtime_handle_auto_observes_window_closed_cleanup(cx: &mut TestAppC
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -158,7 +158,7 @@ fn viewport_runtime_handle_rejects_stale_host_scene_frame_facts(cx: &mut TestApp
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(target_space.clone(), target_tabs);
 
@@ -236,7 +236,7 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -338,11 +338,11 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
     let mut graph = DockGraph::new();
     let main_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     graph.set_root(main_space.clone(), main_tabs);
     graph.set_root(detached_space.clone(), detached_tabs);
@@ -389,7 +389,7 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
         None
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(main_tabs)
             .expect("fallback tabs should remain")
@@ -397,7 +397,7 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
             panic!("fallback root should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
         assert!(
             controller
                 .graph()
@@ -415,11 +415,11 @@ fn viewport_runtime_handle_merge_back_close_focuses_fallback_active_item(cx: &mu
     let mut graph = DockGraph::new();
     let main_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     graph.set_root(main_space.clone(), main_tabs);
     graph.set_root(detached_space.clone(), detached_tabs);
@@ -491,7 +491,7 @@ fn viewport_runtime_handle_opens_tear_off_viewport_and_moves_item(cx: &mut TestA
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -541,16 +541,16 @@ fn viewport_runtime_handle_tears_off_split_floating_from_floating_root(cx: &mut 
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(primary_space.clone(), root);
     let floating_left = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating_right = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let floating_split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -617,7 +617,7 @@ fn viewport_runtime_handle_rejects_floating_tear_off_from_child_tabs_source_node
     let mut graph = DockGraph::new();
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,
@@ -676,7 +676,7 @@ fn viewport_runtime_handle_tear_off_is_not_route_ready_before_first_host_scene(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -819,11 +819,11 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -910,7 +910,7 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -986,7 +986,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -1082,7 +1082,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -1154,7 +1154,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
             .graph()
             .root(completed.pending().target_space())
             .expect("detached stack should become the target root");
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(detached_root)
             .expect("detached root should exist")
@@ -1162,7 +1162,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
             panic!("detached root should be tabs");
         };
         assert_eq!(items, &vec![item("a"), item("c")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -1173,11 +1173,11 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1256,11 +1256,11 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1400,7 +1400,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         "successful routed drop should activate the destination viewport"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -1408,7 +1408,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -1419,11 +1419,11 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1553,7 +1553,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         })
         .expect("target window should still be live");
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -1561,7 +1561,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -1572,11 +1572,11 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1684,11 +1684,11 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1804,11 +1804,11 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1962,7 +1962,7 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
         "release should clear the cached routed preview"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(source_tabs)
             .expect("source tabs should still exist")
@@ -1970,9 +1970,9 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
             panic!("source should remain tabs");
         };
         assert_eq!(items, &vec![item("a"), item("b")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
 
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -1980,7 +1980,7 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("c")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 
@@ -1991,11 +1991,11 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -2084,7 +2084,7 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -2092,7 +2092,7 @@ fn runtime_opened_viewports_publish_host_scene_for_cross_window_drop(cx: &mut Te
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -2103,11 +2103,11 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(target_space.clone(), target_tabs);
     graph.set_root(source_space.clone(), source_tabs);
@@ -2239,7 +2239,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     assert_eq!(target.space(), Some(&target_space));
     assert_eq!(action.action(), crate::DockActionOutcome::Changed);
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -2247,7 +2247,7 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
             Vec::<DockItemId>::new(),
@@ -2265,11 +2265,11 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(target_space.clone(), target_tabs);
     graph.set_root(source_space.clone(), source_tabs);
@@ -2388,7 +2388,7 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -2396,7 +2396,7 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
         assert_eq!(
             controller.graph().collect_items_in_space(&target_space),
             vec![item("b")]
@@ -2411,11 +2411,11 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -2517,7 +2517,7 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
     );
 
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -2525,7 +2525,7 @@ fn runtime_opened_viewports_support_cross_window_stack_drag(cx: &mut TestAppCont
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -2535,7 +2535,7 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -2595,7 +2595,7 @@ fn viewport_runtime_handle_vetoes_retain_layout_close_for_non_closable_panel(
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -2647,11 +2647,11 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -2715,7 +2715,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
 
     assert_eq!(result, Ok(crate::DockActionOutcome::Changed));
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -2723,7 +2723,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -2734,15 +2734,15 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_left_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let target_right_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let target_root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -2867,7 +2867,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
             panic!("target root should remain a split");
         };
         assert_eq!(children.len(), 3);
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(
                 *children
@@ -2879,7 +2879,7 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
             panic!("rightmost child should be tabs");
         };
         assert_eq!(items, &vec![item("a")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 
@@ -2889,7 +2889,7 @@ fn viewport_runtime_handle_allows_platform_close_with_retain_policy(cx: &mut Tes
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 

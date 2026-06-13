@@ -1,24 +1,22 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 
-use super::{DockGraph, DockNode, DropZone};
+use super::{DockGraph, DockNode, DropZone, graph_tab_stack::sanitize_selected_item};
 
 impl DockGraph {
-    /// Selects an active tab by index.
+    /// Selects an active tab by index, storing the selected item identity.
     pub fn set_active_tab(&mut self, tabs: DockNodeId, active: usize) -> bool {
         let Some(DockNode::Tabs {
             items,
-            active: current,
+            selected: current,
         }) = self.nodes.get_mut(tabs)
         else {
             return false;
         };
-
-        let next = if items.is_empty() {
-            0
-        } else {
-            active.min(items.len().saturating_sub(1))
-        };
-        if *current == next {
+        let next = items
+            .get(active)
+            .cloned()
+            .or_else(|| sanitize_selected_item(items, current));
+        if current == &next {
             return false;
         }
         *current = next;
@@ -114,8 +112,8 @@ impl DockGraph {
         }
 
         let tabs = self.insert_node(DockNode::Tabs {
-            items: vec![item],
-            active: 0,
+            items: vec![item.clone()],
+            selected: Some(item),
         });
         self.set_root_for_empty_space(space, tabs);
         true
@@ -177,8 +175,8 @@ impl DockGraph {
         }
 
         let new_tabs = self.insert_node(DockNode::Tabs {
-            items: vec![item],
-            active: 0,
+            items: vec![item.clone()],
+            selected: Some(item),
         });
 
         if !self.insert_edge_docked_child(target_space, target_tabs, zone, new_tabs) {
@@ -204,8 +202,8 @@ impl DockGraph {
             return false;
         }
         let tabs = self.insert_node(DockNode::Tabs {
-            items: vec![item],
-            active: 0,
+            items: vec![item.clone()],
+            selected: Some(item),
         });
         self.set_root_for_empty_space(target_space, tabs);
         self.simplify_space(source_space);
@@ -249,7 +247,7 @@ impl DockGraph {
                 target_tabs,
                 &detached.items,
                 insert_index,
-                detached.active,
+                detached.selected.as_ref(),
             );
             self.simplify_space(source_space);
             if source_space != target_space {

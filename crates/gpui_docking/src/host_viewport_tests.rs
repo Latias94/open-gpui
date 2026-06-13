@@ -17,11 +17,11 @@ fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut Te
     let mut graph = DockGraph::new();
     let primary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(primary_space.clone(), primary_tabs);
     graph.set_root(secondary_space.clone(), secondary_tabs);
@@ -156,7 +156,7 @@ fn viewport_runtime_handle_opens_with_saved_placement_options(cx: &mut TestAppCo
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 

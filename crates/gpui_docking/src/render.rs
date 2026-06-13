@@ -5,7 +5,7 @@ use crate::{
     drop_preview::{DockDropPreview, DockDropPreviewKind},
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact,
-    host_render_session::DockHostRenderSession,
+    host_render_session::{DockHostRenderSession, active_index_for_selected},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
@@ -194,14 +194,17 @@ impl DockHost {
                 viewport_host_scene_frame,
                 cx,
             ),
-            DockNode::Tabs { items, active } => self.render_tabs(
-                node_id,
-                items,
-                active,
-                session,
-                viewport_host_scene_frame,
-                cx,
-            ),
+            DockNode::Tabs { items, selected } => {
+                let active = active_index_for_selected(&items, &selected).unwrap_or(0);
+                self.render_tabs(
+                    node_id,
+                    items,
+                    active,
+                    session,
+                    viewport_host_scene_frame,
+                    cx,
+                )
+            }
             DockNode::Floating { child } => {
                 self.render_floating_node(node_id, child, session, viewport_host_scene_frame, cx)
             }

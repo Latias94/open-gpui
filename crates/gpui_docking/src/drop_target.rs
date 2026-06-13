@@ -504,11 +504,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let first = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("first")],
-            active: 0,
+            selected: Some(DockItemId::from("first")),
         });
         let second = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("second")],
-            active: 0,
+            selected: Some(DockItemId::from("second")),
         });
         (first, second)
     }
@@ -927,11 +927,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let leaf_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
-            active: 0,
+            selected: Some(DockItemId::from("a")),
         });
         let sibling = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("b")],
-            active: 0,
+            selected: Some(DockItemId::from("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -1033,11 +1033,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let left = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
-            active: 0,
+            selected: Some(DockItemId::from("a")),
         });
         let right = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("b")],
-            active: 0,
+            selected: Some(DockItemId::from("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -1100,11 +1100,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let floating_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("floating")],
-            active: 0,
+            selected: Some(DockItemId::from("floating")),
         });
         let primary_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("primary")],
-            active: 0,
+            selected: Some(DockItemId::from("primary")),
         });
         let primary_root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,

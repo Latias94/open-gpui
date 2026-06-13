@@ -72,17 +72,17 @@ fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
         .is_some(),
         "panel B should be active in host B after shared-owner mutation"
     );
-    let active = cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { active, .. } = controller
+    let selected_item = cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { selected, .. } = controller
             .graph()
             .node(root)
             .expect("root tabs should still exist")
         else {
             panic!("root should be tabs");
         };
-        *active
+        selected.clone()
     });
-    assert_eq!(active, 1);
+    assert_eq!(selected_item.as_ref(), Some(&item("b")));
 }
 
 #[open_gpui::test]
@@ -190,11 +190,11 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -273,7 +273,7 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(controller.graph().root(&source_space), None);
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should remain present")
@@ -281,6 +281,6 @@ fn cross_window_tab_drag_can_drop_into_target_controller_host(cx: &mut TestAppCo
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }

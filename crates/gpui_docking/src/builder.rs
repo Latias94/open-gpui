@@ -22,8 +22,10 @@ impl DockLayoutBuilder {
         active: usize,
     ) -> DockNodeId {
         let items: Vec<DockItemId> = items.into_iter().map(Into::into).collect();
-        let active = active.min(items.len().saturating_sub(1));
-        self.graph.insert_node(DockNode::Tabs { items, active })
+        let selected = items
+            .get(active.min(items.len().saturating_sub(1)))
+            .cloned();
+        self.graph.insert_node(DockNode::Tabs { items, selected })
     }
 
     /// Inserts a split node with explicit children and fractions.

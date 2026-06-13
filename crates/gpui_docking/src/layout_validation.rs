@@ -48,11 +48,23 @@ impl DockLayout {
 
         for (id, node) in &by_id {
             match node {
-                DockLayoutNode::Tabs { items, active, .. } => {
+                DockLayoutNode::Tabs {
+                    items,
+                    selected,
+                    active,
+                    ..
+                } => {
                     if items.is_empty() {
                         return Err(DockLayoutValidationError::EmptyTabs { id: *id });
                     }
-                    if *active >= items.len() {
+                    if let Some(selected) = selected {
+                        if !items.contains(selected) {
+                            return Err(DockLayoutValidationError::TabsSelectedItemMissing {
+                                id: *id,
+                                selected: selected.clone(),
+                            });
+                        }
+                    } else if *active >= items.len() {
                         return Err(DockLayoutValidationError::TabsActiveOutOfBounds {
                             id: *id,
                             active: *active,
@@ -219,6 +231,14 @@ pub enum DockLayoutValidationError {
         active: usize,
         /// Item count.
         len: usize,
+    },
+    /// A tabs node selected an item that is not in the tab order.
+    #[error("tabs node {id} selected item {selected} is not present")]
+    TabsSelectedItemMissing {
+        /// Invalid node id.
+        id: u32,
+        /// Missing selected item.
+        selected: DockItemId,
     },
     /// A split node has no children.
     #[error("split node {id} has no children")]

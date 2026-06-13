@@ -75,8 +75,8 @@ impl DockHostRenderSession {
                     self.collect_subtree(workspace, *child);
                 }
             }
-            DockNode::Tabs { items, active } => {
-                self.collect_tab_stack(workspace, items, *active);
+            DockNode::Tabs { items, selected } => {
+                self.collect_tab_stack(workspace, items, selected);
             }
             DockNode::Floating { child } => {
                 self.collect_subtree(workspace, *child);
@@ -90,13 +90,13 @@ impl DockHostRenderSession {
         &mut self,
         workspace: &DockWorkspace,
         items: &[DockItemId],
-        active: usize,
+        selected: &Option<DockItemId>,
     ) {
         for item in items {
             self.collect_panel_metadata(workspace, item);
         }
 
-        if let Some(active_item) = active_tab_item(items, active) {
+        if let Some(active_item) = selected_tab_item(items, selected) {
             self.collect_panel_registration(workspace, active_item);
         }
     }
@@ -150,7 +150,7 @@ impl DockHostRenderSession {
 
     pub(crate) fn floating_title(&self, node_id: DockNodeId) -> String {
         match self.node(node_id) {
-            Some(DockNode::Tabs { items, active }) => active_tab_item(items, *active)
+            Some(DockNode::Tabs { items, selected }) => selected_tab_item(items, selected)
                 .map(|item| self.panel_title(item))
                 .unwrap_or_else(default_floating_title),
             Some(DockNode::Split { children, .. }) => children
@@ -278,9 +278,21 @@ impl DockHost {
     }
 }
 
-fn active_tab_item(items: &[DockItemId], active: usize) -> Option<&DockItemId> {
-    let active = active.min(items.len().checked_sub(1)?);
-    items.get(active)
+pub(crate) fn active_index_for_selected(
+    items: &[DockItemId],
+    selected: &Option<DockItemId>,
+) -> Option<usize> {
+    selected
+        .as_ref()
+        .and_then(|selected| items.iter().position(|item| item == selected))
+        .or_else(|| (!items.is_empty()).then_some(0))
+}
+
+fn selected_tab_item<'a>(
+    items: &'a [DockItemId],
+    selected: &Option<DockItemId>,
+) -> Option<&'a DockItemId> {
+    active_index_for_selected(items, selected).and_then(|active| items.get(active))
 }
 
 fn default_floating_title() -> String {
@@ -328,16 +340,16 @@ mod tests {
         let mut graph = DockGraph::new();
         let root = graph.insert_node(DockNode::Tabs {
             items: vec![item("root")],
-            active: 0,
+            selected: Some(item("root")),
         });
         graph.set_root(space(), root);
         let left = graph.insert_node(DockNode::Tabs {
             items: vec![item("left")],
-            active: 0,
+            selected: Some(item("left")),
         });
         let right = graph.insert_node(DockNode::Tabs {
             items: vec![item("right")],
-            active: 0,
+            selected: Some(item("right")),
         });
         let split = graph.insert_node(DockNode::Split {
             axis: crate::SplitAxis::Horizontal,

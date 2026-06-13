@@ -204,7 +204,7 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         "panel A should be visible after center drop"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(right_tabs)
             .expect("target tabs should exist")
@@ -212,7 +212,7 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -221,11 +221,11 @@ fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -266,7 +266,7 @@ fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
         "previously active stack item should remain active after stack drop"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should still exist")
@@ -274,7 +274,7 @@ fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -328,7 +328,7 @@ fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
         "panel A should be active after reorder"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(tabs)
             .expect("tabs should still exist")
@@ -336,7 +336,7 @@ fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
             panic!("target should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -345,11 +345,11 @@ fn dragging_tab_to_target_tab_bar_empty_area_appends(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b"), item("c")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -397,7 +397,7 @@ fn dragging_tab_to_target_tab_bar_empty_area_appends(cx: &mut TestAppContext) {
         "panel A should be active after tab bar append"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_tabs)
             .expect("target tabs should exist")
@@ -405,7 +405,7 @@ fn dragging_tab_to_target_tab_bar_empty_area_appends(cx: &mut TestAppContext) {
             panic!("target should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("c"), item("a")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -564,11 +564,11 @@ fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let primary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -578,7 +578,7 @@ fn floating_leaf_render_fact_does_not_resolve_against_primary_root(cx: &mut Test
     graph.set_root(space(), root);
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,
@@ -652,7 +652,7 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "Panel A", "A")]);
@@ -715,7 +715,7 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
             .graph()
             .root(&empty_space)
             .expect("empty space should receive a root");
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(target_root)
             .expect("target root should exist")
@@ -723,7 +723,7 @@ fn dragging_tab_to_empty_host_space_moves_item(cx: &mut TestAppContext) {
             panic!("target root should be tabs");
         };
         assert_eq!(items, &vec![item("a")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 
@@ -733,7 +733,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -833,7 +833,7 @@ fn runtime_torn_off_tab_can_dock_back_to_source_viewport(cx: &mut TestAppContext
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -958,11 +958,11 @@ fn runtime_secondary_single_tab_outside_release_creates_detached_viewport(cx: &m
     let mut graph = DockGraph::new();
     let primary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(primary_space.clone(), primary_tabs);
     graph.set_root(secondary_space.clone(), secondary_tabs);
@@ -1060,7 +1060,7 @@ fn runtime_poll_released_left_button_tears_off_without_mouse_up_event(cx: &mut T
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -1163,7 +1163,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -1225,7 +1225,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
             controller.graph().collect_items_in_space(&source_space),
             vec![item("a"), item("b")]
         );
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(source_tabs)
             .expect("source tabs should remain")
@@ -1233,7 +1233,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
             panic!("source should remain tabs");
         };
         assert_eq!(items, &vec![item("a"), item("b")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 
@@ -1270,7 +1270,7 @@ fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestApp
         "non-runtime outside release should leave the source panel active"
     );
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(tabs)
             .expect("source tabs should remain")
@@ -1278,7 +1278,7 @@ fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestApp
             panic!("source should remain tabs");
         };
         assert_eq!(items, &vec![item("a"), item("b")]);
-        assert_eq!(*active, 0);
+        assert_eq!(selected.as_ref(), items.get(0));
     });
 }
 
@@ -1328,7 +1328,7 @@ fn dragging_tab_to_floating_title_bar_merges_into_floating_stack(cx: &mut TestAp
                 _ => None,
             })
             .expect("floating child should remain");
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(floating_tabs)
             .expect("floating tabs should exist")
@@ -1336,7 +1336,7 @@ fn dragging_tab_to_floating_title_bar_merges_into_floating_stack(cx: &mut TestAp
             panic!("floating child should be tabs");
         };
         assert_eq!(items, &vec![item("a"), item("b")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
         assert_eq!(controller.graph().root(&space()), None);
     });
 }
@@ -1375,7 +1375,7 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
             controller.graph().floating_containers(&space()).is_empty(),
             "floating container should be removed after its stack merges into root"
         );
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(root)
             .expect("root tabs should still exist")
@@ -1383,7 +1383,7 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
             panic!("root should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -1394,16 +1394,16 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), root);
     let floating_left = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating_right = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let floating_split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -1457,7 +1457,7 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
             controller.graph().floating_containers(&space()).is_empty(),
             "floating container should be removed after the full subtree merges into root"
         );
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(root)
             .expect("root tabs should still exist")
@@ -1465,7 +1465,7 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
             panic!("root should remain tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 1);
+        assert_eq!(selected.as_ref(), items.get(1));
     });
 }
 
@@ -1582,11 +1582,11 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let central_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -1643,7 +1643,7 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs {
             items: source_items,
-            active: source_active,
+            selected: source_selected,
         } = controller
             .graph()
             .node(source_tabs)
@@ -1652,11 +1652,11 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
             panic!("source node should remain tabs");
         };
         assert_eq!(source_items, &vec![item("a")]);
-        assert_eq!(*source_active, 0);
+        assert_eq!(source_selected.as_ref(), source_items.get(0));
 
         let DockNode::Tabs {
             items: central_items,
-            active: central_active,
+            selected: central_selected,
         } = controller
             .graph()
             .node(central_tabs)
@@ -1665,7 +1665,7 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
             panic!("central node should remain tabs");
         };
         assert_eq!(central_items, &vec![item("b")]);
-        assert_eq!(*central_active, 0);
+        assert_eq!(central_selected.as_ref(), central_items.get(0));
     });
 }
 
@@ -1748,9 +1748,9 @@ fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext)
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
         "closing an inactive tab should keep the previous active panel mounted"
     );
-    let (items, active, metadata_still_registered) = cx.update_entity(&host, |host, cx| {
+    let (items, selected, metadata_still_registered) = cx.update_entity(&host, |host, cx| {
         host.with_workspace(cx, |workspace| {
-            let DockNode::Tabs { items, active } = workspace
+            let DockNode::Tabs { items, selected } = workspace
                 .graph()
                 .node(root)
                 .expect("root tabs should remain")
@@ -1759,13 +1759,13 @@ fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext)
             };
             (
                 items.clone(),
-                *active,
+                selected.clone(),
                 workspace.panels().contains(&item("b")),
             )
         })
     });
     assert_eq!(items, vec![item("a")]);
-    assert_eq!(active, 0);
+    assert_eq!(selected.as_ref(), items.first());
     assert!(
         metadata_still_registered,
         "close should remove graph membership without discarding panel metadata"

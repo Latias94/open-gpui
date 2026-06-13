@@ -45,7 +45,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
 
     let orphan_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("orphan")],
-        active: 0,
+        selected: Some(item("orphan")),
     });
     assert_eq!(
         graph
@@ -157,12 +157,12 @@ fn merge_floating_tabs_preserves_active_item() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("root")],
-        active: 0,
+        selected: Some(item("root")),
     });
     graph.set_root(space(), root);
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 1,
+        selected: Some(item("b")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,
@@ -180,12 +180,12 @@ fn merge_floating_tabs_preserves_active_item() {
         target_tabs: root,
     }));
 
-    let DockNode::Tabs { items, active } = graph.node(root).expect("root tabs node should exist")
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
     else {
         panic!("expected root tabs");
     };
     assert_eq!(items, &vec![item("root"), item("a"), item("b")]);
-    assert_eq!(*active, 2);
+    assert_eq!(selected.as_ref(), items.get(2));
     assert!(graph.floating_containers(&space()).is_empty());
     graph.assert_canonical_space(&space());
 }
@@ -195,15 +195,15 @@ fn move_floating_edge_preserves_child_subtree() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let floating_left = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let floating_right = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let floating_child = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Vertical,
@@ -264,7 +264,7 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
     let mut graph = DockGraph::new();
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,
@@ -289,14 +289,14 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
 
     assert!(graph.floating_containers(&space()).is_empty());
     assert_eq!(graph.root(&detached), Some(floating_tabs));
-    let DockNode::Tabs { items, active } = graph
+    let DockNode::Tabs { items, selected } = graph
         .node(floating_tabs)
         .expect("promoted floating tabs should exist")
     else {
         panic!("detached root should be tabs");
     };
     assert_eq!(items, &vec![item("a"), item("c")]);
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), items.get(1));
     graph.assert_canonical_space(&detached);
 }
 
@@ -305,7 +305,7 @@ fn move_floating_to_empty_space_rebinds_empty_central_region() {
     let mut graph = DockGraph::new();
     let floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     let floating = graph.insert_node(DockNode::Floating {
         child: floating_tabs,

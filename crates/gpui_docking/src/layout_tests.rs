@@ -6,15 +6,15 @@ fn compute_layout_repairs_mismatched_fraction_lengths_without_truncating_childre
     let mut graph = DockGraph::new();
     let tabs_a = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let tabs_b = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let tabs_c = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -56,15 +56,15 @@ fn compute_layout_gives_central_child_remaining_split_space() {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
         items: vec![item("left")],
-        active: 0,
+        selected: Some(item("left")),
     });
     let main = graph.insert_node(DockNode::Tabs {
         items: vec![item("main")],
-        active: 0,
+        selected: Some(item("main")),
     });
     let right = graph.insert_node(DockNode::Tabs {
         items: vec![item("right")],
-        active: 0,
+        selected: Some(item("right")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -231,11 +231,13 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("a")],
+                selected: Some(item("a")),
                 active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("b")],
+                selected: Some(item("b")),
                 active: 0,
             },
         ],
@@ -274,6 +276,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: vec![item("a")],
+            selected: None,
             active: 1,
         }],
     );
@@ -295,6 +298,7 @@ fn layout_validation_rejects_ordinary_empty_tabs() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: Vec::new(),
+            selected: None,
             active: 0,
         }],
     );
@@ -322,11 +326,13 @@ fn layout_validation_rejects_central_node_outside_root_subtree() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("root")],
+                selected: Some(item("root")),
                 active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("central")],
+                selected: Some(item("central")),
                 active: 0,
             },
         ],
@@ -360,6 +366,7 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("a")],
+                selected: Some(item("a")),
                 active: 0,
             },
         ],
@@ -380,11 +387,13 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("a")],
+                selected: Some(item("a")),
                 active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("unused")],
+                selected: Some(item("unused")),
                 active: 0,
             },
         ],
@@ -440,11 +449,13 @@ fn layout_validation_rejects_duplicate_items() {
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("a")],
+                selected: Some(item("a")),
                 active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 3,
                 items: vec![item("a")],
+                selected: Some(item("a")),
                 active: 0,
             },
         ],
@@ -480,6 +491,7 @@ fn layout_validation_rejects_invalid_floating_bounds() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: vec![item("a")],
+            selected: Some(item("a")),
             active: 0,
         }],
     );
