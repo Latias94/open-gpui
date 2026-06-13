@@ -1,5 +1,5 @@
 use crate::{
-    DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute, DockViewportDropRouteCommit,
+    DockDropDelivery, DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
     drag::{DockDragPayload, DockDragPayloadIdentity},
     drop_preview::DockDropPreview,
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
@@ -15,7 +15,7 @@ pub(crate) struct DockInteractionRuntime {
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
     drop_route_preview: Option<DockDropPreview>,
-    drop_route_commit: Option<DockViewportDropRouteCommit>,
+    drop_delivery: Option<DockDropDelivery>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
     viewport_host_scene_frame: Option<DockViewportHostSceneFrame>,
@@ -423,30 +423,30 @@ impl DockInteractionRuntime {
         &mut self,
         route: &DockViewportDropRoute,
         host_position: Point<Pixels>,
-        commit: DockViewportDropRouteCommit,
+        delivery: DockDropDelivery,
     ) -> bool {
         if matches!(route, DockViewportDropRoute::Unavailable) {
             return self.clear_drop_route_preview();
         }
         let preview_changed =
             self.set_drop_route_preview(DockDropPreview::from_viewport_route(route, host_position));
-        let commit_changed = if self.drop_route_commit.as_ref() == Some(&commit) {
+        let delivery_changed = if self.drop_delivery.as_ref() == Some(&delivery) {
             false
         } else {
-            self.drop_route_commit = Some(commit);
+            self.drop_delivery = Some(delivery);
             true
         };
-        preview_changed || commit_changed
+        preview_changed || delivery_changed
     }
 
     pub(crate) fn clear_drop_route_preview(&mut self) -> bool {
         let preview_changed = self.set_drop_route_preview(None);
-        let commit_changed = self.drop_route_commit.take().is_some();
-        preview_changed || commit_changed
+        let delivery_changed = self.drop_delivery.take().is_some();
+        preview_changed || delivery_changed
     }
 
-    pub(crate) fn take_drop_route_commit(&mut self) -> Option<DockViewportDropRouteCommit> {
-        self.drop_route_commit.take()
+    pub(crate) fn take_drop_delivery(&mut self) -> Option<DockDropDelivery> {
+        self.drop_delivery.take()
     }
 
     #[cfg(test)]
@@ -648,7 +648,10 @@ impl DockInteractionRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DockItemId, DockNodeId};
+    use crate::{
+        DockItemId, DockNodeId, DockViewportDropPayload, DockViewportDropRouteRequest,
+        DockViewportTargetContext,
+    };
     use open_gpui::{point, px, size};
     use slotmap::Key;
 
@@ -984,14 +987,21 @@ mod tests {
         let tabs = DockNodeId::null();
         let mut runtime = DockInteractionRuntime::default();
         let position = point(px(80.0), px(60.0));
-
-        assert!(runtime.update_drop_route_preview(
-            &DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled),
-            position,
-            DockViewportDropRouteCommit::Rejected(
-                crate::DockPolicyError::PlatformViewportsDisabled,
+        let rejected_route =
+            DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled);
+        let rejected_delivery = DockDropDelivery::from_route_request(
+            &DockViewportDropRouteRequest::from_target_context(
+                DockSpaceId::from("main"),
+                tabs,
+                DockViewportDropPayload::Item(DockItemId::from("a")),
+                position,
+                None,
+                DockViewportTargetContext::new(),
             ),
-        ));
+            rejected_route.clone(),
+        );
+
+        assert!(runtime.update_drop_route_preview(&rejected_route, position, rejected_delivery,));
         assert_eq!(
             runtime
                 .drop_preview()

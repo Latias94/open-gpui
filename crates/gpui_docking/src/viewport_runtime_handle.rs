@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockController, DockHost, DockSpaceId, DockViewportActivationTarget,
-    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteCommit,
+    DockActionApplyError, DockController, DockDropDelivery, DockHost, DockSpaceId,
+    DockViewportActivationTarget, DockViewportCloseOutcome, DockViewportClosePolicy,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
     DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
@@ -16,7 +16,7 @@ use crate::{
 #[cfg(test)]
 use crate::{
     DockNodeId, DockViewportDropPayload, DockViewportDropRoute, DockViewportPlatformSignals,
-    DockViewportTargetContext,
+    DockViewportTargetContext, viewport_registry::DockViewportRouteUnavailableReason,
 };
 #[cfg(test)]
 use open_gpui::WindowBounds;
@@ -219,6 +219,16 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().viewport_route_ready(space)
     }
 
+    #[cfg(test)]
+    pub(crate) fn viewport_route_unavailable_reason(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<DockViewportRouteUnavailableReason> {
+        self.runtime
+            .borrow()
+            .viewport_route_unavailable_reason(space)
+    }
+
     /// Replaces the shared close policy used by runtime-opened viewport windows.
     pub fn set_close_policy(&self, close_policy: DockViewportClosePolicy) {
         self.runtime.borrow_mut().set_close_policy(close_policy);
@@ -406,19 +416,17 @@ impl DockViewportRuntimeHandle {
             .map(|window| window.window_id())
     }
 
-    pub(crate) fn commit_payload_drop_route_with_outcome(
+    pub(crate) fn deliver_payload_drop_with_outcome(
         &self,
-        commit: DockViewportDropRouteCommit,
+        delivery: DockDropDelivery,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result = match commit {
-            DockViewportDropRouteCommit::TearOff(request) => {
-                self.commit_tear_off_drop_route(request, cx)
-            }
-            commit => self
+        let result = match delivery {
+            DockDropDelivery::TearOff(request) => self.commit_tear_off_drop_route(request, cx),
+            delivery => self
                 .runtime
                 .borrow_mut()
-                .commit_payload_drop_route_with_outcome(commit, cx),
+                .deliver_payload_drop_with_outcome(delivery, cx),
         };
         self.clear_routed_drop_preview(cx);
         result
@@ -431,7 +439,7 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
-            match runtime.prepare_tear_off_drop_route_commit(request, cx)? {
+            match runtime.prepare_tear_off_drop_delivery(request, cx)? {
                 DockViewportTearOffCommitPreparation::Prepared(prepared) => *prepared,
             }
         };
@@ -483,14 +491,14 @@ impl DockViewportRuntimeHandle {
             .resolve_payload_drop_route(request, cx)
     }
 
-    pub(crate) fn resolve_payload_drop_route_with_commit(
+    pub(crate) fn resolve_payload_drop_delivery(
         &self,
         request: &DockViewportDropRouteRequest,
         cx: &App,
     ) -> DockViewportResolvedDropRoute {
         self.runtime
             .borrow_mut()
-            .resolve_payload_drop_route_with_commit(request, cx)
+            .resolve_payload_drop_delivery(request, cx)
     }
 
     pub(crate) fn update_routed_drop_preview(
@@ -524,13 +532,13 @@ impl DockViewportRuntimeHandle {
     }
 
     #[cfg(test)]
-    pub(crate) fn routed_drop_commit_for_drag_session(
+    pub(crate) fn routed_drop_delivery_for_drag_session(
         &self,
         session: Option<&DockRuntimeDragSession>,
-    ) -> Option<DockViewportDropRouteCommit> {
+    ) -> Option<DockDropDelivery> {
         self.runtime
             .borrow()
-            .routed_drop_commit_for_drag_session(session)
+            .routed_drop_delivery_for_drag_session(session)
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
@@ -587,9 +595,9 @@ impl DockViewportRuntimeHandle {
         request: &DockViewportDropRouteRequest,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let resolution = self.resolve_payload_drop_route_with_commit(request, cx);
-        let commit = resolution.commit().clone();
-        self.commit_payload_drop_route_with_outcome(commit, cx)
+        let resolution = self.resolve_payload_drop_delivery(request, cx);
+        let delivery = resolution.delivery().clone();
+        self.deliver_payload_drop_with_outcome(delivery, cx)
     }
 
     /// Resolves and commits a rendered payload release from platform signal snapshots in tests.

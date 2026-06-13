@@ -1,4 +1,7 @@
-use crate::{DockSpaceId, DockViewportAdapter, DockViewportWindowFacts};
+use crate::{
+    DockSpaceId, DockViewportAdapter, DockViewportWindowFacts,
+    viewport_registry::DockViewportStaleReason,
+};
 use open_gpui::{Bounds, Pixels, Point, WindowId, point};
 
 impl DockViewportAdapter {
@@ -14,28 +17,7 @@ impl DockViewportAdapter {
         let Some(snapshot) = self.snapshot_mut(space) else {
             return false;
         };
-        let display_id = window_facts.display_id;
-        let window_bounds = Some(window_facts.window_bounds);
-        let screen_bounds = Some(window_facts.screen_bounds);
-        let host_bounds = Some(host_bounds);
-        if snapshot.display_id == display_id
-            && snapshot.window_bounds == window_bounds
-            && snapshot.screen_bounds == screen_bounds
-            && snapshot.host_bounds == host_bounds
-            && !snapshot.facts_stale
-            && snapshot.route_ready
-        {
-            return false;
-        }
-
-        snapshot.display_id = display_id;
-        snapshot.window_bounds = window_bounds;
-        snapshot.screen_bounds = screen_bounds;
-        snapshot.host_bounds = host_bounds;
-        snapshot.facts_generation = snapshot.facts_generation.wrapping_add(1);
-        snapshot.facts_stale = false;
-        snapshot.route_ready = true;
-        true
+        snapshot.update_route_facts(window_facts, host_bounds)
     }
 
     /// Marks a registered window's live facts stale until its next render frame publishes them.
@@ -48,13 +30,7 @@ impl DockViewportAdapter {
         let Some(snapshot) = self.snapshot_mut(&space) else {
             return false;
         };
-        if snapshot.facts_stale {
-            return false;
-        }
-        snapshot.facts_stale = true;
-        snapshot.route_ready = false;
-        snapshot.facts_generation = snapshot.facts_generation.wrapping_add(1);
-        true
+        snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged)
     }
 
     pub(crate) fn snapshot_facts_generation(
@@ -63,11 +39,7 @@ impl DockViewportAdapter {
         window_id: WindowId,
     ) -> Option<u64> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.window.window_id() != window_id || snapshot.facts_stale || !snapshot.route_ready
-        {
-            return None;
-        }
-        Some(snapshot.facts_generation)
+        snapshot.facts_generation_if_current(window_id)
     }
 
     /// Converts a window-local point into host-local coordinates.
@@ -80,7 +52,7 @@ impl DockViewportAdapter {
         position: Point<Pixels>,
     ) -> Option<Point<Pixels>> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.facts_stale || !snapshot.route_ready {
+        if !snapshot.is_route_ready() {
             return None;
         }
         let host_bounds = snapshot.host_bounds?;
@@ -104,7 +76,7 @@ impl DockViewportAdapter {
         position: Point<Pixels>,
     ) -> Option<Point<Pixels>> {
         let snapshot = self.snapshot(space)?;
-        if snapshot.facts_stale || !snapshot.route_ready {
+        if !snapshot.is_route_ready() {
             return None;
         }
         let screen_bounds = snapshot.screen_bounds?;
@@ -120,6 +92,9 @@ impl DockViewportAdapter {
 mod tests {
     use crate::{
         DockViewportAdapter, DockViewportHit, DockViewportTargetContext, DockViewportWindowFacts,
+        viewport_registry::{
+            DockViewportLifecycleState, DockViewportRouteUnavailableReason, DockViewportStaleReason,
+        },
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{DisplayId, WindowBounds, point, px};
@@ -214,6 +189,11 @@ mod tests {
         let main = space("main");
         let window = handle(1);
         adapter.register_viewport(main.clone(), window);
+        assert!(!adapter.route_ready(&main));
+        assert_eq!(
+            adapter.route_unavailable_reason(&main),
+            Some(DockViewportRouteUnavailableReason::RegisteredNotReady)
+        );
 
         assert!(adapter.update_snapshot(
             &main,
@@ -224,6 +204,8 @@ mod tests {
             ),
             bounds(10.0, 20.0, 300.0, 200.0),
         ));
+        assert!(adapter.route_ready(&main));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
         let generation = adapter
             .snapshot_facts_generation(&main, window.window_id())
             .expect("fresh snapshot should expose its generation");
@@ -233,6 +215,20 @@ mod tests {
         );
 
         assert!(adapter.mark_window_snapshot_stale(window.window_id()));
+        assert!(!adapter.route_ready(&main));
+        assert_eq!(
+            adapter
+                .snapshot(&main)
+                .expect("stale viewport should remain registered")
+                .lifecycle_state(),
+            DockViewportLifecycleState::Stale(DockViewportStaleReason::WindowFactsChanged)
+        );
+        assert_eq!(
+            adapter.route_unavailable_reason(&main),
+            Some(DockViewportRouteUnavailableReason::Stale(
+                DockViewportStaleReason::WindowFactsChanged
+            ))
+        );
         assert_ne!(
             adapter.snapshot_facts_generation(&main, window.window_id()),
             Some(generation),
@@ -253,6 +249,8 @@ mod tests {
             ),
             bounds(10.0, 20.0, 300.0, 200.0),
         ));
+        assert!(adapter.route_ready(&main));
+        assert_eq!(adapter.route_unavailable_reason(&main), None);
         assert_eq!(
             adapter.screen_to_host(&main, point(px(135.0), px(245.0))),
             Some(point(px(5.0), px(5.0)))

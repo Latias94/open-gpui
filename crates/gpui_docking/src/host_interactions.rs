@@ -127,24 +127,15 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let payload = release.payload();
-        self.interaction_mut().take_drop_route_commit();
+        let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
+        let runtime_preview_cleared = self
+            .viewport_runtime()
+            .cloned()
+            .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
         let mut drop_preview_cleared = false;
-        let outcome = if let Some(outcome) =
-            self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
-        {
-            drop_preview_cleared = self.clear_drop_preview_interaction();
-            outcome
-        } else {
-            let target = self.interaction_mut().take_resolved_drop_target();
-            let Some(target) = target else {
-                return DockHostInteractionOutcome::Notify
-                    .merge(DockHostInteractionOutcome::from_session_changed(
-                        route_preview_cleared,
-                    ))
-                    .merge(self.finish_floating_drag_interaction());
-            };
-
+        let target = self.interaction_mut().take_resolved_drop_target();
+        let outcome = if let Some(target) = target {
             let focus_item = self.focus_item_for_drag_payload(payload, cx);
             let outcome = self.commit_resolved_payload_drop_interaction(
                 DockWorkspacePayloadDropRequest {
@@ -157,11 +148,22 @@ impl DockHost {
                 true,
             );
             self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
+        } else if let Some(outcome) =
+            self.commit_runtime_routed_payload_drop_interaction(delivery, &release, window, cx)
+        {
+            drop_preview_cleared = self.clear_drop_preview_interaction();
+            outcome
+        } else {
+            return DockHostInteractionOutcome::Notify
+                .merge(DockHostInteractionOutcome::from_session_changed(
+                    route_preview_cleared,
+                ))
+                .merge(self.finish_floating_drag_interaction());
         };
 
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
-                route_preview_cleared || drop_preview_cleared,
+                route_preview_cleared || runtime_preview_cleared || drop_preview_cleared,
             ))
             .merge(self.finish_floating_drag_interaction())
     }

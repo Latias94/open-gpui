@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::viewport_registry::DockViewportRouteUnavailableReason;
 use crate::{DockSpaceId, viewport_registry::DockViewportRegistry};
 use open_gpui::{AnyWindowHandle, WindowId};
 
@@ -44,12 +46,21 @@ impl DockViewportAdapter {
     #[cfg(test)]
     pub(crate) fn route_ready(&self, space: &DockSpaceId) -> bool {
         self.snapshot(space)
-            .is_some_and(|snapshot| snapshot.route_ready)
+            .is_some_and(|snapshot| snapshot.is_route_ready())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn route_unavailable_reason(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<DockViewportRouteUnavailableReason> {
+        self.snapshot(space)?.route_unavailable_reason()
     }
 
     pub(crate) fn window_route_ready(&self, window_id: WindowId) -> Option<bool> {
         let space = self.space_for_window_id(window_id)?;
-        self.snapshot(space).map(|snapshot| snapshot.route_ready)
+        self.snapshot(space)
+            .map(|snapshot| snapshot.is_route_ready())
     }
 
     pub(crate) fn unregister_window_id_snapshot(
@@ -76,6 +87,15 @@ impl DockViewportAdapter {
     /// Returns known dock spaces in stable lexical order.
     pub(crate) fn spaces(&self) -> Vec<DockSpaceId> {
         self.registry.spaces()
+    }
+
+    pub(crate) fn viewport_lifecycle_records(&self) -> Vec<crate::DockViewportLifecycleRecord> {
+        self.registry
+            .snapshots()
+            .map(|(space, snapshot)| {
+                crate::DockViewportLifecycleRecord::from_snapshot(space.clone(), snapshot)
+            })
+            .collect()
     }
 
     pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
@@ -247,7 +267,7 @@ mod tests {
         assert_eq!(snapshot.display_id, display_id);
         assert_eq!(snapshot.window_bounds, Some(window_bounds));
         assert_eq!(snapshot.host_bounds, Some(host_bounds));
-        assert!(snapshot.route_ready);
+        assert!(snapshot.is_route_ready());
     }
 
     #[test]

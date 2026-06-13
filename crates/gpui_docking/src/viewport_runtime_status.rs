@@ -4,12 +4,17 @@ use crate::{
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
     DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome,
+    viewport_registry::{
+        DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
+    },
 };
 use open_gpui::{Pixels, Point, WindowId};
 
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DockViewportRuntimeStatus {
+    /// Current lifecycle/readiness records for registered platform viewports.
+    pub viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
     /// Most recent viewport route resolved for a rendered drop.
     pub last_route: Option<DockViewportRouteRecord>,
     /// Most recent routed drop outcome.
@@ -22,6 +27,42 @@ pub struct DockViewportRuntimeStatus {
     pub last_should_close: Option<DockViewportShouldCloseOutcome>,
     /// Most recent tear-off transaction outcome.
     pub last_tear_off: Option<DockViewportTearOffRecord>,
+}
+
+/// Current route-readiness record for one registered viewport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockViewportLifecycleRecord {
+    /// Logical dock space rendered by the viewport window.
+    pub space: DockSpaceId,
+    /// GPUI window currently bound to the logical dock space.
+    pub window_id: WindowId,
+    /// Route-readiness status derived from the viewport lifecycle machine.
+    pub route_status: DockViewportRouteStatus,
+    /// Generation of the latest platform/host route facts.
+    pub facts_generation: u64,
+}
+
+/// Route-readiness status for a registered viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportRouteStatus {
+    /// The space/window binding exists, but no rendered host scene has published route facts yet.
+    RegisteredNotReady,
+    /// The latest rendered host scene and platform window facts can be used for routing.
+    RouteReady,
+    /// Previously published route facts were invalidated and need a fresh rendered host scene.
+    Stale {
+        /// Reason the viewport was demoted from route-ready to stale.
+        reason: DockViewportStaleStatusReason,
+    },
+    /// The lifecycle state was ready, but one of the required route fact snapshots is absent.
+    MissingRouteFacts,
+}
+
+/// Public diagnostic reason for stale viewport route facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportStaleStatusReason {
+    /// GPUI reported platform window facts changed after the last rendered host scene.
+    WindowFactsChanged,
 }
 
 /// Payload shape recorded in viewport runtime diagnostics.
@@ -159,6 +200,14 @@ pub enum DockViewportTearOffOutcomeKind {
 }
 
 impl DockViewportRuntimeStatus {
+    pub(crate) fn with_viewport_lifecycle(
+        mut self,
+        viewport_lifecycle: Vec<DockViewportLifecycleRecord>,
+    ) -> Self {
+        self.viewport_lifecycle = viewport_lifecycle;
+        self
+    }
+
     pub(crate) fn record_route(
         &mut self,
         request: &DockViewportDropRouteRequest,
@@ -199,6 +248,40 @@ impl DockViewportRuntimeStatus {
 
     pub(crate) fn record_should_close(&mut self, outcome: &DockViewportShouldCloseOutcome) {
         self.last_should_close = Some(outcome.clone());
+    }
+}
+
+impl DockViewportLifecycleRecord {
+    pub(crate) fn from_snapshot(space: DockSpaceId, snapshot: &DockViewportSnapshot) -> Self {
+        Self {
+            space,
+            window_id: snapshot.window.window_id(),
+            route_status: DockViewportRouteStatus::from_snapshot(snapshot),
+            facts_generation: snapshot.facts_generation(),
+        }
+    }
+}
+
+impl DockViewportRouteStatus {
+    fn from_snapshot(snapshot: &DockViewportSnapshot) -> Self {
+        match snapshot.route_unavailable_reason() {
+            None => Self::RouteReady,
+            Some(DockViewportRouteUnavailableReason::RegisteredNotReady) => {
+                Self::RegisteredNotReady
+            }
+            Some(DockViewportRouteUnavailableReason::Stale(reason)) => Self::Stale {
+                reason: DockViewportStaleStatusReason::from(reason),
+            },
+            Some(DockViewportRouteUnavailableReason::MissingRouteFacts) => Self::MissingRouteFacts,
+        }
+    }
+}
+
+impl From<DockViewportStaleReason> for DockViewportStaleStatusReason {
+    fn from(reason: DockViewportStaleReason) -> Self {
+        match reason {
+            DockViewportStaleReason::WindowFactsChanged => Self::WindowFactsChanged,
+        }
     }
 }
 
@@ -400,9 +483,50 @@ impl DockViewportTearOffRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{drag::DockDragPayload, interaction::DockRuntimeDragSession};
-    use open_gpui::{point, px};
+    use crate::{
+        DockViewportWindowFacts,
+        drag::DockDragPayload,
+        interaction::DockRuntimeDragSession,
+        viewport_test_support::{bounds, handle, space},
+    };
+    use open_gpui::{WindowBounds, point, px};
     use slotmap::Key;
+
+    #[test]
+    fn viewport_lifecycle_record_reports_route_status_from_snapshot() {
+        let space = space("main");
+        let window = handle(7);
+        let mut snapshot = DockViewportSnapshot::new(window);
+
+        let registered = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(registered.space, space);
+        assert_eq!(registered.window_id, window.window_id());
+        assert_eq!(
+            registered.route_status,
+            DockViewportRouteStatus::RegisteredNotReady
+        );
+        assert_eq!(registered.facts_generation, 0);
+
+        assert!(snapshot.update_route_facts(
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 200.0, 320.0, 240.0
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0)
+        ));
+        let ready = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
+        assert_eq!(ready.route_status, DockViewportRouteStatus::RouteReady);
+        assert_eq!(ready.facts_generation, 1);
+
+        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged));
+        let stale = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
+        assert_eq!(
+            stale.route_status,
+            DockViewportRouteStatus::Stale {
+                reason: DockViewportStaleStatusReason::WindowFactsChanged
+            }
+        );
+        assert_eq!(stale.facts_generation, 2);
+    }
 
     #[test]
     fn route_record_derives_local_target_identity_from_source() {
