@@ -89,9 +89,7 @@ fn layout_roundtrips_roots_splits_and_floatings() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(root, DropZone::Right),
     }));
     assert!(graph.apply_op(&DockOp::FloatItemInWindow {
         source_space: space(),

@@ -111,13 +111,20 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .expect("fixture target item should be findable")
                 .0;
             let zone: DropZone = zone.into();
+            let target = if zone == DropZone::Center {
+                DockMoveTarget::center(target_tabs)
+            } else {
+                DockMoveTarget::inner_edge(
+                    graph.root(&space()).expect("fixture should have a root"),
+                    target_tabs,
+                    zone,
+                )
+            };
             let changed = graph.apply_op(&DockOp::MoveItem {
                 source_space: space(),
                 item,
                 target_space: space(),
-                target_tabs,
-                zone,
-                insert_index: None,
+                target,
             });
             assert_eq!(
                 changed,

@@ -138,14 +138,7 @@ impl DockWorkspace {
                 })
             }
             DockWorkspaceDropPayload::Floating { floating } => {
-                let target = target.graph_target();
-                self.commit_floating_move(
-                    source_space,
-                    floating,
-                    target_space,
-                    target.node,
-                    target.zone,
-                )
+                self.commit_floating_move(source_space, floating, target_space, target)
             }
         }
     }
@@ -294,7 +287,7 @@ mod tests {
         DockFloatingContainer, DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId,
         DropZone, SplitAxis,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
-        workspace_move_transaction::{DockWorkspaceEdgeAnchor, DockWorkspaceMoveTarget},
+        workspace_move_transaction::DockWorkspaceMoveTarget,
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -428,17 +421,15 @@ mod tests {
 
         assert_eq!(
             inner,
-            Some(DockWorkspaceMoveTarget::Edge {
-                anchor: DockWorkspaceEdgeAnchor::Leaf { root, tabs: right },
-                zone: DropZone::Right,
-            })
+            Some(DockWorkspaceMoveTarget::inner_edge(
+                root,
+                right,
+                DropZone::Right
+            ))
         );
         assert_eq!(
             root_edge,
-            Some(DockWorkspaceMoveTarget::Edge {
-                anchor: DockWorkspaceEdgeAnchor::Root { root },
-                zone: DropZone::Right,
-            })
+            Some(DockWorkspaceMoveTarget::root_edge(root, DropZone::Right))
         );
         assert_ne!(inner, root_edge);
         assert_eq!(center, Some(DockWorkspaceMoveTarget::center(left)));

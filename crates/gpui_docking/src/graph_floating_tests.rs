@@ -227,8 +227,7 @@ fn move_floating_edge_preserves_child_subtree() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: root,
-                zone: DropZone::Right,
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
             })
             .expect("floating edge drop should be valid")
     );

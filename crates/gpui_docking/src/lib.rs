@@ -197,9 +197,9 @@ pub use host::*;
 pub use ids::*;
 pub use layout::*;
 pub use op::DockGraphMutationError;
-pub(crate) use op::DockOp;
 #[cfg(test)]
 pub(crate) use op::SplitFractionsUpdate;
+pub(crate) use op::{DockMoveTarget, DockOp};
 pub use panel::*;
 pub use panel_catalog::*;
 pub use panel_registry::*;

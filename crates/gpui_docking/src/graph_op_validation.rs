@@ -1,4 +1,4 @@
-use crate::{DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockSpaceId};
+use crate::{DockGraphMutationError, DockItemId, DockMoveTarget, DockNodeId, DockOp, DockSpaceId};
 
 use super::{DockGraph, DropZone};
 
@@ -63,17 +63,14 @@ impl DockGraph {
                 source_space,
                 item,
                 target_space,
-                target_tabs,
-                zone,
-                insert_index,
+                target,
             } => {
-                self.validate_move_item(source_space, item, target_space, *target_tabs, *zone)?;
+                self.validate_move_item(source_space, item, target_space, *target)?;
                 if source_space == target_space
                     && self
                         .find_item_in_space(source_space, item)
-                        .is_some_and(|(source_tabs, _)| source_tabs == *target_tabs)
-                    && *zone == DropZone::Center
-                    && insert_index.is_none()
+                        .is_some_and(|(source_tabs, _)| target.noop_tabs() == Some(source_tabs))
+                    && target.insert_index().is_none()
                 {
                     return Ok(false);
                 }
@@ -89,20 +86,12 @@ impl DockGraph {
                 source_space,
                 source_tabs,
                 target_space,
-                target_tabs,
-                zone,
-                ..
+                target,
             } => {
-                self.validate_move_tabs(
-                    source_space,
-                    *source_tabs,
-                    target_space,
-                    *target_tabs,
-                    *zone,
-                )?;
+                self.validate_move_tabs(source_space, *source_tabs, target_space, *target)?;
                 if source_space == target_space
-                    && *source_tabs == *target_tabs
-                    && *zone == DropZone::Center
+                    && target.noop_tabs() == Some(*source_tabs)
+                    && target.insert_index().is_none()
                 {
                     return Ok(false);
                 }
@@ -169,9 +158,8 @@ impl DockGraph {
                 floating,
                 target_space,
                 target,
-                zone,
             } => {
-                self.validate_move_floating(source_space, *floating, target_space, *target, *zone)?;
+                self.validate_move_floating(source_space, *floating, target_space, *target)?;
                 let items = self.collect_items_in_subtree(*floating);
                 self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
                     op,
@@ -360,8 +348,7 @@ impl DockGraph {
         source_space: &DockSpaceId,
         item: &DockItemId,
         target_space: &DockSpaceId,
-        target_tabs: DockNodeId,
-        zone: DropZone,
+        target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
         if self.find_item_in_space(source_space, item).is_none() {
             return Err(DockGraphMutationError::ItemNotFound {
@@ -369,10 +356,7 @@ impl DockGraph {
                 item: item.clone(),
             });
         }
-        self.require_target_node_in_space(target_space, target_tabs)?;
-        if zone == DropZone::Center {
-            self.require_tabs_node(target_tabs)?;
-        }
+        self.validate_move_target(target_space, target)?;
         Ok(())
     }
 
@@ -391,15 +375,11 @@ impl DockGraph {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target_tabs: DockNodeId,
-        zone: DropZone,
+        target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
         self.require_non_empty_tabs_node(source_tabs)?;
         self.require_source_node_in_space(source_space, source_tabs)?;
-        self.require_target_node_in_space(target_space, target_tabs)?;
-        if zone == DropZone::Center {
-            self.require_tabs_node(target_tabs)?;
-        }
+        self.validate_move_target(target_space, target)?;
         Ok(())
     }
 
@@ -408,8 +388,7 @@ impl DockGraph {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockNodeId,
-        zone: DropZone,
+        target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
         if self.floating_container(source_space, floating).is_none() {
             return Err(DockGraphMutationError::FloatingContainerNotFound {
@@ -417,15 +396,36 @@ impl DockGraph {
                 floating,
             });
         }
-        self.require_target_node_in_space(target_space, target)?;
-        if source_space == target_space && self.subtree_contains(floating, target) {
+        self.validate_move_target(target_space, target)?;
+        let target_node = target.node();
+        if source_space == target_space && self.subtree_contains(floating, target_node) {
             return Err(DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
                 floating,
-                target,
+                target: target_node,
             });
         }
-        if zone == DropZone::Center {
-            self.require_tabs_node(target)?;
+        Ok(())
+    }
+
+    fn validate_move_target(
+        &self,
+        space: &DockSpaceId,
+        target: DockMoveTarget,
+    ) -> Result<(), DockGraphMutationError> {
+        match target {
+            DockMoveTarget::Stack { tabs, .. } => {
+                self.require_target_node_in_space(space, tabs)?;
+                self.require_tabs_node(tabs)?;
+            }
+            DockMoveTarget::Edge { anchor, zone } => {
+                self.require_target_node_in_space(space, anchor.node())?;
+                if zone == DropZone::Center {
+                    return Err(DockGraphMutationError::MutationInvariantViolation {
+                        op: "DockMoveTarget",
+                        reason: "edge move target cannot use center drop zone".into(),
+                    });
+                }
+            }
         }
         Ok(())
     }

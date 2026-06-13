@@ -1,7 +1,7 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockClassId, DockFloatingContainer, DockGraph,
-    DockGraphMutationError, DockNode, DockPanelDescriptor, DockPolicyError, DockSpaceId, DropZone,
-    SplitAxis,
+    DockGraphMutationError, DockMoveTarget, DockNode, DockPanelDescriptor, DockPolicyError,
+    DockSpaceId, DropZone, SplitAxis,
     host_test_support::*,
     workspace_move_transaction::{
         DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest, DockWorkspaceMoveTarget,
@@ -323,7 +323,12 @@ fn workspace_move_floating_rejects_when_subtree_contains_incompatible_class(
         .allow_dock_class_in_space(target.clone(), "inspector");
 
     let err = workspace
-        .commit_floating_move(&space(), floating, &target, target_root, DropZone::Right)
+        .commit_floating_move(
+            &space(),
+            floating,
+            &target,
+            DockMoveTarget::root_edge(target_root, DropZone::Right),
+        )
         .expect_err("incompatible floating subtree should be rejected");
 
     assert_eq!(

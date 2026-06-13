@@ -47,9 +47,7 @@ fn checked_move_item_same_stack_center_reports_noop() {
                 source_space: space(),
                 item: item("a"),
                 target_space: space(),
-                target_tabs: root,
-                zone: DropZone::Center,
-                insert_index: None,
+                target: DockMoveTarget::center(root),
             })
             .expect("same-stack center move without insert index should be valid")
     );
@@ -73,9 +71,7 @@ fn checked_move_tabs_self_center_reports_noop() {
                 source_space: space(),
                 source_tabs: root,
                 target_space: space(),
-                target_tabs: root,
-                zone: DropZone::Center,
-                insert_index: None,
+                target: DockMoveTarget::center(root),
             })
             .expect("moving a tabs node onto itself should be a valid no-op")
     );
@@ -113,9 +109,7 @@ fn checked_move_tabs_edge_drop_onto_same_space_root_preserves_items() {
                 source_space: space(),
                 source_tabs,
                 target_space: space(),
-                target_tabs: root,
-                zone: DropZone::Right,
-                insert_index: None,
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
             })
             .expect("same-space root-edge tabs move should commit transactionally")
     );
@@ -161,9 +155,7 @@ fn checked_move_tabs_reports_empty_source_tabs() {
                 source_space: space(),
                 source_tabs: empty,
                 target_space: DockSpaceId::new("other"),
-                target_tabs: target,
-                zone: DropZone::Center,
-                insert_index: None,
+                target: DockMoveTarget::center(target),
             })
             .expect_err("empty source tabs should be reported"),
         DockGraphMutationError::TabsNodeEmpty { tabs: empty }
@@ -328,9 +320,7 @@ fn move_item_center_inserts_and_selects_item() {
         source_space: space(),
         item: item("c"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Center,
-        insert_index: Some(1),
+        target: DockMoveTarget::tab_bar(root, 1),
     }));
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
@@ -354,9 +344,7 @@ fn move_item_to_target_outside_target_space_is_transactional() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: orphan,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(orphan, DropZone::Right),
     }));
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
@@ -384,9 +372,7 @@ fn checked_move_item_reports_missing_source_item() {
             source_space: space(),
             item: item("missing"),
             target_space: space(),
-            target_tabs: root,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockMoveTarget::center(root),
         })
         .expect_err("missing source item should fail");
 
@@ -413,9 +399,7 @@ fn checked_move_item_reports_target_outside_space_without_mutation() {
             source_space: space(),
             item: item("b"),
             target_space: space(),
-            target_tabs: orphan,
-            zone: DropZone::Right,
-            insert_index: None,
+            target: DockMoveTarget::root_edge(orphan, DropZone::Right),
         })
         .expect_err("orphan target should fail");
 
@@ -442,9 +426,7 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(root, DropZone::Right),
     }));
     let split = graph.root(&space()).expect("space should keep root");
 
@@ -453,9 +435,7 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
             source_space: space(),
             item: item("a"),
             target_space: space(),
-            target_tabs: split,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockMoveTarget::center(split),
         })
         .expect_err("center target must be tabs");
 

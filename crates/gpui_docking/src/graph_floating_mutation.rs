@@ -1,7 +1,7 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockItemId, DockMoveTarget, DockNodeId, DockSpaceId};
 use open_gpui::{Bounds, Pixels};
 
-use super::{DockFloatingContainer, DockGraph, DockNode, DropZone};
+use super::{DockFloatingContainer, DockGraph, DockNode};
 
 impl DockGraph {
     pub(in crate::graph) fn float_item_in_window(
@@ -106,39 +106,40 @@ impl DockGraph {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockNodeId,
-        zone: DropZone,
+        target: DockMoveTarget,
     ) -> bool {
         if self.floating_container(source_space, floating).is_none() {
             return false;
         }
-        if self.root_for_node_in_space(target_space, target).is_none() {
+        if self
+            .root_for_node_in_space(target_space, target.node())
+            .is_none()
+        {
             return false;
         }
-        if source_space == target_space && self.subtree_contains(floating, target) {
+        if source_space == target_space && self.subtree_contains(floating, target.node()) {
             return false;
         }
 
-        if zone == DropZone::Center {
-            return self.merge_floating_subtree_into_tabs(
-                source_space,
-                floating,
-                target_space,
-                target,
-            );
+        match target {
+            DockMoveTarget::Stack { tabs, .. } => {
+                self.merge_floating_subtree_into_tabs(source_space, floating, target_space, tabs)
+            }
+            DockMoveTarget::Edge { anchor, zone } => {
+                let Some(child) = self.take_floating_child_from_space(source_space, floating)
+                else {
+                    return false;
+                };
+                if !self.insert_edge_docked_child(target_space, anchor.node(), zone, child) {
+                    return false;
+                }
+                self.simplify_space(source_space);
+                if source_space != target_space {
+                    self.simplify_space(target_space);
+                }
+                true
+            }
         }
-
-        let Some(child) = self.take_floating_child_from_space(source_space, floating) else {
-            return false;
-        };
-        if !self.insert_edge_docked_child(target_space, target, zone, child) {
-            return false;
-        }
-        self.simplify_space(source_space);
-        if source_space != target_space {
-            self.simplify_space(target_space);
-        }
-        true
     }
 
     pub(in crate::graph) fn move_floating_to_empty_space(
@@ -182,9 +183,7 @@ impl DockGraph {
                 source_space,
                 item,
                 target_space,
-                target_tabs,
-                DropZone::Center,
-                None,
+                DockMoveTarget::center(target_tabs),
             );
         }
         if let Some(selected_item) = selected_item

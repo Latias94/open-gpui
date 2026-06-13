@@ -9,9 +9,7 @@ fn checked_set_split_fraction_two_reports_only_real_changes() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(root, DropZone::Right),
     }));
     let split = graph.root(&space()).expect("space should keep root");
 
@@ -156,9 +154,7 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(root, DropZone::Right),
     }));
     let target_tabs = graph
         .find_item_in_space(&space(), &item("b"))
@@ -168,9 +164,11 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
         source_space: space(),
         item: item("c"),
         target_space: space(),
-        target_tabs,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::inner_edge(
+            graph.root(&space()).expect("space should keep root"),
+            target_tabs,
+            DropZone::Right,
+        ),
     }));
 
     let root = graph.root(&space()).expect("space should keep a root");
@@ -196,9 +194,7 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
         source_space: space(),
         item: item("b"),
         target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
+        target: DockMoveTarget::root_edge(root, DropZone::Right),
     }));
     let left_tabs = graph
         .find_item_in_space(&space(), &item("a"))
@@ -209,9 +205,11 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
         source_space: space(),
         item: item("c"),
         target_space: space(),
-        target_tabs: left_tabs,
-        zone: DropZone::Top,
-        insert_index: None,
+        target: DockMoveTarget::inner_edge(
+            graph.root(&space()).expect("space should keep root"),
+            left_tabs,
+            DropZone::Top,
+        ),
     }));
 
     let root = graph.root(&space()).expect("space should keep a root");
