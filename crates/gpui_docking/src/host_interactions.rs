@@ -12,8 +12,8 @@ use open_gpui::{Bounds, Context, Pixels, Point, Window};
 impl DockHost {
     pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let resolved_target_cleared = self.interaction_mut().take_resolved_drop_target().is_some();
-        route_preview_cleared || resolved_target_cleared
+        let drop_acceptance_cleared = self.interaction_mut().clear_drop_acceptance();
+        route_preview_cleared || drop_acceptance_cleared
     }
 
     pub(crate) fn select_tab_interaction(
@@ -134,7 +134,7 @@ impl DockHost {
             .cloned()
             .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
         let mut drop_preview_cleared = false;
-        let target = self.interaction_mut().take_resolved_drop_target();
+        let target = self.interaction_mut().take_accepted_drop_target();
         let outcome = if let Some(target) = target {
             let focus_item = self.focus_item_for_drag_payload(payload, cx);
             let outcome = self.commit_resolved_payload_drop_interaction(

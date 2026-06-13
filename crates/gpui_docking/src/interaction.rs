@@ -415,8 +415,12 @@ impl DockInteractionRuntime {
         self.viewport_host_scene_frame.as_ref()
     }
 
-    pub(crate) fn take_resolved_drop_target(&mut self) -> Option<DockResolvedDropTarget> {
-        self.drop.take_resolved_target()
+    pub(crate) fn take_accepted_drop_target(&mut self) -> Option<DockResolvedDropTarget> {
+        self.drop.take_accepted_target()
+    }
+
+    pub(crate) fn clear_drop_acceptance(&mut self) -> bool {
+        self.drop.clear()
     }
 
     pub(crate) fn update_drop_route_preview(
@@ -613,6 +617,10 @@ impl DockInteractionRuntime {
         self.drop
             .drop_resolution()
             .and_then(DockDropPreview::from_resolution)
+    }
+
+    pub(crate) fn mark_drop_preview_rendered(&mut self) -> bool {
+        self.drop.mark_preview_rendered()
     }
 
     pub(crate) fn drop_route_preview(&self) -> Option<DockDropRoutePreview> {

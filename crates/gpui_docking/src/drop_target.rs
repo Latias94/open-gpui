@@ -172,6 +172,7 @@ pub(crate) enum DockDropResolution {
 }
 
 impl DockDropResolution {
+    #[cfg(test)]
     pub(crate) fn target(self) -> Option<DockResolvedDropTarget> {
         match self {
             Self::Valid(target) => Some(target),
