@@ -135,7 +135,7 @@ mod tests {
 
         assert!(
             context.priority_for_window(third, 2) < context.priority_for_window(second, 1),
-            "hovered window should beat active window"
+            "hovered window should beat window-stack membership"
         );
         assert!(
             context.priority_for_window(first, 0)

@@ -197,6 +197,24 @@ impl DockDropWorkspaceDelivery {
             DockDropWorkspaceTarget::ResolveAtDelivery { .. } => None,
         }
     }
+
+    fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
+        match &self.target {
+            DockDropWorkspaceTarget::Resolved(target) => {
+                target.accepts_hovered_host_window(host_space, window_id)
+            }
+            DockDropWorkspaceTarget::ResolveAtDelivery {
+                target_space,
+                target_window_id,
+                ..
+            } => target_accepts_hovered_host_window(
+                target_space,
+                *target_window_id,
+                host_space,
+                window_id,
+            ),
+        }
+    }
 }
 
 impl DockDropUnavailableDelivery {
@@ -301,6 +319,27 @@ impl DockViewportResolvedDropTargetSnapshot {
 
     fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
         Some((&self.target_space, self.target_window_id?, self.target()))
+    }
+
+    fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
+        target_accepts_hovered_host_window(
+            &self.target_space,
+            self.target_window_id,
+            host_space,
+            window_id,
+        )
+    }
+}
+
+fn target_accepts_hovered_host_window(
+    target_space: &DockSpaceId,
+    target_window_id: Option<WindowId>,
+    host_space: &DockSpaceId,
+    window_id: WindowId,
+) -> bool {
+    match target_window_id {
+        Some(target_window_id) => target_window_id == window_id,
+        None => target_space == host_space,
     }
 }
 
@@ -412,6 +451,21 @@ impl DockDropDelivery {
         self.source_space() == &payload.source_space
             && self.source_node() == payload.source_node
             && self.payload() == &DockViewportDropPayload::from_drag_payload(payload)
+    }
+
+    pub(crate) fn accepts_hovered_host_window(
+        &self,
+        host_space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        match self {
+            DockDropDelivery::Workspace(delivery) => {
+                delivery.accepts_hovered_host_window(host_space, window_id)
+            }
+            DockDropDelivery::TearOff(_)
+            | DockDropDelivery::Unavailable(_)
+            | DockDropDelivery::Rejected(_) => false,
+        }
     }
 
     pub(crate) fn payload_mismatch_error(&self) -> crate::DockActionApplyError {
@@ -793,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_overlap_route_uses_active_window_without_hovered_source() {
+    fn source_only_overlap_route_uses_window_stack_without_hovered_source() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);

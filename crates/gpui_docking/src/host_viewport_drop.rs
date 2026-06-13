@@ -83,6 +83,10 @@ impl DockHost {
         let runtime = self.viewport_runtime()?.clone();
         if release.origin() == DockPayloadDropReleaseOrigin::HoveredHost
             && let Some(delivery) = delivery
+            && delivery.accepts_hovered_host_window(
+                release.host_space(),
+                window.window_handle().window_id(),
+            )
         {
             let result = if delivery.accepts_drag_payload(release.payload()) {
                 runtime.deliver_payload_drop_with_outcome(delivery, cx)
