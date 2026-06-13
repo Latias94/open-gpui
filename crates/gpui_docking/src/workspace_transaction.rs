@@ -46,52 +46,61 @@ impl DockWorkspace {
         validate_resolved_target_drop_box(&target)?;
         validate_resolved_target_graph_identity(self, target_space, &target)?;
 
-        let move_target = resolved_move_target(&target);
-        let resolved_target_space = target.target_space(target_space).clone();
-        if !matches!(move_target, DockMoveTarget::EmptySpace) {
-            return self.commit_resolved_payload_tabs_target_drop(
+        match target.kind {
+            DockResolvedDropTargetKind::TabBar {
+                target_tabs,
+                insert_index,
+            } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
                 target_space,
-                move_target,
-            );
-        }
-
-        match target.kind {
-            DockResolvedDropTargetKind::EmptyDockSpace { is_central, .. } => {
+                DockMoveTarget::tab_bar(target_tabs, insert_index),
+            ),
+            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => self
+                .commit_resolved_payload_graph_target_drop(
+                    source_space,
+                    payload,
+                    target_space,
+                    DockMoveTarget::center(target_tabs),
+                ),
+            DockResolvedDropTargetKind::InnerEdge {
+                root,
+                target_tabs,
+                zone,
+            } => self.commit_resolved_payload_graph_target_drop(
+                source_space,
+                payload,
+                target_space,
+                DockMoveTarget::inner_edge(root, target_tabs, zone),
+            ),
+            DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
+                .commit_resolved_payload_graph_target_drop(
+                    source_space,
+                    payload,
+                    target_space,
+                    DockMoveTarget::root_edge(root, zone),
+                ),
+            DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
                 if is_central {
                     self.policy().validate_central_region_dock_over()?;
                 }
                 match payload {
-                    DockWorkspaceDropPayload::Item { item, .. } => self
-                        .commit_item_to_empty_dock_space(
-                            source_space,
-                            item,
-                            &resolved_target_space,
-                        ),
-                    DockWorkspaceDropPayload::Tabs { source_tabs } => self
-                        .commit_tabs_to_empty_dock_space(
-                            source_space,
-                            source_tabs,
-                            &resolved_target_space,
-                        ),
-                    DockWorkspaceDropPayload::Floating { floating } => self
-                        .commit_floating_to_empty_dock_space(
-                            source_space,
-                            floating,
-                            &resolved_target_space,
-                        ),
+                    DockWorkspaceDropPayload::Item { item, .. } => {
+                        self.commit_item_to_empty_dock_space(source_space, item, &space)
+                    }
+                    DockWorkspaceDropPayload::Tabs { source_tabs } => {
+                        self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
+                    }
+                    DockWorkspaceDropPayload::Floating { floating } => {
+                        self.commit_floating_to_empty_dock_space(source_space, floating, &space)
+                    }
                 }
             }
-            DockResolvedDropTargetKind::TabBar { .. }
-            | DockResolvedDropTargetKind::LeafCenter { .. }
-            | DockResolvedDropTargetKind::FloatingTitleBar { .. }
-            | DockResolvedDropTargetKind::InnerEdge { .. }
-            | DockResolvedDropTargetKind::RootEdge { .. } => unreachable!(),
         }
     }
 
-    fn commit_resolved_payload_tabs_target_drop(
+    fn commit_resolved_payload_graph_target_drop(
         &mut self,
         source_space: &DockSpaceId,
         payload: DockWorkspaceDropPayload<'_>,
@@ -163,28 +172,6 @@ fn validate_resolved_target_graph_identity(
             validate_root_in_space(workspace, target_space, floating)?;
             validate_tabs_under_root(workspace, target_space, floating, target_tabs)
         }
-    }
-}
-
-fn resolved_move_target(target: &DockResolvedDropTarget) -> DockMoveTarget {
-    match target.kind {
-        DockResolvedDropTargetKind::TabBar {
-            target_tabs,
-            insert_index,
-        } => DockMoveTarget::tab_bar(target_tabs, insert_index),
-        DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-        | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-            DockMoveTarget::center(target_tabs)
-        }
-        DockResolvedDropTargetKind::InnerEdge {
-            root,
-            target_tabs,
-            zone,
-        } => DockMoveTarget::inner_edge(root, target_tabs, zone),
-        DockResolvedDropTargetKind::RootEdge { root, zone, .. } => {
-            DockMoveTarget::root_edge(root, zone)
-        }
-        DockResolvedDropTargetKind::EmptyDockSpace { .. } => DockMoveTarget::empty_space(),
     }
 }
 
@@ -261,8 +248,8 @@ fn expected_drop_box_kind(kind: &DockResolvedDropTargetKind) -> Option<DockDropB
 mod tests {
     use super::*;
     use crate::{
-        DockFloatingContainer, DockGraph, DockItemId, DockMoveTarget, DockNode, DockPolicyError,
-        DockSpaceId, DropZone, SplitAxis,
+        DockFloatingContainer, DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId,
+        DropZone, SplitAxis,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     };
     use open_gpui::{Bounds, point, px, size};
@@ -358,53 +345,6 @@ mod tests {
             preview_bounds: Some(bounds()),
             is_central_region: false,
         }
-    }
-
-    #[test]
-    fn resolved_targets_project_to_distinct_workspace_move_targets() {
-        let (_workspace, root, left, right) = split_workspace();
-
-        let inner = resolved_target(DockResolvedDropTargetKind::InnerEdge {
-            root,
-            target_tabs: right,
-            zone: DropZone::Right,
-        });
-        let root_edge = resolved_target(DockResolvedDropTargetKind::RootEdge {
-            root,
-            leaf_tabs: Some(right),
-            zone: DropZone::Right,
-        });
-        let center = resolved_target(DockResolvedDropTargetKind::LeafCenter {
-            root: left,
-            target_tabs: left,
-        });
-        let tab_bar = resolved_target(DockResolvedDropTargetKind::TabBar {
-            target_tabs: left,
-            insert_index: 1,
-        });
-        let empty = resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
-            space: DockSpaceId::from("detached"),
-            is_central: false,
-        });
-
-        assert_eq!(
-            resolved_move_target(&inner),
-            DockMoveTarget::inner_edge(root, right, DropZone::Right)
-        );
-        assert_eq!(
-            resolved_move_target(&root_edge),
-            DockMoveTarget::root_edge(root, DropZone::Right)
-        );
-        assert_ne!(
-            resolved_move_target(&inner),
-            resolved_move_target(&root_edge)
-        );
-        assert_eq!(resolved_move_target(&center), DockMoveTarget::center(left));
-        assert_eq!(
-            resolved_move_target(&tab_bar),
-            DockMoveTarget::tab_bar(left, 1)
-        );
-        assert_eq!(resolved_move_target(&empty), DockMoveTarget::empty_space());
     }
 
     #[test]
