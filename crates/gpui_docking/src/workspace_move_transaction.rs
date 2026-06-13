@@ -35,6 +35,13 @@ impl DockWorkspace {
             return Ok(());
         }
 
+        let source_root = self.graph().root(source_space);
+        let target_root = self.graph().root(target_space);
+
+        if source_root.is_some() && target_root.is_none() {
+            return self.validate_merge_root_into_empty_space(source_space, target_space);
+        }
+
         let mut target_tabs = self
             .graph()
             .first_tabs_in_space(target_space)
@@ -63,6 +70,32 @@ impl DockWorkspace {
                     .validate_tabs_target_space(target_space, source_tabs)?;
             }
             target_tabs = target_tabs.or(Some((source_tabs, false)));
+        }
+
+        self.move_validation()
+            .validate_space_floating_forest_target_space(source_space, target_space)?;
+
+        Ok(())
+    }
+
+    fn validate_merge_root_into_empty_space(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<(), DockActionApplyError> {
+        if !self.graph().floating_containers(target_space).is_empty() {
+            return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                space: target_space.clone(),
+            }
+            .into());
+        }
+
+        self.policy().validate_platform_viewports()?;
+
+        for source_tabs in self.graph().root_tabs_in_space(source_space) {
+            self.require_non_empty_tabs_for_merge(source_tabs)?;
+            self.move_validation()
+                .validate_tabs_target_space(target_space, source_tabs)?;
         }
 
         self.move_validation()
@@ -187,6 +220,20 @@ impl DockWorkspace {
             return self.commit_merge_space_floating_forest_into(source_space, target_space);
         }
 
+        if self.graph().root(target_space).is_none() {
+            let root_outcome =
+                self.commit_merge_space_root_into_empty_space(source_space, target_space)?;
+            let mut changed = root_outcome.changed();
+            changed |= self
+                .commit_merge_space_floating_forest_into(source_space, target_space)?
+                .changed();
+            return Ok(if changed {
+                DockActionOutcome::Changed
+            } else {
+                DockActionOutcome::Unchanged
+            });
+        }
+
         let mut target_tabs = self.graph().first_tabs_in_space(target_space);
         let mut changed = false;
         for source_tabs in source_tabs {
@@ -221,6 +268,28 @@ impl DockWorkspace {
         } else {
             DockActionOutcome::Unchanged
         })
+    }
+
+    fn commit_merge_space_root_into_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.validate_merge_root_into_empty_space(source_space, target_space)?;
+
+        let mut next = self.graph().clone();
+        let changed = next.move_root_to_empty_space(source_space, target_space);
+        if !changed {
+            return Ok(DockActionOutcome::Unchanged);
+        }
+        next.validate().map_err(|error| {
+            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
+                op: "MergeSpaceRootIntoEmptySpace",
+                reason: error.to_string(),
+            })
+        })?;
+        self.set_graph(next);
+        Ok(DockActionOutcome::Changed)
     }
 
     fn commit_merge_space_floating_forest_into(

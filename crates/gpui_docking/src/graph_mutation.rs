@@ -302,4 +302,26 @@ impl DockGraph {
         self.simplify_space(target_space);
         true
     }
+
+    pub(crate) fn move_root_to_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if source_space == target_space
+            || self.root(target_space).is_some()
+            || !self.floating_containers(target_space).is_empty()
+        {
+            return false;
+        }
+
+        let Some(source_root) = self.remove_root(source_space) else {
+            return false;
+        };
+
+        self.set_root_for_empty_space(target_space, source_root);
+        self.simplify_space(source_space);
+        self.simplify_space(target_space);
+        true
+    }
 }

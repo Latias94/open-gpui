@@ -641,6 +641,82 @@ fn workspace_merge_space_preserves_floating_forest(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn workspace_merge_space_preserves_root_split_tree_on_empty_target(cx: &mut TestAppContext) {
+    let detached = DockSpaceId::from("detached");
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let detached_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![detached_left, detached_right],
+        fractions: vec![0.25, 0.75],
+    });
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let outcome = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect("merge-back should preserve the detached split root tree");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(workspace.graph().root(&detached), None);
+
+    let target_root = workspace
+        .graph()
+        .root(&target)
+        .expect("target space should receive the detached root");
+    assert_eq!(target_root, detached_root);
+    let DockNode::Split {
+        axis,
+        children,
+        fractions,
+    } = workspace
+        .graph()
+        .node(target_root)
+        .expect("target root should still be a split")
+    else {
+        panic!("target root should be split");
+    };
+    assert_eq!(*axis, SplitAxis::Horizontal);
+    assert_eq!(children, &vec![detached_left, detached_right]);
+    assert_eq!(fractions, &vec![0.25, 0.75]);
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(detached_left)
+        .expect("left child should remain tabs")
+    else {
+        panic!("left child should be tabs");
+    };
+    assert_eq!(items, &vec![item("a")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+
+    let DockNode::Tabs { items, selected } = workspace
+        .graph()
+        .node(detached_right)
+        .expect("right child should remain tabs")
+    else {
+        panic!("right child should be tabs");
+    };
+    assert_eq!(items, &vec![item("b")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("a"), item("b")]
+    );
+}
+
+#[open_gpui::test]
 fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     let (graph, tabs) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
