@@ -48,12 +48,6 @@ impl DockViewportPlatformSignals {
         self
     }
 
-    /// Adds the hovered window signal by id.
-    pub(crate) fn with_hovered_window_id(mut self, window_id: Option<WindowId>) -> Self {
-        self.hovered_window = window_id;
-        self
-    }
-
     pub(crate) fn has_global_window_bounds(&self) -> bool {
         self.capabilities.global_window_bounds
     }

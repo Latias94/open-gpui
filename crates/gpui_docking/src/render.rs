@@ -93,7 +93,7 @@ impl Render for DockHost {
                     match this.interaction_mut().rendered_outside_release(request) {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
                         DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
-                            this.finish_payload_drag_session(&drag_session);
+                            this.finish_payload_drag_session(&drag_session, cx);
                             this.clear_drop_preview_interaction();
                             if let Some(runtime) = this.viewport_runtime().cloned() {
                                 runtime.clear_routed_drop_preview(cx);

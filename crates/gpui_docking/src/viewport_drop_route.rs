@@ -77,10 +77,6 @@ impl DockViewportResolvedDropRoute {
     pub(crate) fn delivery(&self) -> &DockDropDelivery {
         &self.delivery
     }
-
-    pub(crate) fn drag_session_id(&self) -> Option<u64> {
-        self.delivery.drag_session_id()
-    }
 }
 
 /// Delivery facts for a drop route that lands in an existing viewport workspace.

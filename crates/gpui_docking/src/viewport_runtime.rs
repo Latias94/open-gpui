@@ -56,15 +56,8 @@ pub(crate) struct DockViewportRuntime {
     drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
-    last_hovered_window: Option<DockViewportLastHoveredWindow>,
     routed_drop_preview: Option<DockViewportRoutedDropPreview>,
     status: DockViewportRuntimeStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DockViewportLastHoveredWindow {
-    window_id: WindowId,
-    drag_session_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,23 +90,6 @@ enum DockViewportWorkspaceRouteTarget {
     Valid(Option<crate::DockViewportResolvedDropTargetSnapshot>),
     Unavailable,
     Rejected(DockPolicyError),
-}
-
-impl DockViewportLastHoveredWindow {
-    fn new(window_id: WindowId, drag_session_id: Option<u64>) -> Self {
-        Self {
-            window_id,
-            drag_session_id,
-        }
-    }
-
-    fn matches_drag_session(&self, session: Option<&DockRuntimeDragSession>) -> bool {
-        self.drag_session_id == session.map(DockRuntimeDragSession::id)
-    }
-
-    fn matches_drag_session_id(&self, drag_session_id: Option<u64>) -> bool {
-        self.drag_session_id == drag_session_id
-    }
 }
 
 impl DockRuntimeDragTearOffGeometry {
@@ -243,7 +219,6 @@ impl DockViewportRoutedDropPreview {
         self.identity.window_id()
     }
 
-    #[cfg(test)]
     fn delivery(&self) -> &DockDropDelivery {
         &self.delivery
     }
@@ -317,7 +292,6 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
-            last_hovered_window: None,
             routed_drop_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
@@ -343,7 +317,6 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
-            last_hovered_window: None,
             routed_drop_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
@@ -398,7 +371,7 @@ impl DockViewportRuntime {
         let session = DockRuntimeDragSession::new(id, payload);
         self.drag_session = Some(session.clone());
         self.drag_tear_off_geometry = None;
-        self.last_hovered_window = None;
+        self.clear_routed_drop_preview_for_drag_session(Some(&session));
         session
     }
 
@@ -438,19 +411,25 @@ impl DockViewportRuntime {
             .cloned()
     }
 
-    pub(crate) fn finish_payload_drag(&mut self, session: &DockRuntimeDragSession) -> bool {
+    pub(crate) fn finish_payload_drag(
+        &mut self,
+        session: &DockRuntimeDragSession,
+    ) -> (bool, Vec<AnyWindowHandle>) {
         if self.drag_session.as_ref() != Some(session) {
-            return false;
+            return (false, Vec::new());
         }
         self.drag_session = None;
+        let mut changed = true;
         if self
             .drag_tear_off_geometry
             .is_some_and(|geometry| geometry.matches_drag_session(session))
         {
             self.drag_tear_off_geometry = None;
+            changed = true;
         }
-        self.clear_last_hovered_window_for_drag_session(Some(session));
-        true
+        let (preview_changed, windows) =
+            self.clear_routed_drop_preview_for_drag_session(Some(session));
+        (changed || preview_changed, windows)
     }
 
     pub(crate) fn validate_payload_drag_session(
@@ -468,56 +447,12 @@ impl DockViewportRuntime {
         })
     }
 
-    pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
-        self.last_hovered_window.map(|hovered| hovered.window_id)
-    }
-
-    pub(crate) fn last_hovered_window_for_drag_session(
-        &self,
-        session: Option<&DockRuntimeDragSession>,
-    ) -> Option<WindowId> {
-        let hovered = self.last_hovered_window?;
-        hovered
-            .matches_drag_session(session)
-            .then_some(hovered.window_id)
-    }
-
     pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
         self.adapter.record_window_focus(window_id);
     }
 
-    fn clear_last_hovered_window_if_matches(&mut self, window_id: WindowId) {
-        if self
-            .last_hovered_window
-            .is_some_and(|hovered| hovered.window_id == window_id)
-        {
-            self.last_hovered_window = None;
-        }
-    }
-
     fn discard_owned_window(&mut self, window_id: WindowId) -> bool {
         self.owned_windows.remove(&window_id)
-    }
-
-    fn clear_last_hovered_window_for_drag_session(
-        &mut self,
-        session: Option<&DockRuntimeDragSession>,
-    ) {
-        if self
-            .last_hovered_window
-            .is_some_and(|hovered| hovered.matches_drag_session(session))
-        {
-            self.last_hovered_window = None;
-        }
-    }
-
-    fn clear_last_hovered_window_for_drag_id(&mut self, drag_session_id: Option<u64>) {
-        if self
-            .last_hovered_window
-            .is_some_and(|hovered| hovered.matches_drag_session_id(drag_session_id))
-        {
-            self.last_hovered_window = None;
-        }
     }
 
     /// Returns the close policy used by [`handle_window_should_close`](Self::handle_window_should_close).
@@ -640,11 +575,7 @@ impl DockViewportRuntime {
         session: Option<&DockRuntimeDragSession>,
     ) -> Option<DockDropDelivery> {
         let session = session?;
-        let hovered_window = self.last_hovered_window_for_drag_session(Some(session))?;
         let preview = self.routed_drop_preview.as_ref()?;
-        if preview.window_id() != hovered_window {
-            return None;
-        }
         let delivery = preview.delivery();
         if delivery.drag_session_id() != Some(session.id()) {
             return None;
@@ -659,20 +590,13 @@ impl DockViewportRuntime {
     ) -> (bool, Vec<AnyWindowHandle>) {
         let payload_title = payload_title.into();
         let next = match resolution.route() {
-            DockViewportDropRoute::KnownViewport { target } => {
-                self.last_hovered_window = Some(DockViewportLastHoveredWindow::new(
-                    target.window_id(),
-                    resolution.drag_session_id(),
-                ));
+            DockViewportDropRoute::KnownViewport { .. } => {
                 self.routed_drop_preview_from_delivery(resolution.delivery(), payload_title)
             }
             DockViewportDropRoute::Local { .. }
             | DockViewportDropRoute::TearOff(_)
             | DockViewportDropRoute::Unavailable
-            | DockViewportDropRoute::Rejected(_) => {
-                self.clear_last_hovered_window_for_drag_id(resolution.drag_session_id());
-                None
-            }
+            | DockViewportDropRoute::Rejected(_) => None,
         };
         self.replace_routed_drop_preview(next)
     }
@@ -730,8 +654,25 @@ impl DockViewportRuntime {
         }
     }
 
+    fn clear_routed_drop_preview_for_drag_session(
+        &mut self,
+        session: Option<&DockRuntimeDragSession>,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        let Some(session) = session else {
+            return (false, Vec::new());
+        };
+        if self
+            .routed_drop_preview
+            .as_ref()
+            .is_some_and(|preview| preview.delivery().drag_session_id() == Some(session.id()))
+        {
+            self.replace_routed_drop_preview(None)
+        } else {
+            (false, Vec::new())
+        }
+    }
+
     fn clear_runtime_window_state(&mut self, space: &DockSpaceId, window_id: WindowId) {
-        self.clear_last_hovered_window_if_matches(window_id);
         let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.host_scenes.unregister_space(space);
     }
@@ -751,7 +692,6 @@ impl DockViewportRuntime {
             return DockViewportReusableWindow::Reused(window);
         }
 
-        self.clear_last_hovered_window_if_matches(window.window_id());
         self.discard_owned_window(window.window_id());
         self.adapter.unregister_space(space);
         self.host_scenes.unregister_space(space);
@@ -1441,7 +1381,6 @@ impl DockViewportRuntime {
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
-        self.clear_last_hovered_window_if_matches(window_id);
         self.discard_owned_window(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         self.host_scenes.unregister_window(window_id);

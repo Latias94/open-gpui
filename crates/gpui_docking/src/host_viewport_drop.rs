@@ -58,7 +58,6 @@ impl DockHost {
             window,
             cx,
             DockPayloadDropReleaseOrigin::HoveredHost,
-            None,
             drag_session,
             tear_off_geometry,
         );
@@ -99,11 +98,6 @@ impl DockHost {
             window,
             cx,
             release.origin(),
-            self.viewport_runtime()
-                .and_then(|runtime| match release.drag_session() {
-                    Some(session) => runtime.last_hovered_window_for_drag_session(Some(session)),
-                    None => runtime.last_hovered_window(),
-                }),
             drag_session,
             tear_off_geometry,
         );
@@ -118,7 +112,6 @@ fn viewport_drop_route_request_from_host(
     window: &Window,
     cx: &Context<DockHost>,
     origin: DockPayloadDropReleaseOrigin,
-    last_hovered_window: Option<open_gpui::WindowId>,
     drag_session: Option<DockRuntimeDragSession>,
     tear_off_geometry: Option<DockDragTearOffGeometry>,
 ) -> DockViewportDropRouteRequest {
@@ -126,9 +119,7 @@ fn viewport_drop_route_request_from_host(
         DockPayloadDropReleaseOrigin::HoveredHost => {
             DockViewportPlatformSignals::from_hovered_window(window, cx)
         }
-        DockPayloadDropReleaseOrigin::SourceOnly => {
-            DockViewportPlatformSignals::from_app(cx).with_hovered_window_id(last_hovered_window)
-        }
+        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),

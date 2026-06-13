@@ -135,19 +135,6 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().runtime_status()
     }
 
-    pub(crate) fn last_hovered_window(&self) -> Option<WindowId> {
-        self.runtime.borrow().last_hovered_window()
-    }
-
-    pub(crate) fn last_hovered_window_for_drag_session(
-        &self,
-        session: Option<&DockRuntimeDragSession>,
-    ) -> Option<WindowId> {
-        self.runtime
-            .borrow()
-            .last_hovered_window_for_drag_session(session)
-    }
-
     pub(crate) fn record_window_focus(&self, window_id: WindowId) {
         self.runtime.borrow_mut().record_window_focus(window_id);
     }
@@ -196,8 +183,19 @@ impl DockViewportRuntimeHandle {
             .active_payload_drag_tear_off_geometry(session)
     }
 
+    #[cfg(test)]
     pub(crate) fn finish_payload_drag(&self, session: &DockRuntimeDragSession) -> bool {
-        self.runtime.borrow_mut().finish_payload_drag(session)
+        self.runtime.borrow_mut().finish_payload_drag(session).0
+    }
+
+    pub(crate) fn finish_payload_drag_with_app(
+        &self,
+        session: &DockRuntimeDragSession,
+        cx: &mut App,
+    ) -> bool {
+        let (changed, windows) = self.runtime.borrow_mut().finish_payload_drag(session);
+        refresh_windows(windows, cx);
+        changed
     }
 
     /// Returns registered dock spaces in stable lexical order.
