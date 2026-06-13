@@ -81,7 +81,9 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        if let Some(delivery) = delivery {
+        if release.origin() == DockPayloadDropReleaseOrigin::HoveredHost
+            && let Some(delivery) = delivery
+        {
             let result = if delivery.accepts_drag_payload(release.payload()) {
                 runtime.deliver_payload_drop_with_outcome(delivery, cx)
             } else {
