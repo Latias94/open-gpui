@@ -1,4 +1,6 @@
 use super::*;
+use crate::{CanvasResizeHandle, HitOptions};
+use open_gpui::Axis;
 
 pub(super) struct SelectToolStateMachine;
 
@@ -67,13 +69,23 @@ impl SelectToolStateMachine {
                     last,
                     handle,
                     node_ids,
+                    edge_ids,
                     shape_ids,
                     origin,
+                    structural,
                     ..
                 },
                 CanvasEvent::PointerMove { position, .. },
             ) => self.handle_resizing_pointer_move(
-                context, position, *origin, *last, *handle, node_ids, shape_ids,
+                context,
+                position,
+                *origin,
+                *last,
+                *handle,
+                node_ids,
+                edge_ids,
+                shape_ids,
+                *structural,
             )?,
             (
                 ToolState::Pointing {
@@ -152,15 +164,17 @@ impl SelectToolStateMachine {
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         if let Some(handle) = context.transform_handle_at(document_position) {
-            let (node_ids, shape_ids) = context.resizable_selection_ids();
+            let resize_scope = context.resize_selection_scope();
             return Ok(vec![
                 CanvasToolEffect::BeginGesture,
                 CanvasToolEffect::SetState(ToolState::Resizing {
                     origin: document_position,
                     last: document_position,
                     handle: handle.handle,
-                    node_ids,
-                    shape_ids,
+                    node_ids: resize_scope.node_ids,
+                    edge_ids: resize_scope.edge_ids,
+                    shape_ids: resize_scope.shape_ids,
+                    structural: resize_scope.structural,
                     snap_guides: Vec::new(),
                 }),
             ]);
@@ -318,14 +332,17 @@ impl SelectToolStateMachine {
         last: Point<Pixels>,
         handle: CanvasResizeHandle,
         node_ids: &[NodeId],
+        edge_ids: &[EdgeId],
         shape_ids: &[ShapeId],
+        structural: bool,
     ) -> Result<Vec<CanvasToolEffect>, DocumentError> {
         let document_position = context.viewport().view_to_document(position);
         let raw_delta = document_position - last;
         let snap = context.snap_delta_for_resize(handle, raw_delta, node_ids, shape_ids);
         let delta = snap.delta;
-        let transaction =
-            context.resize_selection_transaction(handle, delta, node_ids, shape_ids)?;
+        let transaction = context.resize_selection_transaction(
+            handle, delta, node_ids, edge_ids, shape_ids, structural,
+        )?;
 
         Ok(vec![
             CanvasToolEffect::UpdateGesture(transaction),
@@ -334,7 +351,9 @@ impl SelectToolStateMachine {
                 last: last + delta,
                 handle,
                 node_ids: node_ids.to_vec(),
+                edge_ids: edge_ids.to_vec(),
                 shape_ids: shape_ids.to_vec(),
+                structural,
                 snap_guides: snap.guides,
             }),
         ])
@@ -363,5 +382,31 @@ impl SelectToolStateMachine {
                 base_selection: base_selection.clone(),
             }),
         ]
+    }
+}
+
+fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pixels> {
+    Bounds::from_corners(
+        Point::new(origin.x.min(current.x), origin.y.min(current.y)),
+        Point::new(origin.x.max(current.x), origin.y.max(current.y)),
+    )
+}
+
+fn constrained_drag_position(
+    origin: Point<Pixels>,
+    current: Point<Pixels>,
+    axis: Axis,
+) -> Point<Pixels> {
+    match axis {
+        Axis::Horizontal => Point::new(current.x, origin.y),
+        Axis::Vertical => Point::new(origin.x, current.y),
+    }
+}
+
+fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
+    if delta.x.abs() >= delta.y.abs() {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
     }
 }

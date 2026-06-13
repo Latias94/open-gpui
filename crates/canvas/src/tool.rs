@@ -1,30 +1,35 @@
 use crate::gesture::CanvasPreparedGestureCommit;
-use crate::layer::{
-    CanvasLayerRecord, CanvasZOrderCommand, reorder_layer_z_indices, sort_layer_records,
-};
-use crate::record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope};
-use crate::session::{CanvasEditorSession, CanvasEditorSessionSnapshot, CanvasSessionEffect};
-use crate::transform::{
-    CanvasResizeHandle, CanvasTransformHandle, canvas_transform_handles, resize_bounds_by_handle,
-};
+use crate::layer::CanvasZOrderCommand;
+use crate::session::{CanvasToolSession, CanvasToolSessionEffect, CanvasToolSessionSnapshot};
 use crate::{
-    CanvasClipboardPayload, CanvasConnectionEndpointRole, CanvasDefaultEdgeRouter, CanvasDocument,
-    CanvasDocumentDiff, CanvasEdge, CanvasEdgeRouter, CanvasEndpoint, CanvasGeometryFacts,
-    CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId, CanvasRecordScope, CanvasRuntime,
-    CanvasSnapGuide, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
-    CanvasViewport, DEFAULT_SNAP_THRESHOLD, DocumentCommand, DocumentError, EdgeId, HitOptions,
-    HitRecord, HitTarget, NodeId, ShapeId, connection_hit_options, selection_record_scope,
-    snap_delta_for_resize_selection, snap_delta_for_selection,
+    CanvasClipboardPayload, CanvasDefaultEdgeRouter, CanvasDocument, CanvasDocumentDiff,
+    CanvasEdgeRouter, CanvasEndpoint, CanvasKindRegistry, CanvasPasteTransaction, CanvasRecordId,
+    CanvasRuntime, CanvasStore, CanvasStoreChange, CanvasStoreListenerId, CanvasTransaction,
+    CanvasViewport, DocumentCommand, DocumentError, EdgeId, HitTarget, NodeId, ShapeId,
 };
-use indexmap::{IndexMap, IndexSet};
-use open_gpui::{Axis, Bounds, Pixels, Point};
+use indexmap::IndexSet;
+use open_gpui::{Bounds, Pixels, Point};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
+mod action;
 mod builtin;
+mod clipboard;
+mod context;
+mod group;
+mod history;
+mod registry;
 mod select;
+mod z_order;
 
+use crate::session::ToolState;
+pub use action::CanvasToolIntent;
+pub(crate) use action::{CanvasEditorAction, CanvasToolEffect};
 use builtin::BuiltInCanvasTool;
+pub use context::CanvasToolContext;
+pub(crate) use context::CanvasToolReducerContext;
+pub use history::CanvasHistory;
+pub use registry::{CanvasToolReducer, CanvasToolRegistry, CanvasToolRegistryError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PointerButton {
@@ -153,46 +158,6 @@ impl CanvasTool {
             _ => None,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ToolState {
-    Idle,
-    Pointing {
-        origin: Point<Pixels>,
-        selection_mode: CanvasSelectionMode,
-        base_selection: CanvasSelection,
-    },
-    Selecting {
-        origin: Point<Pixels>,
-        current: Point<Pixels>,
-        selection_mode: CanvasSelectionMode,
-        base_selection: CanvasSelection,
-    },
-    Translating {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-        constraint_axis: Option<Axis>,
-        node_ids: Vec<NodeId>,
-        shape_ids: Vec<ShapeId>,
-        snap_guides: Vec<CanvasSnapGuide>,
-    },
-    Resizing {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-        handle: CanvasResizeHandle,
-        node_ids: Vec<NodeId>,
-        shape_ids: Vec<ShapeId>,
-        snap_guides: Vec<CanvasSnapGuide>,
-    },
-    Panning {
-        origin: Point<Pixels>,
-        last: Point<Pixels>,
-    },
-    Connecting {
-        source: CanvasEndpoint,
-        current: Point<Pixels>,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -358,739 +323,27 @@ impl CanvasSelection {
         self.handles
             .retain(|endpoint| document.validate_endpoint(endpoint).is_ok());
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum CanvasToolEffect {
-    ApplyTransaction(CanvasTransaction),
-    BeginGesture,
-    UpdateGesture(CanvasTransaction),
-    CommitGesture,
-    CancelGesture,
-    SetTool(CanvasTool),
-    SetSelection(CanvasSelection),
-    ReplaceSelection(HitTarget),
-    AddSelection(HitTarget),
-    RemoveSelection(HitTarget),
-    ToggleSelection(HitTarget),
-    ClearSelection,
-    SetState(ToolState),
-    PanViewport(Point<Pixels>),
-    SetViewport(CanvasViewport),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum CanvasToolIntent {
-    ApplyTransaction(CanvasTransaction),
-    CommitTransaction,
-    CancelTransaction,
-    SetTool(CanvasTool),
-    SetSelection(CanvasSelection),
-    ReplaceSelection(HitTarget),
-    AddSelection(HitTarget),
-    RemoveSelection(HitTarget),
-    ToggleSelection(HitTarget),
-    ClearSelection,
-    PanViewport(Point<Pixels>),
-    SetViewport(CanvasViewport),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum CanvasEditorAction {
-    ApplyTransaction(CanvasTransaction),
-    BeginGesture,
-    UpdateGesture(CanvasTransaction),
-    CommitGesture,
-    CancelGesture,
-    SetTool(CanvasTool),
-    Session(CanvasSessionEffect),
-}
-
-impl From<CanvasToolEffect> for CanvasEditorAction {
-    fn from(effect: CanvasToolEffect) -> Self {
-        match effect {
-            CanvasToolEffect::ApplyTransaction(transaction) => Self::ApplyTransaction(transaction),
-            CanvasToolEffect::BeginGesture => Self::BeginGesture,
-            CanvasToolEffect::UpdateGesture(transaction) => Self::UpdateGesture(transaction),
-            CanvasToolEffect::CommitGesture => Self::CommitGesture,
-            CanvasToolEffect::CancelGesture => Self::CancelGesture,
-            CanvasToolEffect::SetTool(tool) => Self::SetTool(tool),
-            CanvasToolEffect::SetSelection(selection) => {
-                Self::Session(CanvasSessionEffect::SetSelection(selection))
-            }
-            CanvasToolEffect::ReplaceSelection(target) => {
-                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
-            }
-            CanvasToolEffect::AddSelection(target) => {
-                Self::Session(CanvasSessionEffect::AddSelection(target))
-            }
-            CanvasToolEffect::RemoveSelection(target) => {
-                Self::Session(CanvasSessionEffect::RemoveSelection(target))
-            }
-            CanvasToolEffect::ToggleSelection(target) => {
-                Self::Session(CanvasSessionEffect::ToggleSelection(target))
-            }
-            CanvasToolEffect::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
-            CanvasToolEffect::SetState(state) => {
-                Self::Session(CanvasSessionEffect::SetState(state))
-            }
-            CanvasToolEffect::PanViewport(delta) => {
-                Self::Session(CanvasSessionEffect::PanViewport(delta))
-            }
-            CanvasToolEffect::SetViewport(viewport) => {
-                Self::Session(CanvasSessionEffect::SetViewport(viewport))
-            }
-        }
-    }
-}
-
-impl From<CanvasToolIntent> for CanvasEditorAction {
-    fn from(intent: CanvasToolIntent) -> Self {
-        match intent {
-            CanvasToolIntent::ApplyTransaction(transaction) => Self::ApplyTransaction(transaction),
-            CanvasToolIntent::CommitTransaction => Self::CommitGesture,
-            CanvasToolIntent::CancelTransaction => Self::CancelGesture,
-            CanvasToolIntent::SetTool(tool) => Self::SetTool(tool),
-            CanvasToolIntent::SetSelection(selection) => {
-                Self::Session(CanvasSessionEffect::SetSelection(selection))
-            }
-            CanvasToolIntent::ReplaceSelection(target) => {
-                Self::Session(CanvasSessionEffect::ReplaceSelection(target))
-            }
-            CanvasToolIntent::AddSelection(target) => {
-                Self::Session(CanvasSessionEffect::AddSelection(target))
-            }
-            CanvasToolIntent::RemoveSelection(target) => {
-                Self::Session(CanvasSessionEffect::RemoveSelection(target))
-            }
-            CanvasToolIntent::ToggleSelection(target) => {
-                Self::Session(CanvasSessionEffect::ToggleSelection(target))
-            }
-            CanvasToolIntent::ClearSelection => Self::Session(CanvasSessionEffect::ClearSelection),
-            CanvasToolIntent::PanViewport(delta) => {
-                Self::Session(CanvasSessionEffect::PanViewport(delta))
-            }
-            CanvasToolIntent::SetViewport(viewport) => {
-                Self::Session(CanvasSessionEffect::SetViewport(viewport))
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct CanvasToolContext<'a> {
-    document: &'a CanvasDocument,
-    viewport: CanvasViewport,
-    tool: &'a CanvasTool,
-    runtime: &'a CanvasRuntime,
-    edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
-    kind_registry: &'a CanvasKindRegistry,
-    selection: &'a CanvasSelection,
-    history: &'a CanvasHistory,
-}
-
-impl fmt::Debug for CanvasToolContext<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CanvasToolContext")
-            .field("document", self.document)
-            .field("viewport", &self.viewport)
-            .field("tool", self.tool)
-            .field("runtime", self.runtime)
-            .field("edge_router", &"<dyn CanvasEdgeRouter>")
-            .field("kind_registry", self.kind_registry)
-            .field("selection", self.selection)
-            .field("history", self.history)
-            .finish()
-    }
-}
-
-impl CanvasToolContext<'_> {
-    pub fn document(&self) -> &CanvasDocument {
-        self.document
+    pub(crate) fn selected_records(&self) -> impl Iterator<Item = CanvasRecordId> + '_ {
+        self.selected_nodes()
+            .cloned()
+            .map(CanvasRecordId::Node)
+            .chain(self.selected_edges().cloned().map(CanvasRecordId::Edge))
+            .chain(self.selected_shapes().cloned().map(CanvasRecordId::Shape))
     }
 
-    pub fn viewport(&self) -> &CanvasViewport {
-        &self.viewport
-    }
-
-    pub fn tool(&self) -> &CanvasTool {
-        self.tool
-    }
-
-    pub fn runtime(&self) -> &CanvasRuntime {
-        self.runtime
-    }
-
-    pub fn edge_router(&self) -> &(dyn CanvasEdgeRouter + Send + Sync) {
-        self.edge_router
-    }
-
-    pub fn kind_registry(&self) -> &CanvasKindRegistry {
-        self.kind_registry
-    }
-
-    pub fn selection(&self) -> &CanvasSelection {
-        self.selection
-    }
-
-    pub fn history(&self) -> &CanvasHistory {
-        self.history
-    }
-
-    pub fn active_custom_tool_id(&self) -> Option<&CanvasToolId> {
-        self.tool.custom_id()
-    }
-
-    pub fn document_position(&self, view_position: Point<Pixels>) -> Point<Pixels> {
-        self.viewport.view_to_document(view_position)
-    }
-
-    pub fn hit_test_view(
-        &self,
-        view_position: Point<Pixels>,
-        options: HitOptions,
-    ) -> impl Iterator<Item = &HitRecord> {
-        self.runtime.precise_hit_test_with_kind_registry(
-            self.document,
-            self.kind_registry,
-            self.document_position(view_position),
-            options,
-        )
-    }
-
-    pub fn selection_record_scope(&self, options: CanvasRecordScopeOptions) -> CanvasRecordScope {
-        selection_record_scope(self.document, self.selection, options)
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct CanvasToolReducerContext<'a> {
-    document: &'a CanvasDocument,
-    viewport: CanvasViewport,
-    state: &'a ToolState,
-    runtime: &'a CanvasRuntime,
-    edge_router: &'a (dyn CanvasEdgeRouter + Send + Sync),
-    kind_registry: &'a CanvasKindRegistry,
-    selection: &'a CanvasSelection,
-}
-
-impl CanvasToolReducerContext<'_> {
-    pub(crate) fn document(&self) -> &CanvasDocument {
-        self.document
-    }
-
-    pub(crate) fn viewport(&self) -> CanvasViewport {
-        self.viewport
-    }
-
-    pub(crate) fn state(&self) -> &ToolState {
-        self.state
-    }
-
-    pub(crate) fn selection(&self) -> &CanvasSelection {
-        self.selection
-    }
-
-    pub(crate) fn runtime(&self) -> &CanvasRuntime {
-        self.runtime
-    }
-
-    pub(crate) fn kind_registry(&self) -> &CanvasKindRegistry {
-        self.kind_registry
-    }
-
-    pub(crate) fn delete_selection_transaction(&self) -> CanvasTransaction {
-        let (node_ids, edge_ids, shape_ids) = self.deletable_selection_ids(self.selection);
-
-        let mut commands = Vec::new();
-
-        for id in edge_ids {
-            let Some(edge) = self.document.edge(&id) else {
-                continue;
-            };
-            if edge.locked
-                || node_ids.contains(&edge.source.node_id)
-                || node_ids.contains(&edge.target.node_id)
-            {
-                continue;
-            }
-
-            commands.push(DocumentCommand::RemoveEdge(id));
-        }
-
-        commands.extend(node_ids.iter().cloned().map(DocumentCommand::RemoveNode));
-
-        for id in shape_ids {
-            let Some(shape) = self.document.shape(&id) else {
-                continue;
-            };
-            if shape.locked {
-                continue;
-            }
-
-            commands.push(DocumentCommand::RemoveShape(id));
-        }
-
-        CanvasTransaction::new(commands)
-    }
-
-    fn deletable_selection_ids(
-        &self,
-        selection: &CanvasSelection,
-    ) -> (IndexSet<NodeId>, IndexSet<EdgeId>, IndexSet<ShapeId>) {
-        let records = self.document.relations().collect_related_records(
-            selection
-                .selected_nodes()
-                .cloned()
-                .map(CanvasRecordId::Node)
-                .chain(
-                    selection
-                        .selected_edges()
-                        .cloned()
-                        .map(CanvasRecordId::Edge),
-                )
-                .chain(
-                    selection
-                        .selected_shapes()
-                        .cloned()
-                        .map(CanvasRecordId::Shape),
-                ),
-            |record_id| self.is_deletable_record(record_id),
-        );
-
-        let mut node_ids = IndexSet::new();
-        let mut edge_ids = IndexSet::new();
-        let mut shape_ids = IndexSet::new();
-        for record in records {
-            match record {
-                CanvasRecordId::Node(id) => {
-                    node_ids.insert(id);
-                }
-                CanvasRecordId::Edge(id) => {
-                    edge_ids.insert(id);
-                }
-                CanvasRecordId::Shape(id) => {
-                    shape_ids.insert(id);
-                }
-            }
-        }
-
-        (node_ids, edge_ids, shape_ids)
-    }
-
-    fn is_deletable_record(&self, record_id: &CanvasRecordId) -> bool {
+    pub(crate) fn insert_record(&mut self, record_id: CanvasRecordId) -> bool {
         match record_id {
-            CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
-            CanvasRecordId::Edge(id) => self.document.edge(id).is_some_and(|edge| !edge.locked),
-            CanvasRecordId::Shape(id) => self.document.shape(id).is_some_and(|shape| !shape.locked),
+            CanvasRecordId::Node(id) => self.insert_node(id),
+            CanvasRecordId::Edge(id) => self.insert_edge(id),
+            CanvasRecordId::Shape(id) => self.insert_shape(id),
         }
-    }
-
-    pub(crate) fn translatable_selection_ids(
-        &self,
-        selection: &CanvasSelection,
-    ) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let records = self.document.relations().collect_related_records(
-            selection
-                .selected_nodes()
-                .cloned()
-                .map(CanvasRecordId::Node)
-                .chain(
-                    selection
-                        .selected_shapes()
-                        .cloned()
-                        .map(CanvasRecordId::Shape),
-                ),
-            |record_id| self.is_translatable_record(record_id),
-        );
-
-        let node_ids = records
-            .iter()
-            .filter_map(|id| match id {
-                CanvasRecordId::Node(id) => Some(id.clone()),
-                CanvasRecordId::Edge(_) | CanvasRecordId::Shape(_) => None,
-            })
-            .collect();
-        let shape_ids = records
-            .iter()
-            .filter_map(|id| match id {
-                CanvasRecordId::Shape(id) => Some(id.clone()),
-                CanvasRecordId::Node(_) | CanvasRecordId::Edge(_) => None,
-            })
-            .collect();
-
-        (node_ids, shape_ids)
-    }
-
-    pub(crate) fn selection_structurally_contains_target(&self, target: &HitTarget) -> bool {
-        let Some(record_id) = record_id_for_selection_target(target) else {
-            return false;
-        };
-
-        self.selection_structurally_contains_record(&record_id)
-    }
-
-    fn selection_structurally_contains_record(&self, record_id: &CanvasRecordId) -> bool {
-        collect_selection_record_scope(
-            self.document,
-            self.selection,
-            CanvasRecordScopeOptions::structural(),
-            |record_id| self.is_translatable_record(record_id),
-        )
-        .contains(record_id)
-    }
-
-    fn is_translatable_record(&self, record_id: &CanvasRecordId) -> bool {
-        match record_id {
-            CanvasRecordId::Node(id) => self.document.node(id).is_some_and(|node| !node.locked),
-            CanvasRecordId::Shape(id) => self.document.shape(id).is_some_and(|shape| !shape.locked),
-            CanvasRecordId::Edge(_) => false,
-        }
-    }
-
-    pub(crate) fn transform_handle_at(
-        &self,
-        point: Point<Pixels>,
-    ) -> Option<CanvasTransformHandle> {
-        canvas_transform_handles(
-            self.document,
-            self.selection,
-            self.viewport,
-            Some(self.kind_registry),
-        )
-        .into_iter()
-        .rev()
-        .find(|handle| handle.document_bounds.contains(&point))
-    }
-
-    pub(crate) fn resizable_selection_ids(&self) -> (Vec<NodeId>, Vec<ShapeId>) {
-        let node_ids = self
-            .selection
-            .selected_nodes()
-            .filter_map(|id| self.document.node(id))
-            .filter(|node| !node.locked && !node.hidden)
-            .map(|node| node.id.clone())
-            .collect();
-        let shape_ids = self
-            .selection
-            .selected_shapes()
-            .filter_map(|id| self.document.shape(id))
-            .filter(|shape| !shape.locked && !shape.hidden)
-            .map(|shape| shape.id.clone())
-            .collect();
-
-        (node_ids, shape_ids)
-    }
-
-    pub(crate) fn snap_delta_for_translation(
-        &self,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> crate::snap::CanvasSnapResult {
-        let mut selection = CanvasSelection::default();
-        for id in node_ids {
-            selection.insert_node(id.clone());
-        }
-        for id in shape_ids {
-            selection.insert_shape(id.clone());
-        }
-        snap_delta_for_selection(
-            self.document,
-            &selection,
-            delta,
-            DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry),
-        )
-    }
-
-    pub(crate) fn snap_delta_for_resize(
-        &self,
-        handle: CanvasResizeHandle,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> crate::snap::CanvasSnapResult {
-        let mut selection = CanvasSelection::default();
-        for id in node_ids {
-            selection.insert_node(id.clone());
-        }
-        for id in shape_ids {
-            selection.insert_shape(id.clone());
-        }
-        snap_delta_for_resize_selection(
-            self.document,
-            &selection,
-            handle,
-            delta,
-            DEFAULT_SNAP_THRESHOLD,
-            Some(self.kind_registry),
-        )
-    }
-
-    pub(crate) fn node_endpoint_at(
-        &self,
-        point: Point<Pixels>,
-        role: CanvasConnectionEndpointRole,
-    ) -> Option<CanvasEndpoint> {
-        let facts = CanvasGeometryFacts::with_router_and_kind_registry(
-            self.document,
-            self.edge_router,
-            Some(self.kind_registry),
-        );
-        let records =
-            self.runtime
-                .precise_hit_test_with_facts(facts, point, connection_hit_options());
-        facts.connection_endpoint_at(records, role)
-    }
-
-    pub(crate) fn resize_selection_transaction(
-        &self,
-        handle: CanvasResizeHandle,
-        delta: Point<Pixels>,
-        node_ids: &[NodeId],
-        shape_ids: &[ShapeId],
-    ) -> Result<CanvasTransaction, DocumentError> {
-        if delta.x == Pixels::ZERO && delta.y == Pixels::ZERO {
-            return Ok(CanvasTransaction::default());
-        }
-
-        let mut commands = Vec::new();
-        for id in node_ids {
-            let Some(node) = self.document.node(id) else {
-                continue;
-            };
-            if node.locked {
-                continue;
-            }
-            let mut node = node.clone();
-            let proposed = resize_bounds_by_handle(node.bounds(), handle, delta);
-            let bounds = self.kind_registry.resize_node_bounds(&node, proposed)?;
-            node.position = bounds.origin;
-            node.size = bounds.size;
-            commands.push(DocumentCommand::UpdateNode(node));
-        }
-
-        for id in shape_ids {
-            let Some(shape) = self.document.shape(id) else {
-                continue;
-            };
-            if shape.locked {
-                continue;
-            }
-            let mut shape = shape.clone();
-            let proposed = resize_bounds_by_handle(shape.bounds, handle, delta);
-            shape.bounds = self.kind_registry.resize_shape_bounds(&shape, proposed)?;
-            commands.push(DocumentCommand::UpdateShape(shape));
-        }
-
-        Ok(CanvasTransaction::new(commands))
-    }
-
-    pub(crate) fn selection_for_intersections_with_mode(
-        &self,
-        bounds: Bounds<Pixels>,
-        mode: CanvasSelectionMode,
-        base_selection: &CanvasSelection,
-    ) -> CanvasSelection {
-        let selection = self.selection_for_intersections(bounds);
-        match mode {
-            CanvasSelectionMode::Replace => selection,
-            CanvasSelectionMode::Add => {
-                let mut combined = base_selection.clone();
-                combined.extend_selection(selection);
-                combined
-            }
-        }
-    }
-
-    fn selection_for_intersections(&self, bounds: Bounds<Pixels>) -> CanvasSelection {
-        let mut selection = CanvasSelection::default();
-        for record in self
-            .runtime
-            .query_with_options(bounds, HitOptions::default())
-        {
-            match &record.target {
-                HitTarget::Node(_) | HitTarget::Edge(_) | HitTarget::Shape(_) => {
-                    selection.insert_target(record.target.clone());
-                }
-                HitTarget::Handle { .. } => {}
-            }
-        }
-        selection
-    }
-}
-
-pub trait CanvasToolReducer {
-    fn handle_event(
-        &mut self,
-        context: CanvasToolContext<'_>,
-        event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolIntent>, DocumentError>;
-}
-
-impl<F> CanvasToolReducer for F
-where
-    F: for<'a> FnMut(
-        CanvasToolContext<'a>,
-        CanvasEvent,
-    ) -> Result<Vec<CanvasToolIntent>, DocumentError>,
-{
-    fn handle_event(
-        &mut self,
-        context: CanvasToolContext<'_>,
-        event: CanvasEvent,
-    ) -> Result<Vec<CanvasToolIntent>, DocumentError> {
-        self(context, event)
-    }
-}
-
-#[derive(Default)]
-pub struct CanvasToolRegistry {
-    reducers: IndexMap<CanvasToolId, Box<dyn CanvasToolReducer>>,
-}
-
-impl CanvasToolRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn insert<T>(
-        &mut self,
-        id: impl Into<CanvasToolId>,
-        reducer: T,
-    ) -> Option<Box<dyn CanvasToolReducer>>
-    where
-        T: CanvasToolReducer + 'static,
-    {
-        self.reducers.insert(id.into(), Box::new(reducer))
-    }
-
-    pub fn insert_boxed(
-        &mut self,
-        id: impl Into<CanvasToolId>,
-        reducer: Box<dyn CanvasToolReducer>,
-    ) -> Option<Box<dyn CanvasToolReducer>> {
-        self.reducers.insert(id.into(), reducer)
-    }
-
-    pub fn remove(&mut self, id: &CanvasToolId) -> Option<Box<dyn CanvasToolReducer>> {
-        self.reducers.shift_remove(id)
-    }
-
-    pub fn contains(&self, id: &CanvasToolId) -> bool {
-        self.reducers.contains_key(id)
-    }
-
-    pub fn reducer_mut(&mut self, id: &CanvasToolId) -> Option<&mut (dyn CanvasToolReducer + '_)> {
-        let reducer = self.reducers.get_mut(id)?;
-        Some(reducer.as_mut())
-    }
-
-    pub fn ids(&self) -> impl Iterator<Item = &CanvasToolId> {
-        self.reducers.keys()
-    }
-
-    pub fn len(&self) -> usize {
-        self.reducers.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.reducers.is_empty()
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum CanvasToolRegistryError {
-    MissingTool(CanvasToolId),
-    Document(DocumentError),
-}
-
-impl From<DocumentError> for CanvasToolRegistryError {
-    fn from(value: DocumentError) -> Self {
-        Self::Document(value)
-    }
-}
-
-impl fmt::Display for CanvasToolRegistryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingTool(id) => write!(f, "canvas custom tool `{id}` is not registered"),
-            Self::Document(error) => fmt::Display::fmt(error, f),
-        }
-    }
-}
-
-impl Error for CanvasToolRegistryError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::MissingTool(_) => None,
-            Self::Document(error) => Some(error),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct CanvasHistory {
-    undo_stack: Vec<CanvasTransaction>,
-    redo_stack: Vec<CanvasTransaction>,
-}
-
-impl CanvasHistory {
-    pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo_stack.is_empty()
-    }
-
-    pub fn undo_depth(&self) -> usize {
-        self.undo_stack.len()
-    }
-
-    pub fn redo_depth(&self) -> usize {
-        self.redo_stack.len()
-    }
-
-    pub fn clear(&mut self) {
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-    }
-
-    pub fn next_undo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.undo_stack.last()
-    }
-
-    pub fn next_redo_transaction(&self) -> Option<&CanvasTransaction> {
-        self.redo_stack.last()
-    }
-
-    pub(crate) fn push_undo(&mut self, transaction: CanvasTransaction) {
-        if !transaction.is_empty() {
-            self.undo_stack.push(transaction);
-            self.redo_stack.clear();
-        }
-    }
-
-    pub(crate) fn pop_undo(&mut self) -> Option<CanvasTransaction> {
-        self.undo_stack.pop()
-    }
-
-    pub(crate) fn push_redo(&mut self, transaction: CanvasTransaction) {
-        if !transaction.is_empty() {
-            self.redo_stack.push(transaction);
-        }
-    }
-
-    pub(crate) fn pop_redo(&mut self) -> Option<CanvasTransaction> {
-        self.redo_stack.pop()
     }
 }
 
 pub struct CanvasEditor {
     store: CanvasStore,
-    session: CanvasEditorSession,
+    session: CanvasToolSession,
 }
 
 impl Default for CanvasEditor {
@@ -1110,7 +363,7 @@ impl CanvasEditor {
     {
         Self {
             store: CanvasStore::new_with_router(document, edge_router),
-            session: CanvasEditorSession::default(),
+            session: CanvasToolSession::default(),
         }
     }
 
@@ -1139,7 +392,7 @@ impl CanvasEditor {
                 edge_router,
                 kind_registry,
             )?,
-            session: CanvasEditorSession::default(),
+            session: CanvasToolSession::default(),
         })
     }
 
@@ -1186,7 +439,7 @@ impl CanvasEditor {
         self.store.kind_registry_snapshot()
     }
 
-    pub(crate) fn session_snapshot(&self) -> CanvasEditorSessionSnapshot {
+    pub(crate) fn session_snapshot(&self) -> CanvasToolSessionSnapshot {
         self.session.snapshot()
     }
 
@@ -1321,7 +574,7 @@ impl CanvasEditor {
         Ok(())
     }
 
-    fn apply_session_effect(&mut self, effect: CanvasSessionEffect) {
+    fn apply_session_effect(&mut self, effect: CanvasToolSessionEffect) {
         let document = self.store.document_snapshot();
         self.session.apply_effect(effect, document.as_ref());
     }
@@ -1456,9 +709,7 @@ impl CanvasEditor {
     }
 
     pub fn copy_selection(&self) -> Option<CanvasClipboardPayload> {
-        let payload =
-            CanvasClipboardPayload::from_document_selection(self.document(), self.selection());
-        (!payload.is_empty()).then_some(payload)
+        clipboard::copy_selection(self.document(), self.selection())
     }
 
     pub fn cut_selection(&mut self) -> Result<Option<CanvasClipboardPayload>, DocumentError> {
@@ -1474,15 +725,33 @@ impl CanvasEditor {
         payload: &CanvasClipboardPayload,
         offset: Point<Pixels>,
     ) -> Result<bool, DocumentError> {
-        let pasted = payload.paste_transaction(self.document(), offset);
+        let pasted = clipboard::paste_clipboard(self.document(), payload, offset);
         self.apply_paste_transaction(pasted)
     }
 
     pub fn duplicate_selection(&mut self, offset: Point<Pixels>) -> Result<bool, DocumentError> {
-        let Some(payload) = self.copy_selection() else {
+        let Some(pasted) =
+            clipboard::duplicate_selection(self.document(), self.selection(), offset)
+        else {
             return Ok(false);
         };
-        self.paste_clipboard(&payload, offset)
+        self.apply_paste_transaction(pasted)
+    }
+
+    pub fn group_selection(&mut self, group_id: impl Into<ShapeId>) -> Result<bool, DocumentError> {
+        let Some(edit) =
+            group::group_selection_edit(self.document(), self.selection(), group_id.into())
+        else {
+            return Ok(false);
+        };
+        self.apply_group_edit(edit)
+    }
+
+    pub fn ungroup_selection(&mut self) -> Result<bool, DocumentError> {
+        let Some(edit) = group::ungroup_selection_edit(self.document(), self.selection()) else {
+            return Ok(false);
+        };
+        self.apply_group_edit(edit)
     }
 
     pub fn reorder_selection(
@@ -1611,145 +880,26 @@ impl CanvasEditor {
         &mut self,
         pasted: CanvasPasteTransaction,
     ) -> Result<bool, DocumentError> {
-        if pasted.transaction.is_empty() {
+        let Some((transaction, selection)) = clipboard::paste_transaction_parts(pasted) else {
             return Ok(false);
-        }
+        };
 
-        self.apply_transaction(pasted.transaction)?;
+        self.apply_transaction(transaction)?;
+        let document = self.store.document_snapshot();
+        self.session.set_selection(selection, document.as_ref());
+        Ok(true)
+    }
+
+    fn apply_group_edit(&mut self, edit: group::CanvasGroupEdit) -> Result<bool, DocumentError> {
+        self.apply_transaction(edit.transaction)?;
         let document = self.store.document_snapshot();
         self.session
-            .set_selection(pasted.selection, document.as_ref());
+            .set_selection(edit.selection, document.as_ref());
         Ok(true)
     }
 
     fn reorder_selection_transaction(&self, command: CanvasZOrderCommand) -> CanvasTransaction {
-        let selection_records = self.z_order_selection_record_ids();
-        let mut records = self.z_order_records(&selection_records);
-        let commands = reorder_layer_z_indices(&mut records, command)
-            .into_iter()
-            .filter_map(|(record_id, z_index)| self.z_order_update_command(&record_id, z_index))
-            .collect::<Vec<_>>();
-
-        CanvasTransaction::new(commands)
-    }
-
-    fn z_order_selection_record_ids(&self) -> IndexSet<CanvasRecordId> {
-        collect_selection_record_scope(
-            self.document(),
-            self.selection(),
-            CanvasRecordScopeOptions::structural_with_internal_edges(),
-            |record_id| self.is_reorderable_record(record_id),
-        )
-    }
-
-    fn is_reorderable_record(&self, record_id: &CanvasRecordId) -> bool {
-        match record_id {
-            CanvasRecordId::Node(id) => self.document().node(id).is_some_and(|node| !node.locked),
-            CanvasRecordId::Edge(id) => self.document().edge(id).is_some_and(|edge| !edge.locked),
-            CanvasRecordId::Shape(id) => {
-                self.document().shape(id).is_some_and(|shape| !shape.locked)
-            }
-        }
-    }
-
-    fn z_order_records(
-        &self,
-        selection_records: &IndexSet<CanvasRecordId>,
-    ) -> Vec<CanvasLayerRecord> {
-        let mut ordinal = 0;
-        let mut records = Vec::new();
-
-        records.extend(self.document().nodes().map(|node| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Node(node.id.clone()),
-                z_index: node.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Node(node.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-        records.extend(self.document().shapes().map(|shape| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Shape(shape.id.clone()),
-                z_index: shape.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Shape(shape.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-        records.extend(self.document().edges().map(|edge| {
-            let record = CanvasLayerRecord {
-                id: CanvasRecordId::Edge(edge.id.clone()),
-                z_index: edge.z_index,
-                ordinal,
-                selected: selection_records.contains(&CanvasRecordId::Edge(edge.id.clone())),
-            };
-            ordinal += 1;
-            record
-        }));
-
-        sort_layer_records(&mut records);
-        records
-    }
-
-    fn z_order_update_command(
-        &self,
-        record_id: &CanvasRecordId,
-        z_index: i32,
-    ) -> Option<DocumentCommand> {
-        match record_id {
-            CanvasRecordId::Node(id) => {
-                let mut node = self.document().node(id)?.clone();
-                node.z_index = z_index;
-                Some(DocumentCommand::UpdateNode(node))
-            }
-            CanvasRecordId::Edge(id) => {
-                let mut edge = self.document().edge(id)?.clone();
-                edge.z_index = z_index;
-                Some(DocumentCommand::UpdateEdge(edge))
-            }
-            CanvasRecordId::Shape(id) => {
-                let mut shape = self.document().shape(id)?.clone();
-                shape.z_index = z_index;
-                Some(DocumentCommand::UpdateShape(shape))
-            }
-        }
-    }
-}
-
-fn selection_bounds(origin: Point<Pixels>, current: Point<Pixels>) -> Bounds<Pixels> {
-    Bounds::from_corners(
-        Point::new(origin.x.min(current.x), origin.y.min(current.y)),
-        Point::new(origin.x.max(current.x), origin.y.max(current.y)),
-    )
-}
-
-fn constrained_drag_position(
-    origin: Point<Pixels>,
-    current: Point<Pixels>,
-    axis: Axis,
-) -> Point<Pixels> {
-    match axis {
-        Axis::Horizontal => Point::new(current.x, origin.y),
-        Axis::Vertical => Point::new(origin.x, current.y),
-    }
-}
-
-fn drag_constraint_axis(delta: Point<Pixels>) -> Axis {
-    if delta.x.abs() >= delta.y.abs() {
-        Axis::Horizontal
-    } else {
-        Axis::Vertical
-    }
-}
-
-fn record_id_for_selection_target(target: &HitTarget) -> Option<CanvasRecordId> {
-    match target {
-        HitTarget::Node(id) => Some(CanvasRecordId::Node(id.clone())),
-        HitTarget::Shape(id) => Some(CanvasRecordId::Shape(id.clone())),
-        HitTarget::Edge(_) | HitTarget::Handle { .. } => None,
+        z_order::reorder_selection_transaction(self.document(), self.selection(), command)
     }
 }
 
@@ -1759,10 +909,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest, CanvasNodeInteractionPolicy,
-        CanvasNodeKind, CanvasNodeResizeProposal, CanvasNodeSchemaPolicy,
-        CanvasNodeTransformPolicy, CanvasRecordKind, CanvasRoutePath, CanvasRouteRequest,
-        CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId,
+        CanvasEdge, CanvasNode, CanvasNodeGeometryPolicy, CanvasNodeHitTest,
+        CanvasNodeInteractionPolicy, CanvasNodeKind, CanvasNodeResizeProposal,
+        CanvasNodeSchemaPolicy, CanvasNodeTransformPolicy, CanvasRecordId, CanvasRecordKind,
+        CanvasRecordScopeOptions, CanvasResizeHandle, CanvasRoutePath, CanvasRouteRequest,
+        CanvasSchemaError, CanvasShape, CanvasTransformTarget, CanvasValue, HandleId, HitOptions,
+        canvas_transform_handles,
         test_support::{connected_pair_fixture, document_fixture},
     };
     use open_gpui::{point, px, size};
@@ -2630,18 +1782,9 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![NodeId::from("a-copy"), NodeId::from("b-copy")]
+            vec![NodeId::from("b-copy")]
         );
-        assert_eq!(
-            editor
-                .session
-                .selection
-                .edges
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec![EdgeId::from("a-b-copy")]
-        );
+        assert!(editor.session.selection.edges.is_empty());
         assert_eq!(
             editor
                 .session
@@ -2744,6 +1887,559 @@ mod tests {
             vec![ShapeId::from("shape-copy")]
         );
         assert_eq!(editor.history().undo_depth(), 2);
+    }
+
+    #[test]
+    fn editor_groups_selection_with_internal_edges_and_selects_group() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(400.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .edge(CanvasEdge::new(
+                "a-outside",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("outside", None::<&str>),
+            ))
+            .shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(50.0), px(160.0)), size(px(80.0), px(40.0))),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("shape"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let member_a = CanvasRecordId::Node(NodeId::from("a"));
+        let member_b = CanvasRecordId::Node(NodeId::from("b"));
+        let member_shape = CanvasRecordId::Shape(ShapeId::from("shape"));
+        let internal_edge = CanvasRecordId::Edge(EdgeId::from("a-b"));
+        let external_edge = CanvasRecordId::Edge(EdgeId::from("a-outside"));
+        assert_eq!(
+            editor
+                .document()
+                .shape(&ShapeId::from("group"))
+                .unwrap()
+                .kind,
+            "group"
+        );
+        for member in [&member_a, &member_b, &member_shape, &internal_edge] {
+            assert_eq!(
+                editor.document().relations().parent_of(member),
+                Some(&group)
+            );
+            assert!(
+                editor
+                    .document()
+                    .relations()
+                    .members_of(&group)
+                    .any(|candidate| candidate == member)
+            );
+        }
+        assert_eq!(
+            editor.document().relations().parent_of(&external_edge),
+            None
+        );
+        assert!(
+            !editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .any(|candidate| candidate == &external_edge)
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("group")]
+        );
+        assert!(editor.session.selection.nodes.is_empty());
+        assert!(editor.session.selection.edges.is_empty());
+        assert_eq!(editor.history().undo_depth(), 1);
+
+        assert!(editor.undo().unwrap());
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(editor.document().relations().is_empty());
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
+    }
+
+    #[test]
+    fn select_tool_hits_group_border_but_not_transparent_interior() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(120.0), px(10.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        assert_eq!(
+            editor
+                .runtime()
+                .precise_hit_test_with_kind_registry(
+                    editor.document(),
+                    editor.kind_registry(),
+                    point(px(20.0), px(20.0)),
+                    HitOptions::default(),
+                )
+                .map(|record| record.target.clone())
+                .collect::<Vec<_>>(),
+            vec![HitTarget::Node(NodeId::from("a"))]
+        );
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(20.0), px(20.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(85.0), px(10.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_shapes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("group")]
+        );
+    }
+
+    #[test]
+    fn editor_ungroups_selected_groups_and_selects_members() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+
+        assert!(editor.ungroup_selection().unwrap());
+
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        assert!(editor.document().relations().is_empty());
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a"), NodeId::from("b")]
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .edges
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            Vec::<EdgeId>::new()
+        );
+        assert!(editor.session.selection.shapes.is_empty());
+        assert!(editor.document().contains_edge(&EdgeId::from("a-b")));
+
+        assert!(editor.undo().unwrap());
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        assert!(editor.document().contains_shape(&ShapeId::from("group")));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+    }
+
+    #[test]
+    fn editor_group_selection_skips_locked_and_hidden_records() {
+        let mut locked = CanvasNode::new(
+            "locked",
+            point(px(400.0), px(0.0)),
+            size(px(100.0), px(100.0)),
+        );
+        locked.locked = true;
+        let mut hidden = CanvasShape::new(
+            "hidden",
+            Bounds::new(point(px(0.0), px(200.0)), size(px(40.0), px(40.0))),
+        );
+        hidden.hidden = true;
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(locked)
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .shape(hidden)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor
+            .session
+            .selection
+            .nodes
+            .insert(NodeId::from("locked"));
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("hidden"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("locked"))),
+            None
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Shape(ShapeId::from("hidden"))),
+            None
+        );
+    }
+
+    #[test]
+    fn editor_groups_existing_group_as_atomic_member() {
+        let mut inner_group = CanvasShape::new(
+            "inner-group",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(120.0))),
+        );
+        inner_group.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(inner_group)
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("leaf")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("inner-group"));
+        editor.session.selection.nodes.insert(NodeId::from("peer"));
+
+        assert!(editor.group_selection("outer-group").unwrap());
+
+        let outer_group = CanvasRecordId::Shape(ShapeId::from("outer-group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("peer")),
+            CanvasRecordId::Shape(ShapeId::from("inner-group")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&outer_group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("leaf"))),
+            Some(&CanvasRecordId::Shape(ShapeId::from("inner-group")))
+        );
+    }
+
+    #[test]
+    fn editor_group_selection_preserves_common_parent_membership() {
+        let mut frame = CanvasShape::new(
+            "frame",
+            Bounds::new(point(px(-20.0), px(-20.0)), size(px(360.0), px(180.0))),
+        );
+        frame.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(frame)
+            .node(CanvasNode::new(
+                "a",
+                point(px(0.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .edge(CanvasEdge::new(
+                "a-b",
+                CanvasEndpoint::new("a", None::<&str>),
+                CanvasEndpoint::new("b", None::<&str>),
+            ))
+            .build();
+        let frame = CanvasRecordId::Shape(ShapeId::from("frame"));
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+        ] {
+            document
+                .apply_transaction(CanvasTransaction::new([
+                    DocumentCommand::SetRecordParent {
+                        child: member.clone(),
+                        parent: frame.clone(),
+                    },
+                    DocumentCommand::AddRecordToGroup {
+                        group: frame.clone(),
+                        member,
+                    },
+                ]))
+                .unwrap();
+        }
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+
+        assert!(editor.group_selection("group").unwrap());
+
+        let group = CanvasRecordId::Shape(ShapeId::from("group"));
+        assert_eq!(
+            editor.document().relations().parent_of(&group),
+            Some(&frame)
+        );
+        assert!(
+            editor
+                .document()
+                .relations()
+                .members_of(&frame)
+                .any(|member| member == &group)
+        );
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ] {
+            assert_eq!(
+                editor.document().relations().parent_of(&member),
+                Some(&group)
+            );
+            assert!(
+                !editor
+                    .document()
+                    .relations()
+                    .members_of(&frame)
+                    .any(|candidate| candidate == &member)
+            );
+        }
+
+        assert!(editor.ungroup_selection().unwrap());
+
+        assert!(!editor.document().contains_shape(&ShapeId::from("group")));
+        for member in [
+            CanvasRecordId::Node(NodeId::from("a")),
+            CanvasRecordId::Node(NodeId::from("b")),
+            CanvasRecordId::Edge(EdgeId::from("a-b")),
+        ] {
+            assert_eq!(
+                editor.document().relations().parent_of(&member),
+                Some(&frame)
+            );
+            assert!(
+                editor
+                    .document()
+                    .relations()
+                    .members_of(&frame)
+                    .any(|candidate| candidate == &member)
+            );
+        }
+    }
+
+    #[test]
+    fn editor_group_selection_ignores_selected_descendant_of_selected_group() {
+        let mut inner_group = CanvasShape::new(
+            "inner-group",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(120.0), px(120.0))),
+        );
+        inner_group.kind = "group".to_string();
+        let mut document = document_fixture()
+            .shape(inner_group)
+            .node(CanvasNode::new(
+                "leaf",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "peer",
+                point(px(200.0), px(0.0)),
+                size(px(100.0), px(100.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::new([
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("leaf")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                },
+                DocumentCommand::AddRecordToGroup {
+                    group: CanvasRecordId::Shape(ShapeId::from("inner-group")),
+                    member: CanvasRecordId::Node(NodeId::from("leaf")),
+                },
+            ]))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("inner-group"));
+        editor.session.selection.nodes.insert(NodeId::from("leaf"));
+        editor.session.selection.nodes.insert(NodeId::from("peer"));
+
+        assert!(editor.group_selection("outer-group").unwrap());
+
+        let outer_group = CanvasRecordId::Shape(ShapeId::from("outer-group"));
+        let expected_members: IndexSet<CanvasRecordId> = IndexSet::from_iter([
+            CanvasRecordId::Node(NodeId::from("peer")),
+            CanvasRecordId::Shape(ShapeId::from("inner-group")),
+        ]);
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .members_of(&outer_group)
+                .cloned()
+                .collect::<IndexSet<_>>(),
+            expected_members
+        );
+        assert_eq!(
+            editor
+                .document()
+                .relations()
+                .parent_of(&CanvasRecordId::Node(NodeId::from("leaf"))),
+            Some(&CanvasRecordId::Shape(ShapeId::from("inner-group")))
+        );
     }
 
     #[test]
@@ -3150,6 +2846,149 @@ mod tests {
     }
 
     #[test]
+    fn select_tool_resizes_group_and_structural_descendants() {
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = crate::CanvasEdgeRoute::polyline([point(px(30.0), px(70.0))]);
+        edge.route.control_points = vec![point(px(40.0), px(20.0))];
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(50.0), px(50.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .edge(edge)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+        editor
+            .session
+            .selection
+            .shapes
+            .insert(ShapeId::from("group"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(70.0), px(70.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(130.0), px(130.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(130.0), px(130.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        let group = editor.document().shape(&ShapeId::from("group")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(40.0), px(40.0)));
+        assert_eq!(b.position, point(px(90.0), px(90.0)));
+        assert_eq!(b.size, size(px(40.0), px(40.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(50.0), px(130.0))]);
+        assert_eq!(edge.route.control_points, vec![point(px(70.0), px(30.0))]);
+        assert_eq!(
+            group.bounds,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(120.0), px(120.0)))
+        );
+        assert_eq!(editor.history().undo_depth(), 2);
+
+        assert!(editor.undo().unwrap());
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        let group = editor.document().shape(&ShapeId::from("group")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(20.0), px(20.0)));
+        assert_eq!(b.position, point(px(50.0), px(50.0)));
+        assert_eq!(b.size, size(px(20.0), px(20.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(30.0), px(70.0))]);
+        assert_eq!(edge.route.control_points, vec![point(px(40.0), px(20.0))]);
+        assert_eq!(
+            group.bounds,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(60.0), px(60.0)))
+        );
+    }
+
+    #[test]
+    fn select_tool_direct_multi_select_resize_stays_per_record() {
+        let mut edge = CanvasEdge::new(
+            "a-b",
+            CanvasEndpoint::new("a", None::<&str>),
+            CanvasEndpoint::new("b", None::<&str>),
+        );
+        edge.route = crate::CanvasEdgeRoute::polyline([point(px(30.0), px(70.0))]);
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(50.0), px(50.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .edge(edge)
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(70.0), px(70.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(90.0), px(90.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(90.0), px(90.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        let a = editor.document().node(&NodeId::from("a")).unwrap();
+        let b = editor.document().node(&NodeId::from("b")).unwrap();
+        let edge = editor.document().edge(&EdgeId::from("a-b")).unwrap();
+        assert_eq!(a.position, point(px(10.0), px(10.0)));
+        assert_eq!(a.size, size(px(40.0), px(40.0)));
+        assert_eq!(b.position, point(px(50.0), px(50.0)));
+        assert_eq!(b.size, size(px(40.0), px(40.0)));
+        assert_eq!(edge.route.waypoints, vec![point(px(30.0), px(70.0))]);
+    }
+
+    #[test]
     fn select_tool_resize_uses_registered_kind_policy() {
         let mut node =
             CanvasNode::new("node", point(px(10.0), px(20.0)), size(px(100.0), px(80.0)));
@@ -3343,6 +3182,64 @@ mod tests {
             vec![NodeId::from("inside")]
         );
         assert_eq!(editor.session.state, ToolState::Idle);
+    }
+
+    #[test]
+    fn select_tool_box_select_respects_group_transparent_interior() {
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "a",
+                point(px(80.0), px(80.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "b",
+                point(px(10.0), px(10.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .node(CanvasNode::new(
+                "c",
+                point(px(170.0), px(170.0)),
+                size(px(20.0), px(20.0)),
+            ))
+            .build();
+        let mut editor = CanvasEditor::new(document);
+        editor.session.selection.nodes.insert(NodeId::from("a"));
+        editor.session.selection.nodes.insert(NodeId::from("b"));
+        editor.session.selection.nodes.insert(NodeId::from("c"));
+        assert!(editor.group_selection("group").unwrap());
+        editor.handle_event(CanvasEvent::Cancel).unwrap();
+
+        editor
+            .handle_event(CanvasEvent::PointerDown {
+                position: point(px(75.0), px(75.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerMove {
+                position: point(px(115.0), px(115.0)),
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+        editor
+            .handle_event(CanvasEvent::PointerUp {
+                position: point(px(115.0), px(115.0)),
+                button: PointerButton::Primary,
+                modifiers: CanvasKeyModifiers::default(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .selection()
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("a")]
+        );
+        assert!(editor.selection().selected_shapes().next().is_none());
     }
 
     #[test]
@@ -5160,6 +5057,122 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![EdgeId::from("a-b")]
+        );
+    }
+
+    #[test]
+    fn selection_effects_normalize_selected_ancestor_and_descendant() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .node(CanvasNode::new(
+                "outside",
+                point(px(260.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+        selection.insert_node(NodeId::from("child"));
+        selection.insert_node(NodeId::from("outside"));
+
+        editor
+            .apply_tool_effect(CanvasToolEffect::SetSelection(selection))
+            .unwrap();
+
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
+        );
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("outside")]
+        );
+    }
+
+    #[test]
+    fn public_selection_intents_normalize_redundant_descendants() {
+        let mut document = document_fixture()
+            .shape(CanvasShape::new(
+                "frame",
+                Bounds::new(point(px(0.0), px(0.0)), size(px(200.0), px(200.0))),
+            ))
+            .node(CanvasNode::new(
+                "child",
+                point(px(20.0), px(20.0)),
+                size(px(40.0), px(40.0)),
+            ))
+            .build();
+        document
+            .apply_transaction(CanvasTransaction::single(
+                DocumentCommand::SetRecordParent {
+                    child: CanvasRecordId::Node(NodeId::from("child")),
+                    parent: CanvasRecordId::Shape(ShapeId::from("frame")),
+                },
+            ))
+            .unwrap();
+        let mut editor = CanvasEditor::new(document);
+
+        editor
+            .apply_tool_intent(CanvasToolIntent::ReplaceSelection(HitTarget::Node(
+                NodeId::from("child"),
+            )))
+            .unwrap();
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .nodes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("child")]
+        );
+
+        editor
+            .apply_tool_intent(CanvasToolIntent::AddSelection(HitTarget::Shape(
+                ShapeId::from("frame"),
+            )))
+            .unwrap();
+
+        assert!(editor.session.selection.nodes.is_empty());
+        assert_eq!(
+            editor
+                .session
+                .selection
+                .shapes
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
         );
     }
 

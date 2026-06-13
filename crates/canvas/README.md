@@ -558,17 +558,24 @@ cargo run -p open-gpui-canvas-notes
 The crate includes a focused stress regression for the default GPUI culling path and a Criterion
 benchmark for larger documents. The regression builds a 12,288-node document and verifies that a
 paint frame only carries visible records. The benchmark builds a 20,000-node graph with horizontal
-edges and measures spatial-index rebuild, visible query, and paint-frame culling.
+edges and measures spatial-index rebuild, visible query, and paint-frame culling. A separate
+relation traversal benchmark measures parent, group, and mixed structural selection scopes before
+adding any read-side relation index.
 
 ```sh
 cargo nextest run -p open-gpui-canvas gpui::tests::collect_visible_records_keeps_large_canvas_frame_bounded
 cargo bench -p open-gpui-canvas --bench large_canvas
+cargo bench -p open-gpui-canvas --bench relation_traversal -- --sample-size 10
 ```
 
 Use this before and after changing the runtime candidate cache, such as replacing the internal base
 with an R-tree, tile index, packed AABB index, or GPU-assisted culling adapter. The important signal
 is not the absolute number on one machine; it is whether large documents continue to route
 rendering work through visible-record culling instead of per-record GPUI elements.
+
+Use the relation traversal benchmark before adding parent/group read indexes. `CanvasRecordRelations`
+keeps ordered vectors as the serialized source of truth; derived indexes should stay internal until
+selection, paint, copy, resize, or grouping workloads show a measured bottleneck.
 
 ## Add A Custom Tool
 
@@ -638,11 +645,12 @@ let cancel_intents = vec![
 Register application tools with `CanvasToolRegistry`, then call
 `CanvasEditor::handle_event_with_tool_registry`.
 
-When a tool needs to act on the same structural selection as built-in copy, move, snap, or z-order
-commands, use `CanvasToolContext::selection_record_scope` instead of walking
-`CanvasRecordRelations` directly. Parent and group descendants are expanded by the canvas-owned
-scope rules, and internal edges can be included when both endpoints are inside the selected
-structure.
+Canvas selection uses three related facts: normalized explicit selection, structural selection, and
+action scope. `CanvasSelection` stores the normalized explicit roots that the user actually owns.
+`CanvasToolContext::selection_record_scope` expands that selection into structural descendants and,
+when requested, internal edges for actions like copy, move, snap, or z-order. Parent and group
+descendants are expanded by the canvas-owned scope rules, while handles stay interaction targets
+rather than structural records.
 
 ```rust
 # use open_gpui_canvas::{CanvasRecordScopeOptions, CanvasToolContext};
@@ -656,6 +664,13 @@ fn selected_structure(context: CanvasToolContext<'_>) {
     }
 }
 ```
+
+Selection writes from built-in tools, public tool intents, paste, duplicate, and custom tools are
+normalized at the session boundary. If a parent and descendant are both submitted, the descendant is
+suppressed in `CanvasSelection`; it still participates through action scope when the action asks for
+structural descendants. Clipboard payload records represent the copied action scope, while pasted
+selection stores remapped explicit roots. Lasso selection, drill-in modifiers, and live container
+layout are intentionally left as follow-up interaction policies.
 
 ## JSON Canvas
 

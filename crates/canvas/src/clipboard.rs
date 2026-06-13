@@ -2,9 +2,9 @@ use crate::{
     BindingId, CanvasDocument, CanvasEdge, CanvasEndpoint, CanvasNode, CanvasRecordId,
     CanvasRecordRelations, CanvasSelection, CanvasShape, CanvasTransaction, DocumentCommand,
     EdgeId, NodeId, ShapeId,
-    record_scope::{CanvasRecordScopeOptions, collect_selection_record_scope},
+    record_scope::{CanvasRecordScopeOptions, resolve_selection_scope_with_predicates},
 };
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use open_gpui::{Pixels, Point};
 use serde::{Deserialize, Serialize};
 
@@ -24,12 +24,20 @@ pub struct CanvasClipboardPayload {
 
 impl CanvasClipboardPayload {
     pub fn from_document_selection(document: &CanvasDocument, selection: &CanvasSelection) -> Self {
-        let copied_record_ids = copied_record_ids(document, selection);
+        let scope = resolve_selection_scope_with_predicates(
+            document,
+            selection,
+            CanvasRecordScopeOptions::structural_with_internal_edges(),
+            |record_id| document.contains_record(record_id),
+            |record_id| is_copyable_record(document, record_id),
+        );
+        let copied_records = scope.action_records();
+        let selection = copied_selection(scope.normalized_selection(), copied_records);
 
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
         let mut shapes = Vec::new();
-        for record_id in &copied_record_ids {
+        for record_id in copied_records.records() {
             match record_id {
                 CanvasRecordId::Node(id) => {
                     if let Some(node) = document.node(id) {
@@ -49,25 +57,14 @@ impl CanvasClipboardPayload {
             }
         }
 
-        let mut payload_selection = CanvasSelection::default();
-        for node in &nodes {
-            payload_selection.insert_node(node.id.clone());
-        }
-        for edge in &edges {
-            payload_selection.insert_edge(edge.id.clone());
-        }
-        for shape in &shapes {
-            payload_selection.insert_shape(shape.id.clone());
-        }
-
         Self {
             nodes,
             edges,
             shapes,
-            selection: payload_selection,
+            selection,
             relations: document
                 .relations()
-                .subset_for_records(|record_id| copied_record_ids.contains(record_id)),
+                .subset_for_records(|record_id| copied_records.contains(record_id)),
         }
     }
 
@@ -106,14 +103,14 @@ impl CanvasClipboardPayload {
             unique_binding_id,
         );
 
-        let mut selection = CanvasSelection::default();
+        let mut fallback_selection = CanvasSelection::default();
         let mut commands = Vec::new();
 
         for node in &self.nodes {
             let mut node = node.clone();
             node.id = node_ids[&node.id].clone();
             node.position += offset;
-            selection.insert_node(node.id.clone());
+            fallback_selection.insert_node(node.id.clone());
             commands.push(DocumentCommand::InsertNode(node));
         }
 
@@ -121,7 +118,7 @@ impl CanvasClipboardPayload {
             let mut shape = shape.clone();
             shape.id = shape_ids[&shape.id].clone();
             shape.bounds.origin += offset;
-            selection.insert_shape(shape.id.clone());
+            fallback_selection.insert_shape(shape.id.clone());
             commands.push(DocumentCommand::InsertShape(shape));
         }
 
@@ -138,7 +135,7 @@ impl CanvasClipboardPayload {
             edge.id = edge_ids[&original_edge_id].clone();
             edge.source = source;
             edge.target = target;
-            selection.insert_edge(edge.id.clone());
+            fallback_selection.insert_edge(edge.id.clone());
             pasted_edge_ids.insert(original_edge_id, edge.id.clone());
             commands.push(DocumentCommand::InsertEdge(edge));
         }
@@ -189,6 +186,10 @@ impl CanvasClipboardPayload {
             commands.push(DocumentCommand::SetRecordBinding(binding));
         }
 
+        let selection = remap_selection(&self.selection, &node_ids, &pasted_edge_ids, &shape_ids)
+            .filter(|selection| !selection.is_empty())
+            .unwrap_or(fallback_selection);
+
         CanvasPasteTransaction {
             transaction: CanvasTransaction::new(commands),
             selection,
@@ -202,24 +203,31 @@ pub struct CanvasPasteTransaction {
     pub selection: CanvasSelection,
 }
 
-fn copied_record_ids(
-    document: &CanvasDocument,
-    selection: &CanvasSelection,
-) -> IndexSet<CanvasRecordId> {
-    collect_selection_record_scope(
-        document,
-        selection,
-        CanvasRecordScopeOptions::structural_with_internal_edges(),
-        |record_id| is_copyable_record(document, record_id),
-    )
-}
-
 fn is_copyable_record(document: &CanvasDocument, record_id: &CanvasRecordId) -> bool {
     match record_id {
         CanvasRecordId::Node(id) => document.node(id).is_some_and(|node| !node.locked),
         CanvasRecordId::Edge(id) => document.edge(id).is_some_and(|edge| !edge.locked),
         CanvasRecordId::Shape(id) => document.shape(id).is_some_and(|shape| !shape.locked),
     }
+}
+
+fn copied_selection(
+    selection: &CanvasSelection,
+    copied_records: &crate::CanvasRecordScope,
+) -> CanvasSelection {
+    let mut copied_selection = CanvasSelection::default();
+    for record_id in selection
+        .selected_records()
+        .filter(|record_id| copied_records.contains(record_id))
+    {
+        copied_selection.insert_record(record_id);
+    }
+    for endpoint in selection.selected_handles() {
+        if copied_records.contains(&CanvasRecordId::Node(endpoint.node_id.clone())) {
+            copied_selection.insert_handle(endpoint.clone());
+        }
+    }
+    copied_selection
 }
 
 fn remap_ids<'a, I, T, Exists, Unique>(ids: I, exists: Exists, unique: Unique) -> IndexMap<T, T>
@@ -285,6 +293,23 @@ fn remap_endpoint(
             node_id,
             handle_id: endpoint.handle_id.clone(),
         })
+}
+
+fn remap_selection(
+    selection: &CanvasSelection,
+    node_ids: &IndexMap<NodeId, NodeId>,
+    edge_ids: &IndexMap<EdgeId, EdgeId>,
+    shape_ids: &IndexMap<ShapeId, ShapeId>,
+) -> Option<CanvasSelection> {
+    let mut remapped = CanvasSelection::default();
+    for record_id in selection.selected_records() {
+        remapped.insert_record(remap_record_id(&record_id, node_ids, edge_ids, shape_ids)?);
+    }
+    for endpoint in selection.selected_handles() {
+        remapped.insert_handle(remap_endpoint(endpoint, node_ids)?);
+    }
+
+    Some(remapped)
 }
 
 fn remap_record_id(
@@ -379,7 +404,7 @@ mod tests {
                 .selected_edges()
                 .cloned()
                 .collect::<Vec<_>>(),
-            vec![EdgeId::from("a-b-copy")]
+            Vec::<EdgeId>::new()
         );
         assert_eq!(
             pasted
@@ -392,6 +417,7 @@ mod tests {
 
         let mut draft = document.clone();
         draft.apply_transaction(pasted.transaction).unwrap();
+        assert!(draft.contains_edge(&EdgeId::from("a-b-copy")));
         assert_eq!(
             draft.node(&NodeId::from("a-copy")).unwrap().position,
             point(px(16.0), px(24.0))
@@ -493,6 +519,83 @@ mod tests {
         assert_eq!(
             payload.relations.binding(&BindingId::from("binding")),
             Some(&CanvasRecordBindingRelation::new("binding", child, group))
+        );
+        assert_eq!(
+            payload
+                .selection
+                .selected_shapes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame")]
+        );
+        assert!(payload.selection.selected_nodes().next().is_none());
+        assert!(payload.selection.selected_edges().next().is_none());
+    }
+
+    #[test]
+    fn paste_payload_selects_remapped_explicit_roots() {
+        let document = related_tree_document();
+        let mut selection = CanvasSelection::default();
+        selection.insert_shape(ShapeId::from("frame"));
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+
+        let pasted = payload.paste_transaction(&document, point(px(16.0), px(24.0)));
+
+        assert_eq!(
+            pasted
+                .selection
+                .selected_shapes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![ShapeId::from("frame-copy")]
+        );
+        assert!(pasted.selection.selected_nodes().next().is_none());
+        assert!(pasted.selection.selected_edges().next().is_none());
+    }
+
+    #[test]
+    fn copy_selection_filters_payload_selection_to_copied_records() {
+        let mut locked =
+            CanvasNode::new("locked", point(px(40.0), px(0.0)), size(px(10.0), px(10.0)));
+        locked.locked = true;
+        let document = document_fixture()
+            .node(CanvasNode::new(
+                "copyable",
+                point(px(0.0), px(0.0)),
+                size(px(10.0), px(10.0)),
+            ))
+            .node(locked)
+            .build();
+        let mut selection = CanvasSelection::default();
+        selection.insert_node(NodeId::from("copyable"));
+        selection.insert_node(NodeId::from("locked"));
+
+        let payload = CanvasClipboardPayload::from_document_selection(&document, &selection);
+        let pasted = payload.paste_transaction(&document, point(px(16.0), px(24.0)));
+
+        assert_eq!(
+            payload
+                .nodes
+                .iter()
+                .map(|node| &node.id)
+                .collect::<Vec<_>>(),
+            vec![&NodeId::from("copyable")]
+        );
+        assert_eq!(
+            payload
+                .selection
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("copyable")]
+        );
+        assert_eq!(
+            pasted
+                .selection
+                .selected_nodes()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![NodeId::from("copyable-copy")]
         );
     }
 

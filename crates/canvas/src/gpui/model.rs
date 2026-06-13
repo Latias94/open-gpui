@@ -1,3 +1,4 @@
+use crate::session::ToolState;
 use crate::{
     CanvasDefaultEdgeRouter, CanvasDocument, CanvasEdgeRouter, CanvasEditor, CanvasEndpoint,
     CanvasKindRegistry, CanvasRuntime, CanvasSelection, CanvasSnapGuide, CanvasViewport,
@@ -156,7 +157,7 @@ impl CanvasPaintInteraction {
         self
     }
 
-    pub(crate) fn with_internal_tool_state(mut self, state: crate::tool::ToolState) -> Self {
+    pub(crate) fn with_internal_tool_state(mut self, state: ToolState) -> Self {
         self.state = CanvasPaintInteractionState::from_tool_state(state);
         self
     }
@@ -172,21 +173,15 @@ impl Default for CanvasPaintInteraction {
 }
 
 impl CanvasPaintInteractionState {
-    pub(crate) fn from_tool_state(state: crate::tool::ToolState) -> Self {
+    pub(crate) fn from_tool_state(state: ToolState) -> Self {
         match state {
-            crate::tool::ToolState::Idle
-            | crate::tool::ToolState::Pointing { .. }
-            | crate::tool::ToolState::Panning { .. } => Self::Idle,
-            crate::tool::ToolState::Selecting {
+            ToolState::Idle | ToolState::Pointing { .. } | ToolState::Panning { .. } => Self::Idle,
+            ToolState::Selecting {
                 origin, current, ..
             } => Self::Selecting { origin, current },
-            crate::tool::ToolState::Connecting { source, current } => {
-                Self::Connecting { source, current }
-            }
-            crate::tool::ToolState::Translating { snap_guides, .. }
-            | crate::tool::ToolState::Resizing { snap_guides, .. } => {
-                Self::Transforming { snap_guides }
-            }
+            ToolState::Connecting { source, current } => Self::Connecting { source, current },
+            ToolState::Translating { snap_guides, .. }
+            | ToolState::Resizing { snap_guides, .. } => Self::Transforming { snap_guides },
         }
     }
 }

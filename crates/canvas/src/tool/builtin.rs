@@ -1,5 +1,6 @@
 use super::select::SelectToolStateMachine;
 use super::*;
+use crate::{CanvasConnectionEndpointRole, CanvasEdge};
 
 trait BuiltInCanvasToolReducer {
     fn handle_event(

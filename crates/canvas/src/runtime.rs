@@ -142,15 +142,22 @@ impl CanvasRuntime {
 
         match kind_registry {
             Some(kind_registry) => {
-                self.query.apply_diff_with_router_and_kind_registry(
-                    document,
-                    diff,
-                    router,
-                    kind_registry,
-                );
+                self.query
+                    .apply_diff_with_graph_index_router_and_kind_registry(
+                        document,
+                        diff,
+                        &self.graph_index,
+                        router,
+                        kind_registry,
+                    );
             }
             None => {
-                self.query.apply_diff_with_router(document, diff, router);
+                self.query.apply_diff_with_graph_index_and_router(
+                    document,
+                    diff,
+                    &self.graph_index,
+                    router,
+                );
             }
         }
         self.graph_index.apply_diff(document, diff);
@@ -250,13 +257,15 @@ impl CanvasRuntime {
     {
         match record_id {
             CanvasRecordId::Node(id) => {
-                for edge in document
-                    .edges()
-                    .filter(|edge| edge.source.node_id == *id || edge.target.node_id == *id)
-                {
+                let edge_ids = self
+                    .graph_index
+                    .incident_edge_ids(id)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for edge_id in edge_ids {
                     self.refresh_edge_geometry(
                         document,
-                        &CanvasRecordId::Edge(edge.id.clone()),
+                        &CanvasRecordId::Edge(edge_id),
                         router,
                         kind_registry,
                     );

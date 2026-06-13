@@ -136,6 +136,12 @@ Selection effects include replace, add, remove, toggle, set, and clear operation
 multi-select behavior available to custom tools and future modifier-key interactions without
 requiring each tool to mutate `CanvasSelection` directly.
 
+The selection contract is deliberately split into normalized explicit roots, structural descendants,
+and action scope. `CanvasSelection` stores the normalized explicit roots, while the action helpers
+expand descendants and internal edges only when the consumer asks for them. That keeps paint,
+clipboard, z-order, delete, resize, snap, and future collaboration adapters aligned on one semantic
+boundary instead of reinterpreting relations locally.
+
 Keyboard input uses the same reducer path as pointer input. `CanvasKey` and `CanvasKeyModifiers`
 keep key events renderer-neutral, while the GPUI adapter maps `KeyDownEvent` into `CanvasEvent`.
 The select tool's Delete/Backspace behavior emits a normal recorded transaction, skips locked

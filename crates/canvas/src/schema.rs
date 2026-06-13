@@ -3,7 +3,7 @@ use crate::{
     DocumentCommand,
 };
 use indexmap::IndexMap;
-use open_gpui::{Bounds, Pixels, Point};
+use open_gpui::{Bounds, Pixels, Point, Size, px};
 use std::{fmt, sync::Arc};
 use thiserror::Error;
 
@@ -101,10 +101,26 @@ pub struct CanvasNodeHitTest<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasNodeBoundsHitTest<'a> {
+    pub node: &'a CanvasNode,
+    pub bounds: Bounds<Pixels>,
+    pub query_bounds: Bounds<Pixels>,
+    pub margin: Pixels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasShapeHitTest<'a> {
     pub shape: &'a CanvasShape,
     pub point: Point<Pixels>,
     pub bounds: Bounds<Pixels>,
+    pub margin: Pixels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CanvasShapeBoundsHitTest<'a> {
+    pub shape: &'a CanvasShape,
+    pub bounds: Bounds<Pixels>,
+    pub query_bounds: Bounds<Pixels>,
     pub margin: Pixels,
 }
 
@@ -182,6 +198,10 @@ pub trait CanvasNodeInteractionPolicy: Send + Sync {
     fn node_contains_point(&self, _hit: CanvasNodeHitTest<'_>) -> Option<bool> {
         None
     }
+
+    fn node_intersects_bounds(&self, _hit: CanvasNodeBoundsHitTest<'_>) -> Option<bool> {
+        None
+    }
 }
 
 pub trait CanvasNodeRenderPolicy: Send + Sync {
@@ -245,6 +265,10 @@ pub trait CanvasShapeGeometryPolicy: Send + Sync {
 
 pub trait CanvasShapeInteractionPolicy: Send + Sync {
     fn shape_contains_point(&self, _hit: CanvasShapeHitTest<'_>) -> Option<bool> {
+        None
+    }
+
+    fn shape_intersects_bounds(&self, _hit: CanvasShapeBoundsHitTest<'_>) -> Option<bool> {
         None
     }
 }
@@ -493,8 +517,12 @@ impl fmt::Debug for CanvasKindRegistry {
 }
 
 impl CanvasKindRegistry {
+    pub const GROUP_SHAPE_KIND: &'static str = "group";
+
     pub fn open() -> Self {
-        Self::default()
+        let mut registry = Self::default();
+        registry.register_shape_kind(Self::GROUP_SHAPE_KIND, built_in_group_shape_kind());
+        registry
     }
 
     pub fn register_node_kind(&mut self, kind: impl Into<String>, node_kind: CanvasNodeKind) {
@@ -679,6 +707,25 @@ impl CanvasKindRegistry {
             })
     }
 
+    pub fn node_intersects_bounds(
+        &self,
+        node: &CanvasNode,
+        bounds: Bounds<Pixels>,
+        query_bounds: Bounds<Pixels>,
+        margin: Pixels,
+    ) -> Option<bool> {
+        self.node_kind(&node.kind)
+            .and_then(CanvasNodeKind::interaction_policy)
+            .and_then(|interaction| {
+                interaction.node_intersects_bounds(CanvasNodeBoundsHitTest {
+                    node,
+                    bounds,
+                    query_bounds,
+                    margin,
+                })
+            })
+    }
+
     pub fn shape_contains_point(
         &self,
         shape: &CanvasShape,
@@ -693,6 +740,25 @@ impl CanvasKindRegistry {
                     shape,
                     point,
                     bounds,
+                    margin,
+                })
+            })
+    }
+
+    pub fn shape_intersects_bounds(
+        &self,
+        shape: &CanvasShape,
+        bounds: Bounds<Pixels>,
+        query_bounds: Bounds<Pixels>,
+        margin: Pixels,
+    ) -> Option<bool> {
+        self.shape_kind(&shape.kind)
+            .and_then(CanvasShapeKind::interaction_policy)
+            .and_then(|interaction| {
+                interaction.shape_intersects_bounds(CanvasShapeBoundsHitTest {
+                    shape,
+                    bounds,
+                    query_bounds,
                     margin,
                 })
             })
@@ -774,6 +840,70 @@ impl CanvasKindRegistry {
         )?;
         Ok(bounds)
     }
+}
+
+fn built_in_group_shape_kind() -> CanvasShapeKind {
+    CanvasShapeKind::new().with_interaction_policy(GroupShapeKind)
+}
+
+struct GroupShapeKind;
+
+impl CanvasShapeInteractionPolicy for GroupShapeKind {
+    fn shape_contains_point(&self, hit: CanvasShapeHitTest<'_>) -> Option<bool> {
+        let border = group_border_width(hit.shape, hit.margin);
+        let outer = group_outer_bounds(hit.bounds, hit.margin);
+        if !outer.contains(&hit.point) {
+            return Some(false);
+        }
+
+        let Some(inner) = group_inner_bounds(hit.bounds, border) else {
+            return Some(true);
+        };
+        Some(!inner.contains(&hit.point))
+    }
+
+    fn shape_intersects_bounds(&self, hit: CanvasShapeBoundsHitTest<'_>) -> Option<bool> {
+        let outer = group_outer_bounds(hit.bounds, hit.margin);
+        if !outer.intersects(&hit.query_bounds) {
+            return Some(false);
+        }
+
+        let border = group_border_width(hit.shape, hit.margin);
+        match group_inner_bounds(hit.bounds, border) {
+            Some(inner) => Some(!bounds_contains_bounds(inner, hit.query_bounds)),
+            None => Some(true),
+        }
+    }
+}
+
+fn group_border_width(shape: &CanvasShape, margin: Pixels) -> Pixels {
+    shape.style.stroke_width.max(px(4.0)) + margin
+}
+
+fn group_outer_bounds(bounds: Bounds<Pixels>, margin: Pixels) -> Bounds<Pixels> {
+    bounds.dilate(margin)
+}
+
+fn group_inner_bounds(bounds: Bounds<Pixels>, border: Pixels) -> Option<Bounds<Pixels>> {
+    let inner_size = Size {
+        width: (bounds.size.width - border * 2.0).max(Pixels::ZERO),
+        height: (bounds.size.height - border * 2.0).max(Pixels::ZERO),
+    };
+    if inner_size.width == Pixels::ZERO || inner_size.height == Pixels::ZERO {
+        return None;
+    }
+
+    Some(Bounds::new(
+        Point::new(bounds.origin.x + border, bounds.origin.y + border),
+        inner_size,
+    ))
+}
+
+fn bounds_contains_bounds(outer: Bounds<Pixels>, inner: Bounds<Pixels>) -> bool {
+    inner.origin.x >= outer.origin.x
+        && inner.origin.y >= outer.origin.y
+        && inner.origin.x + inner.size.width <= outer.origin.x + outer.size.width
+        && inner.origin.y + inner.size.height <= outer.origin.y + outer.size.height
 }
 
 fn merge_default_data(data: &mut CanvasValue, defaults: CanvasValue) {
@@ -953,6 +1083,18 @@ mod tests {
         fn node_contains_point(&self, hit: CanvasNodeHitTest<'_>) -> Option<bool> {
             Some(hit.point.x >= hit.bounds.center().x)
         }
+
+        fn node_intersects_bounds(&self, hit: CanvasNodeBoundsHitTest<'_>) -> Option<bool> {
+            let active = Bounds::from_corners(
+                Point::new(hit.bounds.center().x, hit.bounds.origin.y),
+                Point::new(
+                    hit.bounds.origin.x + hit.bounds.size.width,
+                    hit.bounds.origin.y + hit.bounds.size.height,
+                ),
+            )
+            .dilate(hit.margin);
+            Some(active.intersects(&hit.query_bounds))
+        }
     }
 
     struct TopHalfShapeKind;
@@ -960,6 +1102,18 @@ mod tests {
     impl CanvasShapeInteractionPolicy for TopHalfShapeKind {
         fn shape_contains_point(&self, hit: CanvasShapeHitTest<'_>) -> Option<bool> {
             Some(hit.point.y <= hit.bounds.center().y)
+        }
+
+        fn shape_intersects_bounds(&self, hit: CanvasShapeBoundsHitTest<'_>) -> Option<bool> {
+            let active = Bounds::from_corners(
+                hit.bounds.origin,
+                Point::new(
+                    hit.bounds.origin.x + hit.bounds.size.width,
+                    hit.bounds.center().y,
+                ),
+            )
+            .dilate(hit.margin);
+            Some(active.intersects(&hit.query_bounds))
         }
     }
 
@@ -1369,7 +1523,77 @@ mod tests {
             ),
             Some(false)
         );
+        assert_eq!(
+            registry.shape_intersects_bounds(
+                &interaction_shape,
+                interaction_shape.bounds,
+                Bounds::new(point(px(2.0), px(1.0)), size(px(4.0), px(2.0))),
+                Pixels::ZERO,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            registry.shape_intersects_bounds(
+                &interaction_shape,
+                interaction_shape.bounds,
+                Bounds::new(point(px(2.0), px(8.0)), size(px(4.0), px(2.0))),
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
         assert_eq!(registry.shape_paint(&interaction_shape), None);
+    }
+
+    #[test]
+    fn built_in_group_shape_kind_hits_border_but_not_interior() {
+        let registry = CanvasKindRegistry::open();
+        let mut group = CanvasShape::new(
+            "group",
+            Bounds::new(point(px(10.0), px(20.0)), size(px(100.0), px(80.0))),
+        );
+        group.kind = CanvasKindRegistry::GROUP_SHAPE_KIND.to_string();
+        group.style.stroke_width = px(1.0);
+
+        assert_eq!(
+            registry.shape_contains_point(
+                &group,
+                point(px(12.0), px(22.0)),
+                group.bounds,
+                Pixels::ZERO,
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            registry.shape_contains_point(
+                &group,
+                point(px(60.0), px(60.0)),
+                group.bounds,
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            registry.shape_contains_point(&group, point(px(60.0), px(60.0)), group.bounds, px(8.0)),
+            Some(false)
+        );
+        assert_eq!(
+            registry.shape_intersects_bounds(
+                &group,
+                group.bounds,
+                Bounds::new(point(px(40.0), px(40.0)), size(px(20.0), px(20.0))),
+                Pixels::ZERO,
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            registry.shape_intersects_bounds(
+                &group,
+                group.bounds,
+                Bounds::new(point(px(8.0), px(40.0)), size(px(10.0), px(20.0))),
+                Pixels::ZERO,
+            ),
+            Some(true)
+        );
     }
 
     #[test]

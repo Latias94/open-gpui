@@ -349,6 +349,61 @@ where
         self.record_contains_point_with_edge_geometry(record, point, options, None)
     }
 
+    pub fn record_intersects_bounds(
+        &self,
+        record: &HitRecord,
+        bounds: Bounds<Pixels>,
+        options: HitOptions,
+    ) -> bool {
+        if !record_options_match(record, options) {
+            return false;
+        }
+
+        let record_bounds = if options.margin == Pixels::ZERO {
+            record.bounds
+        } else {
+            record.bounds.dilate(options.margin)
+        };
+        let Some(intersection) = intersect_bounds(record_bounds, bounds) else {
+            return false;
+        };
+
+        match &record.target {
+            HitTarget::Node(id) => {
+                if let Some(intersects) = self.document.node(id).and_then(|node| {
+                    self.kind_registry.and_then(|registry| {
+                        registry.node_intersects_bounds(node, record.bounds, bounds, options.margin)
+                    })
+                }) {
+                    return intersects;
+                }
+
+                selection_sample_points(intersection)
+                    .into_iter()
+                    .any(|point| self.record_contains_point(record, point, options))
+            }
+            HitTarget::Shape(id) => {
+                if let Some(intersects) = self.document.shape(id).and_then(|shape| {
+                    self.kind_registry.and_then(|registry| {
+                        registry.shape_intersects_bounds(
+                            shape,
+                            record.bounds,
+                            bounds,
+                            options.margin,
+                        )
+                    })
+                }) {
+                    return intersects;
+                }
+
+                selection_sample_points(intersection)
+                    .into_iter()
+                    .any(|point| self.record_contains_point(record, point, options))
+            }
+            HitTarget::Edge(_) | HitTarget::Handle { .. } => true,
+        }
+    }
+
     pub(crate) fn record_contains_point_with_edge_geometry(
         &self,
         record: &HitRecord,
@@ -506,6 +561,50 @@ fn union_bounds(current: Option<Bounds<Pixels>>, next: Bounds<Pixels>) -> Option
     })
 }
 
+fn intersect_bounds(left: Bounds<Pixels>, right: Bounds<Pixels>) -> Option<Bounds<Pixels>> {
+    let left_min_x = left.origin.x;
+    let left_min_y = left.origin.y;
+    let left_max_x = left.origin.x + left.size.width;
+    let left_max_y = left.origin.y + left.size.height;
+    let right_min_x = right.origin.x;
+    let right_min_y = right.origin.y;
+    let right_max_x = right.origin.x + right.size.width;
+    let right_max_y = right.origin.y + right.size.height;
+
+    let min_x = left_min_x.max(right_min_x);
+    let min_y = left_min_y.max(right_min_y);
+    let max_x = left_max_x.min(right_max_x);
+    let max_y = left_max_y.min(right_max_y);
+    if max_x < min_x || max_y < min_y {
+        return None;
+    }
+
+    Some(Bounds::from_corners(
+        Point::new(min_x, min_y),
+        Point::new(max_x, max_y),
+    ))
+}
+
+fn selection_sample_points(bounds: Bounds<Pixels>) -> [Point<Pixels>; 9] {
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = bounds.origin.x + bounds.size.width;
+    let bottom = bounds.origin.y + bounds.size.height;
+    let center = bounds.center();
+
+    [
+        Point::new(left, top),
+        Point::new(center.x, top),
+        Point::new(right, top),
+        Point::new(left, center.y),
+        center,
+        Point::new(right, center.y),
+        Point::new(left, bottom),
+        Point::new(center.x, bottom),
+        Point::new(right, bottom),
+    ]
+}
+
 fn edge_interaction_radius(edge: &CanvasEdge) -> Pixels {
     let stroke_width =
         if edge.style.stroke_width.as_f32().is_finite() && edge.style.stroke_width > Pixels::ZERO {
@@ -642,8 +741,8 @@ pub fn connection_hit_options() -> HitOptions {
 mod tests {
     use super::*;
     use crate::{
-        CanvasEdge, CanvasHandle, CanvasNode, CanvasShape, CanvasStyle, HandleRole,
-        test_support::document_fixture,
+        CanvasEdge, CanvasHandle, CanvasNode, CanvasNodeBoundsHitTest, CanvasNodeInteractionPolicy,
+        CanvasNodeKind, CanvasShape, CanvasStyle, HandleRole, test_support::document_fixture,
     };
     use open_gpui::{point, px, size};
 
@@ -780,5 +879,104 @@ mod tests {
         assert!(geometry.contains_point(point(px(40.0), px(10.5)), Pixels::ZERO));
         assert!(!geometry.contains_point(point(px(40.0), px(11.5)), Pixels::ZERO));
         assert!(geometry.contains_point(point(px(40.0), px(11.5)), px(1.0)));
+    }
+
+    #[test]
+    fn record_intersects_bounds_uses_shape_interaction_policy() {
+        let mut group = CanvasShape::new(
+            "group",
+            Bounds::new(point(px(0.0), px(0.0)), size(px(100.0), px(100.0))),
+        );
+        group.kind = CanvasKindRegistry::GROUP_SHAPE_KIND.to_string();
+        let document = document_fixture().shape(group).build();
+        let registry = CanvasKindRegistry::open();
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let group_record = facts
+            .hit_records()
+            .into_iter()
+            .find(|record| record.target == HitTarget::Shape("group".into()))
+            .unwrap();
+
+        assert!(!facts.record_intersects_bounds(
+            &group_record,
+            Bounds::new(point(px(40.0), px(40.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
+        assert!(facts.record_intersects_bounds(
+            &group_record,
+            Bounds::new(point(px(0.0), px(40.0)), size(px(8.0), px(20.0))),
+            HitOptions::default()
+        ));
+    }
+
+    #[test]
+    fn record_intersects_bounds_uses_node_bounds_interaction_policy() {
+        struct RightHalfBoundsKind;
+
+        impl CanvasNodeInteractionPolicy for RightHalfBoundsKind {
+            fn node_intersects_bounds(&self, hit: CanvasNodeBoundsHitTest<'_>) -> Option<bool> {
+                let active = Bounds::from_corners(
+                    Point::new(hit.bounds.center().x, hit.bounds.origin.y),
+                    Point::new(
+                        hit.bounds.origin.x + hit.bounds.size.width,
+                        hit.bounds.origin.y + hit.bounds.size.height,
+                    ),
+                );
+                Some(active.intersects(&hit.query_bounds))
+            }
+        }
+
+        let mut node = CanvasNode::new("node", point(px(0.0), px(0.0)), size(px(100.0), px(100.0)));
+        node.kind = "right-half-bounds".to_string();
+        let document = document_fixture().node(node).build();
+        let mut registry = CanvasKindRegistry::open();
+        registry.register_node_kind(
+            "right-half-bounds",
+            CanvasNodeKind::new().with_interaction_policy(RightHalfBoundsKind),
+        );
+        let facts = CanvasGeometryFacts::with_kind_registry(&document, &registry);
+        let node_record = facts
+            .hit_records()
+            .into_iter()
+            .find(|record| record.target == HitTarget::Node("node".into()))
+            .unwrap();
+
+        assert!(!facts.record_intersects_bounds(
+            &node_record,
+            Bounds::new(point(px(10.0), px(10.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
+        assert!(facts.record_intersects_bounds(
+            &node_record,
+            Bounds::new(point(px(60.0), px(10.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
+    }
+
+    #[test]
+    fn record_intersects_bounds_defaults_to_bounds_for_regular_shapes() {
+        let document = document_fixture()
+            .shape(CanvasShape::new(
+                "shape",
+                Bounds::new(point(px(10.0), px(10.0)), size(px(20.0), px(20.0))),
+            ))
+            .build();
+        let facts = CanvasGeometryFacts::new(&document);
+        let shape_record = facts
+            .hit_records()
+            .into_iter()
+            .find(|record| record.target == HitTarget::Shape("shape".into()))
+            .unwrap();
+
+        assert!(facts.record_intersects_bounds(
+            &shape_record,
+            Bounds::new(point(px(25.0), px(25.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
+        assert!(!facts.record_intersects_bounds(
+            &shape_record,
+            Bounds::new(point(px(40.0), px(40.0)), size(px(20.0), px(20.0))),
+            HitOptions::default()
+        ));
     }
 }

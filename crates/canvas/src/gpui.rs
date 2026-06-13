@@ -33,8 +33,9 @@ mod tests {
         CanvasShapeRenderPolicy, CanvasSnapAxis, CanvasSnapGuide, CanvasStyle, CanvasTransaction,
         CanvasTransformTarget, CanvasViewport, DocumentCommand, EdgeId, HandleRole, HitTarget,
         PointerButton,
+        session::ToolState,
         test_support::{connected_pair_fixture, document_fixture},
-        tool::{CanvasToolEffect, ToolState},
+        tool::CanvasToolEffect,
     };
     use open_gpui::{
         Bounds, Hsla, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
@@ -573,7 +574,7 @@ mod tests {
             .find(|record| record.target == HitTarget::Shape(crate::ShapeId::from("frame")))
             .unwrap();
         assert!(frame_record.selected);
-        assert!(frame_record.structurally_selected);
+        assert!(!frame_record.structurally_selected);
         for target in [
             HitTarget::Node(crate::NodeId::from("child")),
             HitTarget::Node(crate::NodeId::from("peer")),
@@ -632,8 +633,8 @@ mod tests {
         assert_eq!(
             frame.interaction.structural_selection_bounds,
             Some(Bounds::new(
-                point(px(0.0), px(0.0)),
-                size(px(200.0), px(80.0))
+                point(px(160.0), px(20.0)),
+                size(px(40.0), px(30.0))
             ))
         );
         assert_eq!(frame.interaction.transform_handles.len(), 4);
@@ -652,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn structural_selection_bounds_skip_redundant_explicit_selection_bounds() {
+    fn child_only_selection_has_no_structural_selection_bounds() {
         let mut document = document_fixture()
             .shape(CanvasShape::new(
                 "frame",
@@ -674,6 +675,16 @@ mod tests {
         editor
             .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Shape(
                 crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::ToggleSelection(HitTarget::Shape(
+                crate::ShapeId::from("frame"),
+            )))
+            .unwrap();
+        editor
+            .apply_tool_effect(CanvasToolEffect::AddSelection(HitTarget::Node(
+                crate::NodeId::from("child"),
             )))
             .unwrap();
         let model = CanvasPaintModel::from(&editor);
