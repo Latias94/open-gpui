@@ -156,14 +156,13 @@ fn validate_resolved_target_drop_box(
     let Some(expected) = expected_drop_box_kind(&target.kind) else {
         return Ok(());
     };
-    if target
-        .drop_box
-        .is_some_and(|drop_box| drop_box.kind == expected)
-    {
-        Ok(())
-    } else {
-        Err(DockActionApplyError::DropTargetUnavailable)
+    let Some(drop_box) = target.drop_box else {
+        return Err(DockActionApplyError::DropTargetUnavailable);
+    };
+    if drop_box.kind != expected || target.preview_bounds != Some(drop_box.preview_bounds) {
+        return Err(DockActionApplyError::DropTargetUnavailable);
     }
+    Ok(())
 }
 
 fn validate_resolved_target_policy(
@@ -555,6 +554,36 @@ mod tests {
                 target,
             })
             .expect_err("edge target without drop box should not commit");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
+        );
+    }
+
+    #[test]
+    fn resolved_edge_target_requires_matching_preview_bounds_metadata() {
+        let (mut workspace, _root, left, right) = split_workspace();
+        let mut target = resolved_target(DockResolvedDropTargetKind::InnerEdge {
+            root: right,
+            target_tabs: right,
+            zone: DropZone::Right,
+        });
+        target.preview_bounds = Some(Bounds::new(
+            point(px(1.0), px(1.0)),
+            size(px(50.0), px(50.0)),
+        ));
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target,
+            })
+            .expect_err("edge target with mismatched preview bounds should not commit");
 
         assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
         assert_eq!(
