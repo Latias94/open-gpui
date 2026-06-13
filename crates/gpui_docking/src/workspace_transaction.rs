@@ -9,15 +9,6 @@ use crate::{
     workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 
-#[cfg(test)]
-pub(crate) struct DockWorkspaceDropRequest<'a> {
-    pub(crate) source_space: &'a DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
-    pub(crate) item: &'a DockItemId,
-    pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target: DockResolvedDropTarget,
-}
-
 pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) payload: DockWorkspaceDropPayload<'a>,
@@ -40,27 +31,6 @@ pub(crate) enum DockWorkspaceDropPayload<'a> {
 }
 
 impl DockWorkspace {
-    #[cfg(test)]
-    pub(crate) fn commit_resolved_drop(
-        &mut self,
-        request: DockWorkspaceDropRequest<'_>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let DockWorkspaceDropRequest {
-            source_space,
-            source_tabs,
-            item,
-            target_space,
-            target,
-        } = request;
-
-        self.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
-            source_space,
-            payload: DockWorkspaceDropPayload::Item { source_tabs, item },
-            target_space,
-            target,
-        })
-    }
-
     pub(crate) fn commit_resolved_payload_drop(
         &mut self,
         request: DockWorkspacePayloadDropRequest<'_>,
@@ -445,10 +415,12 @@ mod tests {
         let (mut workspace, root, left, right) = split_workspace();
 
         let outcome = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
                     root,
@@ -478,10 +450,12 @@ mod tests {
         let mut workspace = DockWorkspace::new(space(), graph);
 
         let outcome = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: tabs,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: tabs,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::TabBar {
                     target_tabs: tabs,
@@ -513,10 +487,12 @@ mod tests {
         target.is_central_region = true;
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target,
             })
@@ -551,10 +527,12 @@ mod tests {
         target.is_central_region = true;
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: tabs,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: tabs,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target,
             })
@@ -579,10 +557,12 @@ mod tests {
         workspace.policy_mut().set_allow_edge_split(false);
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::InnerEdge {
                     root: right,
@@ -613,10 +593,12 @@ mod tests {
         target.drop_box = None;
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target,
             })
@@ -643,10 +625,12 @@ mod tests {
         ));
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target,
             })
@@ -664,10 +648,12 @@ mod tests {
         let (mut workspace, root, left, right) = split_workspace();
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
                     root: right,
@@ -733,10 +719,12 @@ mod tests {
         workspace.policy_mut().set_allow_platform_viewports(true);
 
         let outcome = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &detached,
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
@@ -759,10 +747,12 @@ mod tests {
         workspace.policy_mut().set_allow_platform_viewports(true);
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
@@ -789,10 +779,12 @@ mod tests {
             .set_allow_central_region_dock_over(false);
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs: left,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs: left,
+                    item: &item("a"),
+                },
                 target_space: &central,
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: central.clone(),
@@ -1140,10 +1132,12 @@ mod tests {
         let mut workspace = DockWorkspace::new(space(), graph);
 
         let err = workspace
-            .commit_resolved_drop(DockWorkspaceDropRequest {
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
-                source_tabs,
-                item: &item("a"),
+                payload: DockWorkspaceDropPayload::Item {
+                    source_tabs,
+                    item: &item("a"),
+                },
                 target_space: &space(),
                 target: resolved_target(DockResolvedDropTargetKind::FloatingTitleBar {
                     floating,

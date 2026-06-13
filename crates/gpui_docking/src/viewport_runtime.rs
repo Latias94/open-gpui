@@ -864,13 +864,14 @@ impl DockViewportRuntime {
         let (target_space, target) = target_space;
         let focus_item = self.focus_item_for_payload(&payload, source_node, cx);
         let action = self.controller.update(cx, |controller, cx| {
-            let outcome =
-                controller.commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+            let outcome = controller.workspace_mut().commit_resolved_payload_drop(
+                DockWorkspacePayloadDropRequest {
                     source_space: &source_space,
                     payload: payload.as_workspace_payload(source_node),
                     target_space: &target_space,
                     target,
-                });
+                },
+            );
             if outcome
                 .as_ref()
                 .map(|outcome| outcome.changed())
@@ -1525,7 +1526,9 @@ impl DockViewportRuntime {
     ) -> DockViewportCloseStatus {
         self.controller
             .update(cx, |controller, cx| {
-                let outcome = controller.commit_merge_space_into(source_space, target_space);
+                let outcome = controller
+                    .workspace_mut()
+                    .commit_merge_space_into(source_space, target_space);
                 if outcome
                     .as_ref()
                     .map(|outcome| outcome.changed())
@@ -1654,18 +1657,19 @@ impl DockViewportRuntime {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.controller.update(cx, |controller, cx| {
             let request = pending.request();
+            let workspace = controller.workspace_mut();
             let outcome = match request.payload() {
-                DockViewportDropPayload::Item(item) => controller.commit_item_to_empty_dock_space(
+                DockViewportDropPayload::Item(item) => workspace.commit_item_to_empty_dock_space(
                     request.source_space(),
                     item,
                     pending.target_space(),
                 ),
-                DockViewportDropPayload::Tabs => controller.commit_tabs_to_empty_dock_space(
+                DockViewportDropPayload::Tabs => workspace.commit_tabs_to_empty_dock_space(
                     request.source_space(),
                     request.source_node(),
                     pending.target_space(),
                 ),
-                DockViewportDropPayload::Floating(floating) => controller
+                DockViewportDropPayload::Floating(floating) => workspace
                     .commit_floating_to_empty_dock_space(
                         request.source_space(),
                         *floating,

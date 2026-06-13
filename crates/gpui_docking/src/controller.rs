@@ -5,7 +5,6 @@ use crate::{
     DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
     DockPanel, DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
     DockPolicy, DockSpaceId, DockWorkspace, EditorDockLayoutSpec, host::DockHostOptions,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{AnyView, Bounds, Entity, Focusable, Pixels, Render};
 
@@ -33,6 +32,10 @@ impl DockController {
     /// Returns the owned workspace.
     pub fn workspace(&self) -> &DockWorkspace {
         &self.workspace
+    }
+
+    pub(crate) fn workspace_mut(&mut self) -> &mut DockWorkspace {
+        &mut self.workspace
     }
 
     /// Returns the controller's default logical dock space.
@@ -279,100 +282,12 @@ impl DockController {
         self.workspace.apply_action(action)
     }
 
-    pub(crate) fn commit_resolved_payload_drop(
-        &mut self,
-        request: DockWorkspacePayloadDropRequest<'_>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_resolved_payload_drop(request)
-    }
-
-    pub(crate) fn commit_select_tab(
-        &mut self,
-        tabs: DockNodeId,
-        item: &DockItemId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_select_tab(tabs, item)
-    }
-
-    pub(crate) fn commit_close_item(
-        &mut self,
-        space: &DockSpaceId,
-        item: &DockItemId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_close_item(space, item)
-    }
-
     #[cfg(test)]
     pub(crate) fn commit_tab_move(
         &mut self,
         request: DockWorkspaceMoveTabRequest<'_>,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.commit_tab_move(request)
-    }
-
-    pub(crate) fn commit_item_to_empty_dock_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        item: &DockItemId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace
-            .commit_item_to_empty_dock_space(source_space, item, target_space)
-    }
-
-    pub(crate) fn commit_tabs_to_empty_dock_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        source_tabs: DockNodeId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace
-            .commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)
-    }
-
-    pub(crate) fn commit_floating_to_empty_dock_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        floating: DockNodeId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace
-            .commit_floating_to_empty_dock_space(source_space, floating, target_space)
-    }
-
-    pub(crate) fn commit_merge_space_into(
-        &mut self,
-        source_space: &DockSpaceId,
-        target_space: &DockSpaceId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace
-            .commit_merge_space_into(source_space, target_space)
-    }
-
-    pub(crate) fn commit_resize_split(
-        &mut self,
-        split: DockNodeId,
-        fractions: &[f32],
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_resize_split(split, fractions)
-    }
-
-    pub(crate) fn commit_set_floating_bounds(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        bounds: Bounds<Pixels>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace
-            .commit_set_floating_bounds(space, floating, bounds)
-    }
-
-    pub(crate) fn commit_raise_floating(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_raise_floating(space, floating)
     }
 }
 
