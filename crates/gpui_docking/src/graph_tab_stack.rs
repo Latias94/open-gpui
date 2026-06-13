@@ -4,7 +4,7 @@ use super::{DockGraph, DockNode};
 
 pub(in crate::graph) struct DetachedTabs {
     pub(in crate::graph) items: Vec<DockItemId>,
-    pub(in crate::graph) active: usize,
+    pub(in crate::graph) selected: Option<DockItemId>,
 }
 
 impl DockGraph {
@@ -13,30 +13,49 @@ impl DockGraph {
         space: &DockSpaceId,
         tabs: DockNodeId,
     ) -> Option<DetachedTabs> {
+        self.take_tabs_from_space_with_simplify(space, tabs, true)
+    }
+
+    pub(in crate::graph) fn take_tabs_from_space_without_simplify(
+        &mut self,
+        space: &DockSpaceId,
+        tabs: DockNodeId,
+    ) -> Option<DetachedTabs> {
+        self.take_tabs_from_space_with_simplify(space, tabs, false)
+    }
+
+    fn take_tabs_from_space_with_simplify(
+        &mut self,
+        space: &DockSpaceId,
+        tabs: DockNodeId,
+        simplify: bool,
+    ) -> Option<DetachedTabs> {
         self.root_for_node_in_space(space, tabs)?;
 
-        let (items, active) = match self.nodes.get(tabs) {
-            Some(DockNode::Tabs { items, active }) if !items.is_empty() => {
-                (items.clone(), (*active).min(items.len().saturating_sub(1)))
+        let (items, selected) = match self.nodes.get(tabs) {
+            Some(DockNode::Tabs { items, selected }) if !items.is_empty() => {
+                (items.clone(), sanitize_selected_item(items, selected))
             }
             _ => return None,
         };
 
-        if let Some(DockNode::Tabs { items, active }) = self.nodes.get_mut(tabs) {
+        if let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) {
             items.clear();
-            *active = 0;
+            *selected = None;
         }
         if self.root(space) == Some(tabs) {
             self.remove_root(space);
         }
-        self.simplify_space(space);
-        Some(DetachedTabs { items, active })
+        if simplify {
+            self.simplify_space(space);
+        }
+        Some(DetachedTabs { items, selected })
     }
 
     pub(in crate::graph) fn insert_detached_tabs(&mut self, detached: DetachedTabs) -> DockNodeId {
         self.insert_node(DockNode::Tabs {
             items: detached.items,
-            active: detached.active,
+            selected: detached.selected,
         })
     }
 
@@ -46,28 +65,25 @@ impl DockGraph {
         item: DockItemId,
         index: Option<usize>,
     ) -> bool {
-        let Some(DockNode::Tabs {
-            items,
-            active: current_active,
-        }) = self.nodes.get_mut(tabs)
-        else {
+        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
             return false;
         };
         if items.contains(&item) {
+            *selected = Some(item);
             return true;
         }
 
+        let selected_item = item.clone();
         match index {
             Some(index) => {
                 let index = index.min(items.len());
                 items.insert(index, item);
-                *current_active = index;
             }
             None => {
                 items.push(item);
-                *current_active = items.len().saturating_sub(1);
             }
         }
+        *selected = Some(selected_item);
         true
     }
 
@@ -76,9 +92,9 @@ impl DockGraph {
         tabs: DockNodeId,
         next_items: &[DockItemId],
         index: Option<usize>,
-        active_in_group: usize,
+        selected_in_group: Option<&DockItemId>,
     ) -> bool {
-        let Some(DockNode::Tabs { items, active }) = self.nodes.get_mut(tabs) else {
+        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
             return false;
         };
         if next_items.is_empty() {
@@ -93,15 +109,16 @@ impl DockGraph {
             items.insert(insert_at, item.clone());
             insert_at = insert_at.saturating_add(1);
         }
-        if let Some(active_item) = next_items.get(active_in_group)
-            && let Some(index) = items.iter().position(|item| item == active_item)
-        {
-            *active = index;
+        if let Some(selected_item) = selected_in_group {
+            *selected = Some(selected_item.clone());
         }
         if items.is_empty() {
-            *active = 0;
-        } else if *active >= items.len() {
-            *active = items.len().saturating_sub(1);
+            *selected = None;
+        } else if selected
+            .as_ref()
+            .is_none_or(|candidate| !items.contains(candidate))
+        {
+            *selected = items.first().cloned();
         }
         true
     }
@@ -111,21 +128,35 @@ impl DockGraph {
         tabs: DockNodeId,
         index: usize,
     ) -> bool {
-        let Some(DockNode::Tabs { items, active }) = self.nodes.get_mut(tabs) else {
+        let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
             return false;
         };
         if index >= items.len() {
             return false;
         }
 
-        items.remove(index);
+        let removed = items.remove(index);
         if items.is_empty() {
-            *active = 0;
-        } else if *active >= items.len() {
-            *active = items.len().saturating_sub(1);
-        } else if index < *active {
-            *active = active.saturating_sub(1);
+            *selected = None;
+        } else if selected.as_ref() == Some(&removed)
+            || selected
+                .as_ref()
+                .is_none_or(|candidate| !items.contains(candidate))
+        {
+            let next_index = index.min(items.len().saturating_sub(1));
+            *selected = items.get(next_index).cloned();
         }
         true
     }
+}
+
+pub(in crate::graph) fn sanitize_selected_item(
+    items: &[DockItemId],
+    selected: &Option<DockItemId>,
+) -> Option<DockItemId> {
+    selected
+        .as_ref()
+        .filter(|candidate| items.contains(candidate))
+        .cloned()
+        .or_else(|| items.first().cloned())
 }

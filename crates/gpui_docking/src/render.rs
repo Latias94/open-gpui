@@ -2,10 +2,10 @@ use crate::{
     DockHost, DockNode, DockNodeId, DockViewportWindowFacts, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
-    drop_preview::{DockDropPreview, DockDropPreviewKind},
+    drop_preview::{DockDropPreview, DockDropRoutePreview},
     drop_runtime::DockHostDropSceneFact,
     drop_scene_fact,
-    host_render_session::DockHostRenderSession,
+    host_render_session::{DockHostRenderSession, selected_index},
     interaction::{
         DockPayloadDropRelease, DockRenderedOutsideReleaseDecision,
         DockRenderedOutsideReleaseRequest,
@@ -194,14 +194,17 @@ impl DockHost {
                 viewport_host_scene_frame,
                 cx,
             ),
-            DockNode::Tabs { items, active } => self.render_tabs(
-                node_id,
-                items,
-                active,
-                session,
-                viewport_host_scene_frame,
-                cx,
-            ),
+            DockNode::Tabs { items, selected } => {
+                let selected = selected_index(&items, &selected).unwrap_or(0);
+                self.render_tabs(
+                    node_id,
+                    items,
+                    selected,
+                    session,
+                    viewport_host_scene_frame,
+                    cx,
+                )
+            }
             DockNode::Floating { child } => {
                 self.render_floating_node(node_id, child, session, viewport_host_scene_frame, cx)
             }
@@ -380,21 +383,30 @@ impl DockHost {
         let routed_preview = self.viewport_runtime().and_then(|runtime| {
             runtime.routed_drop_preview_for(self.space(), window.window_handle().window_id())
         });
-        let (preview, payload_title) = self
+        let local_preview = self
             .interaction()
             .drop_preview()
-            .map(|preview| (preview, active_payload_title))
-            .or_else(|| {
-                routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)))
-            })?;
+            .map(|preview| (preview, active_payload_title));
+        let route_preview = self.interaction().drop_route_preview();
+        let routed_target_preview =
+            routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
+
+        if let Some((preview, payload_title)) = local_preview.or(routed_target_preview) {
+            return Some(self.render_target_drop_preview(session, preview, payload_title));
+        }
+
+        route_preview.map(|preview| self.render_route_drop_preview(session, preview))
+    }
+
+    fn render_target_drop_preview(
+        &mut self,
+        session: &DockHostRenderSession,
+        preview: DockDropPreview,
+        payload_title: Option<String>,
+    ) -> AnyElement {
         let bounds = preview.bounds;
-        let region = if preview.is_route() {
-            DockDebugRegion::DropRoutePreview { kind: preview.kind }
-        } else {
-            DockDebugRegion::DropPreview
-        };
         let selector = self.record_debug_selector(
-            region,
+            DockDebugRegion::DropPreview,
             format!("{}:drop-preview", session.selector_prefix()),
         );
         let (border, background) = drop_preview_colors(&preview);
@@ -454,7 +466,33 @@ impl DockHost {
             );
         }
 
-        Some(element.into_any_element())
+        element.into_any_element()
+    }
+
+    fn render_route_drop_preview(
+        &mut self,
+        session: &DockHostRenderSession,
+        preview: DockDropRoutePreview,
+    ) -> AnyElement {
+        let bounds = preview.bounds;
+        let selector = self.record_debug_selector(
+            DockDebugRegion::DropRoutePreview { kind: preview.kind },
+            format!("{}:drop-route-preview", session.selector_prefix()),
+        );
+        let (border, background) = drop_route_preview_colors(&preview);
+
+        div()
+            .id(selector.clone())
+            .debug_selector(move || selector)
+            .absolute()
+            .left(bounds.origin.x)
+            .top(bounds.origin.y)
+            .w(bounds.size.width)
+            .h(bounds.size.height)
+            .border_1()
+            .border_color(border)
+            .bg(background)
+            .into_any_element()
     }
 
     pub(crate) fn render_drop_guides(
@@ -642,10 +680,21 @@ fn drop_preview_colors(preview: &DockDropPreview) -> (Rgba, Rgba) {
         return (rgb(0xdc2626), rgba(0xfca5a547));
     }
 
+    (rgb(0x2563eb), rgba(0x60a5fa47))
+}
+
+fn drop_route_preview_colors(preview: &DockDropRoutePreview) -> (Rgba, Rgba) {
+    if preview.rejected {
+        return (rgb(0xdc2626), rgba(0xfca5a547));
+    }
+
     match preview.kind {
-        DockDropPreviewKind::Local => (rgb(0x2563eb), rgba(0x60a5fa47)),
-        DockDropPreviewKind::KnownViewportRoute => (rgb(0x059669), rgba(0x6ee7b747)),
-        DockDropPreviewKind::TearOffRoute => (rgb(0x7c3aed), rgba(0xc4b5fd47)),
-        DockDropPreviewKind::RejectedRoute => (rgb(0xdc2626), rgba(0xfca5a547)),
+        crate::drop_preview::DockDropRoutePreviewKind::KnownViewport => {
+            (rgb(0x059669), rgba(0x6ee7b747))
+        }
+        crate::drop_preview::DockDropRoutePreviewKind::TearOff => (rgb(0x7c3aed), rgba(0xc4b5fd47)),
+        crate::drop_preview::DockDropRoutePreviewKind::Rejected => {
+            (rgb(0xdc2626), rgba(0xfca5a547))
+        }
     }
 }

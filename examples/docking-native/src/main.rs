@@ -531,8 +531,7 @@ fn restored_demo_layout() -> DockLayout {
                 ["editor", "preview"],
                 ["terminal", "problems", "runtime"],
             )
-            .with_fractions(0.24, 0.68)
-            .with_active_indexes(0, 0, 0),
+            .with_fractions(0.24, 0.68),
         )
         .allow_floating(true)
         .allow_platform_viewports(true)

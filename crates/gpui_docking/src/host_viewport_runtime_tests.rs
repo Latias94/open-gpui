@@ -1,13 +1,14 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController, DockGraph,
-    DockGraphMutationError, DockHost, DockItemId, DockNode, DockPanel, DockPolicyError,
-    DockSpaceId, DockViewportAdapter, DockViewportClosePolicy, DockViewportCloseStatus,
-    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteCommit,
-    DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
-    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTargetHit, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController,
+    DockDropDelivery, DockGraph, DockGraphMutationError, DockHost, DockItemId, DockMoveTarget,
+    DockNode, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportOpenStatus,
+    DockViewportResolvedDropRoute, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
+    DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -17,7 +18,6 @@ use crate::{
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
     },
     viewport_test_support::handle,
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
@@ -69,11 +69,11 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     let mut graph = DockGraph::new();
     let primary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(primary_space.clone(), primary_tabs);
     graph.set_root(secondary_space.clone(), secondary_tabs);
@@ -123,11 +123,11 @@ fn viewport_runtime_tracks_recent_activation_for_fallback_priority(cx: &mut Test
     let mut graph = DockGraph::new();
     let alpha_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let zeta_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(alpha_space.clone(), alpha_tabs);
     graph.set_root(zeta_space.clone(), zeta_tabs);
@@ -182,7 +182,7 @@ fn viewport_runtime_tear_off_opens_viewport_then_moves_item(cx: &mut TestAppCont
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -233,7 +233,7 @@ fn viewport_runtime_tear_off_duplicate_request_is_idempotent(cx: &mut TestAppCon
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -300,7 +300,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_closes_before_window_creat
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -369,11 +369,11 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let other_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
     graph.set_root(other_space.clone(), other_tabs);
@@ -394,15 +394,14 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     );
     cx.update_entity(&controller, |controller, _| {
         controller
-            .commit_tab_move(DockWorkspaceMoveTabRequest {
-                source_space: &primary_space,
+            .workspace_mut()
+            .commit_tab_move(
+                &primary_space,
                 source_tabs,
-                item: &item("a"),
-                target_space: &other_space,
-                target_tabs: other_tabs,
-                zone: crate::DropZone::Center,
-                insert_index: None,
-            })
+                &item("a"),
+                &other_space,
+                DockMoveTarget::center(other_tabs),
+            )
             .expect("source item move should commit before window creation");
     });
 
@@ -448,7 +447,7 @@ fn viewport_runtime_tear_off_expiration_clears_pending_without_graph_mutation(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -494,11 +493,11 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
     graph.set_root(detached_space.clone(), detached_tabs);
@@ -552,11 +551,11 @@ fn viewport_runtime_tear_off_commit_failure_closes_opened_window(cx: &mut TestAp
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
     graph.set_root(detached_space.clone(), detached_tabs);
@@ -618,7 +617,7 @@ fn viewport_runtime_replacement_closes_superseded_runtime_window(cx: &mut TestAp
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -674,7 +673,7 @@ fn viewport_runtime_tear_off_completion_reports_replaced_runtime_windows(cx: &mu
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -750,7 +749,7 @@ fn viewport_runtime_tear_off_rejects_already_open_target_space_without_reuse(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(primary_space.clone(), source_tabs);
 
@@ -803,7 +802,7 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -853,7 +852,7 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -908,11 +907,11 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
     let mut graph = DockGraph::new();
     let main_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("c")],
-        active: 1,
+        selected: Some(item("c")),
     });
     graph.set_root(main_space.clone(), main_tabs);
     graph.set_root(detached_space.clone(), detached_tabs);
@@ -938,7 +937,7 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
     assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
     assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
     cx.read_entity(&controller, |controller, _| {
-        let DockNode::Tabs { items, active } = controller
+        let DockNode::Tabs { items, selected } = controller
             .graph()
             .node(main_tabs)
             .expect("fallback tabs should remain")
@@ -946,7 +945,7 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
             panic!("fallback root should be tabs");
         };
         assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(*active, 2);
+        assert_eq!(selected.as_ref(), items.get(2));
     });
 }
 
@@ -958,7 +957,7 @@ fn viewport_runtime_merge_back_should_close_vetoes_invalid_target(cx: &mut TestA
     let mut graph = DockGraph::new();
     let detached_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(detached_space.clone(), detached_tabs);
 
@@ -1006,7 +1005,7 @@ fn viewport_runtime_installs_should_close_hook_when_reusing_registered_window(
     let mut graph = DockGraph::new();
     let secondary_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(secondary_space.clone(), secondary_tabs);
 
@@ -1069,7 +1068,7 @@ fn viewport_runtime_window_closed_clears_host_scene_without_adapter_mapping(
     let mut graph = DockGraph::new();
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(target_space.clone(), target_tabs);
 
@@ -1120,11 +1119,11 @@ fn viewport_runtime_window_closed_clears_routed_preview(cx: &mut TestAppContext)
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1175,7 +1174,7 @@ fn viewport_runtime_window_closed_clears_routed_preview(cx: &mut TestAppContext)
         DockViewportTargetContext::new().with_hovered_window(target_window),
     )
     .with_drag_session(Some(session.clone()));
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     let (changed, _) = runtime.update_routed_drop_preview(&resolution, "Panel A");
     assert!(changed);
     assert!(
@@ -1191,7 +1190,7 @@ fn viewport_runtime_window_closed_clears_routed_preview(cx: &mut TestAppContext)
         None
     );
     assert_eq!(
-        runtime.routed_drop_commit_for_drag_session(Some(&session)),
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
         None
     );
     assert_eq!(runtime.last_hovered_window(), None);
@@ -1204,11 +1203,11 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1260,7 +1259,7 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
         DockViewportTargetContext::new().with_hovered_window(old_window),
     )
     .with_drag_session(Some(session.clone()));
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     let (changed, _) = runtime.update_routed_drop_preview(&resolution, "Panel A");
     assert!(changed);
 
@@ -1271,14 +1270,14 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
         None
     );
     assert_eq!(
-        runtime.routed_drop_commit_for_drag_session(Some(&session)),
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
         None
     );
     assert_eq!(runtime.last_hovered_window(), None);
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
+fn viewport_runtime_rejects_stale_known_viewport_delivery_after_target_rebind(
     cx: &mut TestAppContext,
 ) {
     let source_space = DockSpaceId::from("source");
@@ -1286,11 +1285,11 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1334,7 +1333,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
         None,
         DockViewportTargetContext::new().with_hovered_window(old_window),
     );
-    let stale_commit = DockViewportDropRouteCommit::from_route_request(
+    let stale_delivery = DockDropDelivery::from_route_request(
         &request,
         DockViewportDropRoute::KnownViewport {
             target: DockViewportTargetHit::new(target_space.clone(), old_window, host_position),
@@ -1355,7 +1354,7 @@ fn viewport_runtime_rejects_stale_known_viewport_commit_after_target_rebind(
         leaf_host_scene_fact(target_tabs, target_tabs),
     ));
 
-    let result = cx.update(|app| runtime.commit_payload_drop_route_with_outcome(stale_commit, app));
+    let result = cx.update(|app| runtime.deliver_payload_drop_with_outcome(stale_delivery, app));
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -1378,11 +1377,11 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1425,7 +1424,7 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target }
             if target.window_id() == target_window.window_id()),
@@ -1447,7 +1446,7 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
     );
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1463,17 +1462,19 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_cached_target_after_window_facts_go_stale(cx: &mut TestAppContext) {
+fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1516,21 +1517,21 @@ fn viewport_runtime_rejects_cached_target_after_window_facts_go_stale(cx: &mut T
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target }
             if target.window_id() == target_window.window_id()),
         "fresh viewport facts should produce a known viewport route"
     );
     assert!(
-        resolution.commit().routed_preview_target().is_some(),
-        "fresh route should cache the resolved host scene target"
+        resolution.delivery().routed_preview_target().is_some(),
+        "fresh route should capture the resolved host scene target"
     );
 
     let (changed, _) = runtime.mark_viewport_window_snapshot_stale(target_window.window_id());
     assert!(changed);
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1552,11 +1553,11 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1592,14 +1593,14 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert_eq!(
         resolution.route(),
         &DockViewportDropRoute::Unavailable,
         "viewport hit without a current host scene target should be unavailable"
     );
     assert!(
-        resolution.commit().routed_preview_target().is_none(),
+        resolution.delivery().routed_preview_target().is_none(),
         "unavailable route must not carry an accepted preview target"
     );
     let (changed, windows) = runtime.update_routed_drop_preview(&resolution, "Panel A");
@@ -1607,7 +1608,7 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
     assert!(windows.is_empty());
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1623,17 +1624,19 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
 }
 
 #[open_gpui::test]
-fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut TestAppContext) {
+fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1681,25 +1684,25 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
-        resolution.commit().routed_preview_target().is_some(),
-        "preview should cache the accepted central target"
+        resolution.delivery().routed_preview_target().is_some(),
+        "preview should capture the accepted central target"
     );
-    let (_, _, cached_target) = resolution
-        .commit()
+    let (_, _, resolved_target) = resolution
+        .delivery()
         .routed_preview_target()
-        .expect("preview target should be cached");
+        .expect("preview target should be captured");
     assert!(
         matches!(
-            cached_target.kind,
+            resolved_target.kind,
             crate::drop_target::DockResolvedDropTargetKind::LeafCenter { .. }
         ),
-        "cached target should be the central leaf body, got {cached_target:?}"
+        "resolved target snapshot should be the central leaf body, got {resolved_target:?}"
     );
     assert!(
-        cached_target.is_central_region,
-        "cached target should retain the central-region marker"
+        resolved_target.is_central_region,
+        "resolved target snapshot should retain the central-region marker"
     );
 
     controller.update(cx, |controller, _| {
@@ -1709,7 +1712,7 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
     });
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
     });
     assert_eq!(
         result,
@@ -1736,11 +1739,11 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1789,7 +1792,7 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     );
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(
             resolution.route(),
@@ -1798,12 +1801,12 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
         "policy-rejected cross-viewport targets should render as rejected routes"
     );
     assert!(
-        resolution.commit().routed_preview_target().is_none(),
+        resolution.delivery().routed_preview_target().is_none(),
         "policy-rejected cross-viewport targets must not render as accepted previews"
     );
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
     });
     assert_eq!(
         result,
@@ -1834,11 +1837,11 @@ fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -1901,8 +1904,7 @@ fn viewport_runtime_source_only_release_uses_last_hovered_viewport(cx: &mut Test
         None,
         DockViewportTargetContext::new().with_hovered_window(target_opened.window()),
     );
-    let resolution =
-        cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&preview_request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
     cx.update(|app| {
         runtime.update_routed_drop_preview(&resolution, "Panel A", app);
     });
@@ -1969,11 +1971,11 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -2058,16 +2060,15 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         DockViewportTargetContext::new().with_hovered_window(target_opened.window()),
     )
     .with_drag_session(Some(session.clone()));
-    let resolution =
-        cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&preview_request, app));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&preview_request, app));
     cx.update(|app| {
         runtime.update_routed_drop_preview(&resolution, "Panel A", app);
     });
     assert!(
         runtime
-            .routed_drop_commit_for_drag_session(Some(&session))
+            .routed_drop_delivery_for_drag_session(Some(&session))
             .is_some(),
-        "preview should cache a routed commit before release"
+        "preview should cache a routed delivery before release"
     );
     assert!(runtime.begin_viewport_host_scene(
         target_space.clone(),
@@ -2092,14 +2093,14 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
     )
     .with_drag_session(Some(session.clone()));
     let release_resolution =
-        cx.update(|app| runtime.resolve_payload_drop_route_with_commit(&release_request, app));
+        cx.update(|app| runtime.resolve_payload_drop_delivery(&release_request, app));
     assert_eq!(
         release_resolution.route(),
         &DockViewportDropRoute::Unavailable,
         "release should be retargeted to the current point instead of reusing cached host_position"
     );
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_route_with_outcome(release_resolution.commit().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(release_resolution.delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -2121,7 +2122,7 @@ fn viewport_runtime_scopes_last_hovered_window_to_drag_session(cx: &mut TestAppC
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     let mut workspace = DockWorkspace::new(source_space.clone(), graph);
@@ -2152,7 +2153,7 @@ fn viewport_runtime_scopes_last_hovered_window_to_drag_session(cx: &mut TestAppC
     };
     let resolution = DockViewportResolvedDropRoute::new(
         route.clone(),
-        DockViewportDropRouteCommit::from_route_request(&request, route),
+        DockDropDelivery::from_route_request(&request, route),
     );
 
     runtime.update_routed_drop_preview(&resolution, "Panel A");
@@ -2166,7 +2167,7 @@ fn viewport_runtime_scopes_last_hovered_window_to_drag_session(cx: &mut TestAppC
         DockViewportDropRoute::Local {
             host_position: target_position,
         },
-        DockViewportDropRouteCommit::from_route_request(
+        DockDropDelivery::from_route_request(
             &request,
             DockViewportDropRoute::Local {
                 host_position: target_position,
@@ -2187,17 +2188,19 @@ fn viewport_runtime_scopes_last_hovered_window_to_drag_session(cx: &mut TestAppC
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &mut TestAppContext) {
+fn viewport_runtime_rejects_known_viewport_delivery_from_stale_drag_session(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let target_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     graph.set_root(target_space.clone(), target_tabs);
@@ -2248,7 +2251,7 @@ fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &m
         DockViewportTargetContext::new().with_hovered_window(target_window),
     )
     .with_drag_session(Some(stale_session.clone()));
-    let stale_commit = DockViewportDropRouteCommit::from_route_request(
+    let stale_delivery = DockDropDelivery::from_route_request(
         &request,
         DockViewportDropRoute::KnownViewport {
             target: DockViewportTargetHit::new(target_space.clone(), target_window, host_position),
@@ -2256,7 +2259,7 @@ fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &m
     );
 
     let _replacement = runtime.begin_payload_drag(&payload);
-    let result = cx.update(|app| runtime.commit_payload_drop_route_with_outcome(stale_commit, app));
+    let result = cx.update(|app| runtime.deliver_payload_drop_with_outcome(stale_delivery, app));
     assert!(matches!(
         result,
         Err(DockActionApplyError::DropDragSessionStale { session })
@@ -2275,12 +2278,12 @@ fn viewport_runtime_rejects_known_viewport_commit_from_stale_drag_session(cx: &m
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_tear_off_commit_from_stale_drag_session(cx: &mut TestAppContext) {
+fn viewport_runtime_rejects_tear_off_delivery_from_stale_drag_session(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -2307,7 +2310,7 @@ fn viewport_runtime_rejects_tear_off_commit_from_stale_drag_session(cx: &mut Tes
     )
     .with_drag_session(Some(stale_session.clone()));
 
-    let result = cx.update(|app| runtime.prepare_tear_off_drop_route_commit(request, app));
+    let result = cx.update(|app| runtime.prepare_tear_off_drop_delivery(request, app));
     assert!(matches!(
         result,
         Err(DockActionApplyError::DropDragSessionStale { session })
@@ -2327,7 +2330,7 @@ fn viewport_runtime_drag_geometry_is_bound_to_active_drag_session(cx: &mut TestA
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
     let workspace = DockWorkspace::new(source_space.clone(), graph);
@@ -2380,7 +2383,7 @@ fn viewport_runtime_tear_off_bounds_fallback_is_marked_degraded(cx: &mut TestApp
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -2421,7 +2424,7 @@ fn viewport_runtime_tear_off_bounds_preserve_drag_cursor_offset(cx: &mut TestApp
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -2459,7 +2462,7 @@ fn viewport_runtime_tear_off_suggested_bounds_override_drag_geometry(cx: &mut Te
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 
@@ -2494,7 +2497,7 @@ fn viewport_runtime_tear_off_drag_bounds_clamp_to_work_area(cx: &mut TestAppCont
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(source_space.clone(), source_tabs);
 

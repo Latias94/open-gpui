@@ -64,14 +64,14 @@ impl DockViewportTargetContext {
             || !self.window_stack.is_empty()
     }
 
-    pub(crate) fn is_trusted_window(&self, window_id: WindowId) -> bool {
+    pub(crate) fn has_signal_for_window(&self, window_id: WindowId) -> bool {
         self.hovered_window == Some(window_id)
             || self.active_window == Some(window_id)
             || self.window_stack.contains(&window_id)
     }
 
     pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
-        self.has_arbitration_signal() && !self.is_trusted_window(window_id)
+        self.has_arbitration_signal() && !self.has_signal_for_window(window_id)
     }
 
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
@@ -83,7 +83,6 @@ impl DockViewportTargetContext {
         self.active_window
     }
 
-    #[cfg(test)]
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
     }

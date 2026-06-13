@@ -101,8 +101,7 @@ impl DockGraph {
             children: vec![first, second],
             fractions: vec![0.5, 0.5],
         });
-        self.replace_node_in_space_tree(space, target, split);
-        true
+        self.replace_node_in_space_tree(space, target, split)
     }
 
     fn insert_edge_child_prefer_same_axis_split(
@@ -133,8 +132,7 @@ impl DockGraph {
         if *split_axis != axis || children.len() != fractions.len() || children.is_empty() {
             return false;
         }
-        split_share_and_insert(children, fractions, anchor_index, insert_index, new_child);
-        true
+        split_share_and_insert(children, fractions, anchor_index, insert_index, new_child)
     }
 
     fn replace_node_in_space_tree(
@@ -142,16 +140,16 @@ impl DockGraph {
         space: &DockSpaceId,
         old: DockNodeId,
         new: DockNodeId,
-    ) {
+    ) -> bool {
         if self.root(space) == Some(old) {
             self.set_root(space.clone(), new);
-            return;
+            return true;
         }
         if let Some(floatings) = self.floatings.get_mut(space) {
             for floating in floatings {
                 if floating.node == old {
                     floating.node = new;
-                    return;
+                    return true;
                 }
             }
         }
@@ -169,10 +167,10 @@ impl DockGraph {
             .collect();
         for root in roots {
             if let Some(parent) = self.find_parent_in_subtree(root, old) {
-                self.replace_child_in_node(parent, old, new);
-                return;
+                return self.replace_child_in_node(parent, old, new);
             }
         }
+        false
     }
 
     fn replace_child_in_node(
@@ -298,13 +296,13 @@ fn split_share_and_insert(
     anchor_index: usize,
     insert_index: usize,
     new_child: DockNodeId,
-) {
+) -> bool {
     if children.is_empty()
         || children.len() != fractions.len()
         || anchor_index >= fractions.len()
         || insert_index > fractions.len()
     {
-        return;
+        return false;
     }
 
     let old = fractions[anchor_index];
@@ -314,4 +312,5 @@ fn split_share_and_insert(
     children.insert(insert_index, new_child);
     fractions.insert(insert_index, take);
     normalize_shares(fractions);
+    true
 }

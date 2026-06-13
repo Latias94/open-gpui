@@ -14,10 +14,9 @@ pub(crate) fn item(id: &str) -> DockItemId {
 
 pub(crate) fn root_tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
     let mut graph = DockGraph::new();
-    let root = graph.insert_node(DockNode::Tabs {
-        items: items.iter().copied().map(item).collect(),
-        active: 0,
-    });
+    let items: Vec<DockItemId> = items.iter().copied().map(item).collect();
+    let selected = items.first().cloned();
+    let root = graph.insert_node(DockNode::Tabs { items, selected });
     graph.set_root(main_space(), root);
     (graph, root)
 }

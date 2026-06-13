@@ -7,7 +7,7 @@ use slotmap::Key;
 
 #[open_gpui::test]
 fn workspace_applies_actions_and_preserves_registered_panels(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_view(item("a"), "A", test_view(cx, "A"));
     workspace.register_panel_view(item("b"), "B", test_view(cx, "B"));
@@ -17,9 +17,9 @@ fn workspace_applies_actions_and_preserves_registered_panels(cx: &mut TestAppCon
             tabs: root,
             item: item("b"),
         })
-        .expect("active tab mutation should be valid");
+        .expect("tab selection should be valid");
 
-    let DockNode::Tabs { active, .. } = workspace
+    let DockNode::Tabs { selected, .. } = workspace
         .graph()
         .node(root)
         .expect("tabs should still exist")
@@ -27,14 +27,14 @@ fn workspace_applies_actions_and_preserves_registered_panels(cx: &mut TestAppCon
         panic!("root should be tabs");
     };
     assert_eq!(outcome, DockActionOutcome::Changed);
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), Some(&item("b")));
     assert!(workspace.panels().contains(&item("a")));
     assert!(workspace.panels().contains(&item("b")));
 }
 
 #[open_gpui::test]
-fn workspace_selecting_active_tab_is_noop(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 1);
+fn workspace_selecting_selected_tab_is_noop(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "b");
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
@@ -42,7 +42,7 @@ fn workspace_selecting_active_tab_is_noop(cx: &mut TestAppContext) {
             tabs: root,
             item: item("b"),
         })
-        .expect("active tab selection should be valid");
+        .expect("tab selection should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Unchanged);
     assert!(workspace.panels().contains(&item("a")));
@@ -51,7 +51,7 @@ fn workspace_selecting_active_tab_is_noop(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn workspace_rejects_invalid_select_tab_actions(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let missing_item = workspace
@@ -81,21 +81,21 @@ fn workspace_rejects_invalid_select_tab_actions(cx: &mut TestAppContext) {
         })
     );
 
-    let DockNode::Tabs { active, .. } = workspace
+    let DockNode::Tabs { selected, .. } = workspace
         .graph()
         .node(root)
         .expect("tabs should still exist")
     else {
         panic!("root should be tabs");
     };
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), Some(&item("a")));
     assert!(workspace.panels().contains(&item("a")));
     assert!(workspace.panels().contains(&item("b")));
 }
 
 #[open_gpui::test]
 fn workspace_action_layout_export_remains_graph_only(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(
         cx,
         graph,
@@ -107,7 +107,7 @@ fn workspace_action_layout_export_remains_graph_only(cx: &mut TestAppContext) {
             tabs: root,
             item: item("b"),
         })
-        .expect("active tab mutation should be valid");
+        .expect("tab selection should be valid");
     assert_eq!(outcome, DockActionOutcome::Changed);
 
     let layout = workspace.graph().export_layout();
@@ -120,7 +120,11 @@ fn workspace_action_layout_export_remains_graph_only(cx: &mut TestAppContext) {
     assert!(!json.contains("Entity"));
     assert!(!json.contains("WindowHandle"));
 
-    let DockLayoutNode::Tabs { active, items, .. } = layout
+    assert!(!json.contains("\"active\""));
+
+    let DockLayoutNode::Tabs {
+        items, selected, ..
+    } = layout
         .nodes
         .iter()
         .find(|node| matches!(node, DockLayoutNode::Tabs { .. }))
@@ -128,17 +132,17 @@ fn workspace_action_layout_export_remains_graph_only(cx: &mut TestAppContext) {
     else {
         panic!("expected tabs node");
     };
-    assert_eq!(*active, 1);
     assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(selected.as_ref(), Some(&item("b")));
 
     let imported = DockGraph::import_layout(&layout).expect("layout should import");
     let imported_root = imported.root(&space()).expect("space should keep root");
-    let DockNode::Tabs { active, items } = imported
+    let DockNode::Tabs { selected, items } = imported
         .node(imported_root)
         .expect("imported root should exist")
     else {
         panic!("imported root should be tabs");
     };
-    assert_eq!(*active, 1);
+    assert_eq!(selected.as_ref(), items.get(1));
     assert_eq!(items, &vec![item("a"), item("b")]);
 }

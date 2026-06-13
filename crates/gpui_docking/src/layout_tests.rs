@@ -6,15 +6,15 @@ fn compute_layout_repairs_mismatched_fraction_lengths_without_truncating_childre
     let mut graph = DockGraph::new();
     let tabs_a = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let tabs_b = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     let tabs_c = graph.insert_node(DockNode::Tabs {
         items: vec![item("c")],
-        active: 0,
+        selected: Some(item("c")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -56,15 +56,15 @@ fn compute_layout_gives_central_child_remaining_split_space() {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
         items: vec![item("left")],
-        active: 0,
+        selected: Some(item("left")),
     });
     let main = graph.insert_node(DockNode::Tabs {
         items: vec![item("main")],
-        active: 0,
+        selected: Some(item("main")),
     });
     let right = graph.insert_node(DockNode::Tabs {
         items: vec![item("right")],
-        active: 0,
+        selected: Some(item("right")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -85,20 +85,26 @@ fn compute_layout_gives_central_child_remaining_split_space() {
 #[test]
 fn layout_roundtrips_roots_splits_and_floatings() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target_tabs: root,
-        zone: DropZone::Right,
-        insert_index: None,
-    }));
-    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-        source_space: space(),
-        item: item("c"),
-        target_space: space(),
-        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("root-edge move should commit")
+    );
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: item("c"),
+                target_space: space(),
+                bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+            })
+            .expect("float item should commit")
+    );
 
     let layout = graph.export_layout();
     let json = serde_json::to_string(&layout).expect("layout should serialize");
@@ -188,7 +194,7 @@ fn central_node_roundtrips_for_default_editor_layout() {
 #[test]
 fn floating_only_space_exports_and_imports_without_root() {
     let mut builder = DockLayoutBuilder::new();
-    let floating_tabs = builder.tabs(["floating"], 0);
+    let floating_tabs = builder.tabs(["floating"]);
     builder.add_floating(
         space(),
         floating_tabs,
@@ -219,7 +225,7 @@ fn floating_only_space_exports_and_imports_without_root() {
 }
 
 #[test]
-fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
+fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
     let duplicate = DockLayout::new(
         vec![DockLayoutSpace {
             id: space(),
@@ -231,12 +237,12 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("a")],
-                active: 0,
+                selected: Some(item("a")),
             },
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("b")],
-                active: 0,
+                selected: Some(item("b")),
             },
         ],
     );
@@ -264,7 +270,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
         Err(DockLayoutValidationError::CycleDetected { id: 1 })
     ));
 
-    let bad_active = DockLayout::new(
+    let missing_selection = DockLayout::new(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -274,12 +280,12 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: vec![item("a")],
-            active: 1,
+            selected: None,
         }],
     );
     assert!(matches!(
-        bad_active.validate(),
-        Err(DockLayoutValidationError::TabsActiveOutOfBounds { .. })
+        missing_selection.validate(),
+        Err(DockLayoutValidationError::TabsSelectionMissing { id: 1 })
     ));
 }
 
@@ -295,7 +301,7 @@ fn layout_validation_rejects_ordinary_empty_tabs() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: Vec::new(),
-            active: 0,
+            selected: None,
         }],
     );
 
@@ -322,12 +328,12 @@ fn layout_validation_rejects_central_node_outside_root_subtree() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("root")],
-                active: 0,
+                selected: Some(item("root")),
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("central")],
-                active: 0,
+                selected: Some(item("central")),
             },
         ],
     );
@@ -360,7 +366,7 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("a")],
-                active: 0,
+                selected: Some(item("a")),
             },
         ],
     );
@@ -380,12 +386,12 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("a")],
-                active: 0,
+                selected: Some(item("a")),
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("unused")],
-                active: 0,
+                selected: Some(item("unused")),
             },
         ],
     );
@@ -440,12 +446,12 @@ fn layout_validation_rejects_duplicate_items() {
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("a")],
-                active: 0,
+                selected: Some(item("a")),
             },
             DockLayoutNode::Tabs {
                 id: 3,
                 items: vec![item("a")],
-                active: 0,
+                selected: Some(item("a")),
             },
         ],
     );
@@ -480,7 +486,7 @@ fn layout_validation_rejects_invalid_floating_bounds() {
         vec![DockLayoutNode::Tabs {
             id: 1,
             items: vec![item("a")],
-            active: 0,
+            selected: Some(item("a")),
         }],
     );
 

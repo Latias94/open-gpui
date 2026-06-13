@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockOp, DockSpaceId,
-    DockWorkspace,
+    DockActionApplyError, DockActionOutcome, DockItemId, DockMoveTarget, DockNodeId, DockOp,
+    DockSpaceId, DockWorkspace, workspace_move_transaction::DockWorkspaceMove,
 };
 use open_gpui::{Bounds, Pixels};
 
@@ -76,10 +76,11 @@ impl DockWorkspace {
         self.policy().validate_floating()?;
         self.move_validation()
             .validate_floating_target_space(space, floating)?;
-        self.commit_graph_op(DockOp::MergeFloatingInto {
-            space: space.clone(),
+        self.commit_move(DockWorkspaceMove::Floating {
+            source_space: space,
             floating,
-            target_tabs,
+            target_space: space,
+            target: DockMoveTarget::center(target_tabs),
         })
     }
 
@@ -88,18 +89,13 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockNodeId,
-        zone: crate::DropZone,
+        target: DockMoveTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.move_validation()
-            .validate_floating_target_space(target_space, floating)?;
-        self.policy().validate_drop_zone(zone)?;
-        self.commit_graph_op(DockOp::MoveFloating {
-            source_space: source_space.clone(),
+        self.commit_move(DockWorkspaceMove::Floating {
+            source_space,
             floating,
-            target_space: target_space.clone(),
+            target_space,
             target,
-            zone,
         })
     }
 
@@ -112,10 +108,11 @@ impl DockWorkspace {
         self.policy().validate_platform_viewports()?;
         self.move_validation()
             .validate_floating_target_space(target_space, floating)?;
-        self.commit_graph_op(DockOp::MoveFloatingToEmptyDockSpace {
+        self.commit_graph_op(DockOp::MoveFloating {
             source_space: source_space.clone(),
             floating,
             target_space: target_space.clone(),
+            target: DockMoveTarget::empty_space(),
         })
     }
 }

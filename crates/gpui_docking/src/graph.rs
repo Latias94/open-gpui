@@ -72,8 +72,8 @@ pub enum DockNode {
     Tabs {
         /// Items in tab order.
         items: Vec<DockItemId>,
-        /// Active item index.
-        active: usize,
+        /// Selected item identity.
+        selected: Option<DockItemId>,
     },
     /// In-window floating container.
     Floating {
@@ -154,7 +154,7 @@ impl Default for DockCentralRegion {
 }
 
 /// Retained docking graph for one or more logical dock spaces.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DockGraph {
     nodes: SlotMap<DockNodeId, DockNode>,
     roots: HashMap<DockSpaceId, DockNodeId>,

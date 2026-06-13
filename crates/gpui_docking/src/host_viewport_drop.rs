@@ -1,7 +1,7 @@
 use crate::{
-    DockHost, DockViewportDropPayload, DockViewportDropRouteRequest, DockViewportPlatformSignals,
-    DockViewportWindowFacts,
-    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
+    DockDropDelivery, DockHost, DockViewportDropPayload, DockViewportDropRouteRequest,
+    DockViewportPlatformSignals, DockViewportWindowFacts,
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
@@ -62,25 +62,35 @@ impl DockHost {
             drag_session,
             tear_off_geometry,
         );
-        let resolution = runtime.resolve_payload_drop_route_with_commit(&request, cx);
+        let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
         let route = resolution.route().clone();
-        let commit = resolution.commit().clone();
+        let delivery = resolution.delivery().clone();
         let routed_preview_changed =
             runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
-                .update_drop_route_preview(&route, position, commit)
+                .update_drop_route_preview(&route, position, delivery)
                 || routed_preview_changed,
         )
     }
 
     pub(crate) fn commit_runtime_routed_payload_drop_interaction(
         &mut self,
+        delivery: Option<DockDropDelivery>,
         release: &DockPayloadDropRelease,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
+        if let Some(delivery) = delivery {
+            let result = if delivery.accepts_drag_payload(release.payload()) {
+                runtime.deliver_payload_drop_with_outcome(delivery, cx)
+            } else {
+                Err(delivery.payload_mismatch_error())
+            };
+            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
+        }
+
         let drag_session = release.drag_session().cloned();
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
         let request = viewport_drop_route_request_from_host(
@@ -123,7 +133,7 @@ fn viewport_drop_route_request_from_host(
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
         payload.source_node,
-        viewport_payload(payload),
+        DockViewportDropPayload::from_drag_payload(payload),
         window_screen_position(window, host_position),
         None,
         platform_signals,
@@ -153,12 +163,4 @@ fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Poi
         position.x - host_bounds.origin.x,
         position.y - host_bounds.origin.y,
     )
-}
-
-fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
-    match &payload.kind {
-        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
-        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
-        DockDragPayloadKind::Floating { floating } => DockViewportDropPayload::Floating(*floating),
-    }
 }

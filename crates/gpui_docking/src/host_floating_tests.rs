@@ -6,7 +6,7 @@ use open_gpui::TestAppContext;
 
 #[open_gpui::test]
 fn floating_action_respects_workspace_policy(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace =
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
 
@@ -36,7 +36,7 @@ fn floating_action_respects_workspace_policy(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn floating_actions_create_move_raise_and_merge_containers(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b", "c"], 0);
+    let (graph, root) = tabs_graph(&["a", "b", "c"]);
     let mut workspace = workspace_with_panels(
         cx,
         graph,

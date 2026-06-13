@@ -1,18 +1,17 @@
 #[cfg(test)]
 use crate::debug::DockDebugInstrumentation;
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockNodeId, DockSpaceId,
+    DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
     DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
-use open_gpui::{AppContext as _, Bounds, Context, Entity, Pixels, Subscription, Window, px};
+use open_gpui::{AppContext as _, Context, Entity, Pixels, Subscription, Window, px};
 
 /// Static host rendering options.
 #[derive(Debug, Clone)]
 pub struct DockHostOptions {
     /// Message rendered when the selected dock space has no root node.
     pub empty_message: String,
-    /// Message prefix rendered when an active panel is missing from the registry.
+    /// Message prefix rendered when a selected panel is missing from the registry.
     pub missing_panel_prefix: String,
     /// Minimum rendered size for a split pane during splitter resizing.
     pub split_min_size: Pixels,
@@ -95,71 +94,7 @@ impl DockHost {
         })
     }
 
-    pub(crate) fn commit_resolved_payload_drop_from_host(
-        &mut self,
-        request: DockWorkspacePayloadDropRequest<'_>,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| {
-            controller.commit_resolved_payload_drop(request)
-        })
-    }
-
-    pub(crate) fn commit_select_tab_from_host(
-        &mut self,
-        tabs: DockNodeId,
-        item: &DockItemId,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| controller.commit_select_tab(tabs, item))
-    }
-
-    pub(crate) fn commit_close_item_from_host(
-        &mut self,
-        item: &DockItemId,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let space = self.space().clone();
-        self.mutate_controller_from_host(cx, |controller| {
-            controller.commit_close_item(&space, item)
-        })
-    }
-
-    pub(crate) fn commit_resize_split_from_host(
-        &mut self,
-        split: DockNodeId,
-        fractions: &[f32],
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| {
-            controller.commit_resize_split(split, fractions)
-        })
-    }
-
-    pub(crate) fn commit_set_floating_bounds_from_host(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        bounds: Bounds<Pixels>,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| {
-            controller.commit_set_floating_bounds(space, floating, bounds)
-        })
-    }
-
-    pub(crate) fn commit_raise_floating_from_host(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        cx: &mut Context<Self>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.mutate_controller_from_host(cx, |controller| {
-            controller.commit_raise_floating(space, floating)
-        })
-    }
-
-    fn mutate_controller_from_host(
+    pub(crate) fn mutate_controller_from_host(
         &mut self,
         cx: &mut Context<Self>,
         mutate: impl FnOnce(&mut DockController) -> Result<DockActionOutcome, DockActionApplyError>,

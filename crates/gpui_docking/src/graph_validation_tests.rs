@@ -5,11 +5,11 @@ fn duplicate_item_graph() -> (DockGraph, DockNodeId, DockNodeId) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let right = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     let root = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,
@@ -33,7 +33,7 @@ fn graph_validation_accepts_reachable_canonical_graph() {
 #[test]
 fn layout_builder_try_build_validates_finished_graph() {
     let mut builder = DockLayoutBuilder::new();
-    let tabs = builder.tabs(["a", "a"], 0);
+    let tabs = builder.tabs(["a", "a"]);
     builder.set_root(space("main"), tabs);
 
     assert_eq!(
@@ -51,8 +51,8 @@ fn layout_builder_try_build_validates_finished_graph() {
 #[test]
 fn layout_builder_try_build_returns_canonical_valid_graph() {
     let mut builder = DockLayoutBuilder::new();
-    let empty = builder.tabs(std::iter::empty::<&str>(), 0);
-    let tabs = builder.tabs(["a"], 0);
+    let empty = builder.tabs(std::iter::empty::<&str>());
+    let tabs = builder.tabs(["a"]);
     let root = builder.split_horizontal(empty, tabs, 0.5);
     builder.set_root(space("main"), root);
 
@@ -85,7 +85,7 @@ fn graph_validation_rejects_ordinary_empty_tabs() {
     let mut graph = DockGraph::new();
     let tabs = graph.insert_node(DockNode::Tabs {
         items: Vec::new(),
-        active: 0,
+        selected: None,
     });
     graph.set_root(space("main"), tabs);
 
@@ -100,11 +100,11 @@ fn graph_validation_rejects_central_node_outside_root_subtree() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("root")],
-        active: 0,
+        selected: Some(item("root")),
     });
     let central = graph.insert_node(DockNode::Tabs {
         items: vec![item("central")],
-        active: 0,
+        selected: Some(item("central")),
     });
     graph.set_root(space("main"), root);
     graph.set_central_region(space("main"), DockCentralRegion::with_node(central));
@@ -137,7 +137,7 @@ fn graph_validation_rejects_shared_reachable_nodes() {
     let mut graph = DockGraph::new();
     let tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a")],
-        active: 0,
+        selected: Some(item("a")),
     });
     graph.set_root(space("left"), tabs);
     graph.set_root(space("right"), tabs);
@@ -153,7 +153,7 @@ fn graph_validation_rejects_malformed_floating_containers() {
     let mut graph = DockGraph::new();
     let tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("floating")],
-        active: 0,
+        selected: Some(item("floating")),
     });
     graph
         .floating_containers_mut(space("main"))

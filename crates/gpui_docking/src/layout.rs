@@ -10,10 +10,10 @@ mod layout_validation;
 pub use layout_validation::DockLayoutValidationError;
 
 /// Current docking layout serialization version.
-pub const DOCK_LAYOUT_VERSION: u32 = 1;
+pub const DOCK_LAYOUT_VERSION: u32 = 2;
 
 /// Serializable dock layout.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayout {
     /// Layout schema version.
     pub layout_version: u32,
@@ -35,7 +35,7 @@ impl DockLayout {
 }
 
 /// Serializable layout for one logical dock space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayoutSpace {
     /// Logical dock space id.
     pub id: DockSpaceId,
@@ -65,7 +65,7 @@ pub struct DockLayoutCentralRegion {
 }
 
 /// Serializable in-window floating container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayoutFloatingContainer {
     /// Root node id for the floating container contents.
     pub root: u32,
@@ -114,7 +114,7 @@ impl DockLayoutRect {
 }
 
 /// Serializable dock node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum DockLayoutNode {
     /// Serializable split node.
@@ -136,8 +136,9 @@ pub enum DockLayoutNode {
         id: u32,
         /// Dock items in tab order.
         items: Vec<DockItemId>,
-        /// Active item index.
-        active: usize,
+        /// Selected item identity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected: Option<DockItemId>,
     },
 }
 
@@ -251,10 +252,10 @@ impl LayoutExporter {
         };
 
         let layout_node = match graph_node {
-            DockNode::Tabs { items, active } => DockLayoutNode::Tabs {
+            DockNode::Tabs { items, selected } => DockLayoutNode::Tabs {
                 id,
                 items: items.clone(),
-                active: *active,
+                selected: selected.clone(),
             },
             DockNode::Floating { child } => return self.export_subtree(graph, *child),
             DockNode::Split {
@@ -294,9 +295,11 @@ impl LayoutImporter<'_> {
             .get(&id)
             .expect("layout must be validated before import");
         let node = match layout_node {
-            DockLayoutNode::Tabs { items, active, .. } => DockNode::Tabs {
+            DockLayoutNode::Tabs {
+                items, selected, ..
+            } => DockNode::Tabs {
                 items: items.clone(),
-                active: *active,
+                selected: selected.clone(),
             },
             DockLayoutNode::Split {
                 axis,

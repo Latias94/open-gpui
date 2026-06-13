@@ -5,7 +5,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockFloatingBoundsRequest, DockPayloadDropRelease, DockSplitterResizeRequest},
-    workspace_transaction::{DockWorkspaceDropPayload, DockWorkspacePayloadDropRequest},
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
 
@@ -127,29 +127,20 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
         let payload = release.payload();
-        self.interaction_mut().take_drop_route_commit();
+        let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
+        let runtime_preview_cleared = self
+            .viewport_runtime()
+            .cloned()
+            .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
         let mut drop_preview_cleared = false;
-        let outcome = if let Some(outcome) =
-            self.commit_runtime_routed_payload_drop_interaction(&release, window, cx)
-        {
-            drop_preview_cleared = self.clear_drop_preview_interaction();
-            outcome
-        } else {
-            let target = self.interaction_mut().take_resolved_drop_target();
-            let Some(target) = target else {
-                return DockHostInteractionOutcome::Notify
-                    .merge(DockHostInteractionOutcome::from_session_changed(
-                        route_preview_cleared,
-                    ))
-                    .merge(self.finish_floating_drag_interaction());
-            };
-
+        let target = self.interaction_mut().take_resolved_drop_target();
+        let outcome = if let Some(target) = target {
             let focus_item = self.focus_item_for_drag_payload(payload, cx);
             let outcome = self.commit_resolved_payload_drop_interaction(
                 DockWorkspacePayloadDropRequest {
                     source_space: &payload.source_space,
-                    payload: workspace_payload(payload),
+                    payload: payload.as_workspace_payload(),
                     target_space: release.host_space(),
                     target,
                 },
@@ -157,11 +148,22 @@ impl DockHost {
                 true,
             );
             self.with_panel_focus_after_local_drop(outcome, focus_item, cx)
+        } else if let Some(outcome) =
+            self.commit_runtime_routed_payload_drop_interaction(delivery, &release, window, cx)
+        {
+            drop_preview_cleared = self.clear_drop_preview_interaction();
+            outcome
+        } else {
+            return DockHostInteractionOutcome::Notify
+                .merge(DockHostInteractionOutcome::from_session_changed(
+                    route_preview_cleared,
+                ))
+                .merge(self.finish_floating_drag_interaction());
         };
 
         outcome
             .merge(DockHostInteractionOutcome::from_session_changed(
-                route_preview_cleared || drop_preview_cleared,
+                route_preview_cleared || runtime_preview_cleared || drop_preview_cleared,
             ))
             .merge(self.finish_floating_drag_interaction())
     }
@@ -184,7 +186,9 @@ impl DockHost {
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         let outcome = DockHostInteractionOutcome::from_commit_result(
-            self.commit_select_tab_from_host(tabs, item, cx),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller.select_tab(tabs, item.clone())
+            }),
             notify_on_unchanged,
         );
         self.with_panel_focus(outcome, item.clone())
@@ -196,8 +200,11 @@ impl DockHost {
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
+        let space = self.space().clone();
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_close_item_from_host(item, cx),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller.close_item(space, item.clone())
+            }),
             notify_on_unchanged,
         )
     }
@@ -209,7 +216,11 @@ impl DockHost {
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_resolved_payload_drop_from_host(request, cx),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller
+                    .workspace_mut()
+                    .commit_resolved_payload_drop(request)
+            }),
             notify_on_unchanged,
         )
     }
@@ -221,7 +232,9 @@ impl DockHost {
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_resize_split_from_host(request.split, &request.fractions, cx),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller.resize_split(request.split, &request.fractions)
+            }),
             notify_on_unchanged,
         )
     }
@@ -232,13 +245,11 @@ impl DockHost {
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
+        let space = request.space;
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_set_floating_bounds_from_host(
-                &request.space,
-                request.floating,
-                request.bounds,
-                cx,
-            ),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller.set_floating_bounds(space, request.floating, request.bounds)
+            }),
             notify_on_unchanged,
         )
     }
@@ -250,8 +261,11 @@ impl DockHost {
         cx: &mut Context<Self>,
         notify_on_unchanged: bool,
     ) -> DockHostInteractionOutcome {
+        let space = space.clone();
         DockHostInteractionOutcome::from_commit_result(
-            self.commit_raise_floating_from_host(space, floating, cx),
+            self.mutate_controller_from_host(cx, |controller| {
+                controller.raise_floating(space, floating)
+            }),
             notify_on_unchanged,
         )
     }
@@ -264,10 +278,10 @@ impl DockHost {
         match &payload.kind {
             DockDragPayloadKind::Item { item } => Some(item.clone()),
             DockDragPayloadKind::Tabs => self.with_workspace(cx, |workspace| {
-                workspace.graph().active_item_in_tabs(payload.source_node)
+                workspace.graph().selected_item_in_tabs(payload.source_node)
             }),
             DockDragPayloadKind::Floating { floating } => self.with_workspace(cx, |workspace| {
-                workspace.graph().active_item_in_subtree(*floating)
+                workspace.graph().selected_item_in_subtree(*floating)
             }),
         }
     }
@@ -308,20 +322,5 @@ impl DockHost {
             return outcome;
         }
         self.with_panel_focus(outcome, item)
-    }
-}
-
-fn workspace_payload(payload: &DockDragPayload) -> DockWorkspaceDropPayload<'_> {
-    match &payload.kind {
-        DockDragPayloadKind::Item { item } => DockWorkspaceDropPayload::Item {
-            source_tabs: payload.source_node,
-            item,
-        },
-        DockDragPayloadKind::Tabs => DockWorkspaceDropPayload::Tabs {
-            source_tabs: payload.source_node,
-        },
-        DockDragPayloadKind::Floating { floating } => DockWorkspaceDropPayload::Floating {
-            floating: *floating,
-        },
     }
 }

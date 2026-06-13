@@ -111,14 +111,23 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .expect("fixture target item should be findable")
                 .0;
             let zone: DropZone = zone.into();
-            let changed = graph.apply_op(&DockOp::MoveItem {
-                source_space: space(),
-                item,
-                target_space: space(),
-                target_tabs,
-                zone,
-                insert_index: None,
-            });
+            let target = if zone == DropZone::Center {
+                DockMoveTarget::center(target_tabs)
+            } else {
+                DockMoveTarget::inner_edge(
+                    graph.root(&space()).expect("fixture should have a root"),
+                    target_tabs,
+                    zone,
+                )
+            };
+            let changed = graph
+                .apply_op_checked(&DockOp::MoveItem {
+                    source_space: space(),
+                    item,
+                    target_space: space(),
+                    target,
+                })
+                .expect("fixture move_item should commit transactionally");
             assert_eq!(
                 changed,
                 !(source_tabs == target_tabs && zone == DropZone::Center),
@@ -126,12 +135,16 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
             );
         }
         FixtureStep::FloatItem { item, bounds } => {
-            assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-                source_space: space(),
-                item: DockItemId::new(item),
-                target_space: space(),
-                bounds: dock_bounds(bounds[0], bounds[1], bounds[2], bounds[3]),
-            }));
+            assert!(
+                graph
+                    .apply_op_checked(&DockOp::FloatItemInWindow {
+                        source_space: space(),
+                        item: DockItemId::new(item),
+                        target_space: space(),
+                        bounds: dock_bounds(bounds[0], bounds[1], bounds[2], bounds[3]),
+                    })
+                    .expect("fixture float_item should commit")
+            );
         }
         FixtureStep::MergeFirstFloating { target_item } => {
             let floating = graph
@@ -143,11 +156,16 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .find_item_in_space(&space(), &DockItemId::new(target_item))
                 .expect("fixture merge target item should be findable")
                 .0;
-            assert!(graph.apply_op(&DockOp::MergeFloatingInto {
-                space: space(),
-                floating,
-                target_tabs,
-            }));
+            assert!(
+                graph
+                    .apply_op_checked(&DockOp::MoveFloating {
+                        source_space: space(),
+                        floating,
+                        target_space: space(),
+                        target: DockMoveTarget::center(target_tabs),
+                    })
+                    .expect("fixture floating merge should commit")
+            );
         }
     }
 }

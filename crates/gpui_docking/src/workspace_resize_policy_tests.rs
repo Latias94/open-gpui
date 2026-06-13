@@ -1,7 +1,6 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockNode,
-    DockNodeId, DockPolicyError, DropZone, SplitAxis, host_test_support::*,
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockMoveTarget,
+    DockNode, DockNodeId, DockPolicyError, DropZone, SplitAxis, host_test_support::*,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -94,27 +93,25 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
 
 #[open_gpui::test]
 fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppContext) {
-    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (graph, split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     workspace.policy_mut().set_allow_edge_split(false);
 
     let err = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: left_tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target_tabs: right_tabs,
-            zone: DropZone::Right,
-            insert_index: None,
-        })
+        .commit_tab_move(
+            &space(),
+            left_tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::inner_edge(split, right_tabs, DropZone::Right),
+        )
         .expect_err("edge drop should be rejected by policy");
 
     assert_eq!(
         err,
         DockActionApplyError::Policy(DockPolicyError::EdgeSplitDisabled)
     );
-    let DockNode::Tabs { items, active } = workspace
+    let DockNode::Tabs { items, selected } = workspace
         .graph()
         .node(left_tabs)
         .expect("source tabs should remain")
@@ -122,7 +119,7 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
         panic!("source should be tabs");
     };
     assert_eq!(items, &vec![item("a")]);
-    assert_eq!(*active, 0);
+    assert_eq!(selected.as_ref(), items.get(0));
 }
 
 #[open_gpui::test]

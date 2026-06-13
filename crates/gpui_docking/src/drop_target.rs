@@ -27,6 +27,28 @@ impl DockResolvedDropTarget {
             DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
         }
     }
+
+    pub(crate) fn target_space<'a>(&'a self, default_space: &'a DockSpaceId) -> &'a DockSpaceId {
+        match &self.kind {
+            DockResolvedDropTargetKind::EmptyDockSpace { space, .. } => space,
+            DockResolvedDropTargetKind::TabBar { .. }
+            | DockResolvedDropTargetKind::LeafCenter { .. }
+            | DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { .. } => default_space,
+        }
+    }
+
+    pub(crate) fn center_target_tabs(&self) -> Option<DockNodeId> {
+        match self.kind {
+            DockResolvedDropTargetKind::TabBar { target_tabs, .. }
+            | DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => Some(target_tabs),
+            DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. }
+            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,6 +178,10 @@ impl DockDropResolution {
             Self::Rejected(_) => None,
         }
     }
+
+    fn is_valid(&self) -> bool {
+        matches!(self, Self::Valid(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,58 +191,72 @@ pub(crate) struct DockDropRejection {
 }
 
 pub(crate) fn resolve_layout_drop(input: DockDropResolverInput<'_>) -> Option<DockDropResolution> {
-    if let Some(target) = resolve_floating_title_bar_drop(&input) {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
+    let mut rejection = None;
+
+    if let Some(resolution) = resolve_floating_title_bar_drop(&input)
+        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
+    {
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
     }
 
-    if let Some(target) = resolve_tab_bar_drop(&input) {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
+    if let Some(resolution) = resolve_tab_bar_drop(&input)
+        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
+    {
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
     }
 
-    if let Some(target) = resolve_tab_bar_empty_drop(&input) {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
+    if let Some(resolution) = resolve_tab_bar_empty_drop(&input)
+        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
+    {
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
     }
 
     let leaf = topmost_leaf_containing(input.leaves, input.position);
-    if let Some(target) = resolve_root_edge_drop(&input, leaf) {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
-    }
-
-    if let Some(leaf) = leaf
-        && let Some(target) = resolve_leaf_drop(leaf, input.position)
+    if let Some(resolution) = resolve_root_edge_drop(&input, leaf)
+        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
     {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
     }
 
-    if let Some(target) = resolve_empty_space_drop(&input) {
-        return Some(validate_resolved_drop_target(
-            target,
-            input.policy,
-            input.target_validator,
-        ));
+    for leaf in input
+        .leaves
+        .iter()
+        .rev()
+        .filter(|leaf| leaf.bounds.contains(&input.position))
+    {
+        let Some(target) = resolve_leaf_drop(leaf, input.position) else {
+            continue;
+        };
+        let resolution =
+            validate_resolved_drop_target(target, input.policy, input.target_validator);
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
     }
 
-    None
+    if let Some(resolution) = resolve_empty_space_drop(&input)
+        .map(|target| validate_resolved_drop_target(target, input.policy, input.target_validator))
+    {
+        if resolution.is_valid() {
+            return Some(resolution);
+        }
+        rejection.get_or_insert(resolution);
+    }
+
+    rejection
 }
 
 fn resolve_floating_title_bar_drop(
@@ -504,11 +544,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let first = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("first")],
-            active: 0,
+            selected: Some(DockItemId::from("first")),
         });
         let second = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("second")],
-            active: 0,
+            selected: Some(DockItemId::from("second")),
         });
         (first, second)
     }
@@ -825,12 +865,8 @@ mod tests {
     fn overlapping_leaf_hits_follow_render_order_rather_than_area() {
         let (background_tabs, foreground_tabs) = two_node_ids();
         let background_bounds = bounds(180.0, 180.0);
-        let foreground_bounds = bounds(100.0, 100.0);
-        let position = drop_box_center(
-            foreground_bounds,
-            DockDropBoxSet::Inner,
-            DockDropBoxKind::Center,
-        );
+        let foreground_bounds = Bounds::new(point(px(50.0), px(60.0)), size(px(100.0), px(100.0)));
+        let position = background_bounds.center();
         let target = resolve_layout_drop(DockDropResolverInput {
             leaves: &[
                 DockLeafDropTarget {
@@ -854,6 +890,109 @@ mod tests {
         assert_eq!(target.source, DockDropResolveSource::LeafBody);
         assert_eq!(
             target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: foreground_tabs,
+                target_tabs: foreground_tabs,
+            }
+        );
+    }
+
+    #[test]
+    fn rejected_foreground_leaf_falls_through_to_valid_background_leaf() {
+        let (background_tabs, foreground_tabs) = two_node_ids();
+        let background_bounds = bounds(180.0, 180.0);
+        let foreground_bounds = Bounds::new(point(px(50.0), px(60.0)), size(px(100.0), px(100.0)));
+        let position = background_bounds.center();
+        let validator = move |target: &DockResolvedDropTarget| {
+            if matches!(
+                target.kind,
+                DockResolvedDropTargetKind::LeafCenter {
+                    target_tabs,
+                    ..
+                } if target_tabs == foreground_tabs
+            ) {
+                Err(DockPolicyError::DockClassRejected {
+                    space: DockSpaceId::from("main"),
+                    item: DockItemId::from("a"),
+                    dock_class: None,
+                })
+            } else {
+                Ok(())
+            }
+        };
+        let target = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[
+                DockLeafDropTarget {
+                    root: background_tabs,
+                    target_tabs: background_tabs,
+                    bounds: background_bounds,
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                    bounds: foreground_bounds,
+                    is_central: false,
+                },
+            ],
+            target_validator: Some(&validator),
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .and_then(DockDropResolution::target)
+        .expect("rejected foreground target should fall through to the background leaf");
+
+        assert_eq!(target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: background_tabs,
+                target_tabs: background_tabs,
+            }
+        );
+    }
+
+    #[test]
+    fn all_rejected_candidates_preserve_first_rejection_for_preview() {
+        let (background_tabs, foreground_tabs) = two_node_ids();
+        let background_bounds = bounds(180.0, 180.0);
+        let foreground_bounds = bounds(100.0, 100.0);
+        let position = drop_box_center(
+            foreground_bounds,
+            DockDropBoxSet::Inner,
+            DockDropBoxKind::Center,
+        );
+        let validator = |_: &DockResolvedDropTarget| {
+            Err(DockPolicyError::DockClassRejected {
+                space: DockSpaceId::from("main"),
+                item: DockItemId::from("a"),
+                dock_class: None,
+            })
+        };
+        let DockDropResolution::Rejected(rejection) = resolve_layout_drop(DockDropResolverInput {
+            leaves: &[
+                DockLeafDropTarget {
+                    root: background_tabs,
+                    target_tabs: background_tabs,
+                    bounds: background_bounds,
+                    is_central: false,
+                },
+                DockLeafDropTarget {
+                    root: foreground_tabs,
+                    target_tabs: foreground_tabs,
+                    bounds: foreground_bounds,
+                    is_central: false,
+                },
+            ],
+            target_validator: Some(&validator),
+            ..DockDropResolverInput::new(position, &policy())
+        })
+        .expect("all rejected candidates should still produce a rejected preview") else {
+            panic!("all candidates should be rejected");
+        };
+
+        assert_eq!(rejection.target.source, DockDropResolveSource::LeafBody);
+        assert_eq!(
+            rejection.target.kind,
             DockResolvedDropTargetKind::LeafCenter {
                 root: foreground_tabs,
                 target_tabs: foreground_tabs,
@@ -927,11 +1066,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let leaf_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
-            active: 0,
+            selected: Some(DockItemId::from("a")),
         });
         let sibling = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("b")],
-            active: 0,
+            selected: Some(DockItemId::from("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -1033,11 +1172,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let left = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("a")],
-            active: 0,
+            selected: Some(DockItemId::from("a")),
         });
         let right = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("b")],
-            active: 0,
+            selected: Some(DockItemId::from("b")),
         });
         let root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,
@@ -1100,11 +1239,11 @@ mod tests {
         let mut graph = DockGraph::new();
         let floating_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("floating")],
-            active: 0,
+            selected: Some(DockItemId::from("floating")),
         });
         let primary_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![DockItemId::from("primary")],
-            active: 0,
+            selected: Some(DockItemId::from("primary")),
         });
         let primary_root = graph.insert_node(DockNode::Split {
             axis: SplitAxis::Horizontal,

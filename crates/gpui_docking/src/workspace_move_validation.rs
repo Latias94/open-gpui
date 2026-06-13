@@ -2,7 +2,7 @@ use crate::{
     DockActionApplyError, DockClassId, DockGraphMutationError, DockItemId, DockNode, DockNodeId,
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportDropPayload, DockWorkspace,
     drag::{DockDragPayload, DockDragPayloadKind},
-    drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
+    drop_target::DockResolvedDropTarget,
 };
 
 pub(crate) struct DockWorkspaceMoveValidation<'a> {
@@ -183,28 +183,12 @@ impl DockPayloadDockClasses {
     }
 }
 
-pub(crate) fn dock_target_space<'a>(
-    default_space: &'a DockSpaceId,
-    target: &'a DockResolvedDropTarget,
-) -> &'a DockSpaceId {
-    match &target.kind {
-        DockResolvedDropTargetKind::EmptyDockSpace { space, .. } => space,
-        DockResolvedDropTargetKind::TabBar { .. }
-        | DockResolvedDropTargetKind::LeafCenter { .. }
-        | DockResolvedDropTargetKind::InnerEdge { .. }
-        | DockResolvedDropTargetKind::RootEdge { .. }
-        | DockResolvedDropTargetKind::FloatingTitleBar { .. } => default_space,
-    }
-}
-
 pub(crate) fn dock_target_validator<'a>(
     default_space: &'a DockSpaceId,
     payload_classes: &'a DockPayloadDockClasses,
     policy: &'a DockPolicy,
 ) -> impl Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a {
-    move |target| {
-        payload_classes.validate_target_space(dock_target_space(default_space, target), policy)
-    }
+    move |target| payload_classes.validate_target_space(target.target_space(default_space), policy)
 }
 
 fn payload_dock_class_item(

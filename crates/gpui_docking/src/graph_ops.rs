@@ -5,10 +5,10 @@ use crate::{DockNodeId, SplitFractionsUpdate};
 use super::DockGraph;
 
 impl DockGraph {
-    /// Applies an operation and returns whether it changed or preserved a valid graph state.
-    pub(crate) fn apply_op(&mut self, op: &DockOp) -> bool {
+    /// Applies an operation without validation.
+    pub(in crate::graph) fn apply_op_unchecked(&mut self, op: &DockOp) -> bool {
         match op {
-            DockOp::SetActiveTab { tabs, active } => self.set_active_tab(*tabs, *active),
+            DockOp::SelectTab { tabs, item } => self.select_tab(*tabs, item.clone()),
             DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),
             DockOp::OpenItem {
                 space,
@@ -20,74 +20,20 @@ impl DockGraph {
                 source_space,
                 item,
                 target_space,
-                target_tabs,
-                zone,
-                insert_index,
-            } => self.move_item_between_spaces(
-                source_space,
-                item.clone(),
-                target_space,
-                *target_tabs,
-                *zone,
-                *insert_index,
-            ),
-            DockOp::MoveItemToEmptyDockSpace {
-                source_space,
-                item,
-                target_space,
-            } => {
-                if !self.target_space_is_empty_for_item_move(source_space, item, target_space) {
-                    return false;
-                }
-                self.move_item_to_empty_space(source_space, item.clone(), target_space)
-            }
+                target,
+            } => self.move_item_between_spaces(source_space, item.clone(), target_space, *target),
             DockOp::MoveTabs {
                 source_space,
                 source_tabs,
                 target_space,
-                target_tabs,
-                zone,
-                insert_index,
-            } => self.move_tabs_between_spaces(
-                source_space,
-                *source_tabs,
-                target_space,
-                *target_tabs,
-                *zone,
-                *insert_index,
-            ),
-            DockOp::MoveTabsToEmptyDockSpace {
-                source_space,
-                source_tabs,
-                target_space,
-            } => {
-                if !self.target_space_is_empty_for_tabs_move(
-                    source_space,
-                    *source_tabs,
-                    target_space,
-                ) {
-                    return false;
-                }
-                self.move_tabs_to_empty_space(source_space, *source_tabs, target_space)
-            }
+                target,
+            } => self.move_tabs_between_spaces(source_space, *source_tabs, target_space, *target),
             DockOp::MoveFloating {
                 source_space,
                 floating,
                 target_space,
                 target,
-                zone,
-            } => self.move_floating_between_spaces(
-                source_space,
-                *floating,
-                target_space,
-                *target,
-                *zone,
-            ),
-            DockOp::MoveFloatingToEmptyDockSpace {
-                source_space,
-                floating,
-                target_space,
-            } => self.move_floating_to_empty_space(source_space, *floating, target_space),
+            } => self.move_floating_between_spaces(source_space, *floating, target_space, *target),
             DockOp::FloatItemInWindow {
                 source_space,
                 item,
@@ -106,11 +52,6 @@ impl DockGraph {
                 bounds,
             } => self.set_floating_bounds(space, *floating, *bounds),
             DockOp::RaiseFloating { space, floating } => self.raise_floating(space, *floating),
-            DockOp::MergeFloatingInto {
-                space,
-                floating,
-                target_tabs,
-            } => self.merge_floating_into(space, *floating, *target_tabs),
             DockOp::SetSplitFractions { split, fractions } => {
                 self.update_split_fractions(*split, fractions.clone())
             }

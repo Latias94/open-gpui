@@ -8,8 +8,8 @@ use open_gpui::{
 use slotmap::Key;
 
 #[open_gpui::test]
-fn single_tabs_render_active_panel_and_all_tab_labels(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 1);
+fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext) {
+    let (graph, root) = tabs_graph_with_selected(&["a", "b"], "b");
     let (_window, host, mut visual) = open_host(
         cx,
         graph,
@@ -36,7 +36,7 @@ fn single_tabs_render_active_panel_and_all_tab_labels(cx: &mut TestAppContext) {
     )
     .expect("tab B selector should be emitted");
     let panel_b = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
-        .expect("active panel selector should be emitted");
+        .expect("selected panel selector should be emitted");
 
     assert!(debug_bounds(&mut visual, &tab_a).size.width > px(0.0));
     assert!(debug_bounds(&mut visual, &tab_b).size.width > px(0.0));
@@ -49,7 +49,7 @@ fn single_tabs_render_active_panel_and_all_tab_labels(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn drop_guides_render_while_tab_drag_is_active(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
         cx,
         graph,
@@ -148,7 +148,7 @@ fn drop_guides_are_scoped_to_each_target_tabs_node(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
-    let (graph, _root) = tabs_graph(&["a"], 0);
+    let (graph, _root) = tabs_graph(&["a"]);
     let panel = test_view(cx, "A");
     let expected_focus = cx.read_entity(&panel, |panel, cx| panel.focus_handle(cx));
     let mut workspace = DockWorkspace::new(space(), graph);
@@ -167,8 +167,8 @@ fn pending_panel_focus_targets_active_focusable_panel(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn missing_active_panel_renders_placeholder(cx: &mut TestAppContext) {
-    let (graph, _root) = tabs_graph(&["a", "missing"], 1);
+fn missing_selected_panel_renders_placeholder(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph_with_selected(&["a", "missing"], "missing");
     let (_window, host, mut visual) = open_host(
         cx,
         graph,
@@ -259,7 +259,7 @@ fn missing_floating_child_renders_missing_node_placeholder(cx: &mut TestAppConte
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("b")],
-        active: 0,
+        selected: Some(item("b")),
     });
     graph.set_root(space(), root);
     let missing_child = DockNodeId::null();
@@ -379,15 +379,15 @@ fn central_split_child_uses_remaining_render_space(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let left = graph.insert_node(DockNode::Tabs {
         items: vec![item("left")],
-        active: 0,
+        selected: Some(item("left")),
     });
     let main = graph.insert_node(DockNode::Tabs {
         items: vec![item("main")],
-        active: 0,
+        selected: Some(item("main")),
     });
     let right = graph.insert_node(DockNode::Tabs {
         items: vec![item("right")],
-        active: 0,
+        selected: Some(item("right")),
     });
     let split = graph.insert_node(DockNode::Split {
         axis: SplitAxis::Horizontal,

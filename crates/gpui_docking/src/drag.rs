@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId};
+use crate::{DockItemId, DockNodeId, DockSpaceId, workspace_transaction::DockWorkspaceDropPayload};
 use open_gpui::{
     Bounds, Context, IntoElement, ParentElement, Pixels, Point, Render, Size, Styled, Window, div,
     rgb, white,
@@ -105,6 +105,21 @@ impl DockDragPayload {
             source_space: self.source_space.clone(),
             source_node: self.source_node,
             kind: self.kind.clone(),
+        }
+    }
+
+    pub(crate) fn as_workspace_payload(&self) -> DockWorkspaceDropPayload<'_> {
+        match &self.kind {
+            DockDragPayloadKind::Item { item } => DockWorkspaceDropPayload::Item {
+                source_tabs: self.source_node,
+                item,
+            },
+            DockDragPayloadKind::Tabs => DockWorkspaceDropPayload::Tabs {
+                source_tabs: self.source_node,
+            },
+            DockDragPayloadKind::Floating { floating } => DockWorkspaceDropPayload::Floating {
+                floating: *floating,
+            },
         }
     }
 

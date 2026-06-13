@@ -171,22 +171,22 @@ impl DockWorkspace {
         let Some(node) = self.graph().node(tabs) else {
             return Err(DockGraphMutationError::TabsNodeNotFound { tabs }.into());
         };
-        let DockNode::Tabs { items, active } = node else {
+        let DockNode::Tabs { items, selected } = node else {
             return Err(DockGraphMutationError::NodeIsNotTabs { node: tabs }.into());
         };
-        let Some(next_active) = items.iter().position(|candidate| candidate == item) else {
+        if !items.contains(item) {
             return Err(DockActionApplyError::ItemNotInTabs {
                 tabs,
                 item: item.clone(),
             });
-        };
-        if *active == next_active {
+        }
+        if selected.as_ref() == Some(item) {
             return Ok(DockActionOutcome::Unchanged);
         }
 
-        self.commit_graph_op(DockOp::SetActiveTab {
+        self.commit_graph_op(DockOp::SelectTab {
             tabs,
-            active: next_active,
+            item: item.clone(),
         })
     }
 }

@@ -2,7 +2,7 @@ use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 #[cfg(test)]
 use std::collections::HashSet;
 
-use super::{DockGraph, DockNode, SplitAxis};
+use super::{DockGraph, DockNode, SplitAxis, graph_tab_stack::sanitize_selected_item};
 
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
@@ -54,20 +54,18 @@ impl DockGraph {
     fn simplify_subtree(&mut self, node: DockNodeId) -> Option<DockNodeId> {
         let node_value = self.nodes.get(node)?.clone();
         match node_value {
-            DockNode::Tabs { items, mut active } => {
+            DockNode::Tabs { items, selected } => {
                 if items.is_empty() {
                     return None;
                 }
-                if active >= items.len() {
-                    active = items.len().saturating_sub(1);
-                }
+                let selected = sanitize_selected_item(&items, &selected);
                 if let Some(DockNode::Tabs {
                     items: current_items,
-                    active: current_active,
+                    selected: current_selected,
                 }) = self.nodes.get_mut(node)
                 {
                     *current_items = items;
-                    *current_active = active;
+                    *current_selected = selected;
                 }
                 Some(node)
             }
@@ -197,9 +195,12 @@ impl DockGraph {
             panic!("dock graph references missing node");
         };
         match node {
-            DockNode::Tabs { items, active } => {
+            DockNode::Tabs { items, selected } => {
                 assert!(!items.is_empty(), "tabs nodes must be non-empty");
-                assert!(*active < items.len(), "active tab index must be in bounds");
+                assert!(
+                    selected.as_ref().is_some_and(|item| items.contains(item)),
+                    "selected tab item must be present"
+                );
             }
             DockNode::Floating { child } => self.assert_canonical_subtree(*child, reachable),
             DockNode::Split {

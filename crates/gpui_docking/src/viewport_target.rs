@@ -36,7 +36,7 @@ impl DockViewportAdapter {
             .filter_map(|space| {
                 let snapshot = self.snapshot(&space)?;
                 let window = snapshot.window;
-                let facts_generation = snapshot.facts_generation;
+                let facts_generation = snapshot.facts_generation();
                 let host_position = self.screen_to_host(&space, position)?;
                 Some(DockViewportTargetHit::with_facts_generation(
                     space,

@@ -48,15 +48,19 @@ impl DockLayout {
 
         for (id, node) in &by_id {
             match node {
-                DockLayoutNode::Tabs { items, active, .. } => {
+                DockLayoutNode::Tabs {
+                    items, selected, ..
+                } => {
                     if items.is_empty() {
                         return Err(DockLayoutValidationError::EmptyTabs { id: *id });
                     }
-                    if *active >= items.len() {
-                        return Err(DockLayoutValidationError::TabsActiveOutOfBounds {
+                    let Some(selected) = selected else {
+                        return Err(DockLayoutValidationError::TabsSelectionMissing { id: *id });
+                    };
+                    if !items.contains(selected) {
+                        return Err(DockLayoutValidationError::TabsSelectedItemMissing {
                             id: *id,
-                            active: *active,
-                            len: items.len(),
+                            selected: selected.clone(),
                         });
                     }
                 }
@@ -210,15 +214,19 @@ pub enum DockLayoutValidationError {
         /// Invalid node id.
         id: u32,
     },
-    /// A tabs node has an invalid active index.
-    #[error("tabs node {id} active index {active} out of bounds for length {len}")]
-    TabsActiveOutOfBounds {
+    /// A tabs node has items but no selected item.
+    #[error("tabs node {id} has no selected item")]
+    TabsSelectionMissing {
         /// Invalid node id.
         id: u32,
-        /// Active index.
-        active: usize,
-        /// Item count.
-        len: usize,
+    },
+    /// A tabs node selected an item that is not in the tab order.
+    #[error("tabs node {id} selected item {selected} is not present")]
+    TabsSelectedItemMissing {
+        /// Invalid node id.
+        id: u32,
+        /// Missing selected item.
+        selected: DockItemId,
     },
     /// A split node has no children.
     #[error("split node {id} has no children")]

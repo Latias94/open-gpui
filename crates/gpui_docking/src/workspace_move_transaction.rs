@@ -1,25 +1,28 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockNode,
-    DockNodeId, DockOp, DockSpaceId, DockWorkspace, DropZone,
+    DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockMoveTarget,
+    DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace, DropZone,
 };
 
-pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
-    pub(crate) source_space: &'a DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
-    pub(crate) item: &'a DockItemId,
-    pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target_tabs: DockNodeId,
-    pub(crate) zone: DropZone,
-    pub(crate) insert_index: Option<usize>,
-}
-
-pub(crate) struct DockWorkspaceMoveTabsRequest<'a> {
-    pub(crate) source_space: &'a DockSpaceId,
-    pub(crate) source_tabs: DockNodeId,
-    pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target_tabs: DockNodeId,
-    pub(crate) zone: DropZone,
-    pub(crate) insert_index: Option<usize>,
+pub(crate) enum DockWorkspaceMove<'a> {
+    Item {
+        source_space: &'a DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &'a DockItemId,
+        target_space: &'a DockSpaceId,
+        target: DockMoveTarget,
+    },
+    Tabs {
+        source_space: &'a DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &'a DockSpaceId,
+        target: DockMoveTarget,
+    },
+    Floating {
+        source_space: &'a DockSpaceId,
+        floating: DockNodeId,
+        target_space: &'a DockSpaceId,
+        target: DockMoveTarget,
+    },
 }
 
 impl DockWorkspace {
@@ -103,68 +106,33 @@ impl DockWorkspace {
 
     pub(crate) fn commit_tab_move(
         &mut self,
-        request: DockWorkspaceMoveTabRequest<'_>,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+        target: DockMoveTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let DockWorkspaceMoveTabRequest {
+        self.commit_move(DockWorkspaceMove::Item {
             source_space,
             source_tabs,
             item,
             target_space,
-            target_tabs,
-            zone,
-            insert_index,
-        } = request;
-
-        self.move_validation()
-            .validate_move_tab_source(source_space, source_tabs, item)?;
-        self.move_validation()
-            .validate_item_target_space(target_space, item)?;
-        self.policy().validate_drop_zone(zone)?;
-        if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
-            self.policy().validate_same_stack_center_drop()?;
-            if insert_index.is_none() {
-                return Ok(DockActionOutcome::Unchanged);
-            }
-        }
-
-        self.commit_graph_op(DockOp::MoveItem {
-            source_space: source_space.clone(),
-            item: item.clone(),
-            target_space: target_space.clone(),
-            target_tabs,
-            zone,
-            insert_index,
+            target,
         })
     }
 
     pub(crate) fn commit_tabs_move(
         &mut self,
-        request: DockWorkspaceMoveTabsRequest<'_>,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockMoveTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        let DockWorkspaceMoveTabsRequest {
+        self.commit_move(DockWorkspaceMove::Tabs {
             source_space,
             source_tabs,
             target_space,
-            target_tabs,
-            zone,
-            insert_index,
-        } = request;
-
-        self.move_validation()
-            .validate_tabs_target_space(target_space, source_tabs)?;
-        self.policy().validate_drop_zone(zone)?;
-        if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
-            self.policy().validate_same_stack_center_drop()?;
-            return Ok(DockActionOutcome::Unchanged);
-        }
-
-        self.commit_graph_op(DockOp::MoveTabs {
-            source_space: source_space.clone(),
-            source_tabs,
-            target_space: target_space.clone(),
-            target_tabs,
-            zone,
-            insert_index,
+            target,
         })
     }
 
@@ -177,10 +145,11 @@ impl DockWorkspace {
         self.policy().validate_platform_viewports()?;
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
-        self.commit_graph_op(DockOp::MoveItemToEmptyDockSpace {
+        self.commit_graph_op(DockOp::MoveItem {
             source_space: source_space.clone(),
             item: item.clone(),
             target_space: target_space.clone(),
+            target: DockMoveTarget::empty_space(),
         })
     }
 
@@ -193,10 +162,11 @@ impl DockWorkspace {
         self.policy().validate_platform_viewports()?;
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
-        self.commit_graph_op(DockOp::MoveTabsToEmptyDockSpace {
+        self.commit_graph_op(DockOp::MoveTabs {
             source_space: source_space.clone(),
             source_tabs,
             target_space: target_space.clone(),
+            target: DockMoveTarget::empty_space(),
         })
     }
 
@@ -226,14 +196,12 @@ impl DockWorkspace {
             }
 
             let outcome = if let Some(target_tabs) = target_tabs {
-                self.commit_tabs_move(DockWorkspaceMoveTabsRequest {
+                self.commit_tabs_move(
                     source_space,
                     source_tabs,
                     target_space,
-                    target_tabs,
-                    zone: DropZone::Center,
-                    insert_index: None,
-                })?
+                    DockMoveTarget::center(target_tabs),
+                )?
             } else {
                 self.commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)?
             };
@@ -247,4 +215,112 @@ impl DockWorkspace {
             DockActionOutcome::Unchanged
         })
     }
+
+    pub(crate) fn commit_move(
+        &mut self,
+        request: DockWorkspaceMove<'_>,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        match request {
+            DockWorkspaceMove::Item {
+                source_space,
+                source_tabs,
+                item,
+                target_space,
+                target,
+            } => self.commit_item_move(source_space, source_tabs, item, target_space, target),
+            DockWorkspaceMove::Tabs {
+                source_space,
+                source_tabs,
+                target_space,
+                target,
+            } => self.commit_tabs_move_impl(source_space, source_tabs, target_space, target),
+            DockWorkspaceMove::Floating {
+                source_space,
+                floating,
+                target_space,
+                target,
+            } => self.commit_floating_move_impl(source_space, floating, target_space, target),
+        }
+    }
+
+    fn commit_item_move(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        item: &DockItemId,
+        target_space: &DockSpaceId,
+        target: DockMoveTarget,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.move_validation()
+            .validate_move_tab_source(source_space, source_tabs, item)?;
+        self.move_validation()
+            .validate_item_target_space(target_space, item)?;
+        validate_move_target_policy(self.policy(), target)?;
+        if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
+            self.policy().validate_same_stack_center_drop()?;
+            if target.insert_index().is_none() {
+                return Ok(DockActionOutcome::Unchanged);
+            }
+        }
+
+        self.commit_graph_op(DockOp::MoveItem {
+            source_space: source_space.clone(),
+            item: item.clone(),
+            target_space: target_space.clone(),
+            target,
+        })
+    }
+
+    fn commit_tabs_move_impl(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_tabs: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockMoveTarget,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.move_validation()
+            .validate_tabs_target_space(target_space, source_tabs)?;
+        validate_move_target_policy(self.policy(), target)?;
+        if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
+            self.policy().validate_same_stack_center_drop()?;
+            return Ok(DockActionOutcome::Unchanged);
+        }
+
+        self.commit_graph_op(DockOp::MoveTabs {
+            source_space: source_space.clone(),
+            source_tabs,
+            target_space: target_space.clone(),
+            target,
+        })
+    }
+
+    fn commit_floating_move_impl(
+        &mut self,
+        source_space: &DockSpaceId,
+        floating: DockNodeId,
+        target_space: &DockSpaceId,
+        target: DockMoveTarget,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.move_validation()
+            .validate_floating_target_space(target_space, floating)?;
+        validate_move_target_policy(self.policy(), target)?;
+        self.commit_graph_op(DockOp::MoveFloating {
+            source_space: source_space.clone(),
+            floating,
+            target_space: target_space.clone(),
+            target,
+        })
+    }
+}
+
+pub(crate) fn validate_move_target_policy(
+    policy: &DockPolicy,
+    target: DockMoveTarget,
+) -> Result<(), DockActionApplyError> {
+    if let Some(zone) = target.drop_zone() {
+        policy.validate_drop_zone(zone)?;
+    } else {
+        policy.validate_platform_viewports()?;
+    }
+    Ok(())
 }

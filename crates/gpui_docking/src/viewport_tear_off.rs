@@ -1,6 +1,7 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
-    drag::DockDragTearOffGeometry, interaction::DockRuntimeDragSession,
+    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
+    interaction::DockRuntimeDragSession,
     workspace_transaction::DockWorkspaceDropPayload,
 };
 use open_gpui::{AnyWindowHandle, Pixels, Point, WindowBounds};
@@ -18,6 +19,14 @@ pub(crate) enum DockViewportDropPayload {
 }
 
 impl DockViewportDropPayload {
+    pub(crate) fn from_drag_payload(payload: &DockDragPayload) -> Self {
+        match &payload.kind {
+            DockDragPayloadKind::Item { item } => Self::Item(item.clone()),
+            DockDragPayloadKind::Tabs => Self::Tabs,
+            DockDragPayloadKind::Floating { floating } => Self::Floating(*floating),
+        }
+    }
+
     pub(crate) fn as_workspace_payload(
         &self,
         source_node: DockNodeId,
