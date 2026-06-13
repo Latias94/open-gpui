@@ -93,8 +93,8 @@ mod tests {
                     &DockViewportTargetContext::new().with_active_window(zeta_window),
                 )
                 .map(|target| target.space().clone()),
-            Some(zeta.clone()),
-            "active-window context should beat stable space order"
+            Some(alpha.clone()),
+            "active-window remains diagnostic and should not change cross-viewport order"
         );
         assert_eq!(
             adapter
@@ -106,7 +106,7 @@ mod tests {
                 )
                 .map(|target| target.space().clone()),
             Some(alpha),
-            "hovered-window context should beat active-window context"
+            "hovered-window context should beat stable space order"
         );
     }
 

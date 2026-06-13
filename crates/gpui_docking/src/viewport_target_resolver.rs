@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_prefers_hovered_active_then_window_stack() {
+    fn viewport_target_prefers_hovered_then_window_stack() {
         let first = handle(1);
         let second = handle(2);
         let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
@@ -237,14 +237,6 @@ mod tests {
                 .map(|hit| hit.space().clone()),
             Some(space("alpha")),
             "default fallback should preserve deterministic candidate order"
-        );
-        assert_eq!(
-            choose_viewport_target(
-                hits(),
-                &DockViewportTargetContext::new().with_active_window(second),
-            )
-            .map(|hit| hit.space().clone()),
-            Some(space("zeta"))
         );
         assert_eq!(
             choose_viewport_target(
@@ -305,12 +297,12 @@ mod tests {
             hits(),
             &DockViewportTargetContext::new().with_active_window(second),
         )
-        .expect("active-only target should still be reported for diagnostics");
-        assert_eq!(active_only.target().space(), &space("zeta"));
+        .expect("diagnostic active-window alone should not affect overlapping arbitration");
+        assert_eq!(active_only.target().space(), &space("alpha"));
         assert_eq!(
             active_only.confidence(),
-            DockViewportTargetConfidence::FallbackOnly,
-            "active-window alone is not trusted hover/topmost arbitration"
+            DockViewportTargetConfidence::Ambiguous,
+            "active-window is diagnostic only and should not arbitrate overlapping hits"
         );
         assert!(!active_only.is_trusted());
 
@@ -318,10 +310,10 @@ mod tests {
             hits(),
             &DockViewportTargetContext::new().with_active_window(handle(9)),
         )
-        .expect("fallback-only target should still be reported for diagnostics");
+        .expect("diagnostic active-window alone should not affect overlapping arbitration");
         assert_eq!(
             fallback_only.confidence(),
-            DockViewportTargetConfidence::FallbackOnly
+            DockViewportTargetConfidence::Ambiguous
         );
 
         let single = resolve_viewport_target_with_confidence(
@@ -338,9 +330,9 @@ mod tests {
         .expect("single hit should still be reported for diagnostics");
         assert_eq!(
             single_unmatched_signal.confidence(),
-            DockViewportTargetConfidence::FallbackOnly,
-            "a single rectangle hit is not trusted when platform arbitration points elsewhere"
+            DockViewportTargetConfidence::Trusted,
+            "a single rectangle hit should stay trusted when only active-window is known"
         );
-        assert!(!single_unmatched_signal.is_trusted());
+        assert!(single_unmatched_signal.is_trusted());
     }
 }

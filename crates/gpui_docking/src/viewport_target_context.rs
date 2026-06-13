@@ -7,7 +7,7 @@ use open_gpui::WindowId;
 pub(crate) struct DockViewportTargetContext {
     /// Window known to be under the pointer for this docking route event.
     hovered_window: Option<WindowId>,
-    /// Platform-active window, when known.
+    /// Platform-active window, recorded for diagnostics only.
     active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
@@ -17,7 +17,6 @@ pub(crate) struct DockViewportTargetContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DockViewportTargetPriority {
     hovered: usize,
-    active: usize,
     stacked: usize,
     fallback: usize,
 }
@@ -45,10 +44,6 @@ impl DockViewportTargetContext {
                 .hovered_window
                 .map(|hovered| usize::from(hovered != window_id))
                 .unwrap_or(1),
-            active: self
-                .active_window
-                .map(|active| usize::from(active != window_id))
-                .unwrap_or(1),
             stacked: self
                 .window_stack
                 .iter()
@@ -59,15 +54,11 @@ impl DockViewportTargetContext {
     }
 
     pub(crate) fn has_arbitration_signal(&self) -> bool {
-        self.hovered_window.is_some()
-            || self.active_window.is_some()
-            || !self.window_stack.is_empty()
+        self.hovered_window.is_some() || !self.window_stack.is_empty()
     }
 
     pub(crate) fn has_signal_for_window(&self, window_id: WindowId) -> bool {
-        self.hovered_window == Some(window_id)
-            || self.active_window == Some(window_id)
-            || self.window_stack.contains(&window_id)
+        self.hovered_window == Some(window_id) || self.window_stack.contains(&window_id)
     }
 
     pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
@@ -105,7 +96,7 @@ impl DockViewportTargetContext {
         self
     }
 
-    /// Adds the active window signal.
+    /// Adds the active window signal for diagnostics only.
     #[cfg(test)]
     pub(crate) fn with_active_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
         self.active_window = Some(window.into().window_id());
@@ -132,7 +123,7 @@ mod tests {
     use open_gpui::WindowId;
 
     #[test]
-    fn target_priority_prefers_hovered_active_stack_then_fallback() {
+    fn target_priority_prefers_hovered_stack_then_fallback() {
         let first = WindowId::from(1);
         let second = WindowId::from(2);
         let third = WindowId::from(3);
@@ -145,10 +136,6 @@ mod tests {
         assert!(
             context.priority_for_window(third, 2) < context.priority_for_window(second, 1),
             "hovered window should beat active window"
-        );
-        assert!(
-            context.priority_for_window(second, 1) < context.priority_for_window(first, 0),
-            "active window should beat window stack order"
         );
         assert!(
             context.priority_for_window(first, 0)

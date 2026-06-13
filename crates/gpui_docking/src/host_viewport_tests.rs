@@ -132,8 +132,8 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
             .map(|target| target.space().clone()),
-        Some(zeta_space.clone()),
-        "active window should arbitrate overlapping hits when no hovered window is known"
+        Some(alpha_space.clone()),
+        "active window is diagnostic only and should not arbitrate overlapping hits"
     );
 
     let hovered_context = cx.update(|app| {
