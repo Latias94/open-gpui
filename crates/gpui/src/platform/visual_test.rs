@@ -9,8 +9,9 @@ use crate::ScreenCaptureSource;
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
     Menu, MenuItem, MouseButton, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    TestDispatcher, WindowAppearance, WindowParams,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformViewportCapabilities, PlatformWindow, Task, TestDispatcher, WindowAppearance,
+    WindowParams,
 };
 use anyhow::Result;
 use futures::channel::oneshot;
@@ -105,8 +106,16 @@ impl Platform for VisualTestPlatform {
         self.platform.active_window()
     }
 
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.hovered_window()
+    }
+
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         self.platform.window_stack()
+    }
+
+    fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
+        self.platform.viewport_capabilities()
     }
 
     fn mouse_button_is_pressed(&self, button: MouseButton) -> Option<bool> {

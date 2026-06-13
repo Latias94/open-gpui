@@ -90,6 +90,9 @@ pub(crate) trait LinuxClient {
     fn write_to_clipboard(&self, item: ClipboardItem);
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        None
+    }
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
@@ -305,6 +308,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         self.inner.active_window()
+    }
+
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        self.inner.hovered_window()
     }
 
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {

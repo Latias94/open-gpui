@@ -136,11 +136,14 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
         "active window is diagnostic only and should not arbitrate overlapping hits"
     );
 
-    let hovered_context = cx.update(|app| {
-        DockViewportPlatformSignals::from_app(app)
-            .with_hovered_window(alpha_handle)
-            .target_context()
-    });
+    cx.set_platform_hovered_window(Some(alpha_handle));
+    let hovered_context =
+        cx.update(|app| DockViewportPlatformSignals::from_app(app).target_context());
+    assert_eq!(
+        hovered_context.hovered_window(),
+        Some(alpha_handle.window_id()),
+        "platform hovered window should be captured by from_app"
+    );
     assert_eq!(
         adapter
             .resolve_viewport_target(point(px(125.0), px(150.0)), &hovered_context)

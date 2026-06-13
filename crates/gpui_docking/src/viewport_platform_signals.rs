@@ -19,7 +19,10 @@ impl DockViewportPlatformSignals {
     pub(crate) fn from_app(cx: &App) -> Self {
         let capabilities = cx.viewport_capabilities();
         Self {
-            hovered_window: None,
+            hovered_window: capabilities
+                .mouse_hovered_window
+                .then(|| cx.hovered_window().map(|window| window.window_id()))
+                .flatten(),
             active_window: capabilities
                 .active_window
                 .then(|| cx.active_window().map(|window| window.window_id()))

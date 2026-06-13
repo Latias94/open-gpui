@@ -998,12 +998,21 @@ impl LinuxClient for WaylandClient {
             .map(|window| window.handle())
     }
 
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        self.0
+            .borrow()
+            .mouse_focused_window
+            .as_ref()
+            .map(|window| window.handle())
+    }
+
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None
     }
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            mouse_hovered_window: true,
             active_window: true,
             dpi_scale: true,
             ..Default::default()

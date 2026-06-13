@@ -522,8 +522,17 @@ impl Platform for WindowsPlatform {
             .map(|inner| inner.handle)
     }
 
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        let mut cursor_position = POINT::default();
+        unsafe { GetCursorPos(&mut cursor_position).ok()? };
+        let hovered_window_hwnd = unsafe { WindowFromPoint(cursor_position) };
+        self.window_from_hwnd(hovered_window_hwnd)
+            .map(|inner| inner.handle)
+    }
+
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            mouse_hovered_window: true,
             active_window: true,
             display_work_area: true,
             dpi_scale: true,
