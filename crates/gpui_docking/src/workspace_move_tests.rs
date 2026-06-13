@@ -3,7 +3,9 @@ use crate::{
     DockGraphMutationError, DockNode, DockPanelDescriptor, DockPolicyError, DockSpaceId, DropZone,
     SplitAxis,
     host_test_support::*,
-    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
+    workspace_move_transaction::{
+        DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest, DockWorkspaceMoveTarget,
+    },
 };
 use open_gpui::TestAppContext;
 
@@ -18,9 +20,7 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
             source_tabs: left_tabs,
             item: &item("a"),
             target_space: &space(),
-            target_tabs: right_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(right_tabs),
         })
         .expect("tab move transaction should be valid");
 
@@ -47,9 +47,7 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
             source_tabs: right_tabs,
             item: &item("a"),
             target_space: &space(),
-            target_tabs: right_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(right_tabs),
         })
         .expect_err("stale source tabs should not move an item from another stack");
 
@@ -93,9 +91,7 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
             source_tabs: secondary_tabs,
             item: &item("b"),
             target_space: &space(),
-            target_tabs: main_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(main_tabs),
         })
         .expect_err("source tabs outside the declared source space should fail");
 
@@ -146,9 +142,7 @@ fn workspace_move_tab_respects_target_space_dock_class_policy(cx: &mut TestAppCo
             source_tabs,
             item: &item("a"),
             target_space: &target,
-            target_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(target_tabs),
         })
         .expect("matching class should be accepted");
 
@@ -188,9 +182,7 @@ fn workspace_move_tab_rejects_incompatible_target_space_class(cx: &mut TestAppCo
             source_tabs,
             item: &item("a"),
             target_space: &target,
-            target_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(target_tabs),
         })
         .expect_err("incompatible class should be rejected before mutation");
 
@@ -248,9 +240,7 @@ fn workspace_move_tabs_rejects_when_any_item_class_is_incompatible(cx: &mut Test
             source_space: &space(),
             source_tabs,
             target_space: &target,
-            target_tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(target_tabs),
         })
         .expect_err("one incompatible item should reject the full stack");
 
@@ -568,9 +558,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
             source_tabs: tabs,
             item: &item("a"),
             target_space: &space(),
-            target_tabs: tabs,
-            zone: DropZone::Center,
-            insert_index: None,
+            target: DockWorkspaceMoveTarget::center(tabs),
         })
         .expect("same-stack center drop should be valid");
 
@@ -601,9 +589,7 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
             source_tabs: tabs,
             item: &item("a"),
             target_space: &space(),
-            target_tabs: tabs,
-            zone: DropZone::Center,
-            insert_index: Some(3),
+            target: DockWorkspaceMoveTarget::tab_bar(tabs, 3),
         })
         .expect("same-stack center drop with an index should reorder");
 

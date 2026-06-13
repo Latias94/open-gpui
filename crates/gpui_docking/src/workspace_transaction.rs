@@ -1,12 +1,14 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicy, DockSpaceId,
-    DockWorkspace, DropZone,
+    DockWorkspace,
     drop_target::{
         DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind,
         validate_resolved_drop_target,
     },
     geometry::DockDropBoxKind,
-    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
+    workspace_move_transaction::{
+        DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest, DockWorkspaceMoveTarget,
+    },
 };
 
 #[cfg(test)]
@@ -75,47 +77,16 @@ impl DockWorkspace {
         let target = validate_resolved_target_policy(target, self.policy())?;
         validate_resolved_target_drop_box(&target)?;
 
+        if let Some(move_target) = resolved_existing_move_target(&target) {
+            return self.commit_resolved_payload_tabs_target_drop(
+                source_space,
+                payload,
+                target_space,
+                move_target,
+            );
+        }
+
         match target.kind {
-            DockResolvedDropTargetKind::TabBar {
-                target_tabs,
-                insert_index,
-            } => self.commit_resolved_payload_tabs_target_drop(
-                source_space,
-                payload,
-                target_space,
-                target_tabs,
-                DropZone::Center,
-                Some(insert_index),
-            ),
-            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => self
-                .commit_resolved_payload_tabs_target_drop(
-                    source_space,
-                    payload,
-                    target_space,
-                    target_tabs,
-                    DropZone::Center,
-                    None,
-                ),
-            DockResolvedDropTargetKind::InnerEdge {
-                target_tabs, zone, ..
-            } => self.commit_resolved_payload_tabs_target_drop(
-                source_space,
-                payload,
-                target_space,
-                target_tabs,
-                zone,
-                None,
-            ),
-            DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
-                .commit_resolved_payload_tabs_target_drop(
-                    source_space,
-                    payload,
-                    target_space,
-                    root,
-                    zone,
-                    None,
-                ),
             DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
                 if is_central {
                     self.policy().validate_central_region_dock_over()?;
@@ -132,6 +103,11 @@ impl DockWorkspace {
                     }
                 }
             }
+            DockResolvedDropTargetKind::TabBar { .. }
+            | DockResolvedDropTargetKind::LeafCenter { .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+            | DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. } => unreachable!(),
         }
     }
 
@@ -140,9 +116,7 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         payload: DockWorkspaceDropPayload<'_>,
         target_space: &DockSpaceId,
-        target_tabs: DockNodeId,
-        zone: DropZone,
-        insert_index: Option<usize>,
+        target: DockWorkspaceMoveTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         match payload {
             DockWorkspaceDropPayload::Item { source_tabs, item } => {
@@ -151,9 +125,7 @@ impl DockWorkspace {
                     source_tabs,
                     item,
                     target_space,
-                    target_tabs,
-                    zone,
-                    insert_index,
+                    target,
                 })
             }
             DockWorkspaceDropPayload::Tabs { source_tabs } => {
@@ -161,13 +133,18 @@ impl DockWorkspace {
                     source_space,
                     source_tabs,
                     target_space,
-                    target_tabs,
-                    zone,
-                    insert_index,
+                    target,
                 })
             }
             DockWorkspaceDropPayload::Floating { floating } => {
-                self.commit_floating_move(source_space, floating, target_space, target_tabs, zone)
+                let target = target.graph_target();
+                self.commit_floating_move(
+                    source_space,
+                    floating,
+                    target_space,
+                    target.node,
+                    target.zone,
+                )
             }
         }
     }
@@ -214,13 +191,38 @@ fn expected_drop_box_kind(kind: &DockResolvedDropTargetKind) -> Option<DockDropB
     }
 }
 
+fn resolved_existing_move_target(
+    target: &DockResolvedDropTarget,
+) -> Option<DockWorkspaceMoveTarget> {
+    match target.kind {
+        DockResolvedDropTargetKind::TabBar {
+            target_tabs,
+            insert_index,
+        } => Some(DockWorkspaceMoveTarget::tab_bar(target_tabs, insert_index)),
+        DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
+        | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
+            Some(DockWorkspaceMoveTarget::center(target_tabs))
+        }
+        DockResolvedDropTargetKind::InnerEdge {
+            root,
+            target_tabs,
+            zone,
+        } => Some(DockWorkspaceMoveTarget::inner_edge(root, target_tabs, zone)),
+        DockResolvedDropTargetKind::RootEdge { root, zone, .. } => {
+            Some(DockWorkspaceMoveTarget::root_edge(root, zone))
+        }
+        DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         DockFloatingContainer, DockGraph, DockItemId, DockNode, DockPolicyError, DockSpaceId,
-        SplitAxis,
+        DropZone, SplitAxis,
         drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
+        workspace_move_transaction::{DockWorkspaceEdgeAnchor, DockWorkspaceMoveTarget},
     };
     use open_gpui::{Bounds, point, px, size};
 
@@ -315,6 +317,61 @@ mod tests {
             preview_bounds: Some(bounds()),
             is_central_region: false,
         }
+    }
+
+    #[test]
+    fn resolved_targets_project_to_distinct_workspace_move_targets() {
+        let (_workspace, root, left, right) = split_workspace();
+
+        let inner = resolved_existing_move_target(&resolved_target(
+            DockResolvedDropTargetKind::InnerEdge {
+                root,
+                target_tabs: right,
+                zone: DropZone::Right,
+            },
+        ));
+        let root_edge =
+            resolved_existing_move_target(&resolved_target(DockResolvedDropTargetKind::RootEdge {
+                root,
+                leaf_tabs: Some(right),
+                zone: DropZone::Right,
+            }));
+        let center = resolved_existing_move_target(&resolved_target(
+            DockResolvedDropTargetKind::LeafCenter {
+                root: left,
+                target_tabs: left,
+            },
+        ));
+        let tab_bar =
+            resolved_existing_move_target(&resolved_target(DockResolvedDropTargetKind::TabBar {
+                target_tabs: left,
+                insert_index: 1,
+            }));
+        let empty = resolved_existing_move_target(&resolved_target(
+            DockResolvedDropTargetKind::EmptyDockSpace {
+                space: DockSpaceId::from("detached"),
+                is_central: false,
+            },
+        ));
+
+        assert_eq!(
+            inner,
+            Some(DockWorkspaceMoveTarget::Edge {
+                anchor: DockWorkspaceEdgeAnchor::Leaf { root, tabs: right },
+                zone: DropZone::Right,
+            })
+        );
+        assert_eq!(
+            root_edge,
+            Some(DockWorkspaceMoveTarget::Edge {
+                anchor: DockWorkspaceEdgeAnchor::Root { root },
+                zone: DropZone::Right,
+            })
+        );
+        assert_ne!(inner, root_edge);
+        assert_eq!(center, Some(DockWorkspaceMoveTarget::center(left)));
+        assert_eq!(tab_bar, Some(DockWorkspaceMoveTarget::tab_bar(left, 1)));
+        assert_eq!(empty, None);
     }
 
     #[test]

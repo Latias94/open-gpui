@@ -8,18 +8,96 @@ pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
     pub(crate) source_tabs: DockNodeId,
     pub(crate) item: &'a DockItemId,
     pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target_tabs: DockNodeId,
-    pub(crate) zone: DropZone,
-    pub(crate) insert_index: Option<usize>,
+    pub(crate) target: DockWorkspaceMoveTarget,
 }
 
 pub(crate) struct DockWorkspaceMoveTabsRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) source_tabs: DockNodeId,
     pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target_tabs: DockNodeId,
+    pub(crate) target: DockWorkspaceMoveTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockWorkspaceMoveTarget {
+    Stack {
+        tabs: DockNodeId,
+        insert_index: Option<usize>,
+    },
+    Edge {
+        anchor: DockWorkspaceEdgeAnchor,
+        zone: DropZone,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockWorkspaceEdgeAnchor {
+    Leaf { root: DockNodeId, tabs: DockNodeId },
+    Root { root: DockNodeId },
+}
+
+impl DockWorkspaceMoveTarget {
+    pub(crate) fn center(tabs: DockNodeId) -> Self {
+        Self::Stack {
+            tabs,
+            insert_index: None,
+        }
+    }
+
+    pub(crate) fn tab_bar(tabs: DockNodeId, insert_index: usize) -> Self {
+        Self::Stack {
+            tabs,
+            insert_index: Some(insert_index),
+        }
+    }
+
+    pub(crate) fn inner_edge(root: DockNodeId, tabs: DockNodeId, zone: DropZone) -> Self {
+        Self::Edge {
+            anchor: DockWorkspaceEdgeAnchor::Leaf { root, tabs },
+            zone,
+        }
+    }
+
+    pub(crate) fn root_edge(root: DockNodeId, zone: DropZone) -> Self {
+        Self::Edge {
+            anchor: DockWorkspaceEdgeAnchor::Root { root },
+            zone,
+        }
+    }
+
+    pub(crate) fn graph_target(self) -> DockWorkspaceGraphMoveTarget {
+        match self {
+            Self::Stack { tabs, insert_index } => DockWorkspaceGraphMoveTarget {
+                node: tabs,
+                zone: DropZone::Center,
+                insert_index,
+                noop_tabs: Some(tabs),
+            },
+            Self::Edge { anchor, zone } => DockWorkspaceGraphMoveTarget {
+                node: anchor.node(),
+                zone,
+                insert_index: None,
+                noop_tabs: None,
+            },
+        }
+    }
+}
+
+impl DockWorkspaceEdgeAnchor {
+    fn node(self) -> DockNodeId {
+        match self {
+            Self::Leaf { root: _, tabs } => tabs,
+            Self::Root { root } => root,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DockWorkspaceGraphMoveTarget {
+    pub(crate) node: DockNodeId,
     pub(crate) zone: DropZone,
     pub(crate) insert_index: Option<usize>,
+    pub(crate) noop_tabs: Option<DockNodeId>,
 }
 
 impl DockWorkspace {
@@ -110,19 +188,18 @@ impl DockWorkspace {
             source_tabs,
             item,
             target_space,
-            target_tabs,
-            zone,
-            insert_index,
+            target,
         } = request;
+        let target = target.graph_target();
 
         self.move_validation()
             .validate_move_tab_source(source_space, source_tabs, item)?;
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
-        self.policy().validate_drop_zone(zone)?;
-        if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
+        self.policy().validate_drop_zone(target.zone)?;
+        if source_space == target_space && target.noop_tabs == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
-            if insert_index.is_none() {
+            if target.insert_index.is_none() {
                 return Ok(DockActionOutcome::Unchanged);
             }
         }
@@ -131,9 +208,9 @@ impl DockWorkspace {
             source_space: source_space.clone(),
             item: item.clone(),
             target_space: target_space.clone(),
-            target_tabs,
-            zone,
-            insert_index,
+            target_tabs: target.node,
+            zone: target.zone,
+            insert_index: target.insert_index,
         })
     }
 
@@ -145,15 +222,14 @@ impl DockWorkspace {
             source_space,
             source_tabs,
             target_space,
-            target_tabs,
-            zone,
-            insert_index,
+            target,
         } = request;
+        let target = target.graph_target();
 
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
-        self.policy().validate_drop_zone(zone)?;
-        if source_space == target_space && source_tabs == target_tabs && zone == DropZone::Center {
+        self.policy().validate_drop_zone(target.zone)?;
+        if source_space == target_space && target.noop_tabs == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
             return Ok(DockActionOutcome::Unchanged);
         }
@@ -162,9 +238,9 @@ impl DockWorkspace {
             source_space: source_space.clone(),
             source_tabs,
             target_space: target_space.clone(),
-            target_tabs,
-            zone,
-            insert_index,
+            target_tabs: target.node,
+            zone: target.zone,
+            insert_index: target.insert_index,
         })
     }
 
@@ -230,9 +306,7 @@ impl DockWorkspace {
                     source_space,
                     source_tabs,
                     target_space,
-                    target_tabs,
-                    zone: DropZone::Center,
-                    insert_index: None,
+                    target: DockWorkspaceMoveTarget::center(target_tabs),
                 })?
             } else {
                 self.commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)?

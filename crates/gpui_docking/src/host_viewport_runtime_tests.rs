@@ -17,7 +17,7 @@ use crate::{
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
     },
     viewport_test_support::handle,
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
+    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTarget},
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
@@ -399,9 +399,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
                 source_tabs,
                 item: &item("a"),
                 target_space: &other_space,
-                target_tabs: other_tabs,
-                zone: crate::DropZone::Center,
-                insert_index: None,
+                target: DockWorkspaceMoveTarget::center(other_tabs),
             })
             .expect("source item move should commit before window creation");
     });
