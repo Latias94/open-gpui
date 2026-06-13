@@ -3,7 +3,7 @@ use crate::{
     DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
     DockViewportTearOffRequest,
-    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_target::DockResolvedDropTarget,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::DockViewportHostSceneFrame,
@@ -391,7 +391,7 @@ impl DockDropDelivery {
     pub(crate) fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
         self.source_space() == &payload.source_space
             && self.source_node() == payload.source_node
-            && self.payload() == &viewport_payload(payload)
+            && self.payload() == &DockViewportDropPayload::from_drag_payload(payload)
     }
 
     pub(crate) fn payload_mismatch_error(&self) -> crate::DockActionApplyError {
@@ -399,14 +399,6 @@ impl DockDropDelivery {
             space: self.source_space().clone(),
             tabs: self.source_node(),
         }
-    }
-}
-
-fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
-    match &payload.kind {
-        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
-        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
-        DockDragPayloadKind::Floating { floating } => DockViewportDropPayload::Floating(*floating),
     }
 }
 

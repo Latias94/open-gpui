@@ -1,7 +1,7 @@
 use crate::{
     DockDropDelivery, DockHost, DockViewportDropPayload, DockViewportDropRouteRequest,
     DockViewportPlatformSignals, DockViewportWindowFacts,
-    drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
+    drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
 };
@@ -133,7 +133,7 @@ fn viewport_drop_route_request_from_host(
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
         payload.source_node,
-        viewport_payload(payload),
+        DockViewportDropPayload::from_drag_payload(payload),
         window_screen_position(window, host_position),
         None,
         platform_signals,
@@ -163,12 +163,4 @@ fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Poi
         position.x - host_bounds.origin.x,
         position.y - host_bounds.origin.y,
     )
-}
-
-fn viewport_payload(payload: &DockDragPayload) -> DockViewportDropPayload {
-    match &payload.kind {
-        DockDragPayloadKind::Item { item } => DockViewportDropPayload::Item(item.clone()),
-        DockDragPayloadKind::Tabs => DockViewportDropPayload::Tabs,
-        DockDragPayloadKind::Floating { floating } => DockViewportDropPayload::Floating(*floating),
-    }
 }
