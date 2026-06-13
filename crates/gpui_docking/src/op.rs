@@ -1,7 +1,7 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId, DropZone};
 use thiserror::Error;
 
-/// Graph-level target for an existing dock tree move.
+/// Graph-level target for a dock tree move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockMoveTarget {
     /// Merge into an existing tab stack.
@@ -18,6 +18,8 @@ pub(crate) enum DockMoveTarget {
         /// Edge zone.
         zone: DropZone,
     },
+    /// Promote the moved subtree as the root of an empty dock space.
+    EmptySpace,
 }
 
 /// Anchor for graph-level edge docking.
@@ -70,31 +72,38 @@ impl DockMoveTarget {
         }
     }
 
-    pub(crate) fn node(self) -> DockNodeId {
+    /// Builds an empty-space promotion target.
+    pub(crate) fn empty_space() -> Self {
+        Self::EmptySpace
+    }
+
+    pub(crate) fn existing_node(self) -> Option<DockNodeId> {
         match self {
-            Self::Stack { tabs, .. } => tabs,
-            Self::Edge { anchor, .. } => anchor.node(),
+            Self::Stack { tabs, .. } => Some(tabs),
+            Self::Edge { anchor, .. } => Some(anchor.node()),
+            Self::EmptySpace => None,
         }
     }
 
-    pub(crate) fn zone(self) -> DropZone {
+    pub(crate) fn drop_zone(self) -> Option<DropZone> {
         match self {
-            Self::Stack { .. } => DropZone::Center,
-            Self::Edge { zone, .. } => zone,
+            Self::Stack { .. } => Some(DropZone::Center),
+            Self::Edge { zone, .. } => Some(zone),
+            Self::EmptySpace => None,
         }
     }
 
     pub(crate) fn insert_index(self) -> Option<usize> {
         match self {
             Self::Stack { insert_index, .. } => insert_index,
-            Self::Edge { .. } => None,
+            Self::Edge { .. } | Self::EmptySpace => None,
         }
     }
 
     pub(crate) fn noop_tabs(self) -> Option<DockNodeId> {
         match self {
             Self::Stack { tabs, .. } => Some(tabs),
-            Self::Edge { .. } => None,
+            Self::Edge { .. } | Self::EmptySpace => None,
         }
     }
 }
@@ -139,7 +148,7 @@ pub(crate) enum DockOp {
         insert_index: Option<usize>,
     },
 
-    /// Moves one item into an existing tabs node or split target.
+    /// Moves one item into another dock target.
     MoveItem {
         /// The source dock space.
         source_space: DockSpaceId,
@@ -147,18 +156,8 @@ pub(crate) enum DockOp {
         item: DockItemId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Existing graph target.
+        /// Move target.
         target: DockMoveTarget,
-    },
-
-    /// Moves one item into an empty dock space, creating its root tabs node.
-    MoveItemToEmptyDockSpace {
-        /// The source dock space.
-        source_space: DockSpaceId,
-        /// The item to move.
-        item: DockItemId,
-        /// The target dock space.
-        target_space: DockSpaceId,
     },
 
     /// Moves an entire tabs node as a group.
@@ -169,21 +168,11 @@ pub(crate) enum DockOp {
         source_tabs: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Existing graph target.
+        /// Move target.
         target: DockMoveTarget,
     },
 
-    /// Moves an entire tabs node into an empty dock space.
-    MoveTabsToEmptyDockSpace {
-        /// The source dock space.
-        source_space: DockSpaceId,
-        /// The tabs node to move.
-        source_tabs: DockNodeId,
-        /// The target dock space.
-        target_space: DockSpaceId,
-    },
-
-    /// Moves an in-window floating subtree into an existing target.
+    /// Moves an in-window floating subtree into another dock target.
     MoveFloating {
         /// The source dock space containing the floating container.
         source_space: DockSpaceId,
@@ -191,18 +180,8 @@ pub(crate) enum DockOp {
         floating: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Existing graph target.
+        /// Move target.
         target: DockMoveTarget,
-    },
-
-    /// Moves an in-window floating subtree into an empty dock space.
-    MoveFloatingToEmptyDockSpace {
-        /// The source dock space containing the floating container.
-        source_space: DockSpaceId,
-        /// The floating container node to move.
-        floating: DockNodeId,
-        /// The target dock space.
-        target_space: DockSpaceId,
     },
 
     /// Floats one item inside a dock space without creating a platform window.

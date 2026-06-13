@@ -188,6 +188,12 @@ impl DockGraph {
                 }
                 true
             }
+            DockMoveTarget::EmptySpace => {
+                if !self.target_space_is_empty_for_item_move(source_space, &item, target_space) {
+                    return false;
+                }
+                self.move_item_to_empty_space(source_space, item, target_space)
+            }
         }
     }
 
@@ -271,6 +277,16 @@ impl DockGraph {
                     self.simplify_space(target_space);
                 }
                 true
+            }
+            DockMoveTarget::EmptySpace => {
+                if !self.target_space_is_empty_for_tabs_move(
+                    source_space,
+                    source_tabs,
+                    target_space,
+                ) {
+                    return false;
+                }
+                self.move_tabs_to_empty_space(source_space, source_tabs, target_space)
             }
         }
     }

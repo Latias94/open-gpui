@@ -450,10 +450,11 @@ fn checked_move_item_to_empty_space_creates_target_root() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveItem {
                 source_space: space(),
                 item: item("b"),
                 target_space: detached.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("move to empty space should be valid")
     );
@@ -488,10 +489,11 @@ fn checked_move_item_to_empty_space_rebinds_empty_central_region() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveItem {
                 source_space: space(),
                 item: item("b"),
                 target_space: central.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("moving into an empty central space should create a root")
     );
@@ -530,10 +532,11 @@ fn checked_move_tabs_to_empty_space_preserves_stack_order_and_active_tab() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveTabs {
                 source_space: space(),
                 source_tabs,
                 target_space: detached.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("moving tabs to empty space should be valid")
     );
@@ -567,10 +570,11 @@ fn checked_move_tabs_to_empty_space_rebinds_empty_central_region() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveTabs {
                 source_space: space(),
                 source_tabs,
                 target_space: central.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("moving tabs into an empty central space should create a root")
     );
@@ -600,10 +604,11 @@ fn checked_move_floating_tabs_to_empty_same_space_removes_floating_and_creates_r
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveTabs {
                 source_space: space(),
                 source_tabs,
                 target_space: space(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("floating tabs should move to the empty root in the same space")
     );
@@ -630,10 +635,11 @@ fn checked_empty_space_moves_reject_non_empty_target_without_mutation() {
     graph.set_root(detached.clone(), detached_root);
 
     let err = graph
-        .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveItem {
             source_space: space(),
             item: item("b"),
             target_space: detached.clone(),
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("non-empty target should be rejected");
     assert_eq!(
@@ -681,10 +687,11 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
         });
 
     let err = graph
-        .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveItem {
             source_space: space(),
             item: item("b"),
             target_space: detached.clone(),
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("floating-only target should still be non-empty");
     assert_eq!(
@@ -695,10 +702,11 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
     );
 
     let err = graph
-        .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveTabs {
             source_space: space(),
             source_tabs: root,
             target_space: detached.clone(),
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("floating-only target should reject tab-group moves too");
     assert_eq!(
@@ -729,10 +737,11 @@ fn checked_empty_same_space_moves_report_missing_source() {
     let mut graph = DockGraph::new();
 
     let item_err = graph
-        .apply_op_checked(&DockOp::MoveItemToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveItem {
             source_space: space(),
             item: item("missing"),
             target_space: space(),
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("empty same-space item move should still validate the source item");
     assert_eq!(
@@ -748,10 +757,11 @@ fn checked_empty_same_space_moves_report_missing_source() {
         selected: None,
     });
     let tabs_err = graph
-        .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveTabs {
             source_space: space(),
             source_tabs: tabs,
             target_space: space(),
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("empty same-space tabs move should still validate the source tabs");
     assert_eq!(tabs_err, DockGraphMutationError::TabsNodeEmpty { tabs });
@@ -769,10 +779,11 @@ fn checked_move_tabs_to_empty_space_rejects_source_outside_space() {
     let detached = DockSpaceId::new("detached");
 
     let err = graph
-        .apply_op_checked(&DockOp::MoveTabsToEmptyDockSpace {
+        .apply_op_checked(&DockOp::MoveTabs {
             source_space: space(),
             source_tabs: other_tabs,
             target_space: detached,
+            target: DockMoveTarget::empty_space(),
         })
         .expect_err("source tabs outside source space should fail");
 

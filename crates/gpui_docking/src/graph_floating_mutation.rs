@@ -102,13 +102,17 @@ impl DockGraph {
         if self.floating_container(source_space, floating).is_none() {
             return false;
         }
-        if self
-            .root_for_node_in_space(target_space, target.node())
-            .is_none()
+        if let Some(target_node) = target.existing_node()
+            && self
+                .root_for_node_in_space(target_space, target_node)
+                .is_none()
         {
             return false;
         }
-        if source_space == target_space && self.subtree_contains(floating, target.node()) {
+        if let Some(target_node) = target.existing_node()
+            && source_space == target_space
+            && self.subtree_contains(floating, target_node)
+        {
             return false;
         }
 
@@ -129,6 +133,9 @@ impl DockGraph {
                     self.simplify_space(target_space);
                 }
                 true
+            }
+            DockMoveTarget::EmptySpace => {
+                self.move_floating_to_empty_space(source_space, floating, target_space)
             }
         }
     }

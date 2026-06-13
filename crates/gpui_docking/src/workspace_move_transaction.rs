@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockMoveTarget,
-    DockNode, DockNodeId, DockOp, DockSpaceId, DockWorkspace, DropZone,
+    DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace, DropZone,
 };
 
 pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
@@ -115,7 +115,7 @@ impl DockWorkspace {
             .validate_move_tab_source(source_space, source_tabs, item)?;
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
-        self.policy().validate_drop_zone(target.zone())?;
+        validate_move_target_policy(self.policy(), target)?;
         if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
             if target.insert_index().is_none() {
@@ -144,7 +144,7 @@ impl DockWorkspace {
 
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
-        self.policy().validate_drop_zone(target.zone())?;
+        validate_move_target_policy(self.policy(), target)?;
         if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
             return Ok(DockActionOutcome::Unchanged);
@@ -167,10 +167,11 @@ impl DockWorkspace {
         self.policy().validate_platform_viewports()?;
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
-        self.commit_graph_op(DockOp::MoveItemToEmptyDockSpace {
+        self.commit_graph_op(DockOp::MoveItem {
             source_space: source_space.clone(),
             item: item.clone(),
             target_space: target_space.clone(),
+            target: DockMoveTarget::empty_space(),
         })
     }
 
@@ -183,10 +184,11 @@ impl DockWorkspace {
         self.policy().validate_platform_viewports()?;
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
-        self.commit_graph_op(DockOp::MoveTabsToEmptyDockSpace {
+        self.commit_graph_op(DockOp::MoveTabs {
             source_space: source_space.clone(),
             source_tabs,
             target_space: target_space.clone(),
+            target: DockMoveTarget::empty_space(),
         })
     }
 
@@ -235,4 +237,16 @@ impl DockWorkspace {
             DockActionOutcome::Unchanged
         })
     }
+}
+
+pub(crate) fn validate_move_target_policy(
+    policy: &DockPolicy,
+    target: DockMoveTarget,
+) -> Result<(), DockActionApplyError> {
+    if let Some(zone) = target.drop_zone() {
+        policy.validate_drop_zone(zone)?;
+    } else {
+        policy.validate_platform_viewports()?;
+    }
+    Ok(())
 }

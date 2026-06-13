@@ -282,10 +282,11 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveFloatingToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveFloating {
                 source_space: space(),
                 floating,
                 target_space: detached.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("floating tear-off move should be valid")
     );
@@ -324,10 +325,11 @@ fn move_floating_to_empty_space_rebinds_empty_central_region() {
 
     assert!(
         graph
-            .apply_op_checked(&DockOp::MoveFloatingToEmptyDockSpace {
+            .apply_op_checked(&DockOp::MoveFloating {
                 source_space: space(),
                 floating,
                 target_space: central.clone(),
+                target: DockMoveTarget::empty_space(),
             })
             .expect("moving floating content into an empty central space should create a root")
     );

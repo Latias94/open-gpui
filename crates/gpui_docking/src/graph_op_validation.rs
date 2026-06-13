@@ -104,55 +104,6 @@ impl DockGraph {
                     },
                 ))
             }
-            DockOp::MoveItemToEmptyDockSpace {
-                source_space,
-                item,
-                target_space,
-            } => {
-                if !self.target_space_is_empty_for_item_move(source_space, item, target_space) {
-                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
-                        space: target_space.clone(),
-                    });
-                }
-                if self.find_item_in_space(source_space, item).is_none() {
-                    return Err(DockGraphMutationError::ItemNotFound {
-                        space: source_space.clone(),
-                        item: item.clone(),
-                    });
-                }
-                self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
-                    op,
-                    DockTreeMutationExpectation::ItemsReachable {
-                        space: target_space.clone(),
-                        items: vec![item.clone()],
-                    },
-                ))
-            }
-            DockOp::MoveTabsToEmptyDockSpace {
-                source_space,
-                source_tabs,
-                target_space,
-            } => {
-                if !self.target_space_is_empty_for_tabs_move(
-                    source_space,
-                    *source_tabs,
-                    target_space,
-                ) {
-                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
-                        space: target_space.clone(),
-                    });
-                }
-                self.require_non_empty_tabs_node(*source_tabs)?;
-                self.require_source_node_in_space(source_space, *source_tabs)?;
-                let items = self.collect_items_in_subtree(*source_tabs);
-                self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
-                    op,
-                    DockTreeMutationExpectation::ItemsReachable {
-                        space: target_space.clone(),
-                        items,
-                    },
-                ))
-            }
             DockOp::MoveFloating {
                 source_space,
                 floating,
@@ -160,35 +111,6 @@ impl DockGraph {
                 target,
             } => {
                 self.validate_move_floating(source_space, *floating, target_space, *target)?;
-                let items = self.collect_items_in_subtree(*floating);
-                self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
-                    op,
-                    DockTreeMutationExpectation::ItemsReachable {
-                        space: target_space.clone(),
-                        items,
-                    },
-                ))
-            }
-            DockOp::MoveFloatingToEmptyDockSpace {
-                source_space,
-                floating,
-                target_space,
-            } => {
-                if self.floating_container(source_space, *floating).is_none() {
-                    return Err(DockGraphMutationError::FloatingContainerNotFound {
-                        space: source_space.clone(),
-                        floating: *floating,
-                    });
-                }
-                if !self.target_space_is_empty_for_floating_move(
-                    source_space,
-                    *floating,
-                    target_space,
-                ) {
-                    return Err(DockGraphMutationError::TargetSpaceNotEmpty {
-                        space: target_space.clone(),
-                    });
-                }
                 let items = self.collect_items_in_subtree(*floating);
                 self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
                     op,
@@ -322,6 +244,13 @@ impl DockGraph {
         target_space: &DockSpaceId,
         target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
+        if matches!(target, DockMoveTarget::EmptySpace)
+            && !self.target_space_is_empty_for_item_move(source_space, item, target_space)
+        {
+            return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                space: target_space.clone(),
+            });
+        }
         if self.find_item_in_space(source_space, item).is_none() {
             return Err(DockGraphMutationError::ItemNotFound {
                 space: source_space.clone(),
@@ -349,6 +278,13 @@ impl DockGraph {
         target_space: &DockSpaceId,
         target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
+        if matches!(target, DockMoveTarget::EmptySpace)
+            && !self.target_space_is_empty_for_tabs_move(source_space, source_tabs, target_space)
+        {
+            return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                space: target_space.clone(),
+            });
+        }
         self.require_non_empty_tabs_node(source_tabs)?;
         self.require_source_node_in_space(source_space, source_tabs)?;
         self.validate_move_target(target_space, target)?;
@@ -368,9 +304,18 @@ impl DockGraph {
                 floating,
             });
         }
+        if matches!(target, DockMoveTarget::EmptySpace)
+            && !self.target_space_is_empty_for_floating_move(source_space, floating, target_space)
+        {
+            return Err(DockGraphMutationError::TargetSpaceNotEmpty {
+                space: target_space.clone(),
+            });
+        }
         self.validate_move_target(target_space, target)?;
-        let target_node = target.node();
-        if source_space == target_space && self.subtree_contains(floating, target_node) {
+        if let Some(target_node) = target.existing_node()
+            && source_space == target_space
+            && self.subtree_contains(floating, target_node)
+        {
             return Err(DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
                 floating,
                 target: target_node,
@@ -398,6 +343,7 @@ impl DockGraph {
                     });
                 }
             }
+            DockMoveTarget::EmptySpace => {}
         }
         Ok(())
     }
@@ -432,11 +378,8 @@ impl<'a> DockTreeMutationPlan<'a> {
             DockOp::CloseItem { .. } => "CloseItem",
             DockOp::OpenItem { .. } => "OpenItem",
             DockOp::MoveItem { .. } => "MoveItem",
-            DockOp::MoveItemToEmptyDockSpace { .. } => "MoveItemToEmptyDockSpace",
             DockOp::MoveTabs { .. } => "MoveTabs",
-            DockOp::MoveTabsToEmptyDockSpace { .. } => "MoveTabsToEmptyDockSpace",
             DockOp::MoveFloating { .. } => "MoveFloating",
-            DockOp::MoveFloatingToEmptyDockSpace { .. } => "MoveFloatingToEmptyDockSpace",
             DockOp::FloatItemInWindow { .. } => "FloatItemInWindow",
             DockOp::FloatTabsInWindow { .. } => "FloatTabsInWindow",
             DockOp::SetFloatingBounds { .. } => "SetFloatingBounds",
