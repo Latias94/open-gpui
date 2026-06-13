@@ -52,12 +52,23 @@ pub(crate) fn item(id: &str) -> DockItemId {
     DockItemId::from(id)
 }
 
-pub(crate) fn tabs_graph(items: &[&str], active: usize) -> (DockGraph, DockNodeId) {
+pub(crate) fn tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
+    tabs_graph_with_optional_selected(items, items.first().copied())
+}
+
+pub(crate) fn tabs_graph_with_selected(items: &[&str], selected: &str) -> (DockGraph, DockNodeId) {
+    tabs_graph_with_optional_selected(items, Some(selected))
+}
+
+fn tabs_graph_with_optional_selected(
+    items: &[&str],
+    selected: Option<&str>,
+) -> (DockGraph, DockNodeId) {
     let mut graph = DockGraph::new();
     let items: Vec<DockItemId> = items.iter().copied().map(DockItemId::from).collect();
-    let selected = items
-        .get(active.min(items.len().saturating_sub(1)))
-        .cloned();
+    let selected = selected
+        .map(DockItemId::from)
+        .filter(|selected| items.contains(selected));
     let root = graph.insert_node(DockNode::Tabs { items, selected });
     graph.set_root(space(), root);
     (graph, root)

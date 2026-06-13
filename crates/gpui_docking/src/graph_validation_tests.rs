@@ -33,7 +33,7 @@ fn graph_validation_accepts_reachable_canonical_graph() {
 #[test]
 fn layout_builder_try_build_validates_finished_graph() {
     let mut builder = DockLayoutBuilder::new();
-    let tabs = builder.tabs(["a", "a"], 0);
+    let tabs = builder.tabs(["a", "a"]);
     builder.set_root(space("main"), tabs);
 
     assert_eq!(
@@ -51,8 +51,8 @@ fn layout_builder_try_build_validates_finished_graph() {
 #[test]
 fn layout_builder_try_build_returns_canonical_valid_graph() {
     let mut builder = DockLayoutBuilder::new();
-    let empty = builder.tabs(std::iter::empty::<&str>(), 0);
-    let tabs = builder.tabs(["a"], 0);
+    let empty = builder.tabs(std::iter::empty::<&str>());
+    let tabs = builder.tabs(["a"]);
     let root = builder.split_horizontal(empty, tabs, 0.5);
     builder.set_root(space("main"), root);
 

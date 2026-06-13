@@ -120,12 +120,12 @@ impl DockMoveTargetAnchor {
 /// High-level graph mutation emitted by docking UI or application code.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockOp {
-    /// Selects the active item within a tabs node.
-    SetActiveTab {
+    /// Selects an item within a tabs node.
+    SelectTab {
         /// The tabs node to update.
         tabs: DockNodeId,
-        /// The active tab index.
-        active: usize,
+        /// The item to select.
+        item: DockItemId,
     },
 
     /// Removes an item from a dock space.
@@ -292,15 +292,13 @@ pub enum DockGraphMutationError {
         node: DockNodeId,
     },
 
-    /// The requested active tab index is out of bounds.
-    #[error("active tab index {active} out of bounds for {tabs:?} with length {len}")]
-    ActiveOutOfBounds {
+    /// The requested item is not present in the target tabs node.
+    #[error("dock item {item} not found in tabs node {tabs:?}")]
+    ItemNotInTabs {
         /// The tabs node.
         tabs: DockNodeId,
-        /// Requested active index.
-        active: usize,
-        /// Current tab count.
-        len: usize,
+        /// Missing item.
+        item: DockItemId,
     },
 
     /// The requested item was not found in the source space.

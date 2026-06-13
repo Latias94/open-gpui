@@ -186,7 +186,7 @@ fn central_node_roundtrips_for_default_editor_layout() {
 #[test]
 fn floating_only_space_exports_and_imports_without_root() {
     let mut builder = DockLayoutBuilder::new();
-    let floating_tabs = builder.tabs(["floating"], 0);
+    let floating_tabs = builder.tabs(["floating"]);
     builder.add_floating(
         space(),
         floating_tabs,
@@ -217,7 +217,7 @@ fn floating_only_space_exports_and_imports_without_root() {
 }
 
 #[test]
-fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
+fn layout_validation_rejects_duplicate_ids_cycles_and_bad_tab_selection() {
     let duplicate = DockLayout::new(
         vec![DockLayoutSpace {
             id: space(),
@@ -230,13 +230,11 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
                 id: 1,
                 items: vec![item("a")],
                 selected: Some(item("a")),
-                active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 1,
                 items: vec![item("b")],
                 selected: Some(item("b")),
-                active: 0,
             },
         ],
     );
@@ -264,7 +262,7 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
         Err(DockLayoutValidationError::CycleDetected { id: 1 })
     ));
 
-    let bad_active = DockLayout::new(
+    let missing_selection = DockLayout::new(
         vec![DockLayoutSpace {
             id: space(),
             root: Some(1),
@@ -275,12 +273,11 @@ fn layout_validation_rejects_duplicate_ids_cycles_and_bad_active_indexes() {
             id: 1,
             items: vec![item("a")],
             selected: None,
-            active: 1,
         }],
     );
     assert!(matches!(
-        bad_active.validate(),
-        Err(DockLayoutValidationError::TabsActiveOutOfBounds { .. })
+        missing_selection.validate(),
+        Err(DockLayoutValidationError::TabsSelectionMissing { id: 1 })
     ));
 }
 
@@ -297,7 +294,6 @@ fn layout_validation_rejects_ordinary_empty_tabs() {
             id: 1,
             items: Vec::new(),
             selected: None,
-            active: 0,
         }],
     );
 
@@ -325,13 +321,11 @@ fn layout_validation_rejects_central_node_outside_root_subtree() {
                 id: 1,
                 items: vec![item("root")],
                 selected: Some(item("root")),
-                active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("central")],
                 selected: Some(item("central")),
-                active: 0,
             },
         ],
     );
@@ -365,7 +359,6 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
                 id: 2,
                 items: vec![item("a")],
                 selected: Some(item("a")),
-                active: 0,
             },
         ],
     );
@@ -386,13 +379,11 @@ fn layout_validation_rejects_shared_and_unreachable_nodes() {
                 id: 1,
                 items: vec![item("a")],
                 selected: Some(item("a")),
-                active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 2,
                 items: vec![item("unused")],
                 selected: Some(item("unused")),
-                active: 0,
             },
         ],
     );
@@ -448,13 +439,11 @@ fn layout_validation_rejects_duplicate_items() {
                 id: 2,
                 items: vec![item("a")],
                 selected: Some(item("a")),
-                active: 0,
             },
             DockLayoutNode::Tabs {
                 id: 3,
                 items: vec![item("a")],
                 selected: Some(item("a")),
-                active: 0,
             },
         ],
     );
@@ -490,7 +479,6 @@ fn layout_validation_rejects_invalid_floating_bounds() {
             id: 1,
             items: vec![item("a")],
             selected: Some(item("a")),
-            active: 0,
         }],
     );
 

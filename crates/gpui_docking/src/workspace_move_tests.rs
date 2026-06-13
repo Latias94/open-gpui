@@ -346,7 +346,7 @@ fn workspace_move_floating_rejects_when_subtree_contains_incompatible_class(
 
 #[open_gpui::test]
 fn workspace_move_item_to_empty_space_transaction_creates_detached_root(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     workspace.policy_mut().set_allow_platform_viewports(true);
     let detached = DockSpaceId::from("detached");
@@ -433,7 +433,7 @@ fn workspace_move_tabs_to_empty_space_transaction_preserves_stack(cx: &mut TestA
 
 #[open_gpui::test]
 fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppContext) {
-    let (mut graph, root) = tabs_graph(&["a", "b"], 0);
+    let (mut graph, root) = tabs_graph(&["a", "b"]);
     let detached = DockSpaceId::from("detached");
     let detached_root = graph.insert_node(DockNode::Tabs {
         items: vec![item("existing")],
@@ -470,7 +470,7 @@ fn workspace_empty_space_transactions_reject_existing_target(cx: &mut TestAppCon
 
 #[open_gpui::test]
 fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestAppContext) {
-    let (mut graph, root) = tabs_graph(&["a", "b"], 0);
+    let (mut graph, root) = tabs_graph(&["a", "b"]);
     let detached = DockSpaceId::from("detached");
     let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("existing")],
@@ -527,7 +527,7 @@ fn workspace_empty_space_transactions_reject_floating_only_target(cx: &mut TestA
 
 #[open_gpui::test]
 fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     let detached = DockSpaceId::from("detached");
 
@@ -552,7 +552,7 @@ fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut 
 }
 #[open_gpui::test]
 fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
-    let (graph, tabs) = tabs_graph(&["a", "b"], 0);
+    let (graph, tabs) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
@@ -579,7 +579,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppContext) {
-    let (graph, tabs) = tabs_graph(&["a", "b", "c"], 0);
+    let (graph, tabs) = tabs_graph(&["a", "b", "c"]);
     let mut workspace = workspace_with_panels(
         cx,
         graph,

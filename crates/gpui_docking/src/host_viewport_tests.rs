@@ -83,8 +83,8 @@ fn viewport_runtime_handle_opens_and_reuses_controller_backed_window(cx: &mut Te
 fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
-    let (alpha_graph, _alpha_root) = tabs_graph(&["a"], 0);
-    let (zeta_graph, _zeta_root) = tabs_graph(&["b"], 0);
+    let (alpha_graph, _alpha_root) = tabs_graph(&["a"]);
+    let (zeta_graph, _zeta_root) = tabs_graph(&["b"]);
     let (alpha_window, _alpha_host, _alpha_visual) = open_host(
         cx,
         alpha_graph,

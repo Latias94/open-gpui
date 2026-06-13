@@ -2,11 +2,11 @@ use crate::{
     DockItemId, DockMoveTarget, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
 };
 
-use super::{DockGraph, DockNode, graph_tab_stack::sanitize_selected_item};
+use super::{DockGraph, DockNode};
 
 impl DockGraph {
-    /// Selects an active tab by index, storing the selected item identity.
-    pub fn set_active_tab(&mut self, tabs: DockNodeId, active: usize) -> bool {
+    /// Selects a tab by item identity.
+    pub fn select_tab(&mut self, tabs: DockNodeId, item: DockItemId) -> bool {
         let Some(DockNode::Tabs {
             items,
             selected: current,
@@ -14,10 +14,7 @@ impl DockGraph {
         else {
             return false;
         };
-        let next = items
-            .get(active)
-            .cloned()
-            .or_else(|| sanitize_selected_item(items, current));
+        let next = items.contains(&item).then_some(item);
         if current == &next {
             return false;
         }

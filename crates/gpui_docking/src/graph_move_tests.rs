@@ -2,30 +2,30 @@ use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
 use crate::*;
 
 #[test]
-fn checked_set_active_tab_reports_only_real_changes() {
+fn checked_select_tab_reports_only_real_changes() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 
     assert!(
         !graph
-            .apply_op_checked(&DockOp::SetActiveTab {
+            .apply_op_checked(&DockOp::SelectTab {
                 tabs: root,
-                active: 0,
+                item: item("a"),
             })
-            .expect("selecting the already-active tab should be valid")
+            .expect("selecting the already-selected tab should be valid")
     );
     assert!(
         graph
-            .apply_op_checked(&DockOp::SetActiveTab {
+            .apply_op_checked(&DockOp::SelectTab {
                 tabs: root,
-                active: 1,
+                item: item("b"),
             })
             .expect("selecting a different tab should be valid")
     );
     assert!(
         !graph
-            .apply_op_checked(&DockOp::SetActiveTab {
+            .apply_op_checked(&DockOp::SelectTab {
                 tabs: root,
-                active: 1,
+                item: item("b"),
             })
             .expect("selecting the same new tab should stay valid")
     );
@@ -595,7 +595,7 @@ fn checked_move_tabs_to_empty_space_rebinds_empty_central_region() {
 #[test]
 fn checked_move_floating_tabs_to_empty_same_space_removes_floating_and_creates_root() {
     let mut builder = DockLayoutBuilder::new();
-    let source_tabs = builder.tabs(["a", "b"], 1);
+    let source_tabs = builder.tabs_with_selected(["a", "b"], "b");
     builder.add_floating(space(), source_tabs, dock_bounds(10.0, 20.0, 300.0, 200.0));
     let mut graph = builder.build();
 

@@ -49,26 +49,18 @@ impl DockLayout {
         for (id, node) in &by_id {
             match node {
                 DockLayoutNode::Tabs {
-                    items,
-                    selected,
-                    active,
-                    ..
+                    items, selected, ..
                 } => {
                     if items.is_empty() {
                         return Err(DockLayoutValidationError::EmptyTabs { id: *id });
                     }
-                    if let Some(selected) = selected {
-                        if !items.contains(selected) {
-                            return Err(DockLayoutValidationError::TabsSelectedItemMissing {
-                                id: *id,
-                                selected: selected.clone(),
-                            });
-                        }
-                    } else if *active >= items.len() {
-                        return Err(DockLayoutValidationError::TabsActiveOutOfBounds {
+                    let Some(selected) = selected else {
+                        return Err(DockLayoutValidationError::TabsSelectionMissing { id: *id });
+                    };
+                    if !items.contains(selected) {
+                        return Err(DockLayoutValidationError::TabsSelectedItemMissing {
                             id: *id,
-                            active: *active,
-                            len: items.len(),
+                            selected: selected.clone(),
                         });
                     }
                 }
@@ -222,15 +214,11 @@ pub enum DockLayoutValidationError {
         /// Invalid node id.
         id: u32,
     },
-    /// A tabs node has an invalid active index.
-    #[error("tabs node {id} active index {active} out of bounds for length {len}")]
-    TabsActiveOutOfBounds {
+    /// A tabs node has items but no selected item.
+    #[error("tabs node {id} has no selected item")]
+    TabsSelectionMissing {
         /// Invalid node id.
         id: u32,
-        /// Active index.
-        active: usize,
-        /// Item count.
-        len: usize,
     },
     /// A tabs node selected an item that is not in the tab order.
     #[error("tabs node {id} selected item {selected} is not present")]

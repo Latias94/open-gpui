@@ -9,7 +9,7 @@ use std::{cell::Cell, rc::Rc};
 
 #[open_gpui::test]
 fn controller_backed_hosts_share_one_workspace(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let workspace =
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
     let controller = cx.new(|_| DockController::new(workspace));

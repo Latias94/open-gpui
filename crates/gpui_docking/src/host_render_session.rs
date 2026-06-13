@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn render_session_keeps_inactive_panel_views_out_of_snapshot() {
-        let (graph, _root) = tabs_graph(&["active", "inactive"], 0);
+        let (graph, _root) = tabs_graph(&["active", "inactive"]);
         let mut workspace = DockWorkspace::new(space(), graph);
         workspace.register_panel_factory("active", "Active", |_| unreachable!());
         workspace.register_panel_factory("inactive", "Inactive", |_| unreachable!());

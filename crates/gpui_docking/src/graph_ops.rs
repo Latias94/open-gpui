@@ -8,7 +8,7 @@ impl DockGraph {
     /// Applies an operation and returns whether it changed or preserved a valid graph state.
     pub(crate) fn apply_op(&mut self, op: &DockOp) -> bool {
         match op {
-            DockOp::SetActiveTab { tabs, active } => self.set_active_tab(*tabs, *active),
+            DockOp::SelectTab { tabs, item } => self.select_tab(*tabs, item.clone()),
             DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),
             DockOp::OpenItem {
                 space,

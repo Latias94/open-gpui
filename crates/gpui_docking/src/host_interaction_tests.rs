@@ -280,7 +280,7 @@ fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn dragging_tab_within_same_stack_reorders_tabs(cx: &mut TestAppContext) {
-    let (graph, tabs) = tabs_graph(&["a", "b", "c"], 0);
+    let (graph, tabs) = tabs_graph(&["a", "b", "c"]);
     let workspace = workspace_with_panels(
         cx,
         graph,
@@ -1239,7 +1239,7 @@ fn runtime_rendered_mouse_up_outside_viewports_rejects_when_platform_viewports_d
 
 #[open_gpui::test]
 fn non_runtime_mouse_up_outside_host_does_not_commit_stale_drop(cx: &mut TestAppContext) {
-    let (graph, tabs) = tabs_graph(&["a", "b"], 0);
+    let (graph, tabs) = tabs_graph(&["a", "b"]);
     let workspace =
         workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
     let controller = cx.new(|_| DockController::new(workspace));
@@ -1671,7 +1671,7 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
 
 #[open_gpui::test]
 fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
         cx,
         graph,
@@ -1710,7 +1710,7 @@ fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
 
 #[open_gpui::test]
 fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
         cx,
         graph,
@@ -1774,7 +1774,7 @@ fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext)
 
 #[open_gpui::test]
 fn non_closable_tab_omits_close_control_and_rejects_close_action(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["locked", "open"], 0);
+    let (graph, root) = tabs_graph(&["locked", "open"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel(
         item("locked"),

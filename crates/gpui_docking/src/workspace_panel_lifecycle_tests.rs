@@ -7,7 +7,7 @@ use std::{cell::Cell, rc::Rc};
 
 #[open_gpui::test]
 fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel(
         item("a"),
@@ -49,7 +49,7 @@ fn workspace_close_item_transaction_respects_panel_policy(cx: &mut TestAppContex
 fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_panel(
     _cx: &mut TestAppContext,
 ) {
-    let (graph, root) = tabs_graph(&["lazy"], 0);
+    let (graph, root) = tabs_graph(&["lazy"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     let instantiations = Rc::new(Cell::new(0));
     let observed_instantiations = instantiations.clone();
@@ -83,7 +83,7 @@ fn workspace_close_item_transaction_uses_metadata_without_instantiating_lazy_pan
 
 #[open_gpui::test]
 fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["anchor", "restored"], 0);
+    let (graph, root) = tabs_graph(&["anchor", "restored"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_descriptor(
         item("restored"),
@@ -139,7 +139,7 @@ fn workspace_actions_can_use_descriptor_only_panel_metadata(_cx: &mut TestAppCon
 fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instantiating_view(
     _cx: &mut TestAppContext,
 ) {
-    let (graph, root) = tabs_graph(&["a", "b"], 0);
+    let (graph, root) = tabs_graph(&["a", "b"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel("a", DockPanel::lazy("A", |_| unreachable!()));
     let instantiations = Rc::new(Cell::new(0));
@@ -188,7 +188,7 @@ fn workspace_open_item_transaction_reopens_registered_lazy_panel_without_instant
 
 #[test]
 fn workspace_attach_panel_factory_preserves_restored_metadata() {
-    let (graph, _root) = tabs_graph(&["restored"], 0);
+    let (graph, _root) = tabs_graph(&["restored"]);
     let mut workspace = DockWorkspace::new(space(), graph);
     workspace.register_panel_descriptor(
         item("restored"),
@@ -215,7 +215,7 @@ fn workspace_attach_panel_factory_preserves_restored_metadata() {
 
 #[open_gpui::test]
 fn workspace_open_item_transaction_requires_registered_panel(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a"], 0);
+    let (graph, root) = tabs_graph(&["a"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A")]);
 
     let err = workspace
@@ -246,7 +246,7 @@ fn workspace_open_item_transaction_requires_registered_panel(cx: &mut TestAppCon
 
 #[open_gpui::test]
 fn workspace_close_item_transaction_requires_registered_panel(cx: &mut TestAppContext) {
-    let (graph, root) = tabs_graph(&["a"], 0);
+    let (graph, root) = tabs_graph(&["a"]);
     let mut workspace = workspace_with_panels(cx, graph, &[]);
 
     let err = workspace

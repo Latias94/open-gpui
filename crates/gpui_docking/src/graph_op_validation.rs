@@ -6,13 +6,12 @@ impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
     pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
         match op {
-            DockOp::SetActiveTab { tabs, active } => {
+            DockOp::SelectTab { tabs, item } => {
                 let items = self.require_tabs_node(*tabs)?;
-                if *active >= items.len() {
-                    return Err(DockGraphMutationError::ActiveOutOfBounds {
+                if !items.contains(item) {
+                    return Err(DockGraphMutationError::ItemNotInTabs {
                         tabs: *tabs,
-                        active: *active,
-                        len: items.len(),
+                        item: item.clone(),
                     });
                 }
                 self.apply_tree_mutation_plan(DockTreeMutationPlan::allow_noop(
@@ -374,7 +373,7 @@ impl<'a> DockTreeMutationPlan<'a> {
 
     fn op_name(&self) -> &'static str {
         match self.op {
-            DockOp::SetActiveTab { .. } => "SetActiveTab",
+            DockOp::SelectTab { .. } => "SelectTab",
             DockOp::CloseItem { .. } => "CloseItem",
             DockOp::OpenItem { .. } => "OpenItem",
             DockOp::MoveItem { .. } => "MoveItem",

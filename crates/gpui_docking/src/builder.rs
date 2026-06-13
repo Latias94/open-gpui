@@ -16,15 +16,21 @@ impl DockLayoutBuilder {
     }
 
     /// Inserts a tabs node.
-    pub fn tabs(
+    pub fn tabs(&mut self, items: impl IntoIterator<Item = impl Into<DockItemId>>) -> DockNodeId {
+        let items: Vec<DockItemId> = items.into_iter().map(Into::into).collect();
+        let selected = items.first().cloned();
+        self.graph.insert_node(DockNode::Tabs { items, selected })
+    }
+
+    /// Inserts a tabs node with an explicit selected item.
+    pub fn tabs_with_selected(
         &mut self,
         items: impl IntoIterator<Item = impl Into<DockItemId>>,
-        active: usize,
+        selected: impl Into<DockItemId>,
     ) -> DockNodeId {
         let items: Vec<DockItemId> = items.into_iter().map(Into::into).collect();
-        let selected = items
-            .get(active.min(items.len().saturating_sub(1)))
-            .cloned();
+        let selected = selected.into();
+        let selected = items.contains(&selected).then_some(selected);
         self.graph.insert_node(DockNode::Tabs { items, selected })
     }
 
@@ -136,12 +142,12 @@ pub struct EditorDockLayoutSpec {
     pub left_fraction: f32,
     /// Fraction allocated to the top stack within the right split.
     pub main_fraction: f32,
-    /// Active index for the left stack.
-    pub active_left: usize,
-    /// Active index for the main stack.
-    pub active_main: usize,
-    /// Active index for the bottom stack.
-    pub active_bottom: usize,
+    /// Selected item in the left stack.
+    pub selected_left: Option<DockItemId>,
+    /// Selected item in the main stack.
+    pub selected_main: Option<DockItemId>,
+    /// Selected item in the bottom stack.
+    pub selected_bottom: Option<DockItemId>,
 }
 
 impl EditorDockLayoutSpec {
@@ -157,9 +163,9 @@ impl EditorDockLayoutSpec {
             bottom_items: bottom_items.into_iter().map(Into::into).collect(),
             left_fraction: 0.26,
             main_fraction: 0.72,
-            active_left: 0,
-            active_main: 0,
-            active_bottom: 0,
+            selected_left: None,
+            selected_main: None,
+            selected_bottom: None,
         }
     }
 
@@ -170,16 +176,16 @@ impl EditorDockLayoutSpec {
         self
     }
 
-    /// Sets active tab indexes.
-    pub fn with_active_indexes(
+    /// Sets selected tab identities.
+    pub fn with_selected_items(
         mut self,
-        active_left: usize,
-        active_main: usize,
-        active_bottom: usize,
+        selected_left: impl Into<DockItemId>,
+        selected_main: impl Into<DockItemId>,
+        selected_bottom: impl Into<DockItemId>,
     ) -> Self {
-        self.active_left = active_left;
-        self.active_main = active_main;
-        self.active_bottom = active_bottom;
+        self.selected_left = Some(selected_left.into());
+        self.selected_main = Some(selected_main.into());
+        self.selected_bottom = Some(selected_bottom.into());
         self
     }
 }
@@ -192,13 +198,22 @@ impl DockGraph {
     ) -> Self {
         let space = space.into();
         let mut builder = DockLayoutBuilder::new();
-        let left = builder.tabs(spec.left_items, spec.active_left);
-        let main = builder.tabs(spec.main_items, spec.active_main);
-        let bottom = builder.tabs(spec.bottom_items, spec.active_bottom);
+        let left = builder.editor_tabs(spec.left_items, spec.selected_left);
+        let main = builder.editor_tabs(spec.main_items, spec.selected_main);
+        let bottom = builder.editor_tabs(spec.bottom_items, spec.selected_bottom);
         let right = builder.split_vertical(main, bottom, spec.main_fraction);
         let root = builder.split_horizontal(left, right, spec.left_fraction);
         builder.set_root(space.clone(), root);
         builder.set_central_region(space, DockCentralRegion::with_node(main));
         builder.build()
+    }
+}
+
+impl DockLayoutBuilder {
+    fn editor_tabs(&mut self, items: Vec<DockItemId>, selected: Option<DockItemId>) -> DockNodeId {
+        if let Some(selected) = selected {
+            return self.tabs_with_selected(items, selected);
+        }
+        self.tabs(items)
     }
 }
