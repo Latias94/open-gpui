@@ -1,0 +1,26 @@
+[package]
+name = "open-gpui-canvas-jellyflow"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+publish = false
+description = "Native Jellyflow graph projection example for open-gpui-canvas."
+
+[[bin]]
+name = "open-gpui-canvas-jellyflow"
+path = "src/main.rs"
+
+[dependencies]
+jellyflow = "0.2.0"
+open_gpui.workspace = true
+open_gpui_canvas.workspace = true
+open_gpui_platform.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
