@@ -157,8 +157,14 @@ fn validate_resolved_target_graph_identity(
     target: &DockResolvedDropTarget,
 ) -> Result<(), DockActionApplyError> {
     match target.kind {
-        DockResolvedDropTargetKind::TabBar { .. }
-        | DockResolvedDropTargetKind::EmptyDockSpace { .. } => Ok(()),
+        DockResolvedDropTargetKind::TabBar { .. } => Ok(()),
+        DockResolvedDropTargetKind::EmptyDockSpace { ref space, .. } => {
+            if space == target_space {
+                Ok(())
+            } else {
+                Err(DockActionApplyError::DropTargetUnavailable)
+            }
+        }
         DockResolvedDropTargetKind::LeafCenter { root, target_tabs }
         | DockResolvedDropTargetKind::InnerEdge {
             root, target_tabs, ..
@@ -737,7 +743,7 @@ mod tests {
                 source_space: &space(),
                 source_tabs: left,
                 item: &item("a"),
-                target_space: &space(),
+                target_space: &detached,
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
                     is_central: false,
@@ -749,6 +755,33 @@ mod tests {
         assert_eq!(
             workspace.graph().collect_items_in_space(&detached),
             vec![item("a")]
+        );
+    }
+
+    #[test]
+    fn resolved_empty_space_target_requires_route_space_to_match_target_space() {
+        let (mut workspace, _root, left, _right) = split_workspace();
+        let detached = DockSpaceId::from("detached");
+        workspace.policy_mut().set_allow_platform_viewports(true);
+
+        let err = workspace
+            .commit_resolved_drop(DockWorkspaceDropRequest {
+                source_space: &space(),
+                source_tabs: left,
+                item: &item("a"),
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
+                    space: detached.clone(),
+                    is_central: false,
+                }),
+            })
+            .expect_err("empty-space target should not conflict with route target space");
+
+        assert_eq!(err, DockActionApplyError::DropTargetUnavailable);
+        assert_eq!(workspace.graph().root(&detached), None);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("a"), item("b")]
         );
     }
 
@@ -766,7 +799,7 @@ mod tests {
                 source_space: &space(),
                 source_tabs: left,
                 item: &item("a"),
-                target_space: &space(),
+                target_space: &central,
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: central.clone(),
                     is_central: true,
@@ -844,7 +877,7 @@ mod tests {
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
-                target_space: &space(),
+                target_space: &detached,
                 target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
                     space: detached.clone(),
                     is_central: false,
