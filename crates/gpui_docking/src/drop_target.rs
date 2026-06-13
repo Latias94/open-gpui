@@ -1,5 +1,5 @@
 use crate::{
-    DockMoveTarget, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DropZone,
+    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DropZone,
     geometry::{self, DockDropBox, DockDropGeometry},
 };
 use open_gpui::{Bounds, Pixels, Point};
@@ -25,28 +25,6 @@ impl DockResolvedDropTarget {
             DockResolvedDropTargetKind::InnerEdge { zone, .. }
             | DockResolvedDropTargetKind::RootEdge { zone, .. } => Some(zone),
             DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
-        }
-    }
-
-    pub(crate) fn move_target(&self) -> DockMoveTarget {
-        match self.kind {
-            DockResolvedDropTargetKind::TabBar {
-                target_tabs,
-                insert_index,
-            } => DockMoveTarget::tab_bar(target_tabs, insert_index),
-            DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-            | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-                DockMoveTarget::center(target_tabs)
-            }
-            DockResolvedDropTargetKind::InnerEdge {
-                root,
-                target_tabs,
-                zone,
-            } => DockMoveTarget::inner_edge(root, target_tabs, zone),
-            DockResolvedDropTargetKind::RootEdge { root, zone, .. } => {
-                DockMoveTarget::root_edge(root, zone)
-            }
-            DockResolvedDropTargetKind::EmptyDockSpace { .. } => DockMoveTarget::empty_space(),
         }
     }
 
