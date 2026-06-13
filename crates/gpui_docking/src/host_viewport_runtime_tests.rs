@@ -997,6 +997,76 @@ fn viewport_runtime_merge_back_should_close_vetoes_invalid_target(cx: &mut TestA
 }
 
 #[open_gpui::test]
+fn viewport_runtime_merge_back_commits_during_should_close(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_descriptor(
+        item("a"),
+        crate::DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+    );
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(main_space.clone(), "editor");
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(45);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let should_close =
+        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+    assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("b"), item("a")]
+        );
+        assert!(
+            controller
+                .graph()
+                .collect_items_in_space(&detached_space)
+                .is_empty()
+        );
+    });
+
+    controller.update(cx, |controller, _| {
+        controller
+            .policy_mut()
+            .set_allowed_dock_classes_for_space(main_space.clone(), ["inspector"]);
+    });
+    let closed = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
+
+    assert_eq!(closed.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("b"), item("a")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_installs_should_close_hook_when_reusing_registered_window(
     cx: &mut TestAppContext,
 ) {

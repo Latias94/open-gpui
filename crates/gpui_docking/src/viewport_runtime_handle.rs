@@ -654,7 +654,7 @@ impl DockViewportRuntimeHandle {
     pub fn handle_window_should_close_with_app(
         &self,
         window_id: WindowId,
-        cx: &App,
+        cx: &mut App,
     ) -> DockViewportShouldCloseOutcome {
         self.runtime
             .borrow_mut()

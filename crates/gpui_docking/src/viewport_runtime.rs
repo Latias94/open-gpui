@@ -56,6 +56,7 @@ pub(crate) struct DockViewportRuntime {
     drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
+    pre_closed_merge_back_windows: HashSet<WindowId>,
     routed_drop_preview: Option<DockViewportRoutedDropPreview>,
     status: DockViewportRuntimeStatus,
 }
@@ -292,6 +293,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
+            pre_closed_merge_back_windows: HashSet::new(),
             routed_drop_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
@@ -317,6 +319,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
+            pre_closed_merge_back_windows: HashSet::new(),
             routed_drop_preview: None,
             status: DockViewportRuntimeStatus::default(),
         }
@@ -1367,9 +1370,16 @@ impl DockViewportRuntime {
     pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.discard_owned_window(window_id);
+        let merge_back_prepared = self.pre_closed_merge_back_windows.remove(&window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
+        let outcome = if merge_back_prepared && outcome.status() == DockViewportCloseStatus::Closed
+        {
+            outcome.with_status(DockViewportCloseStatus::MergedBack)
+        } else {
+            outcome
+        };
         self.status.record_close(&outcome);
         outcome
     }
@@ -1388,6 +1398,9 @@ impl DockViewportRuntime {
         let DockViewportClosePolicy::MergeBack { target_space } = close_policy else {
             return outcome;
         };
+        if outcome.status() == DockViewportCloseStatus::MergedBack {
+            return outcome;
+        }
 
         let outcome =
             outcome.with_status(self.merge_closed_space_back(&source_space, &target_space, cx));
@@ -1431,7 +1444,7 @@ impl DockViewportRuntime {
     pub(crate) fn handle_window_should_close_with_app(
         &mut self,
         window_id: WindowId,
-        cx: &App,
+        cx: &mut App,
     ) -> DockViewportShouldCloseOutcome {
         let mut outcome = self
             .adapter
@@ -1440,7 +1453,7 @@ impl DockViewportRuntime {
             && let Some(space) = outcome.space.as_ref()
         {
             let close_policy = self.close_policy();
-            let allowed = {
+            let mut allowed = {
                 let controller = self.controller.read(cx);
                 let workspace = controller.workspace();
                 match &close_policy {
@@ -1453,6 +1466,14 @@ impl DockViewportRuntime {
                     DockViewportClosePolicy::Prevent => false,
                 }
             };
+            if allowed && let DockViewportClosePolicy::MergeBack { target_space } = close_policy {
+                let status = self.merge_closed_space_back(space, &target_space, cx);
+                if status == DockViewportCloseStatus::MergedBack {
+                    self.pre_closed_merge_back_windows.insert(window_id);
+                } else if status != DockViewportCloseStatus::Closed {
+                    allowed = false;
+                }
+            }
             if !allowed {
                 outcome.status = DockViewportShouldCloseStatus::Vetoed;
             }
