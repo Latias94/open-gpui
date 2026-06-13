@@ -5,10 +5,9 @@ use crate::{
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportOpenStatus,
     DockViewportResolvedDropRoute, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -1327,16 +1326,14 @@ fn viewport_runtime_rejects_stale_known_viewport_delivery_after_target_rebind(
         source_space.clone(),
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        screen_position_for_host_position(window_bounds, host_position),
         None,
         DockViewportTargetContext::new().with_hovered_window(old_window),
     );
-    let stale_delivery = DockDropDelivery::from_route_request(
-        &request,
-        DockViewportDropRoute::KnownViewport {
-            target: DockViewportTargetHit::new(target_space.clone(), old_window, host_position),
-        },
-    );
+    let stale_delivery = cx
+        .update(|app| runtime.resolve_payload_drop_delivery(&request, app))
+        .delivery()
+        .clone();
 
     runtime.register_opened_viewport(target_space.clone(), new_window);
     assert!(runtime.begin_viewport_host_scene(
@@ -2323,17 +2320,15 @@ fn viewport_runtime_rejects_known_viewport_delivery_from_stale_drag_session(
         source_space.clone(),
         source_tabs,
         DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
+        screen_position_for_host_position(window_bounds, host_position),
         None,
         DockViewportTargetContext::new().with_hovered_window(target_window),
     )
     .with_drag_session(Some(stale_session.clone()));
-    let stale_delivery = DockDropDelivery::from_route_request(
-        &request,
-        DockViewportDropRoute::KnownViewport {
-            target: DockViewportTargetHit::new(target_space.clone(), target_window, host_position),
-        },
-    );
+    let stale_delivery = cx
+        .update(|app| runtime.resolve_payload_drop_delivery(&request, app))
+        .delivery()
+        .clone();
 
     let _replacement = runtime.begin_payload_drag(&payload);
     let result = cx.update(|app| runtime.deliver_payload_drop_with_outcome(stale_delivery, app));

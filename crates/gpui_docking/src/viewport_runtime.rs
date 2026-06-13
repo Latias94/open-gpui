@@ -771,20 +771,15 @@ impl DockViewportRuntime {
                     crate::DockDropWorkspaceTarget::Resolved(_) => {
                         return Err(DockActionApplyError::DropTargetUnavailable);
                     }
-                    crate::DockDropWorkspaceTarget::ResolveAtDelivery {
-                        target_space,
-                        target_window_id,
-                        target_facts_generation,
-                        host_position,
-                    } => self.resolve_route_target(
-                        &target_space,
-                        target_window_id,
-                        target_facts_generation,
-                        host_position,
-                        &payload,
-                        source_node,
-                        cx,
-                    )?,
+                    crate::DockDropWorkspaceTarget::ResolveLocalAtDelivery { host_position } => {
+                        self.resolve_local_route_target(
+                            &source_space,
+                            host_position,
+                            &payload,
+                            source_node,
+                            cx,
+                        )?
+                    }
                 };
                 (source_space, source_node, payload, target_space)
             }
@@ -854,24 +849,14 @@ impl DockViewportRuntime {
         }
     }
 
-    fn resolve_route_target(
+    fn resolve_local_route_target(
         &self,
         target_space: &DockSpaceId,
-        target_window_id: Option<WindowId>,
-        target_facts_generation: Option<u64>,
         host_position: Point<Pixels>,
         payload: &DockViewportDropPayload,
         source_node: DockNodeId,
         cx: &App,
     ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
-        if !self.target_facts_generation_is_current(
-            target_space,
-            target_window_id,
-            target_facts_generation,
-        ) {
-            return Err(DockActionApplyError::DropTargetUnavailable);
-        }
-
         let controller = self.controller.read(cx);
         let workspace = controller.workspace();
         let policy = workspace.policy().clone();
@@ -880,7 +865,7 @@ impl DockViewportRuntime {
         let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
         let Some((_, resolution)) = self.host_scenes.resolve_frame_for_window(
             target_space,
-            target_window_id,
+            None,
             host_position,
             &policy,
             Some(&target_validator),
