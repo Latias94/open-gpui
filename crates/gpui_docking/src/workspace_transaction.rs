@@ -47,6 +47,7 @@ impl DockWorkspace {
         validate_resolved_target_graph_identity(self, target_space, &target)?;
 
         let move_target = target.move_target();
+        let resolved_target_space = target.target_space(target_space).clone();
         if !matches!(move_target, DockMoveTarget::EmptySpace) {
             return self.commit_resolved_payload_tabs_target_drop(
                 source_space,
@@ -57,20 +58,29 @@ impl DockWorkspace {
         }
 
         match target.kind {
-            DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
+            DockResolvedDropTargetKind::EmptyDockSpace { is_central, .. } => {
                 if is_central {
                     self.policy().validate_central_region_dock_over()?;
                 }
                 match payload {
-                    DockWorkspaceDropPayload::Item { item, .. } => {
-                        self.commit_item_to_empty_dock_space(source_space, item, &space)
-                    }
-                    DockWorkspaceDropPayload::Tabs { source_tabs } => {
-                        self.commit_tabs_to_empty_dock_space(source_space, source_tabs, &space)
-                    }
-                    DockWorkspaceDropPayload::Floating { floating } => {
-                        self.commit_floating_to_empty_dock_space(source_space, floating, &space)
-                    }
+                    DockWorkspaceDropPayload::Item { item, .. } => self
+                        .commit_item_to_empty_dock_space(
+                            source_space,
+                            item,
+                            &resolved_target_space,
+                        ),
+                    DockWorkspaceDropPayload::Tabs { source_tabs } => self
+                        .commit_tabs_to_empty_dock_space(
+                            source_space,
+                            source_tabs,
+                            &resolved_target_space,
+                        ),
+                    DockWorkspaceDropPayload::Floating { floating } => self
+                        .commit_floating_to_empty_dock_space(
+                            source_space,
+                            floating,
+                            &resolved_target_space,
+                        ),
                 }
             }
             DockResolvedDropTargetKind::TabBar { .. }

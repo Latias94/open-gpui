@@ -50,6 +50,17 @@ impl DockResolvedDropTarget {
         }
     }
 
+    pub(crate) fn target_space<'a>(&'a self, default_space: &'a DockSpaceId) -> &'a DockSpaceId {
+        match &self.kind {
+            DockResolvedDropTargetKind::EmptyDockSpace { space, .. } => space,
+            DockResolvedDropTargetKind::TabBar { .. }
+            | DockResolvedDropTargetKind::LeafCenter { .. }
+            | DockResolvedDropTargetKind::InnerEdge { .. }
+            | DockResolvedDropTargetKind::RootEdge { .. }
+            | DockResolvedDropTargetKind::FloatingTitleBar { .. } => default_space,
+        }
+    }
+
     pub(crate) fn center_target_tabs(&self) -> Option<DockNodeId> {
         match self.kind {
             DockResolvedDropTargetKind::TabBar { target_tabs, .. }
