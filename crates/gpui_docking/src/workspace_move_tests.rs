@@ -548,6 +548,98 @@ fn workspace_empty_space_transactions_require_platform_viewport_policy(cx: &mut 
     assert_eq!(items, &vec![item("a"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(0));
 }
+
+#[open_gpui::test]
+fn workspace_merge_space_preserves_floating_forest(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target")],
+        selected: Some(item("target")),
+    });
+    let detached_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![detached_left, detached_right],
+        fractions: vec![0.25, 0.75],
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("float-a")],
+        selected: Some(item("float-a")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("float-b")],
+        selected: Some(item("float-b")),
+    });
+    let floating_child = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Vertical,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.4, 0.6],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_child,
+    });
+    let floating_bounds = floating_bounds(16.0, 24.0, 240.0, 160.0);
+    graph.set_root(target.clone(), target_tabs);
+    graph.set_root(detached.clone(), detached_root);
+    graph
+        .floating_containers_mut(detached.clone())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds,
+        });
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target", "Target", "Target"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+            ("float-a", "Float A", "Float A"),
+            ("float-b", "Float B", "Float B"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let outcome = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect("merge-back should preserve detached floating trees");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(workspace.graph().root(&detached), None);
+    assert!(workspace.graph().floating_containers(&detached).is_empty());
+    let target_floatings = workspace.graph().floating_containers(&target);
+    assert_eq!(target_floatings.len(), 1);
+    assert_eq!(target_floatings[0].bounds, floating_bounds);
+    let moved_floating = target_floatings[0].node;
+    assert!(
+        matches!(workspace.graph().node(moved_floating), Some(DockNode::Floating { child }) if *child == floating_child)
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_subtree(moved_floating),
+        vec![item("float-a"), item("float-b")]
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![
+            item("target"),
+            item("a"),
+            item("b"),
+            item("float-a"),
+            item("float-b")
+        ]
+    );
+}
+
 #[open_gpui::test]
 fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     let (graph, tabs) = tabs_graph(&["a", "b"]);

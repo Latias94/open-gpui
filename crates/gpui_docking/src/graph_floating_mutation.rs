@@ -160,6 +160,31 @@ impl DockGraph {
         true
     }
 
+    pub(crate) fn merge_space_floating_forest_into(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if source_space == target_space {
+            return false;
+        }
+
+        let Some(mut source_floatings) = self.floatings.remove(source_space) else {
+            return false;
+        };
+        if source_floatings.is_empty() {
+            return false;
+        }
+
+        self.floatings
+            .entry(target_space.clone())
+            .or_default()
+            .append(&mut source_floatings);
+        self.simplify_space(source_space);
+        self.simplify_space(target_space);
+        true
+    }
+
     fn merge_floating_subtree_into_tabs(
         &mut self,
         source_space: &DockSpaceId,

@@ -39,7 +39,7 @@ impl DockWorkspace {
             .graph()
             .first_tabs_in_space(target_space)
             .map(|tabs| (tabs, true));
-        for source_tabs in self.graph().tabs_in_space(source_space) {
+        for source_tabs in self.graph().root_tabs_in_space(source_space) {
             if self
                 .graph()
                 .root_for_node_in_space(source_space, source_tabs)
@@ -64,6 +64,9 @@ impl DockWorkspace {
             }
             target_tabs = target_tabs.or(Some((source_tabs, false)));
         }
+
+        self.move_validation()
+            .validate_space_floating_forest_target_space(source_space, target_space)?;
 
         Ok(())
     }
@@ -179,9 +182,9 @@ impl DockWorkspace {
             return Ok(DockActionOutcome::Unchanged);
         }
 
-        let source_tabs = self.graph().tabs_in_space(source_space);
+        let source_tabs = self.graph().root_tabs_in_space(source_space);
         if source_tabs.is_empty() {
-            return Ok(DockActionOutcome::Unchanged);
+            return self.commit_merge_space_floating_forest_into(source_space, target_space);
         }
 
         let mut target_tabs = self.graph().first_tabs_in_space(target_space);
@@ -209,11 +212,37 @@ impl DockWorkspace {
             target_tabs = self.graph().first_tabs_in_space(target_space);
         }
 
+        changed |= self
+            .commit_merge_space_floating_forest_into(source_space, target_space)?
+            .changed();
+
         Ok(if changed {
             DockActionOutcome::Changed
         } else {
             DockActionOutcome::Unchanged
         })
+    }
+
+    fn commit_merge_space_floating_forest_into(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.move_validation()
+            .validate_space_floating_forest_target_space(source_space, target_space)?;
+        let mut next = self.graph().clone();
+        let changed = next.merge_space_floating_forest_into(source_space, target_space);
+        if !changed {
+            return Ok(DockActionOutcome::Unchanged);
+        }
+        next.validate().map_err(|error| {
+            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
+                op: "MergeSpaceFloatingForest",
+                reason: error.to_string(),
+            })
+        })?;
+        self.set_graph(next);
+        Ok(DockActionOutcome::Changed)
     }
 
     pub(crate) fn commit_move(

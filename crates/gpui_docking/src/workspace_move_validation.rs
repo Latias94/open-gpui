@@ -91,6 +91,28 @@ impl<'a> DockWorkspaceMoveValidation<'a> {
             .validate_target_space(target_space, self.workspace.policy())
             .map_err(Into::into)
     }
+
+    pub(crate) fn validate_space_floating_forest_target_space(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<(), DockActionApplyError> {
+        let items = self
+            .workspace
+            .graph()
+            .floating_containers(source_space)
+            .iter()
+            .flat_map(|floating| {
+                self.workspace
+                    .graph()
+                    .collect_items_in_subtree(floating.node)
+            })
+            .collect::<Vec<_>>();
+        self.workspace
+            .payload_dock_classes_for_items(&items)
+            .validate_target_space(target_space, self.workspace.policy())
+            .map_err(Into::into)
+    }
 }
 
 impl DockWorkspace {
@@ -148,7 +170,7 @@ impl DockWorkspace {
         }
     }
 
-    fn payload_dock_classes_for_items<'a>(
+    pub(crate) fn payload_dock_classes_for_items<'a>(
         &self,
         items: impl IntoIterator<Item = &'a DockItemId>,
     ) -> DockPayloadDockClasses {

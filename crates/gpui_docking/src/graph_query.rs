@@ -38,9 +38,18 @@ impl DockGraph {
         out
     }
 
+    /// Returns tabs nodes reachable from a dock space root, excluding floating containers.
+    pub(crate) fn root_tabs_in_space(&self, space: &DockSpaceId) -> Vec<DockNodeId> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root(space) {
+            self.collect_tabs_in_subtree_into(root, &mut out);
+        }
+        out
+    }
+
     /// Returns the first tabs node reachable from a dock space.
     pub fn first_tabs_in_space(&self, space: &DockSpaceId) -> Option<DockNodeId> {
-        self.tabs_in_space(space).into_iter().next()
+        self.root_tabs_in_space(space).into_iter().next()
     }
 
     /// Returns true when an item is reachable from any dock space.
