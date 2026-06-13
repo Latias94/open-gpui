@@ -6,7 +6,6 @@ use crate::{
         validate_resolved_drop_target,
     },
     geometry::DockDropBoxKind,
-    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
 };
 
 pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
@@ -109,21 +108,10 @@ impl DockWorkspace {
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         match payload {
             DockWorkspaceDropPayload::Item { source_tabs, item } => {
-                self.commit_tab_move(DockWorkspaceMoveTabRequest {
-                    source_space,
-                    source_tabs,
-                    item,
-                    target_space,
-                    target,
-                })
+                self.commit_tab_move(source_space, source_tabs, item, target_space, target)
             }
             DockWorkspaceDropPayload::Tabs { source_tabs } => {
-                self.commit_tabs_move(DockWorkspaceMoveTabsRequest {
-                    source_space,
-                    source_tabs,
-                    target_space,
-                    target,
-                })
+                self.commit_tabs_move(source_space, source_tabs, target_space, target)
             }
             DockWorkspaceDropPayload::Floating { floating } => {
                 self.commit_floating_move(source_space, floating, target_space, target)

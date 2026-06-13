@@ -1,7 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockMoveTarget,
     DockNode, DockNodeId, DockPolicyError, DropZone, SplitAxis, host_test_support::*,
-    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -99,13 +98,13 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
     workspace.policy_mut().set_allow_edge_split(false);
 
     let err = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: left_tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target: DockMoveTarget::inner_edge(split, right_tabs, DropZone::Right),
-        })
+        .commit_tab_move(
+            &space(),
+            left_tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::inner_edge(split, right_tabs, DropZone::Right),
+        )
         .expect_err("edge drop should be rejected by policy");
 
     assert_eq!(

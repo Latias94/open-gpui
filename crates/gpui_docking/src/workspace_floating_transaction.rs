@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockMoveTarget, DockNodeId, DockOp,
-    DockSpaceId, DockWorkspace, workspace_move_transaction::validate_move_target_policy,
+    DockSpaceId, DockWorkspace, workspace_move_transaction::DockWorkspaceMove,
 };
 use open_gpui::{Bounds, Pixels};
 
@@ -76,10 +76,10 @@ impl DockWorkspace {
         self.policy().validate_floating()?;
         self.move_validation()
             .validate_floating_target_space(space, floating)?;
-        self.commit_graph_op(DockOp::MoveFloating {
-            source_space: space.clone(),
+        self.commit_move(DockWorkspaceMove::Floating {
+            source_space: space,
             floating,
-            target_space: space.clone(),
+            target_space: space,
             target: DockMoveTarget::center(target_tabs),
         })
     }
@@ -91,13 +91,10 @@ impl DockWorkspace {
         target_space: &DockSpaceId,
         target: DockMoveTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.move_validation()
-            .validate_floating_target_space(target_space, floating)?;
-        validate_move_target_policy(self.policy(), target)?;
-        self.commit_graph_op(DockOp::MoveFloating {
-            source_space: source_space.clone(),
+        self.commit_move(DockWorkspaceMove::Floating {
+            source_space,
             floating,
-            target_space: target_space.clone(),
+            target_space,
             target,
         })
     }

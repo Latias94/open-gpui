@@ -1,9 +1,7 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockClassId, DockFloatingContainer, DockGraph,
     DockGraphMutationError, DockMoveTarget, DockNode, DockPanelDescriptor, DockPolicyError,
-    DockSpaceId, DropZone, SplitAxis,
-    host_test_support::*,
-    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTabsRequest},
+    DockSpaceId, DropZone, SplitAxis, host_test_support::*,
 };
 use open_gpui::TestAppContext;
 
@@ -13,13 +11,13 @@ fn workspace_move_tab_center_moves_item_between_stacks(cx: &mut TestAppContext) 
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: left_tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target: DockMoveTarget::center(right_tabs),
-        })
+        .commit_tab_move(
+            &space(),
+            left_tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::center(right_tabs),
+        )
         .expect("tab move transaction should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
@@ -40,13 +38,13 @@ fn workspace_move_tab_validates_declared_source_tabs(cx: &mut TestAppContext) {
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let err = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: right_tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target: DockMoveTarget::center(right_tabs),
-        })
+        .commit_tab_move(
+            &space(),
+            right_tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::center(right_tabs),
+        )
         .expect_err("stale source tabs should not move an item from another stack");
 
     assert_eq!(
@@ -84,13 +82,13 @@ fn workspace_move_tab_rejects_source_tabs_outside_source_space(cx: &mut TestAppC
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let err = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: secondary_tabs,
-            item: &item("b"),
-            target_space: &space(),
-            target: DockMoveTarget::center(main_tabs),
-        })
+        .commit_tab_move(
+            &space(),
+            secondary_tabs,
+            &item("b"),
+            &space(),
+            DockMoveTarget::center(main_tabs),
+        )
         .expect_err("source tabs outside the declared source space should fail");
 
     assert_eq!(
@@ -135,13 +133,13 @@ fn workspace_move_tab_respects_target_space_dock_class_policy(cx: &mut TestAppCo
         .allow_dock_class_in_space(target.clone(), "editor");
 
     let outcome = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
+        .commit_tab_move(
+            &space(),
             source_tabs,
-            item: &item("a"),
-            target_space: &target,
-            target: DockMoveTarget::center(target_tabs),
-        })
+            &item("a"),
+            &target,
+            DockMoveTarget::center(target_tabs),
+        )
         .expect("matching class should be accepted");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
@@ -175,13 +173,13 @@ fn workspace_move_tab_rejects_incompatible_target_space_class(cx: &mut TestAppCo
         .allow_dock_class_in_space(target.clone(), "inspector");
 
     let err = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
+        .commit_tab_move(
+            &space(),
             source_tabs,
-            item: &item("a"),
-            target_space: &target,
-            target: DockMoveTarget::center(target_tabs),
-        })
+            &item("a"),
+            &target,
+            DockMoveTarget::center(target_tabs),
+        )
         .expect_err("incompatible class should be rejected before mutation");
 
     assert_eq!(
@@ -234,12 +232,12 @@ fn workspace_move_tabs_rejects_when_any_item_class_is_incompatible(cx: &mut Test
         .allow_dock_class_in_space(target.clone(), "inspector");
 
     let err = workspace
-        .commit_tabs_move(DockWorkspaceMoveTabsRequest {
-            source_space: &space(),
+        .commit_tabs_move(
+            &space(),
             source_tabs,
-            target_space: &target,
-            target: DockMoveTarget::center(target_tabs),
-        })
+            &target,
+            DockMoveTarget::center(target_tabs),
+        )
         .expect_err("one incompatible item should reject the full stack");
 
     assert_eq!(
@@ -556,13 +554,13 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
 
     let outcome = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target: DockMoveTarget::center(tabs),
-        })
+        .commit_tab_move(
+            &space(),
+            tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::center(tabs),
+        )
         .expect("same-stack center drop should be valid");
 
     assert_eq!(outcome, DockActionOutcome::Unchanged);
@@ -587,13 +585,13 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
     );
 
     let outcome = workspace
-        .commit_tab_move(DockWorkspaceMoveTabRequest {
-            source_space: &space(),
-            source_tabs: tabs,
-            item: &item("a"),
-            target_space: &space(),
-            target: DockMoveTarget::tab_bar(tabs, 3),
-        })
+        .commit_tab_move(
+            &space(),
+            tabs,
+            &item("a"),
+            &space(),
+            DockMoveTarget::tab_bar(tabs, 3),
+        )
         .expect("same-stack center drop with an index should reorder");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
