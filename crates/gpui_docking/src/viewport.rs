@@ -98,8 +98,8 @@ impl DockViewportAdapter {
             .collect()
     }
 
-    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
-        self.registry.spaces_by_fallback_priority()
+    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
+        self.registry.spaces_by_diagnostic_hit_order()
     }
 
     #[cfg(test)]
@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_fallback_prefers_recent_focus_over_lexical_order() {
+    fn viewport_target_diagnostic_hit_order_prefers_recent_focus_over_lexical_order() {
         let mut adapter = DockViewportAdapter::new();
         let alpha = space("alpha");
         let zeta = space("zeta");

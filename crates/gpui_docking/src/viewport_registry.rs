@@ -367,7 +367,7 @@ impl DockViewportRegistry {
         self.viewports.iter()
     }
 
-    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
+    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
         let mut spaces = self.spaces();
         spaces.sort_by(|left, right| {
             let left_stamp = self
@@ -490,13 +490,13 @@ mod tests {
         registry.record_window_focus(alpha_window.window_id());
         registry.record_window_focus(zeta_window.window_id());
         assert_eq!(
-            registry.spaces_by_fallback_priority(),
+            registry.spaces_by_diagnostic_hit_order(),
             vec![zeta.clone(), alpha.clone()]
         );
 
         registry.register(zeta.clone(), rebound_window);
 
         assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
-        assert_eq!(registry.spaces_by_fallback_priority(), vec![alpha, zeta]);
+        assert_eq!(registry.spaces_by_diagnostic_hit_order(), vec![alpha, zeta]);
     }
 }

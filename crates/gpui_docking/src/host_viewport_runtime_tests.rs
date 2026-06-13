@@ -117,7 +117,7 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
 }
 
 #[open_gpui::test]
-fn viewport_runtime_tracks_recent_activation_for_fallback_priority(cx: &mut TestAppContext) {
+fn viewport_runtime_tracks_recent_activation_for_diagnostic_hit_order(cx: &mut TestAppContext) {
     let alpha_space = DockSpaceId::from("alpha");
     let zeta_space = DockSpaceId::from("zeta");
     let mut graph = DockGraph::new();
@@ -170,7 +170,7 @@ fn viewport_runtime_tracks_recent_activation_for_fallback_priority(cx: &mut Test
     cx.run_until_parked();
 
     assert_eq!(
-        runtime.borrow().adapter().spaces_by_fallback_priority(),
+        runtime.borrow().adapter().spaces_by_diagnostic_hit_order(),
         vec![zeta_space, alpha_space]
     );
 }
