@@ -1,13 +1,14 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController,
-    DockDropDelivery, DockGraph, DockGraphMutationError, DockHost, DockItemId, DockNode, DockPanel,
-    DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
-    DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
-    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTargetHit, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace,
+    DockDropDelivery, DockGraph, DockGraphMutationError, DockHost, DockItemId, DockMoveTarget,
+    DockNode, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
+    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportOpenStatus,
+    DockViewportResolvedDropRoute, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTargetHit,
+    DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
+    DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -17,7 +18,7 @@ use crate::{
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
     },
     viewport_test_support::handle,
-    workspace_move_transaction::{DockWorkspaceMoveTabRequest, DockWorkspaceMoveTarget},
+    workspace_move_transaction::DockWorkspaceMoveTabRequest,
 };
 use open_gpui::{
     AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
@@ -399,7 +400,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
                 source_tabs,
                 item: &item("a"),
                 target_space: &other_space,
-                target: DockWorkspaceMoveTarget::center(other_tabs),
+                target: DockMoveTarget::center(other_tabs),
             })
             .expect("source item move should commit before window creation");
     });

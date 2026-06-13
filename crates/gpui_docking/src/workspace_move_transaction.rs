@@ -8,17 +8,15 @@ pub(crate) struct DockWorkspaceMoveTabRequest<'a> {
     pub(crate) source_tabs: DockNodeId,
     pub(crate) item: &'a DockItemId,
     pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target: DockWorkspaceMoveTarget,
+    pub(crate) target: DockMoveTarget,
 }
 
 pub(crate) struct DockWorkspaceMoveTabsRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) source_tabs: DockNodeId,
     pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target: DockWorkspaceMoveTarget,
+    pub(crate) target: DockMoveTarget,
 }
-
-pub(crate) type DockWorkspaceMoveTarget = DockMoveTarget;
 
 impl DockWorkspace {
     pub(crate) fn validate_merge_space_into(
@@ -222,7 +220,7 @@ impl DockWorkspace {
                     source_space,
                     source_tabs,
                     target_space,
-                    target: DockWorkspaceMoveTarget::center(target_tabs),
+                    target: DockMoveTarget::center(target_tabs),
                 })?
             } else {
                 self.commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)?

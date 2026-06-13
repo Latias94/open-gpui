@@ -184,7 +184,7 @@ impl DockDropRuntime {
             && resolution
                 .as_ref()
                 .and_then(valid_target)
-                .and_then(center_target_tabs)
+                .and_then(DockResolvedDropTarget::center_target_tabs)
                 .is_some_and(|target_tabs| target_tabs == reorder_hold.target_tabs)
         {
             resolution = Some(DockDropResolution::Valid(existing.clone()));
@@ -259,19 +259,6 @@ fn tab_reorder_hold(target: &DockResolvedDropTarget) -> Option<DockTabReorderHol
         target_tabs,
         bounds: target.preview_bounds?,
     })
-}
-
-fn center_target_tabs(target: &DockResolvedDropTarget) -> Option<DockNodeId> {
-    match target.kind {
-        drop_target::DockResolvedDropTargetKind::TabBar { target_tabs, .. }
-        | drop_target::DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
-        | drop_target::DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => {
-            Some(target_tabs)
-        }
-        drop_target::DockResolvedDropTargetKind::InnerEdge { .. }
-        | drop_target::DockResolvedDropTargetKind::RootEdge { .. }
-        | drop_target::DockResolvedDropTargetKind::EmptyDockSpace { .. } => None,
-    }
 }
 
 #[cfg(test)]
