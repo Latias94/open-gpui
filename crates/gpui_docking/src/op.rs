@@ -340,4 +340,13 @@ pub enum DockGraphMutationError {
         /// The split node that appears more than once.
         split: DockNodeId,
     },
+
+    /// The graph mutation reported success or no-op incorrectly after partially changing state.
+    #[error("dock graph mutation {op} violated transactional guarantees: {reason}")]
+    MutationInvariantViolation {
+        /// The mutation that failed its transactional contract.
+        op: &'static str,
+        /// The observed invariant failure.
+        reason: String,
+    },
 }

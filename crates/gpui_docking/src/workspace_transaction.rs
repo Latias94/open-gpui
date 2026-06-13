@@ -758,6 +758,63 @@ mod tests {
     }
 
     #[test]
+    fn resolved_same_space_root_edge_tabs_move_preserves_moved_stack() {
+        let mut graph = DockGraph::new();
+        let source_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("c")],
+            active: 1,
+        });
+        let target_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("b")],
+            active: 0,
+        });
+        let root = graph.insert_node(DockNode::Split {
+            axis: SplitAxis::Horizontal,
+            children: vec![source_tabs, target_tabs],
+            fractions: vec![0.5, 0.5],
+        });
+        graph.set_root(space(), root);
+        let mut workspace = DockWorkspace::new(space(), graph);
+
+        let outcome = workspace
+            .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
+                source_space: &space(),
+                payload: DockWorkspaceDropPayload::Tabs { source_tabs },
+                target_space: &space(),
+                target: resolved_target(DockResolvedDropTargetKind::RootEdge {
+                    root,
+                    leaf_tabs: Some(target_tabs),
+                    zone: DropZone::Right,
+                }),
+            })
+            .expect("same-space root-edge tabs move should commit");
+
+        assert_eq!(outcome, DockActionOutcome::Changed);
+        assert_eq!(
+            workspace.graph().collect_items_in_space(&space()),
+            vec![item("b"), item("a"), item("c")]
+        );
+        let moved_tabs = workspace
+            .graph()
+            .find_item_in_space(&space(), &item("a"))
+            .expect("moved item should remain reachable")
+            .0;
+        assert_eq!(
+            workspace.graph().find_item_in_space(&space(), &item("c")),
+            Some((moved_tabs, 1))
+        );
+        let DockNode::Tabs { items, active } = workspace
+            .graph()
+            .node(moved_tabs)
+            .expect("moved tabs should remain present")
+        else {
+            panic!("moved root-edge payload should stay a tabs node");
+        };
+        assert_eq!(items, &vec![item("a"), item("c")]);
+        assert_eq!(*active, 1);
+    }
+
+    #[test]
     fn resolved_root_edge_target_moves_floating_subtree_without_flattening() {
         let source_space = DockSpaceId::from("source");
         let target_space = DockSpaceId::from("target");

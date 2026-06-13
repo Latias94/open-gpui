@@ -90,6 +90,58 @@ fn checked_move_tabs_self_center_reports_noop() {
 }
 
 #[test]
+fn checked_move_tabs_edge_drop_onto_same_space_root_preserves_items() {
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        active: 1,
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        active: 0,
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveTabs {
+                source_space: space(),
+                source_tabs,
+                target_space: space(),
+                target_tabs: root,
+                zone: DropZone::Right,
+                insert_index: None,
+            })
+            .expect("same-space root-edge tabs move should commit transactionally")
+    );
+
+    assert_eq!(
+        graph.collect_items_in_space(&space()),
+        vec![item("b"), item("a"), item("c")]
+    );
+    let new_tabs = graph
+        .find_item_in_space(&space(), &item("a"))
+        .expect("moved item should stay reachable")
+        .0;
+    assert_eq!(
+        graph.find_item_in_space(&space(), &item("c")),
+        Some((new_tabs, 1))
+    );
+    let DockNode::Tabs { items, active } = graph.node(new_tabs).expect("moved tabs should exist")
+    else {
+        panic!("moved node should remain a tabs stack");
+    };
+    assert_eq!(items, &vec![item("a"), item("c")]);
+    assert_eq!(*active, 1);
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn checked_move_tabs_reports_empty_source_tabs() {
     let mut graph = DockGraph::new();
     let empty = graph.insert_node(DockNode::Tabs {

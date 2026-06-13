@@ -13,6 +13,23 @@ impl DockGraph {
         space: &DockSpaceId,
         tabs: DockNodeId,
     ) -> Option<DetachedTabs> {
+        self.take_tabs_from_space_with_simplify(space, tabs, true)
+    }
+
+    pub(in crate::graph) fn take_tabs_from_space_without_simplify(
+        &mut self,
+        space: &DockSpaceId,
+        tabs: DockNodeId,
+    ) -> Option<DetachedTabs> {
+        self.take_tabs_from_space_with_simplify(space, tabs, false)
+    }
+
+    fn take_tabs_from_space_with_simplify(
+        &mut self,
+        space: &DockSpaceId,
+        tabs: DockNodeId,
+        simplify: bool,
+    ) -> Option<DetachedTabs> {
         self.root_for_node_in_space(space, tabs)?;
 
         let (items, active) = match self.nodes.get(tabs) {
@@ -29,7 +46,9 @@ impl DockGraph {
         if self.root(space) == Some(tabs) {
             self.remove_root(space);
         }
-        self.simplify_space(space);
+        if simplify {
+            self.simplify_space(space);
+        }
         Some(DetachedTabs { items, active })
     }
 

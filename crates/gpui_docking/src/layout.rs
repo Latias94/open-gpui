@@ -13,7 +13,7 @@ pub use layout_validation::DockLayoutValidationError;
 pub const DOCK_LAYOUT_VERSION: u32 = 1;
 
 /// Serializable dock layout.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayout {
     /// Layout schema version.
     pub layout_version: u32,
@@ -35,7 +35,7 @@ impl DockLayout {
 }
 
 /// Serializable layout for one logical dock space.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayoutSpace {
     /// Logical dock space id.
     pub id: DockSpaceId,
@@ -65,7 +65,7 @@ pub struct DockLayoutCentralRegion {
 }
 
 /// Serializable in-window floating container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockLayoutFloatingContainer {
     /// Root node id for the floating container contents.
     pub root: u32,
@@ -114,7 +114,7 @@ impl DockLayoutRect {
 }
 
 /// Serializable dock node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum DockLayoutNode {
     /// Serializable split node.

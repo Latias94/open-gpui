@@ -154,7 +154,7 @@ impl Default for DockCentralRegion {
 }
 
 /// Retained docking graph for one or more logical dock spaces.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DockGraph {
     nodes: SlotMap<DockNodeId, DockNode>,
     roots: HashMap<DockSpaceId, DockNodeId>,

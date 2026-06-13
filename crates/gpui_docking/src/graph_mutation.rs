@@ -239,7 +239,8 @@ impl DockGraph {
             return false;
         }
 
-        let Some(detached) = self.take_tabs_from_space(source_space, source_tabs) else {
+        let Some(detached) = self.take_tabs_from_space_without_simplify(source_space, source_tabs)
+        else {
             return false;
         };
 
@@ -250,7 +251,10 @@ impl DockGraph {
                 insert_index,
                 detached.active,
             );
-            self.simplify_space(target_space);
+            self.simplify_space(source_space);
+            if source_space != target_space {
+                self.simplify_space(target_space);
+            }
             return ok;
         }
 
@@ -259,7 +263,10 @@ impl DockGraph {
         if !self.insert_edge_docked_child(target_space, target_tabs, zone, new_tabs) {
             return false;
         }
-        self.simplify_space(target_space);
+        self.simplify_space(source_space);
+        if source_space != target_space {
+            self.simplify_space(target_space);
+        }
         true
     }
 
