@@ -1,24 +1,29 @@
 use crate::{
-    DockPolicyError, DockViewportDropRoute,
+    DockViewportDropRoute,
     drop_runtime::resolution_target,
     drop_target::{DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind},
 };
 use open_gpui::{Bounds, Pixels, Point, point, px, size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum DockDropPreviewKind {
-    Local,
-    KnownViewportRoute,
-    TearOffRoute,
-    RejectedRoute,
+pub(crate) enum DockDropRoutePreviewKind {
+    KnownViewport,
+    TearOff,
+    Rejected,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDropPreview {
-    pub(crate) kind: DockDropPreviewKind,
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) rejected: bool,
     pub(crate) payload_tab: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockDropRoutePreview {
+    pub(crate) kind: DockDropRoutePreviewKind,
+    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) rejected: bool,
 }
 
 impl DockDropPreview {
@@ -33,15 +38,13 @@ impl DockDropPreview {
     }
 
     fn from_target(target: &DockResolvedDropTarget, rejected: bool) -> Option<Self> {
-        let (kind, bounds) = match &target.kind {
+        let bounds = match &target.kind {
             DockResolvedDropTargetKind::TabBar { .. }
             | DockResolvedDropTargetKind::LeafCenter { .. }
             | DockResolvedDropTargetKind::InnerEdge { .. }
             | DockResolvedDropTargetKind::RootEdge { .. }
             | DockResolvedDropTargetKind::FloatingTitleBar { .. }
-            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => {
-                (DockDropPreviewKind::Local, target.preview_bounds?)
-            }
+            | DockResolvedDropTargetKind::EmptyDockSpace { .. } => target.preview_bounds?,
         };
         let payload_tab = !rejected
             && matches!(
@@ -53,45 +56,33 @@ impl DockDropPreview {
             );
 
         Some(Self {
-            kind,
             bounds,
             rejected,
             payload_tab,
         })
     }
+}
 
-    pub(crate) fn from_viewport_route(
+impl DockDropRoutePreview {
+    pub(crate) fn from_route(
         route: &DockViewportDropRoute,
         host_position: Point<Pixels>,
     ) -> Option<Self> {
         let (kind, rejected) = match route {
             DockViewportDropRoute::Local { .. } => return None,
             DockViewportDropRoute::KnownViewport { .. } => {
-                (DockDropPreviewKind::KnownViewportRoute, false)
+                (DockDropRoutePreviewKind::KnownViewport, false)
             }
-            DockViewportDropRoute::TearOff(_) => (DockDropPreviewKind::TearOffRoute, false),
+            DockViewportDropRoute::TearOff(_) => (DockDropRoutePreviewKind::TearOff, false),
             DockViewportDropRoute::Unavailable => return None,
-            DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled) => {
-                (DockDropPreviewKind::RejectedRoute, true)
-            }
-            DockViewportDropRoute::Rejected(_) => (DockDropPreviewKind::RejectedRoute, true),
+            DockViewportDropRoute::Rejected(_) => (DockDropRoutePreviewKind::Rejected, true),
         };
 
         Some(Self {
             kind,
             bounds: route_bounds(host_position),
             rejected,
-            payload_tab: false,
         })
-    }
-
-    pub(crate) fn is_route(&self) -> bool {
-        matches!(
-            self.kind,
-            DockDropPreviewKind::KnownViewportRoute
-                | DockDropPreviewKind::TearOffRoute
-                | DockDropPreviewKind::RejectedRoute
-        )
     }
 }
 
@@ -110,7 +101,8 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockNodeId, DockViewportDropPayload, DockViewportTargetHit, DockViewportTearOffRequest,
+        DockNodeId, DockPolicyError, DockViewportDropPayload, DockViewportTargetHit,
+        DockViewportTearOffRequest,
         viewport_test_support::{handle, item, space},
     };
     use open_gpui::{point, px};
@@ -118,7 +110,7 @@ mod tests {
 
     #[test]
     fn known_viewport_route_preview_uses_host_pointer_anchor() {
-        let preview = DockDropPreview::from_viewport_route(
+        let preview = DockDropRoutePreview::from_route(
             &DockViewportDropRoute::KnownViewport {
                 target: DockViewportTargetHit::new(
                     space("target"),
@@ -130,7 +122,7 @@ mod tests {
         )
         .expect("known viewport route should produce a preview");
 
-        assert_eq!(preview.kind, DockDropPreviewKind::KnownViewportRoute);
+        assert_eq!(preview.kind, DockDropRoutePreviewKind::KnownViewport);
         assert!(!preview.rejected);
         assert!(preview.bounds.contains(&point(px(40.0), px(50.0))));
     }
@@ -140,7 +132,7 @@ mod tests {
         let source_space = space("source");
         let source_tabs = DockNodeId::null();
         let release_position = point(px(900.0), px(700.0));
-        let preview = DockDropPreview::from_viewport_route(
+        let preview = DockDropRoutePreview::from_route(
             &DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
                 source_space,
                 source_tabs,
@@ -152,20 +144,20 @@ mod tests {
         )
         .expect("tear-off route should produce a preview");
 
-        assert_eq!(preview.kind, DockDropPreviewKind::TearOffRoute);
+        assert_eq!(preview.kind, DockDropRoutePreviewKind::TearOff);
         assert!(!preview.rejected);
         assert!(preview.bounds.contains(&point(px(100.0), px(120.0))));
     }
 
     #[test]
     fn rejected_route_preview_is_marked_rejected() {
-        let preview = DockDropPreview::from_viewport_route(
+        let preview = DockDropRoutePreview::from_route(
             &DockViewportDropRoute::Rejected(DockPolicyError::PlatformViewportsDisabled),
             point(px(12.0), px(34.0)),
         )
         .expect("rejected route should produce a preview");
 
-        assert_eq!(preview.kind, DockDropPreviewKind::RejectedRoute);
+        assert_eq!(preview.kind, DockDropRoutePreviewKind::Rejected);
         assert!(preview.rejected);
         assert!(preview.bounds.contains(&point(px(12.0), px(34.0))));
     }
@@ -173,7 +165,7 @@ mod tests {
     #[test]
     fn unavailable_route_preview_is_hidden() {
         assert_eq!(
-            DockDropPreview::from_viewport_route(
+            DockDropRoutePreview::from_route(
                 &DockViewportDropRoute::Unavailable,
                 point(px(12.0), px(34.0)),
             ),

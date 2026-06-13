@@ -1,7 +1,7 @@
 use crate::{
     DockDropDelivery, DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
     drag::{DockDragPayload, DockDragPayloadIdentity},
-    drop_preview::DockDropPreview,
+    drop_preview::{DockDropPreview, DockDropRoutePreview},
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
     drop_target::{DockDropTargetValidator, DockResolvedDropTarget},
     geometry,
@@ -14,7 +14,7 @@ pub(crate) struct DockInteractionRuntime {
     splitter_drag: Option<SplitterDrag>,
     floating_drag: Option<FloatingDrag>,
     drop: DockDropRuntime,
-    drop_route_preview: Option<DockDropPreview>,
+    drop_route_preview: Option<DockDropRoutePreview>,
     drop_delivery: Option<DockDropDelivery>,
     outside_release_poll: Option<DockOutsideReleasePollSession>,
     next_outside_release_poll_id: u64,
@@ -429,7 +429,7 @@ impl DockInteractionRuntime {
             return self.clear_drop_route_preview();
         }
         let preview_changed =
-            self.set_drop_route_preview(DockDropPreview::from_viewport_route(route, host_position));
+            self.set_drop_route_preview(DockDropRoutePreview::from_route(route, host_position));
         let delivery_changed = if self.drop_delivery.as_ref() == Some(&delivery) {
             false
         } else {
@@ -613,10 +613,13 @@ impl DockInteractionRuntime {
         self.drop
             .drop_resolution()
             .and_then(DockDropPreview::from_resolution)
-            .or_else(|| self.drop_route_preview.clone())
     }
 
-    fn set_drop_route_preview(&mut self, preview: Option<DockDropPreview>) -> bool {
+    pub(crate) fn drop_route_preview(&self) -> Option<DockDropRoutePreview> {
+        self.drop_route_preview.clone()
+    }
+
+    fn set_drop_route_preview(&mut self, preview: Option<DockDropRoutePreview>) -> bool {
         if self.drop_route_preview == preview {
             return false;
         }
@@ -1002,12 +1005,16 @@ mod tests {
         );
 
         assert!(runtime.update_drop_route_preview(&rejected_route, position, rejected_delivery,));
+        assert!(
+            runtime.drop_preview().is_none(),
+            "route marker should not be exposed as a target drop preview"
+        );
         assert_eq!(
             runtime
-                .drop_preview()
+                .drop_route_preview()
                 .expect("route preview should be visible")
                 .kind,
-            crate::drop_preview::DockDropPreviewKind::RejectedRoute
+            crate::drop_preview::DockDropRoutePreviewKind::Rejected
         );
 
         runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
@@ -1023,12 +1030,13 @@ mod tests {
             &DockPolicy::default(),
         );
 
-        assert_eq!(
-            runtime
-                .drop_preview()
-                .expect("local preview should be visible")
-                .kind,
-            crate::drop_preview::DockDropPreviewKind::Local
+        assert!(
+            runtime.drop_preview().is_some(),
+            "local target preview should be visible"
+        );
+        assert!(
+            runtime.drop_route_preview().is_some(),
+            "route marker remains separate from the local target preview"
         );
     }
 

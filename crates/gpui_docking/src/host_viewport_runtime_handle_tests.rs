@@ -8,7 +8,7 @@ use crate::{
     DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
-    drop_preview::DockDropPreviewKind,
+    drop_preview::DockDropRoutePreviewKind,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockDropResolveSource, DockLeafDropTarget, DockResolvedDropTargetKind},
     host_test_support::*,
@@ -1667,7 +1667,7 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
             &source_visual,
             &source_host,
             DockDebugRegion::DropRoutePreview {
-                kind: DockDropPreviewKind::KnownViewportRoute
+                kind: DockDropRoutePreviewKind::KnownViewport
             }
         )
         .is_some(),
@@ -1791,7 +1791,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
             &VisualTestContext::from_window(source_opened.window(), cx),
             &source_host,
             DockDebugRegion::DropRoutePreview {
-                kind: DockDropPreviewKind::KnownViewportRoute
+                kind: DockDropRoutePreviewKind::KnownViewport
             }
         )
         .is_some(),
@@ -1921,7 +1921,7 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
             &source_visual,
             &source_host,
             DockDebugRegion::DropRoutePreview {
-                kind: DockDropPreviewKind::KnownViewportRoute
+                kind: DockDropRoutePreviewKind::KnownViewport
             }
         )
         .is_some(),
