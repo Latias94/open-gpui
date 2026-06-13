@@ -251,34 +251,6 @@ impl DockGraph {
                     DockTreeMutationExpectation::ValidateOnly,
                 ))
             }
-            DockOp::MergeFloatingInto {
-                space,
-                floating,
-                target_tabs,
-            } => {
-                if self.floating_container(space, *floating).is_none() {
-                    return Err(DockGraphMutationError::FloatingContainerNotFound {
-                        space: space.clone(),
-                        floating: *floating,
-                    });
-                }
-                self.require_tabs_node(*target_tabs)?;
-                let target_root = self.require_target_node_in_space(space, *target_tabs)?;
-                if target_root == *floating {
-                    return Err(DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
-                        floating: *floating,
-                        target: *target_tabs,
-                    });
-                }
-                let items = self.collect_items_in_subtree(*floating);
-                self.apply_tree_mutation_plan(DockTreeMutationPlan::must_change(
-                    op,
-                    DockTreeMutationExpectation::ItemsReachable {
-                        space: space.clone(),
-                        items,
-                    },
-                ))
-            }
             DockOp::SetSplitFractions { split, fractions } => {
                 self.validate_split_fractions(*split, fractions)?;
                 self.apply_tree_mutation_plan(DockTreeMutationPlan::allow_noop(
@@ -469,7 +441,6 @@ impl<'a> DockTreeMutationPlan<'a> {
             DockOp::FloatTabsInWindow { .. } => "FloatTabsInWindow",
             DockOp::SetFloatingBounds { .. } => "SetFloatingBounds",
             DockOp::RaiseFloating { .. } => "RaiseFloating",
-            DockOp::MergeFloatingInto { .. } => "MergeFloatingInto",
             DockOp::SetSplitFractions { .. } => "SetSplitFractions",
             #[cfg(test)]
             DockOp::SetSplitFractionsMany { .. } => "SetSplitFractionsMany",

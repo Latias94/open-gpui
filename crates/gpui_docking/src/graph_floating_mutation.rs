@@ -92,15 +92,6 @@ impl DockGraph {
         true
     }
 
-    pub(in crate::graph) fn merge_floating_into(
-        &mut self,
-        space: &DockSpaceId,
-        floating: DockNodeId,
-        target_tabs: DockNodeId,
-    ) -> bool {
-        self.merge_floating_subtree_into_tabs(space, floating, space, target_tabs)
-    }
-
     pub(in crate::graph) fn move_floating_between_spaces(
         &mut self,
         source_space: &DockSpaceId,

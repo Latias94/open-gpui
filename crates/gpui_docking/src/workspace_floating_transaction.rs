@@ -76,10 +76,11 @@ impl DockWorkspace {
         self.policy().validate_floating()?;
         self.move_validation()
             .validate_floating_target_space(space, floating)?;
-        self.commit_graph_op(DockOp::MergeFloatingInto {
-            space: space.clone(),
+        self.commit_graph_op(DockOp::MoveFloating {
+            source_space: space.clone(),
             floating,
-            target_tabs,
+            target_space: space.clone(),
+            target: DockMoveTarget::center(target_tabs),
         })
     }
 

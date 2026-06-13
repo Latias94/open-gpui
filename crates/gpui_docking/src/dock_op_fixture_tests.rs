@@ -150,10 +150,11 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .find_item_in_space(&space(), &DockItemId::new(target_item))
                 .expect("fixture merge target item should be findable")
                 .0;
-            assert!(graph.apply_op(&DockOp::MergeFloatingInto {
-                space: space(),
+            assert!(graph.apply_op(&DockOp::MoveFloating {
+                source_space: space(),
                 floating,
-                target_tabs,
+                target_space: space(),
+                target: DockMoveTarget::center(target_tabs),
             }));
         }
     }

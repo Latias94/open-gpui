@@ -81,11 +81,6 @@ impl DockGraph {
                 bounds,
             } => self.set_floating_bounds(space, *floating, *bounds),
             DockOp::RaiseFloating { space, floating } => self.raise_floating(space, *floating),
-            DockOp::MergeFloatingInto {
-                space,
-                floating,
-                target_tabs,
-            } => self.merge_floating_into(space, *floating, *target_tabs),
             DockOp::SetSplitFractions { split, fractions } => {
                 self.update_split_fractions(*split, fractions.clone())
             }

@@ -94,10 +94,11 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
 
     assert_eq!(
         graph
-            .apply_op_checked(&DockOp::MergeFloatingInto {
-                space: space(),
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
                 floating,
-                target_tabs: floating_tabs,
+                target_space: space(),
+                target: DockMoveTarget::center(floating_tabs),
             })
             .expect_err("floating cannot merge into its own tabs"),
         DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
@@ -108,10 +109,11 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
 
     assert_eq!(
         graph
-            .apply_op_checked(&DockOp::MergeFloatingInto {
-                space: space(),
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
                 floating,
-                target_tabs: orphan_tabs,
+                target_space: space(),
+                target: DockMoveTarget::center(orphan_tabs),
             })
             .expect_err("merge target outside space should be reported"),
         DockGraphMutationError::TargetNodeNotInSpace {
@@ -138,10 +140,11 @@ fn merge_floating_into_moves_items_and_removes_floating() {
     }));
 
     let floating = graph.floating_containers(&space())[0].node;
-    assert!(graph.apply_op(&DockOp::MergeFloatingInto {
-        space: space(),
+    assert!(graph.apply_op(&DockOp::MoveFloating {
+        source_space: space(),
         floating,
-        target_tabs: root,
+        target_space: space(),
+        target: DockMoveTarget::center(root),
     }));
 
     assert!(graph.floating_containers(&space()).is_empty());
@@ -174,10 +177,11 @@ fn merge_floating_tabs_preserves_active_item() {
             bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
         });
 
-    assert!(graph.apply_op(&DockOp::MergeFloatingInto {
-        space: space(),
+    assert!(graph.apply_op(&DockOp::MoveFloating {
+        source_space: space(),
         floating,
-        target_tabs: root,
+        target_space: space(),
+        target: DockMoveTarget::center(root),
     }));
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")

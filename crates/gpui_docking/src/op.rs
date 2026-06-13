@@ -247,16 +247,6 @@ pub(crate) enum DockOp {
         floating: DockNodeId,
     },
 
-    /// Merges an in-window floating container into an existing tabs node.
-    MergeFloatingInto {
-        /// The dock space containing the floating container and target tabs.
-        space: DockSpaceId,
-        /// The floating container node.
-        floating: DockNodeId,
-        /// The target tabs node.
-        target_tabs: DockNodeId,
-    },
-
     /// Replaces every fraction in one split node.
     SetSplitFractions {
         /// The split node to update.
