@@ -316,12 +316,16 @@ fn checked_open_item_rejects_duplicate_items_without_mutation() {
 fn move_item_center_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("c"),
-        target_space: space(),
-        target: DockMoveTarget::tab_bar(root, 1),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("c"),
+                target_space: space(),
+                target: DockMoveTarget::tab_bar(root, 1),
+            })
+            .expect("same-space insert should commit")
+    );
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
     else {
@@ -329,38 +333,6 @@ fn move_item_center_inserts_and_selects_item() {
     };
     assert_eq!(items, &vec![item("a"), item("c"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(1));
-    graph.assert_canonical_space(&space());
-}
-
-#[test]
-fn move_item_to_target_outside_target_space_is_transactional() {
-    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
-    let orphan = graph.insert_node(DockNode::Tabs {
-        items: vec![item("orphan")],
-        selected: Some(item("orphan")),
-    });
-
-    assert!(!graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(orphan, DropZone::Right),
-    }));
-
-    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
-    else {
-        panic!("expected root tabs");
-    };
-    assert_eq!(items, &vec![item("a"), item("b")]);
-    assert_eq!(selected.as_ref(), items.get(0));
-
-    let DockNode::Tabs { items, selected } =
-        graph.node(orphan).expect("orphan tabs node should exist")
-    else {
-        panic!("expected orphan tabs");
-    };
-    assert_eq!(items, &vec![item("orphan")]);
-    assert_eq!(selected.as_ref(), items.get(0));
     graph.assert_canonical_space(&space());
 }
 
@@ -422,12 +394,16 @@ fn checked_move_item_reports_target_outside_space_without_mutation() {
 #[test]
 fn checked_move_item_reports_center_target_that_is_not_tabs() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(root, DropZone::Right),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("root-edge move should commit")
+    );
     let split = graph.root(&space()).expect("space should keep root");
 
     let err = graph

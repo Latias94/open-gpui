@@ -208,7 +208,7 @@ impl DockGraph {
         let before = self.clone();
         let before_layout = before.export_layout();
         let mut next = before.clone();
-        let changed = next.apply_op(plan.op);
+        let changed = next.apply_op_unchecked(plan.op);
         let next_layout = next.export_layout();
 
         if !changed {

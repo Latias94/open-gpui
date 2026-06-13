@@ -5,8 +5,8 @@ use crate::{DockNodeId, SplitFractionsUpdate};
 use super::DockGraph;
 
 impl DockGraph {
-    /// Applies an operation and returns whether it changed or preserved a valid graph state.
-    pub(crate) fn apply_op(&mut self, op: &DockOp) -> bool {
+    /// Applies an operation without validation.
+    pub(in crate::graph) fn apply_op_unchecked(&mut self, op: &DockOp) -> bool {
         match op {
             DockOp::SelectTab { tabs, item } => self.select_tab(*tabs, item.clone()),
             DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),

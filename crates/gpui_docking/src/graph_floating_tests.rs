@@ -6,12 +6,16 @@ use slotmap::Key;
 fn float_item_in_window_creates_floating_container() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 
-    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+            })
+            .expect("floating item should commit")
+    );
 
     assert_eq!(graph.collect_items_in_space(&space()).len(), 2);
     assert_eq!(graph.floating_containers(&space()).len(), 1);
@@ -75,12 +79,16 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
         }
     );
 
-    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-        source_space: space(),
-        item: item("a"),
-        target_space: space(),
-        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: item("a"),
+                target_space: space(),
+                bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+            })
+            .expect("floating item should commit")
+    );
     let floating = graph.floating_containers(&space())[0].node;
     let DockNode::Floating {
         child: floating_tabs,
@@ -132,20 +140,28 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
 #[test]
 fn merge_floating_into_moves_items_and_removes_floating() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
-    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+            })
+            .expect("floating item should commit")
+    );
 
     let floating = graph.floating_containers(&space())[0].node;
-    assert!(graph.apply_op(&DockOp::MoveFloating {
-        source_space: space(),
-        floating,
-        target_space: space(),
-        target: DockMoveTarget::center(root),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: DockMoveTarget::center(root),
+            })
+            .expect("floating merge should commit")
+    );
 
     assert!(graph.floating_containers(&space()).is_empty());
     assert_eq!(
@@ -177,12 +193,16 @@ fn merge_floating_tabs_preserves_selected_item() {
             bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
         });
 
-    assert!(graph.apply_op(&DockOp::MoveFloating {
-        source_space: space(),
-        floating,
-        target_space: space(),
-        target: DockMoveTarget::center(root),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: DockMoveTarget::center(root),
+            })
+            .expect("floating merge should commit")
+    );
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
     else {

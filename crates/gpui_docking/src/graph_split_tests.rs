@@ -5,12 +5,16 @@ use slotmap::Key;
 #[test]
 fn checked_set_split_fraction_two_reports_only_real_changes() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(root, DropZone::Right),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("initial edge dock should commit")
+    );
     let split = graph.root(&space()).expect("space should keep root");
 
     assert!(
@@ -150,26 +154,34 @@ fn checked_resize_reports_split_errors_without_mutation() {
 fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(root, DropZone::Right),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("first edge dock should commit")
+    );
     let target_tabs = graph
         .find_item_in_space(&space(), &item("b"))
         .expect("moved item should remain findable")
         .0;
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("c"),
-        target_space: space(),
-        target: DockMoveTarget::inner_edge(
-            graph.root(&space()).expect("space should keep root"),
-            target_tabs,
-            DropZone::Right,
-        ),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("c"),
+                target_space: space(),
+                target: DockMoveTarget::inner_edge(
+                    graph.root(&space()).expect("space should keep root"),
+                    target_tabs,
+                    DropZone::Right,
+                ),
+            })
+            .expect("second edge dock should commit")
+    );
 
     let root = graph.root(&space()).expect("space should keep a root");
     let DockNode::Split {
@@ -190,27 +202,35 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
 fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(root, DropZone::Right),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("first edge dock should commit")
+    );
     let left_tabs = graph
         .find_item_in_space(&space(), &item("a"))
         .expect("left item should remain findable")
         .0;
 
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("c"),
-        target_space: space(),
-        target: DockMoveTarget::inner_edge(
-            graph.root(&space()).expect("space should keep root"),
-            left_tabs,
-            DropZone::Top,
-        ),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("c"),
+                target_space: space(),
+                target: DockMoveTarget::inner_edge(
+                    graph.root(&space()).expect("space should keep root"),
+                    left_tabs,
+                    DropZone::Top,
+                ),
+            })
+            .expect("cross-axis edge dock should commit")
+    );
 
     let root = graph.root(&space()).expect("space should keep a root");
     let DockNode::Split {

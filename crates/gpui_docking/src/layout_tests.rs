@@ -85,18 +85,26 @@ fn compute_layout_gives_central_child_remaining_split_space() {
 #[test]
 fn layout_roundtrips_roots_splits_and_floatings() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
-    assert!(graph.apply_op(&DockOp::MoveItem {
-        source_space: space(),
-        item: item("b"),
-        target_space: space(),
-        target: DockMoveTarget::root_edge(root, DropZone::Right),
-    }));
-    assert!(graph.apply_op(&DockOp::FloatItemInWindow {
-        source_space: space(),
-        item: item("c"),
-        target_space: space(),
-        bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
-    }));
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("b"),
+                target_space: space(),
+                target: DockMoveTarget::root_edge(root, DropZone::Right),
+            })
+            .expect("root-edge move should commit")
+    );
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::FloatItemInWindow {
+                source_space: space(),
+                item: item("c"),
+                target_space: space(),
+                bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+            })
+            .expect("float item should commit")
+    );
 
     let layout = graph.export_layout();
     let json = serde_json::to_string(&layout).expect("layout should serialize");
