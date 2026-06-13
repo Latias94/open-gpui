@@ -1463,7 +1463,9 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_cached_target_after_window_facts_go_stale(cx: &mut TestAppContext) {
+fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -1524,7 +1526,7 @@ fn viewport_runtime_rejects_cached_target_after_window_facts_go_stale(cx: &mut T
     );
     assert!(
         resolution.delivery().routed_preview_target().is_some(),
-        "fresh route should cache the resolved host scene target"
+        "fresh route should capture the resolved host scene target"
     );
 
     let (changed, _) = runtime.mark_viewport_window_snapshot_stale(target_window.window_id());
@@ -1623,7 +1625,9 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
 }
 
 #[open_gpui::test]
-fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut TestAppContext) {
+fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -1684,22 +1688,22 @@ fn viewport_runtime_revalidates_cached_target_against_current_policy(cx: &mut Te
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         resolution.delivery().routed_preview_target().is_some(),
-        "preview should cache the accepted central target"
+        "preview should capture the accepted central target"
     );
-    let (_, _, cached_target) = resolution
+    let (_, _, resolved_target) = resolution
         .delivery()
         .routed_preview_target()
-        .expect("preview target should be cached");
+        .expect("preview target should be captured");
     assert!(
         matches!(
-            cached_target.kind,
+            resolved_target.kind,
             crate::drop_target::DockResolvedDropTargetKind::LeafCenter { .. }
         ),
-        "cached target should be the central leaf body, got {cached_target:?}"
+        "resolved target snapshot should be the central leaf body, got {resolved_target:?}"
     );
     assert!(
-        cached_target.is_central_region,
-        "cached target should retain the central-region marker"
+        resolved_target.is_central_region,
+        "resolved target snapshot should retain the central-region marker"
     );
 
     controller.update(cx, |controller, _| {

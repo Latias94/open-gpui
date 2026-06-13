@@ -94,7 +94,7 @@ struct DockViewportTearOffPlacementPolicy {
 }
 
 enum DockViewportWorkspaceRouteTarget {
-    Valid(Option<crate::DockViewportCachedDropTarget>),
+    Valid(Option<crate::DockViewportResolvedDropTargetSnapshot>),
     Unavailable,
     Rejected(DockPolicyError),
 }
@@ -261,17 +261,23 @@ pub(crate) enum DockViewportTearOffCommitPreparation {
     Prepared(Box<DockViewportPreparedTearOffDrop>),
 }
 
-fn cached_route_target(
+fn resolved_target_snapshot(
+    target_space: DockSpaceId,
+    target_window_id: Option<WindowId>,
     frame: DockViewportHostSceneFrame,
     facts_generation: Option<u64>,
     resolution: DockDropResolution,
-) -> Result<crate::DockViewportCachedDropTarget, DockPolicyError> {
+) -> Result<crate::DockViewportResolvedDropTargetSnapshot, DockPolicyError> {
     match resolution {
-        DockDropResolution::Valid(target) => Ok(crate::DockViewportCachedDropTarget::new(
-            frame,
-            facts_generation,
-            target,
-        )),
+        DockDropResolution::Valid(target) => {
+            Ok(crate::DockViewportResolvedDropTargetSnapshot::new(
+                target_space,
+                target_window_id,
+                frame,
+                facts_generation,
+                target,
+            ))
+        }
         DockDropResolution::Rejected(rejection) => Err(rejection.reason),
     }
 }
@@ -803,36 +809,35 @@ impl DockViewportRuntime {
         let (source_space, source_node, payload, target_space) = match delivery {
             DockDropDelivery::Workspace(delivery) => {
                 self.validate_payload_drag_session(delivery.drag_session())?;
-                let (
-                    source_space,
-                    source_node,
-                    payload,
-                    route_space,
-                    target_window_id,
-                    target_facts_generation,
-                    host_position,
-                    resolved_target,
-                ) = delivery.into_parts();
-                let target_space = match resolved_target {
-                    Some(target)
+                let (source_space, source_node, payload, target) = delivery.into_parts();
+                let target_space = match target {
+                    crate::DockDropWorkspaceTarget::Resolved(target)
                         if target.frame().is_current_in(&self.host_scenes)
                             && self.target_facts_generation_is_current(
-                                &route_space,
-                                target_window_id,
+                                target.target_space(),
+                                target.target_window_id(),
                                 target.facts_generation(),
                             ) =>
                     {
-                        self.validate_cached_route_target(
-                            &route_space,
+                        let target_space = target.target_space().clone();
+                        self.validate_resolved_target_snapshot(
+                            &target_space,
                             target.into_target(),
                             &payload,
                             source_node,
                             cx,
                         )?
                     }
-                    Some(_) => return Err(DockActionApplyError::DropTargetUnavailable),
-                    None => self.resolve_route_target(
-                        &route_space,
+                    crate::DockDropWorkspaceTarget::Resolved(_) => {
+                        return Err(DockActionApplyError::DropTargetUnavailable);
+                    }
+                    crate::DockDropWorkspaceTarget::ResolveAtDelivery {
+                        target_space,
+                        target_window_id,
+                        target_facts_generation,
+                        host_position,
+                    } => self.resolve_route_target(
+                        &target_space,
                         target_window_id,
                         target_facts_generation,
                         host_position,
@@ -887,7 +892,7 @@ impl DockViewportRuntime {
         ))
     }
 
-    fn validate_cached_route_target(
+    fn validate_resolved_target_snapshot(
         &self,
         target_space: &DockSpaceId,
         target: DockResolvedDropTarget,
@@ -1192,7 +1197,15 @@ impl DockViewportRuntime {
                         policy,
                         Some(&target_validator),
                     )
-                    .map(|(frame, resolution)| cached_route_target(frame, None, resolution));
+                    .map(|(frame, resolution)| {
+                        resolved_target_snapshot(
+                            request.source_space().clone(),
+                            None,
+                            frame,
+                            None,
+                            resolution,
+                        )
+                    });
                 DockViewportWorkspaceRouteTarget::Valid(resolved.and_then(Result::ok))
             }
             DockViewportDropRoute::KnownViewport { target } => {
@@ -1207,7 +1220,13 @@ impl DockViewportRuntime {
                 ) else {
                     return DockViewportWorkspaceRouteTarget::Unavailable;
                 };
-                match cached_route_target(frame, Some(target.facts_generation()), resolution) {
+                match resolved_target_snapshot(
+                    target.space().clone(),
+                    Some(target.window_id()),
+                    frame,
+                    Some(target.facts_generation()),
+                    resolution,
+                ) {
                     Ok(target) => DockViewportWorkspaceRouteTarget::Valid(Some(target)),
                     Err(error) => DockViewportWorkspaceRouteTarget::Rejected(error),
                 }
