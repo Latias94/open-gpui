@@ -96,8 +96,8 @@ impl DockHostRenderSession {
             self.collect_panel_metadata(workspace, item);
         }
 
-        if let Some(active_item) = selected_tab_item(items, selected) {
-            self.collect_panel_registration(workspace, active_item);
+        if let Some(selected_item) = selected_tab_item(items, selected) {
+            self.collect_panel_registration(workspace, selected_item);
         }
     }
 
@@ -278,10 +278,7 @@ impl DockHost {
     }
 }
 
-pub(crate) fn active_index_for_selected(
-    items: &[DockItemId],
-    selected: &Option<DockItemId>,
-) -> Option<usize> {
+pub(crate) fn selected_index(items: &[DockItemId], selected: &Option<DockItemId>) -> Option<usize> {
     selected
         .as_ref()
         .and_then(|selected| items.iter().position(|item| item == selected))
@@ -292,7 +289,7 @@ fn selected_tab_item<'a>(
     items: &'a [DockItemId],
     selected: &Option<DockItemId>,
 ) -> Option<&'a DockItemId> {
-    active_index_for_selected(items, selected).and_then(|active| items.get(active))
+    selected_index(items, selected).and_then(|selected| items.get(selected))
 }
 
 fn default_floating_title() -> String {
@@ -309,16 +306,16 @@ mod tests {
 
     #[test]
     fn render_session_keeps_inactive_panel_views_out_of_snapshot() {
-        let (graph, _root) = tabs_graph(&["active", "inactive"]);
+        let (graph, _root) = tabs_graph(&["selected", "inactive"]);
         let mut workspace = DockWorkspace::new(space(), graph);
-        workspace.register_panel_factory("active", "Active", |_| unreachable!());
+        workspace.register_panel_factory("selected", "Selected", |_| unreachable!());
         workspace.register_panel_factory("inactive", "Inactive", |_| unreachable!());
 
         let session = DockHostRenderSession::new(space(), &workspace);
 
-        assert_eq!(session.panel_title(&item("active")), "Active");
+        assert_eq!(session.panel_title(&item("selected")), "Selected");
         assert_eq!(session.panel_title(&item("inactive")), "Inactive");
-        assert!(session.panels.contains_key(&item("active")));
+        assert!(session.panels.contains_key(&item("selected")));
         assert!(!session.panels.contains_key(&item("inactive")));
     }
 

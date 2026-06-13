@@ -11,7 +11,7 @@ use open_gpui::{AppContext as _, Context, Entity, Pixels, Subscription, Window, 
 pub struct DockHostOptions {
     /// Message rendered when the selected dock space has no root node.
     pub empty_message: String,
-    /// Message prefix rendered when an active panel is missing from the registry.
+    /// Message prefix rendered when a selected panel is missing from the registry.
     pub missing_panel_prefix: String,
     /// Minimum rendered size for a split pane during splitter resizing.
     pub split_min_size: Pixels,

@@ -1670,7 +1670,7 @@ fn policy_rejected_central_body_hover_renders_preview_without_commit(cx: &mut Te
 }
 
 #[open_gpui::test]
-fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
+fn clicking_inactive_tab_updates_selected_panel(cx: &mut TestAppContext) {
     let (graph, root) = tabs_graph(&["a", "b"]);
     let (window, host, mut visual) = open_host(
         cx,
@@ -1681,7 +1681,7 @@ fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
 
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
-        "panel A should be active before mutation"
+        "panel A should be selected before mutation"
     );
 
     let tab_b = selector_for(
@@ -1700,7 +1700,7 @@ fn clicking_inactive_tab_updates_active_panel(cx: &mut TestAppContext) {
 
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") }).is_some(),
-        "panel B should be active after mutation"
+        "panel B should be selected after mutation"
     );
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_none(),
@@ -1746,7 +1746,7 @@ fn clicking_tab_close_removes_closable_panel_from_graph(cx: &mut TestAppContext)
     );
     assert!(
         selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
-        "closing an inactive tab should keep the previous active panel mounted"
+        "closing an inactive tab should keep the previous selected panel mounted"
     );
     let (items, selected, metadata_still_registered) = cx.update_entity(&host, |host, cx| {
         host.with_workspace(cx, |workspace| {

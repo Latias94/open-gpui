@@ -409,7 +409,9 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
 }
 
 #[open_gpui::test]
-fn viewport_runtime_handle_merge_back_close_focuses_fallback_active_item(cx: &mut TestAppContext) {
+fn viewport_runtime_handle_merge_back_close_focuses_fallback_selected_item(
+    cx: &mut TestAppContext,
+) {
     let main_space = DockSpaceId::from("main");
     let detached_space = DockSpaceId::from("detached");
     let mut graph = DockGraph::new();

@@ -90,22 +90,22 @@ impl DockGraph {
     }
 
     /// Returns the selected item in a tabs node.
-    pub fn active_item_in_tabs(&self, tabs: DockNodeId) -> Option<DockItemId> {
+    pub fn selected_item_in_tabs(&self, tabs: DockNodeId) -> Option<DockItemId> {
         let DockNode::Tabs { items, selected } = self.nodes.get(tabs)? else {
             return None;
         };
         sanitize_selected_item(items, selected)
     }
 
-    /// Returns the active item of a reachable subtree in stable depth-first order.
-    pub(crate) fn active_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
+    /// Returns the selected item of a reachable subtree in stable depth-first order.
+    pub(crate) fn selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         match self.nodes.get(root)? {
             DockNode::Tabs { items, selected } => sanitize_selected_item(items, selected),
-            DockNode::Floating { child } => self.active_item_in_subtree(*child),
+            DockNode::Floating { child } => self.selected_item_in_subtree(*child),
             DockNode::Split { children, .. } => children
                 .iter()
                 .copied()
-                .find_map(|child| self.active_item_in_subtree(child)),
+                .find_map(|child| self.selected_item_in_subtree(child)),
         }
     }
 

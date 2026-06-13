@@ -512,7 +512,7 @@ fn checked_move_item_to_empty_space_rebinds_empty_central_region() {
 }
 
 #[test]
-fn checked_move_tabs_to_empty_space_preserves_stack_order_and_active_tab() {
+fn checked_move_tabs_to_empty_space_preserves_stack_order_and_selected_tab() {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {
         items: vec![item("a"), item("b")],

@@ -36,7 +36,7 @@ fn single_tabs_render_selected_panel_and_all_tab_labels(cx: &mut TestAppContext)
     )
     .expect("tab B selector should be emitted");
     let panel_b = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
-        .expect("active panel selector should be emitted");
+        .expect("selected panel selector should be emitted");
 
     assert!(debug_bounds(&mut visual, &tab_a).size.width > px(0.0));
     assert!(debug_bounds(&mut visual, &tab_b).size.width > px(0.0));

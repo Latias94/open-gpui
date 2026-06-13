@@ -1406,12 +1406,12 @@ impl DockViewportRuntime {
                 .controller
                 .read(cx)
                 .graph()
-                .active_item_in_tabs(source_node),
+                .selected_item_in_tabs(source_node),
             DockViewportDropPayload::Floating(floating) => self
                 .controller
                 .read(cx)
                 .graph()
-                .active_item_in_subtree(*floating),
+                .selected_item_in_subtree(*floating),
         }
     }
 
@@ -1468,7 +1468,7 @@ impl DockViewportRuntime {
             let graph = controller.graph();
             graph
                 .first_tabs_in_space(&target_space)
-                .and_then(|tabs| graph.active_item_in_tabs(tabs))
+                .and_then(|tabs| graph.selected_item_in_tabs(tabs))
         };
         self.activate_viewport_for_space(&target_space, focus_item, cx)
     }

@@ -156,7 +156,7 @@ fn merge_floating_into_moves_items_and_removes_floating() {
 }
 
 #[test]
-fn merge_floating_tabs_preserves_active_item() {
+fn merge_floating_tabs_preserves_selected_item() {
     let mut graph = DockGraph::new();
     let root = graph.insert_node(DockNode::Tabs {
         items: vec![item("root")],

@@ -63,7 +63,7 @@ pub(crate) enum DockDebugRegion {
         /// Dock item id.
         item: DockItemId,
     },
-    /// The active panel body for one dock item.
+    /// The selected panel body for one dock item.
     Panel {
         /// Dock item id.
         item: DockItemId,

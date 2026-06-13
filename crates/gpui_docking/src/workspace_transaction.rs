@@ -805,7 +805,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_center_target_moves_tabs_stack_preserving_order_and_active_item() {
+    fn resolved_center_target_moves_tabs_stack_preserving_order_and_selected_item() {
         let mut graph = DockGraph::new();
         let source_tabs = graph.insert_node(DockNode::Tabs {
             items: vec![item("a"), item("c")],

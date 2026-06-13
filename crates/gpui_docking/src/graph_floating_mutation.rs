@@ -174,7 +174,7 @@ impl DockGraph {
         if items.is_empty() {
             return false;
         }
-        let selected_item = self.active_item_in_subtree(floating);
+        let selected_item = self.selected_item_in_subtree(floating);
         let mut changed = false;
         for item in items {
             changed |= self.move_item_between_spaces(

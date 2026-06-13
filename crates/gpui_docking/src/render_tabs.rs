@@ -16,7 +16,7 @@ impl DockHost {
         &mut self,
         node: DockNodeId,
         items: Vec<DockItemId>,
-        active: usize,
+        selected: usize,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
         cx: &mut Context<Self>,
@@ -29,14 +29,14 @@ impl DockHost {
             DockDebugRegion::Tabs { node },
             format!("{}:tabs:{}", session.selector_prefix(), node.as_u64()),
         );
-        let active = active.min(items.len().saturating_sub(1));
-        let active_item = items[active].clone();
+        let selected = selected.min(items.len().saturating_sub(1));
+        let selected_item = items[selected].clone();
         let is_central = session.is_central_tabs(node);
         let drop_root = session.drop_root_for_tabs(node);
         let source_space = session.space().clone();
         let entity = cx.entity();
         let stack_title = if items.len() == 1 {
-            session.panel_title(&active_item)
+            session.panel_title(&selected_item)
         } else {
             format!("{} tabs", items.len())
         };
@@ -161,18 +161,18 @@ impl DockHost {
                 .px_2()
                 .py_1()
                 .border_1()
-                .border_color(if index == active {
+                .border_color(if index == selected {
                     rgb(0x4b5563)
                 } else {
                     rgb(0xd8dde6)
                 })
-                .bg(if index == active {
+                .bg(if index == selected {
                     white()
                 } else {
                     rgb(0xf0f3f7).into()
                 })
                 .cursor_pointer()
-                .text_color(if index == active {
+                .text_color(if index == selected {
                     black()
                 } else {
                     rgb(0x657083).into()
@@ -265,7 +265,7 @@ impl DockHost {
 
         tabs = tabs
             .child(tab_bar)
-            .child(self.render_panel(&active_item, session, cx));
+            .child(self.render_panel(&selected_item, session, cx));
         if let Some(guides) = self.render_drop_guides(session, Some(node), cx) {
             tabs = tabs.child(guides);
         }

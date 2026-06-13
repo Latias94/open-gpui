@@ -278,10 +278,10 @@ impl DockHost {
         match &payload.kind {
             DockDragPayloadKind::Item { item } => Some(item.clone()),
             DockDragPayloadKind::Tabs => self.with_workspace(cx, |workspace| {
-                workspace.graph().active_item_in_tabs(payload.source_node)
+                workspace.graph().selected_item_in_tabs(payload.source_node)
             }),
             DockDragPayloadKind::Floating { floating } => self.with_workspace(cx, |workspace| {
-                workspace.graph().active_item_in_subtree(*floating)
+                workspace.graph().selected_item_in_subtree(*floating)
             }),
         }
     }
