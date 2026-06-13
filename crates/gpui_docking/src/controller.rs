@@ -1,5 +1,3 @@
-#[cfg(test)]
-use crate::workspace_move_transaction::DockWorkspaceMoveTabRequest;
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockGraph,
     DockGraphValidationError, DockItemId, DockLayout, DockLayoutValidationError, DockNodeId,
@@ -280,14 +278,6 @@ impl DockController {
         action: &DockAction,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.workspace.apply_action(action)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn commit_tab_move(
-        &mut self,
-        request: DockWorkspaceMoveTabRequest<'_>,
-    ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.workspace.commit_tab_move(request)
     }
 }
 

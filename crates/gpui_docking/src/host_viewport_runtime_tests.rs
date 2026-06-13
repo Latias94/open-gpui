@@ -395,6 +395,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
     );
     cx.update_entity(&controller, |controller, _| {
         controller
+            .workspace_mut()
             .commit_tab_move(DockWorkspaceMoveTabRequest {
                 source_space: &primary_space,
                 source_tabs,
