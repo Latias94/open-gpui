@@ -302,14 +302,14 @@ impl DockViewportTearOffCompleted {
     }
 }
 
-/// Tear-off request whose viewport opened but graph commit failed afterward.
+/// Tear-off request whose platform window opened but graph commit failed before registration.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportTearOffCommitFailure {
     /// Pending request that reached commit.
     pending: DockViewportTearOffPending,
-    /// Runtime viewport registration outcome before cleanup.
-    registration: crate::DockViewportRegisterOutcome,
-    /// Runtime-owned windows superseded before graph commit failed.
+    /// Platform window opened for this tear-off attempt.
+    window: AnyWindowHandle,
+    /// Runtime-owned windows superseded while attempting completion.
     replaced_windows: Vec<AnyWindowHandle>,
     /// Commit error returned by the docking workspace.
     error: crate::DockActionApplyError,
@@ -318,14 +318,13 @@ pub(crate) struct DockViewportTearOffCommitFailure {
 impl DockViewportTearOffCommitFailure {
     pub(crate) fn new(
         pending: DockViewportTearOffPending,
-        registration: crate::DockViewportRegisterOutcome,
-        replaced_windows: Vec<AnyWindowHandle>,
+        window: AnyWindowHandle,
         error: crate::DockActionApplyError,
     ) -> Self {
         Self {
             pending,
-            registration,
-            replaced_windows,
+            window,
+            replaced_windows: Vec::new(),
             error,
         }
     }
@@ -336,6 +335,10 @@ impl DockViewportTearOffCommitFailure {
 
     pub(crate) fn error(&self) -> &crate::DockActionApplyError {
         &self.error
+    }
+
+    pub(crate) fn window(&self) -> AnyWindowHandle {
+        self.window
     }
 
     pub(crate) fn replaced_windows(&self) -> &[AnyWindowHandle] {
@@ -360,7 +363,7 @@ pub(crate) enum DockViewportTearOffOpenOutcome {
     Completed(DockViewportTearOffCompleted),
     /// The request was cancelled before graph mutation.
     Cancelled(DockViewportTearOffCancelled),
-    /// The viewport registered, but the graph move failed and runtime mapping was cleaned up.
+    /// The platform window opened, but graph move failed before viewport registration.
     CommitFailed(DockViewportTearOffCommitFailure),
 }
 

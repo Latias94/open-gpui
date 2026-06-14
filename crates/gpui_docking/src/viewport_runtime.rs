@@ -969,23 +969,23 @@ impl DockViewportRuntime {
             }
         };
 
-        let registration = self
-            .adapter
-            .register_viewport_with_outcome(pending.target_space().clone(), window);
-        self.owned_windows.insert(window.window_id());
-        let mut replaced_windows = Vec::new();
-        for removed in registration.replaced() {
-            self.clear_runtime_window_state(&removed.space, removed.window.window_id());
-            if removed.window != window
-                && self.discard_owned_window(removed.window.window_id())
-                && !replaced_windows.contains(&removed.window)
-            {
-                replaced_windows.push(removed.window);
-            }
-        }
-        self.close_gate.sync_adapter(&self.adapter);
         match self.commit_tear_off_move(&pending, cx) {
             Ok(action) => {
+                let registration = self
+                    .adapter
+                    .register_viewport_with_outcome(pending.target_space().clone(), window);
+                self.owned_windows.insert(window.window_id());
+                let mut replaced_windows = Vec::new();
+                for removed in registration.replaced() {
+                    self.clear_runtime_window_state(&removed.space, removed.window.window_id());
+                    if removed.window != window
+                        && self.discard_owned_window(removed.window.window_id())
+                        && !replaced_windows.contains(&removed.window)
+                    {
+                        replaced_windows.push(removed.window);
+                    }
+                }
+                self.close_gate.sync_adapter(&self.adapter);
                 let _ = registration
                     .window()
                     .update(cx, |_, window, _| window.activate_window());
@@ -996,19 +996,9 @@ impl DockViewportRuntime {
                     action,
                 ))
             }
-            Err(error) => {
-                self.discard_owned_window(window.window_id());
-                self.unregister_space_runtime_state(pending.target_space());
-                self.close_gate.sync_adapter(&self.adapter);
-                DockViewportTearOffCompletionOutcome::CommitFailed(
-                    DockViewportTearOffCommitFailure::new(
-                        pending,
-                        registration,
-                        replaced_windows,
-                        error,
-                    ),
-                )
-            }
+            Err(error) => DockViewportTearOffCompletionOutcome::CommitFailed(
+                DockViewportTearOffCommitFailure::new(pending, window, error),
+            ),
         }
     }
 

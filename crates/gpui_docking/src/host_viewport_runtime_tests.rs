@@ -781,7 +781,9 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
 }
 
 #[open_gpui::test]
-fn viewport_runtime_tear_off_commit_failure_reports_replaced_windows(cx: &mut TestAppContext) {
+fn viewport_runtime_tear_off_commit_failure_preserves_existing_target_window(
+    cx: &mut TestAppContext,
+) {
     let primary_space = DockSpaceId::from("primary");
     let detached_space = DockSpaceId::from("detached");
     let mut graph = DockGraph::new();
@@ -825,8 +827,13 @@ fn viewport_runtime_tear_off_commit_failure_reports_replaced_windows(cx: &mut Te
     let DockViewportTearOffCompletionOutcome::CommitFailed(failure) = outcome else {
         panic!("non-empty destination space should fail the tear-off move transaction");
     };
-    assert_eq!(failure.replaced_windows(), &[old_window]);
-    assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
+    assert_eq!(failure.window(), new_window);
+    assert_eq!(failure.replaced_windows(), &[]);
+    assert_eq!(
+        runtime.adapter().window_for_space(&detached_space),
+        Some(old_window),
+        "failed tear-off completion must not replace an existing routeable target window"
+    );
 }
 
 #[open_gpui::test]

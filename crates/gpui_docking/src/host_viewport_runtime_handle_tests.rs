@@ -687,6 +687,7 @@ fn viewport_runtime_handle_rejects_floating_tear_off_from_child_tabs_source_node
     let controller = cx.new(|_| DockController::new(workspace));
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
 
+    let before_windows = cx.windows().len();
     let outcome = cx
         .update(|app| {
             runtime.open_tear_off_viewport(
@@ -697,12 +698,12 @@ fn viewport_runtime_handle_rejects_floating_tear_off_from_child_tabs_source_node
                     point(px(900.0), px(900.0)),
                     None,
                 ),
-                detached_space,
+                detached_space.clone(),
                 viewport_window_options(360.0, 220.0),
                 app,
             )
         })
-        .expect("invalid floating source node should be cancelled after open");
+        .expect("invalid floating source node should be cancelled after creating an unregistered window");
 
     let DockViewportTearOffOpenOutcome::Cancelled(cancelled) = outcome else {
         panic!("invalid floating source node should cancel, got {outcome:?}");
@@ -710,6 +711,18 @@ fn viewport_runtime_handle_rejects_floating_tear_off_from_child_tabs_source_node
     assert_eq!(
         cancelled.reason(),
         crate::DockViewportTearOffCancelReason::SourceMissing
+    );
+    assert_eq!(
+        runtime.borrow().adapter().window_for_space(&detached_space),
+        None,
+        "cancelled tear-off windows must never be registered as routeable dock viewports"
+    );
+    cx.run_until_parked();
+    cx.update(|app| app.refresh_windows());
+    assert_eq!(
+        cx.windows().len(),
+        before_windows,
+        "cancelled tear-off should close the unregistered platform window"
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(

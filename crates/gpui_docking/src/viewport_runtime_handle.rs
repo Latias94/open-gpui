@@ -301,6 +301,32 @@ impl DockViewportRuntimeHandle {
         Ok(DockViewportOpenOutcome::new(space, window, status))
     }
 
+    fn open_unregistered_viewport_window(
+        &self,
+        space: DockSpaceId,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> Result<AnyWindowHandle> {
+        self.ensure_window_closed_observer(cx);
+
+        let controller = self.runtime.borrow().controller_entity();
+        let host_runtime = self.clone();
+        let window = cx
+            .open_window(options, move |_, cx| {
+                cx.new(move |cx| {
+                    DockHost::with_viewport_runtime(controller, space, host_runtime, cx)
+                })
+            })?
+            .into();
+
+        if let Err(error) = install_should_close_hook(self.clone(), window, cx) {
+            close_window_quietly(window, cx);
+            return Err(error);
+        }
+
+        Ok(window)
+    }
+
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
     pub(crate) fn open_tear_off_viewport(
         &self,
@@ -336,8 +362,12 @@ impl DockViewportRuntimeHandle {
             .into());
         }
 
-        let opened = match self.open_viewport(pending.target_space().clone(), options, cx) {
-            Ok(opened) => opened,
+        let window = match self.open_unregistered_viewport_window(
+            pending.target_space().clone(),
+            options,
+            cx,
+        ) {
+            Ok(window) => window,
             Err(error) => {
                 self.runtime
                     .borrow_mut()
@@ -348,7 +378,7 @@ impl DockViewportRuntimeHandle {
 
         let outcome = {
             let mut runtime = self.runtime.borrow_mut();
-            let completion = runtime.complete_tear_off_viewport(&key, opened.window(), cx);
+            let completion = runtime.complete_tear_off_viewport(&key, window, cx);
             let outcome = runtime.finish_tear_off_open(pending, completion, cx);
             runtime.record_tear_off_outcome(&outcome);
             outcome
@@ -360,7 +390,7 @@ impl DockViewportRuntimeHandle {
             close_windows_quietly(failure.replaced_windows().to_vec(), cx);
         }
         if !matches!(outcome, DockViewportTearOffOpenOutcome::Completed(_)) {
-            close_window_quietly(opened.window(), cx);
+            close_window_quietly(window, cx);
         }
         Ok(outcome)
     }
