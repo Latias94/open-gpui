@@ -172,6 +172,10 @@ impl<'a> DockViewportHoverArbiter<'a> {
             return DockViewportHoverArbitration::Unavailable;
         };
 
+        if self.context.hovered_window_known_empty() {
+            return DockViewportHoverArbitration::FallbackOnly(target);
+        }
+
         if self.is_trusted_route_target(target.window_id()) {
             return DockViewportHoverArbitration::Trusted(target);
         }
@@ -192,9 +196,6 @@ impl<'a> DockViewportHoverArbiter<'a> {
     }
 
     fn is_trusted_route_target(&self, window_id: WindowId) -> bool {
-        if self.context.hovered_window_known_empty() {
-            return false;
-        }
         self.context.hovered_window() == Some(window_id)
             || self.context.window_stack().contains(&window_id)
     }
@@ -316,6 +317,20 @@ mod tests {
         )
         .expect("single hit should resolve");
         assert_eq!(single.confidence(), DockViewportTargetConfidence::Trusted);
+
+        let single_hovered_known_empty = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", first)],
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([first]),
+        )
+        .expect("single hit should still be reported for diagnostics");
+        assert_eq!(
+            single_hovered_known_empty.confidence(),
+            DockViewportTargetConfidence::FallbackOnly,
+            "trusted hovered=None must block even a single matching app-window hit"
+        );
+        assert!(!single_hovered_known_empty.is_trusted());
 
         let single_unmatched_signal = resolve_viewport_target_with_confidence(
             vec![candidate("alpha", first)],

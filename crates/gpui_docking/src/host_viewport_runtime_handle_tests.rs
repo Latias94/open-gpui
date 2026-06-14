@@ -1520,6 +1520,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         "Panel A",
     );
 
+    cx.set_platform_hovered_window(Some(target_opened.window()));
     let changed = source_window
         .update(cx, |host, window, cx| {
             host.drop_payload_release_from_render(
