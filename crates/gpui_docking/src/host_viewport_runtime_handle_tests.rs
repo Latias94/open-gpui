@@ -963,14 +963,10 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
             app,
         )
     });
-    let DockViewportDropRoute::TearOff(request) = tear_off else {
-        panic!("allowed workspace policy should resolve an outside release as tear-off");
-    };
-    assert_eq!(request.source_space(), &source_space);
-    assert_eq!(request.source_node(), source_tabs);
-    assert_eq!(request.payload(), &DockViewportDropPayload::Item(item("a")));
-    assert_eq!(request.release_position(), release_position);
-    assert_eq!(request.suggested_window_bounds(), None);
+    assert!(
+        matches!(tear_off, DockViewportDropRoute::TearOff),
+        "allowed workspace policy should resolve an outside release as tear-off"
+    );
     let status = runtime.runtime_status();
     let target = &status
         .last_route

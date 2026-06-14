@@ -73,7 +73,7 @@ impl DockDropRoutePreview {
             DockViewportDropRoute::KnownViewport { .. } => {
                 (DockDropRoutePreviewKind::KnownViewport, false)
             }
-            DockViewportDropRoute::TearOff(_) => (DockDropRoutePreviewKind::TearOff, false),
+            DockViewportDropRoute::TearOff => (DockDropRoutePreviewKind::TearOff, false),
             DockViewportDropRoute::Unavailable => return None,
             DockViewportDropRoute::Rejected(_) => (DockDropRoutePreviewKind::Rejected, true),
         };
@@ -101,12 +101,10 @@ fn route_bounds(anchor: Point<Pixels>) -> Bounds<Pixels> {
 mod tests {
     use super::*;
     use crate::{
-        DockNodeId, DockPolicyError, DockViewportDropPayload, DockViewportTargetHit,
-        DockViewportTearOffRequest,
-        viewport_test_support::{handle, item, space},
+        DockPolicyError, DockViewportTargetHit,
+        viewport_test_support::{handle, space},
     };
     use open_gpui::{point, px};
-    use slotmap::Key;
 
     #[test]
     fn known_viewport_route_preview_uses_host_pointer_anchor() {
@@ -129,17 +127,8 @@ mod tests {
 
     #[test]
     fn tear_off_route_preview_is_visible_without_receiver_bounds() {
-        let source_space = space("source");
-        let source_tabs = DockNodeId::null();
-        let release_position = point(px(900.0), px(700.0));
         let preview = DockDropRoutePreview::from_route(
-            &DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
-                source_space,
-                source_tabs,
-                DockViewportDropPayload::Item(item("a")),
-                release_position,
-                None,
-            )),
+            &DockViewportDropRoute::TearOff,
             point(px(100.0), px(120.0)),
         )
         .expect("tear-off route should produce a preview");

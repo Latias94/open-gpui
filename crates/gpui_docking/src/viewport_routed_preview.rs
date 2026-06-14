@@ -88,7 +88,7 @@ impl DockViewportRoutedDropPreviewStore {
                 routed_drop_preview_from_delivery(resolution.delivery(), payload_title)
             }
             crate::DockViewportDropRoute::Local { .. }
-            | crate::DockViewportDropRoute::TearOff(_)
+            | crate::DockViewportDropRoute::TearOff
             | crate::DockViewportDropRoute::Unavailable
             | crate::DockViewportDropRoute::Rejected(_) => None,
         };

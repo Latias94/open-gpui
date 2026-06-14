@@ -68,7 +68,7 @@ pub(crate) fn resolve_workspace_target_for_route(
                 Err(error) => DockViewportWorkspaceRouteTarget::Rejected(error),
             }
         }
-        DockViewportDropRoute::TearOff(_)
+        DockViewportDropRoute::TearOff
         | DockViewportDropRoute::Unavailable
         | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::Valid(None),
     }

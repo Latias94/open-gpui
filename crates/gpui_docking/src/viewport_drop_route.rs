@@ -24,7 +24,7 @@ pub(crate) enum DockViewportDropRoute {
         target: DockViewportTargetHit,
     },
     /// The release landed outside all registered viewports and may open a new platform viewport.
-    TearOff(DockViewportTearOffRequest),
+    TearOff,
     /// The release landed in a registered viewport that has no current dock target.
     Unavailable,
     /// The release landed outside all registered viewports, but policy forbids opening one.
@@ -364,7 +364,7 @@ impl DockDropDelivery {
                     DockDropDeliveryKind::Unavailable
                 }
             }
-            DockViewportDropRoute::TearOff(_) => {
+            DockViewportDropRoute::TearOff => {
                 DockDropDeliveryKind::TearOff(DockDropTearOffDelivery::from_request(request))
             }
             DockViewportDropRoute::Unavailable => DockDropDeliveryKind::Unavailable,
@@ -561,18 +561,6 @@ impl DockViewportDropRouteRequest {
         self.has_global_window_bounds
     }
 
-    pub(crate) fn tear_off_request(&self) -> DockViewportTearOffRequest {
-        DockViewportTearOffRequest::new(
-            self.source_space().clone(),
-            self.source_node(),
-            self.payload().clone(),
-            self.release_position(),
-            self.suggested_window_bounds(),
-        )
-        .with_drag_session(self.drag_session().cloned())
-        .with_tear_off_geometry(self.tear_off_geometry())
-    }
-
     #[cfg(test)]
     pub(crate) fn from_target_context(
         source_space: impl Into<DockSpaceId>,
@@ -644,7 +632,7 @@ impl DockViewportAdapter {
             return DockViewportDropRoute::Rejected(reason);
         }
 
-        DockViewportDropRoute::TearOff(request.tear_off_request())
+        DockViewportDropRoute::TearOff
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
@@ -1110,13 +1098,7 @@ mod tests {
                 &policy,
                 DockViewportTargetContext::new(),
             ),
-            DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
-                source,
-                source_tabs,
-                DockViewportDropPayload::Item(item),
-                release_position,
-                Some(suggested_window_bounds),
-            ))
+            DockViewportDropRoute::TearOff
         );
     }
 
@@ -1273,16 +1255,10 @@ mod tests {
         )
         .with_drag_session(Some(drag_session.clone()))
         .with_tear_off_geometry(Some(tear_off_geometry));
-        let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
-            space("other"),
-            source_tabs,
-            DockViewportDropPayload::Tabs,
-            point(px(1.0), px(2.0)),
-            None,
-        ));
+        let route = DockViewportDropRoute::TearOff;
 
         assert_eq!(
-            DockDropDelivery::from_route_request(&request, mismatched_route)
+            DockDropDelivery::from_route_request(&request, route)
                 .tear_off_request()
                 .as_ref(),
             Some(

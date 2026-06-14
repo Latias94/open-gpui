@@ -218,7 +218,7 @@ impl DockViewportRuntimeStatus {
             source_node: request.source_node(),
             payload: DockViewportPayloadRecord::from_payload(request.payload()),
             drag_session_id: request.drag_session().map(|session| session.id()),
-            target: DockViewportRouteTarget::from_route(request.source_space(), route),
+            target: DockViewportRouteTarget::from_route(request, route),
         });
     }
 
@@ -337,10 +337,10 @@ impl DockViewportRouteTarget {
         }
     }
 
-    fn from_route(source_space: &DockSpaceId, route: &DockViewportDropRoute) -> Self {
+    fn from_route(request: &DockViewportDropRouteRequest, route: &DockViewportDropRoute) -> Self {
         match route {
             DockViewportDropRoute::Local { host_position } => Self::Local {
-                space: source_space.clone(),
+                space: request.source_space().clone(),
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
@@ -348,7 +348,7 @@ impl DockViewportRouteTarget {
                 window_id: target.window_id(),
                 host_position: target.host_position(),
             },
-            DockViewportDropRoute::TearOff(request) => Self::TearOff {
+            DockViewportDropRoute::TearOff => Self::TearOff {
                 release_position: request.release_position(),
             },
             DockViewportDropRoute::Unavailable => Self::Unavailable,
