@@ -211,6 +211,14 @@ fn merge_floating_tabs_preserves_selected_item() {
     assert_eq!(items, &vec![item("root"), item("a"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(2));
     assert!(graph.floating_containers(&space()).is_empty());
+    assert!(
+        graph.node(floating).is_none(),
+        "merged floating wrapper should be deleted"
+    );
+    assert!(
+        graph.node(floating_tabs).is_none(),
+        "merged floating payload tabs should be deleted"
+    );
     graph.assert_canonical_space(&space());
 }
 

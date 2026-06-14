@@ -1,11 +1,12 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockMoveTarget, DockNode, DockNodeId,
-    DockPolicy, DockSpaceId, DockWorkspace,
+    DockSpaceId, DockWorkspace,
     drop_target::{
         DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind,
         validate_resolved_drop_target,
     },
     geometry::DockDropBoxKind,
+    workspace_move_validation::dock_target_validator,
 };
 
 pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
@@ -41,7 +42,17 @@ impl DockWorkspace {
             target,
         } = request;
 
-        let target = validate_resolved_target_policy(target, self.policy())?;
+        let target = {
+            let payload_classes = self.payload_dock_classes_for_workspace_payload(&payload);
+            let target_validator =
+                dock_target_validator(target_space, &payload_classes, self.policy());
+            match validate_resolved_drop_target(target, self.policy(), Some(&target_validator)) {
+                DockDropResolution::Valid(target) => target,
+                DockDropResolution::Rejected(rejection) => {
+                    return Err(DockActionApplyError::Policy(rejection.reason));
+                }
+            }
+        };
         validate_resolved_target_drop_box(&target)?;
         validate_resolved_target_graph_identity(self, target_space, &target)?;
 
@@ -205,18 +216,6 @@ fn validate_resolved_target_drop_box(
         return Err(DockActionApplyError::DropTargetUnavailable);
     }
     Ok(())
-}
-
-fn validate_resolved_target_policy(
-    target: DockResolvedDropTarget,
-    policy: &DockPolicy,
-) -> Result<DockResolvedDropTarget, DockActionApplyError> {
-    match validate_resolved_drop_target(target, policy, None) {
-        DockDropResolution::Valid(target) => Ok(target),
-        DockDropResolution::Rejected(rejection) => {
-            Err(DockActionApplyError::Policy(rejection.reason))
-        }
-    }
 }
 
 fn expected_drop_box_kind(kind: &DockResolvedDropTargetKind) -> Option<DockDropBoxKind> {

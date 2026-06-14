@@ -1444,7 +1444,7 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
+fn dragging_split_floating_title_bar_to_center_rejects_visible_split_payload(
     cx: &mut TestAppContext,
 ) {
     let mut graph = DockGraph::new();
@@ -1495,23 +1495,35 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
         DockDebugRegion::FloatingHandle { node: floating },
     )
     .expect("floating handle selector should be emitted");
-    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
-        .expect("root tabs selector should be emitted");
+    let target_panel = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
+        .expect("root panel selector should be emitted");
     let start = debug_bounds(&mut visual, &floating_handle).center();
-    let end = debug_bounds(&mut visual, &target_tabs).center();
+    let end = debug_bounds(&mut visual, &target_panel).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    let threshold = point(start.x + px(24.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    let visual = VisualTestContext::from_window(window.into(), cx);
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
 
-    assert!(
-        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
-        "first floating subtree item should be active in the root stack"
-    );
+    let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
+        .expect("split floating center rejection should render a rejected preview");
+    assert!(debug_bounds(&mut visual, &preview).size.width > px(0.0));
+    cx.read_entity(&host, |host, _| {
+        let preview = host
+            .interaction()
+            .drop_preview()
+            .expect("drop preview should be tracked");
+        assert!(preview.rejected);
+    });
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
     cx.read_entity(&controller, |controller, _| {
         assert!(
-            controller.graph().floating_containers(&space()).is_empty(),
-            "floating container should be removed after the full subtree merges into root"
+            !controller.graph().floating_containers(&space()).is_empty(),
+            "visible split floating payload should remain floating after rejected center merge"
         );
         let DockNode::Tabs { items, selected } = controller
             .graph()
@@ -1520,8 +1532,8 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
         else {
             panic!("root should remain tabs");
         };
-        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(selected.as_ref(), items.get(1));
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
     });
 }
 

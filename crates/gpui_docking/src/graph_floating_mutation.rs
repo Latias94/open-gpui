@@ -195,38 +195,45 @@ impl DockGraph {
         if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
             return false;
         }
-        let items = self.collect_items_in_subtree(floating);
-        if items.is_empty() {
+        let Some(child) = self.nodes.get(floating).and_then(|node| match node {
+            DockNode::Floating { child } => Some(*child),
+            _ => None,
+        }) else {
+            return false;
+        };
+
+        let source_items = self.collect_items_in_subtree(child);
+        if source_items.is_empty() {
             return false;
         }
-        let selected_item = self.selected_item_in_subtree(floating);
-        let mut changed = false;
-        for item in items {
-            changed |= self.move_item_between_spaces(
-                source_space,
-                item,
-                target_space,
-                DockMoveTarget::center(target_tabs),
-            );
-        }
-        if let Some(selected_item) = selected_item
-            && let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(target_tabs)
-            && items.contains(&selected_item)
-            && selected.as_ref() != Some(&selected_item)
+        let source_selected = self.selected_item_in_subtree(child);
+        let target_insert_index = match self.nodes.get(target_tabs) {
+            Some(DockNode::Tabs { items, .. }) => items.len(),
+            _ => return false,
+        };
+
+        if self
+            .take_floating_child_from_space(source_space, floating)
+            .is_none()
         {
-            *selected = Some(selected_item);
-            changed = true;
+            return false;
         }
-        if let Some(floatings) = self.floatings.get_mut(source_space)
-            && let Some(index) = floatings.iter().position(|entry| entry.node == floating)
-        {
-            floatings.remove(index);
+
+        if !self.insert_items_into_tabs_at(
+            target_tabs,
+            &source_items,
+            Some(target_insert_index),
+            source_selected.as_ref(),
+        ) {
+            return false;
         }
+        self.remove_subtree(floating);
+
         self.simplify_space(source_space);
         if source_space != target_space {
             self.simplify_space(target_space);
         }
-        changed
+        true
     }
 
     fn take_floating_child_from_space(

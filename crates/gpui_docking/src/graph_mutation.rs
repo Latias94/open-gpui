@@ -324,4 +324,99 @@ impl DockGraph {
         self.simplify_space(target_space);
         true
     }
+
+    pub(crate) fn move_root_to_non_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if source_space == target_space {
+            return false;
+        }
+
+        let Some(source_root) = self.root(source_space) else {
+            return false;
+        };
+        let Some(target_root) = self.root(target_space) else {
+            return false;
+        };
+
+        match self.nodes.get(source_root).cloned() {
+            Some(DockNode::Tabs { .. }) => self.move_root_tabs_to_non_empty_space(
+                source_space,
+                source_root,
+                target_space,
+                target_root,
+            ),
+            Some(DockNode::Split { .. }) | Some(DockNode::Floating { .. }) => self
+                .move_root_subtree_to_non_empty_space(
+                    source_space,
+                    source_root,
+                    target_space,
+                    target_root,
+                ),
+            None => false,
+        }
+    }
+
+    fn move_root_tabs_to_non_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_root: DockNodeId,
+        target_space: &DockSpaceId,
+        target_root: DockNodeId,
+    ) -> bool {
+        let Some(detached) = self.take_tabs_from_space_without_simplify(source_space, source_root)
+        else {
+            return false;
+        };
+        let target_tabs = self
+            .selected_tabs_in_subtree(target_root)
+            .unwrap_or(target_root);
+        if !self.insert_items_into_tabs_at(
+            target_tabs,
+            &detached.items,
+            None,
+            detached.selected.as_ref(),
+        ) {
+            return false;
+        }
+        self.remove_subtree(source_root);
+        self.simplify_space(source_space);
+        self.simplify_space(target_space);
+        true
+    }
+
+    fn move_root_subtree_to_non_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_root: DockNodeId,
+        target_space: &DockSpaceId,
+        target_root: DockNodeId,
+    ) -> bool {
+        let Some(target_merge_tabs) = self.selected_tabs_in_subtree(target_root) else {
+            return false;
+        };
+        let source_items = self.collect_items_in_subtree(source_root);
+        if source_items.is_empty() {
+            return false;
+        }
+        let source_selected = self.selected_item_in_subtree(source_root);
+
+        self.remove_root(source_space);
+
+        if !self.insert_items_into_tabs_at(
+            target_merge_tabs,
+            &source_items,
+            None,
+            source_selected.as_ref(),
+        ) {
+            return false;
+        }
+        self.remove_subtree(source_root);
+
+        self.simplify_space(source_space);
+        self.simplify_space(target_space);
+        true
+    }
 }

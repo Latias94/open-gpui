@@ -118,6 +118,12 @@ impl DockGraph {
         }
     }
 
+    pub(crate) fn selected_tabs_in_subtree(&self, root: DockNodeId) -> Option<DockNodeId> {
+        let selected = self.selected_item_in_subtree(root)?;
+        self.find_item_in_subtree(root, &selected)
+            .map(|(tabs, _)| tabs)
+    }
+
     pub(in crate::graph) fn root_subtree_contains(
         &self,
         space: &DockSpaceId,

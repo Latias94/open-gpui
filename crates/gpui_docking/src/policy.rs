@@ -236,6 +236,9 @@ pub enum DockPolicyError {
     /// Center tab merging is disabled.
     #[error("center tab merge is disabled by docking policy")]
     CenterMergeDisabled,
+    /// A visibly split payload cannot be merged into a non-empty center target.
+    #[error("visibly split docking payload cannot be center-merged into a non-empty target")]
+    SplitPayloadCenterMergeRejected,
     /// Edge splitting is disabled.
     #[error("edge split is disabled by docking policy")]
     EdgeSplitDisabled,

@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockMoveTarget,
-    DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace, DropZone,
+    DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace,
 };
 
 pub(crate) enum DockWorkspaceMove<'a> {
@@ -42,34 +42,23 @@ impl DockWorkspace {
             return self.validate_merge_root_into_empty_space(source_space, target_space);
         }
 
-        let mut target_tabs = self
-            .graph()
-            .first_tabs_in_space(target_space)
-            .map(|tabs| (tabs, true));
-        for source_tabs in self.graph().root_tabs_in_space(source_space) {
-            if self
-                .graph()
-                .root_for_node_in_space(source_space, source_tabs)
-                .is_none()
-            {
-                continue;
-            }
-
-            self.require_non_empty_tabs_for_merge(source_tabs)?;
-            if let Some((target_tabs, target_exists_now)) = target_tabs {
-                self.validate_merge_tabs_target(target_space, target_tabs, target_exists_now)?;
-                self.move_validation()
-                    .validate_tabs_target_space(target_space, source_tabs)?;
-                self.policy().validate_drop_zone(DropZone::Center)?;
-                if source_space == target_space && source_tabs == target_tabs {
-                    self.policy().validate_same_stack_center_drop()?;
+        if source_root.is_some() {
+            for source_tabs in self.graph().root_tabs_in_space(source_space) {
+                if self
+                    .graph()
+                    .root_for_node_in_space(source_space, source_tabs)
+                    .is_none()
+                {
+                    continue;
                 }
-            } else {
-                self.policy().validate_platform_viewports()?;
+
+                self.require_non_empty_tabs_for_merge(source_tabs)?;
                 self.move_validation()
                     .validate_tabs_target_space(target_space, source_tabs)?;
             }
-            target_tabs = target_tabs.or(Some((source_tabs, false)));
+            self.move_validation()
+                .validate_space_floating_forest_target_space(source_space, target_space)?;
+            return Ok(());
         }
 
         self.move_validation()
@@ -101,28 +90,6 @@ impl DockWorkspace {
         self.move_validation()
             .validate_space_floating_forest_target_space(source_space, target_space)?;
 
-        Ok(())
-    }
-
-    fn validate_merge_tabs_target(
-        &self,
-        target_space: &DockSpaceId,
-        target_tabs: DockNodeId,
-        target_exists_now: bool,
-    ) -> Result<(), DockActionApplyError> {
-        self.require_non_empty_tabs_for_merge(target_tabs)?;
-        if target_exists_now
-            && self
-                .graph()
-                .root_for_node_in_space(target_space, target_tabs)
-                .is_none()
-        {
-            return Err(DockGraphMutationError::TargetNodeNotInSpace {
-                space: target_space.clone(),
-                target: target_tabs,
-            }
-            .into());
-        }
         Ok(())
     }
 
@@ -234,31 +201,20 @@ impl DockWorkspace {
             });
         }
 
-        let mut target_tabs = self.graph().first_tabs_in_space(target_space);
-        let mut changed = false;
-        for source_tabs in source_tabs {
-            if self
-                .graph()
-                .root_for_node_in_space(source_space, source_tabs)
-                .is_none()
-            {
-                continue;
-            }
-
-            let outcome = if let Some(target_tabs) = target_tabs {
-                self.commit_tabs_move(
-                    source_space,
-                    source_tabs,
-                    target_space,
-                    DockMoveTarget::center(target_tabs),
-                )?
-            } else {
-                self.commit_tabs_to_empty_dock_space(source_space, source_tabs, target_space)?
-            };
-            changed |= outcome.changed();
-            target_tabs = self.graph().first_tabs_in_space(target_space);
+        let mut next = self.graph().clone();
+        let changed = next.move_root_to_non_empty_space(source_space, target_space);
+        if !changed {
+            return self.commit_merge_space_floating_forest_into(source_space, target_space);
         }
 
+        next.validate().map_err(|error| {
+            DockActionApplyError::Graph(DockGraphMutationError::MutationInvariantViolation {
+                op: "MergeSpaceIntoNonEmptySpace",
+                reason: error.to_string(),
+            })
+        })?;
+        self.set_graph(next);
+        let mut changed = true;
         changed |= self
             .commit_merge_space_floating_forest_into(source_space, target_space)?
             .changed();
