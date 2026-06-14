@@ -141,8 +141,8 @@ mod tests {
                 position,
                 &DockViewportTargetContext::new().with_window_stack([zeta_window, alpha_window]),
             )
-            .expect("window stack should arbitrate overlapping live viewports");
+            .expect("window stack should still expose a diagnostic target");
         assert_eq!(trusted.target().space(), &zeta);
-        assert!(trusted.is_trusted());
+        assert!(!trusted.is_trusted());
     }
 }

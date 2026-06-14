@@ -87,14 +87,19 @@ impl DockViewportTargetContext {
             || !self.window_stack.is_empty()
     }
 
-    pub(crate) fn has_signal_for_window(&self, window_id: WindowId) -> bool {
-        self.platform_hovered_window == Some(window_id)
-            || self.event_receiver_window == Some(window_id)
-            || self.window_stack.contains(&window_id)
+    pub(crate) fn has_conflicting_primary_signal(&self, window_id: WindowId) -> bool {
+        self.hovered_window_known_empty()
+            || self
+                .platform_hovered_window
+                .is_some_and(|hovered| hovered != window_id)
+            || self
+                .event_receiver_window
+                .is_some_and(|receiver| receiver != window_id)
     }
 
-    pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
-        self.has_arbitration_signal() && !self.has_signal_for_window(window_id)
+    pub(crate) fn has_conflicting_single_hit_signal(&self, window_id: WindowId) -> bool {
+        self.has_conflicting_primary_signal(window_id)
+            || (!self.window_stack.is_empty() && !self.window_stack.contains(&window_id))
     }
 
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
@@ -109,8 +114,16 @@ impl DockViewportTargetContext {
         self.event_receiver_window
     }
 
+    pub(crate) fn event_receiver_window_matches(&self, window_id: WindowId) -> bool {
+        self.event_receiver_window == Some(window_id)
+    }
+
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
+    }
+
+    pub(crate) fn window_stack_contains(&self, window_id: WindowId) -> bool {
+        self.window_stack.contains(&window_id)
     }
 
     #[cfg(test)]

@@ -2010,12 +2010,11 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
             .route()
             .clone()
     });
-    match baseline_route {
-        DockViewportDropRoute::Local { .. } => {}
-        DockViewportDropRoute::KnownViewport { ref target }
-            if target.window_id() == source_opened.window().window_id() => {}
-        other => panic!("unexpected baseline route: {:?}", other),
-    }
+    assert_eq!(
+        baseline_route,
+        DockViewportDropRoute::Unavailable,
+        "window-stack fallback must not authorize a release without current hover authority"
+    );
 
     let request_with_hovered = DockViewportDropRouteRequest::from_target_context(
         source_space.clone(),

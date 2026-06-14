@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn drop_route_uses_trusted_window_stack_arbitration_for_known_viewport() {
+    fn drop_route_does_not_use_window_stack_fallback_for_known_viewport_commit() {
         let source = space("source");
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -653,14 +653,8 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    zeta,
-                    zeta_window,
-                    point(px(20.0), px(40.0)),
-                    1,
-                ),
-            }
+            DockViewportDropRoute::Unavailable,
+            "window-stack/focus fallback may rank diagnostics, but must not authorize an overlapping cross-viewport commit"
         );
     }
 
@@ -780,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_overlap_route_uses_window_stack_without_hovered_source() {
+    fn source_only_overlap_route_does_not_use_window_stack_as_hover_authority() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);
@@ -811,15 +805,8 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target,
-                    target_window,
-                    point(px(20.0), px(40.0)),
-                    1,
-                ),
-            },
-            "source-only routes must not treat the source event window as hovered"
+            DockViewportDropRoute::Unavailable,
+            "source-only routes must not promote window-stack fallback into current hover authority"
         );
     }
 
