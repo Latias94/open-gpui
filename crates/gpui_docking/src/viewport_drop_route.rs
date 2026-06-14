@@ -120,9 +120,7 @@ pub(crate) enum DockDropWorkspaceTarget {
 /// Delivery facts for a route that opens a new platform viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockDropTearOffDelivery {
-    release_position: Point<Pixels>,
-    tear_off_geometry: Option<DockDragTearOffGeometry>,
-    suggested_window_bounds: Option<WindowBounds>,
+    request: DockViewportTearOffRequest,
 }
 
 /// Resolved target snapshot captured from a concrete host-scene frame.
@@ -234,37 +232,25 @@ impl DockDropDeliverySource {
 
 impl DockDropTearOffDelivery {
     fn from_request(request: &DockViewportDropRouteRequest) -> Self {
-        Self {
-            release_position: request.release_position(),
-            tear_off_geometry: request.tear_off_geometry(),
-            suggested_window_bounds: request.suggested_window_bounds(),
-        }
-    }
-
-    fn into_request(self, source: DockDropDeliverySource) -> DockViewportTearOffRequest {
-        let (source_space, source_node, payload, drag_session) = source.into_parts();
-        DockViewportTearOffRequest::new(
-            source_space,
-            source_node,
-            payload,
-            self.release_position,
-            self.suggested_window_bounds,
+        let request = DockViewportTearOffRequest::new(
+            request.source_space().clone(),
+            request.source_node(),
+            request.payload().clone(),
+            request.release_position(),
+            request.suggested_window_bounds(),
         )
-        .with_drag_session(drag_session)
-        .with_tear_off_geometry(self.tear_off_geometry)
+        .with_drag_session(request.drag_session().cloned())
+        .with_tear_off_geometry(request.tear_off_geometry());
+        Self { request }
     }
 
     #[cfg(test)]
-    fn to_request(&self, source: &DockDropDeliverySource) -> DockViewportTearOffRequest {
-        DockViewportTearOffRequest::new(
-            source.source_space().clone(),
-            source.source_node(),
-            source.payload().clone(),
-            self.release_position,
-            self.suggested_window_bounds,
-        )
-        .with_drag_session(source.drag_session().cloned())
-        .with_tear_off_geometry(self.tear_off_geometry)
+    fn request(&self) -> &DockViewportTearOffRequest {
+        &self.request
+    }
+
+    fn into_request(self) -> DockViewportTearOffRequest {
+        self.request
     }
 }
 
@@ -426,7 +412,7 @@ impl DockDropDelivery {
     #[cfg(test)]
     pub(crate) fn tear_off_request(&self) -> Option<DockViewportTearOffRequest> {
         match &self.kind {
-            DockDropDeliveryKind::TearOff(delivery) => Some(delivery.to_request(&self.source)),
+            DockDropDeliveryKind::TearOff(delivery) => Some(delivery.request().clone()),
             DockDropDeliveryKind::Workspace(_) => None,
         }
     }
@@ -434,7 +420,7 @@ impl DockDropDelivery {
     pub(crate) fn into_tear_off_request(self) -> Result<DockViewportTearOffRequest, Self> {
         let Self { source, kind } = self;
         match kind {
-            DockDropDeliveryKind::TearOff(delivery) => Ok(delivery.into_request(source)),
+            DockDropDeliveryKind::TearOff(delivery) => Ok(delivery.into_request()),
             kind => Err(Self { source, kind }),
         }
     }
