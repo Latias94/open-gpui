@@ -10,9 +10,11 @@ use open_gpui::WindowId;
 
 /// Current workspace target facts for a viewport route.
 pub(crate) enum DockViewportWorkspaceRouteTarget {
-    Valid(Option<DockViewportResolvedDropTargetSnapshot>),
+    Resolved(DockViewportResolvedDropTargetSnapshot),
+    Missing,
     Unavailable,
     Rejected(DockPolicyError),
+    NotWorkspaceRoute,
 }
 
 /// Resolves the workspace target authority for a viewport route.
@@ -44,7 +46,10 @@ pub(crate) fn resolve_workspace_target_for_route(
                         resolution,
                     )
                 });
-            DockViewportWorkspaceRouteTarget::Valid(resolved.and_then(Result::ok))
+            match resolved {
+                Some(Ok(target)) => DockViewportWorkspaceRouteTarget::Resolved(target),
+                Some(Err(_)) | None => DockViewportWorkspaceRouteTarget::Missing,
+            }
         }
         DockViewportDropRoute::KnownViewport { target } => {
             let target_validator = dock_target_validator(target.space(), payload_classes, policy);
@@ -64,13 +69,13 @@ pub(crate) fn resolve_workspace_target_for_route(
                 Some(target.facts_generation()),
                 resolution,
             ) {
-                Ok(target) => DockViewportWorkspaceRouteTarget::Valid(Some(target)),
+                Ok(target) => DockViewportWorkspaceRouteTarget::Resolved(target),
                 Err(error) => DockViewportWorkspaceRouteTarget::Rejected(error),
             }
         }
         DockViewportDropRoute::TearOff
         | DockViewportDropRoute::Unavailable
-        | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::Valid(None),
+        | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::NotWorkspaceRoute,
     }
 }
 

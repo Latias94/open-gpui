@@ -762,7 +762,8 @@ impl DockViewportRuntime {
             &policy,
             &payload_classes,
         ) {
-            DockViewportWorkspaceRouteTarget::Valid(target) => target,
+            DockViewportWorkspaceRouteTarget::Resolved(target) => Some(target),
+            DockViewportWorkspaceRouteTarget::Missing => None,
             DockViewportWorkspaceRouteTarget::Unavailable => {
                 route = DockViewportDropRoute::Unavailable;
                 None
@@ -773,6 +774,7 @@ impl DockViewportRuntime {
                 }
                 None
             }
+            DockViewportWorkspaceRouteTarget::NotWorkspaceRoute => None,
         };
         self.status.record_route(request, &route);
         let delivery = DockDropDelivery::from_route_request_with_resolved_target(
