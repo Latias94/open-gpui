@@ -113,8 +113,6 @@ pub(crate) struct DockDropDeliverySource {
 pub(crate) enum DockDropWorkspaceTarget {
     /// Commit against a resolved target snapshot if it still matches current runtime facts.
     Resolved(DockViewportResolvedDropTargetSnapshot),
-    /// Resolve the source host's local target from current host-scene facts at delivery time.
-    ResolveLocalAtDelivery { host_position: Point<Pixels> },
 }
 
 /// Resolved target snapshot captured from a concrete host-scene frame.
@@ -128,16 +126,6 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
 }
 
 impl DockDropWorkspaceTarget {
-    fn local_from_request(
-        host_position: Point<Pixels>,
-        resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
-    ) -> Self {
-        match resolved_target {
-            Some(resolved) => DockDropWorkspaceTarget::Resolved(resolved),
-            None => DockDropWorkspaceTarget::ResolveLocalAtDelivery { host_position },
-        }
-    }
-
     fn resolved(resolved_target: DockViewportResolvedDropTargetSnapshot) -> Self {
         DockDropWorkspaceTarget::Resolved(resolved_target)
     }
@@ -145,22 +133,18 @@ impl DockDropWorkspaceTarget {
     fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
         match self {
             DockDropWorkspaceTarget::Resolved(target) => target.routed_preview_target(),
-            DockDropWorkspaceTarget::ResolveLocalAtDelivery { .. } => None,
         }
     }
 
     fn accepts_hovered_host_window(
         &self,
-        source_space: &DockSpaceId,
+        _source_space: &DockSpaceId,
         host_space: &DockSpaceId,
         window_id: WindowId,
     ) -> bool {
         match self {
             DockDropWorkspaceTarget::Resolved(target) => {
                 target.accepts_hovered_host_window(host_space, window_id)
-            }
-            DockDropWorkspaceTarget::ResolveLocalAtDelivery { .. } => {
-                target_accepts_hovered_host_window(source_space, None, host_space, window_id)
             }
         }
     }
@@ -307,10 +291,7 @@ impl DockDropDelivery {
     ) -> Option<Self> {
         let source = DockDropDeliverySource::from_request(request);
         let kind = match route {
-            DockViewportDropRoute::Local { host_position } => DockDropDeliveryKind::Workspace(
-                DockDropWorkspaceTarget::local_from_request(host_position, resolved_target),
-            ),
-            DockViewportDropRoute::KnownViewport { target: _ } => {
+            DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
                 DockDropDeliveryKind::Workspace(DockDropWorkspaceTarget::resolved(resolved_target?))
             }
             DockViewportDropRoute::TearOff => {
@@ -1066,7 +1047,7 @@ mod tests {
     }
 
     #[test]
-    fn local_drop_delivery_can_resolve_at_delivery_without_snapshot() {
+    fn local_drop_delivery_without_resolved_snapshot_is_absent() {
         let source = space("source");
         let source_tabs = DockNodeId::null();
         let item = item("a");
@@ -1089,24 +1070,8 @@ mod tests {
             DockViewportDropRoute::Local {
                 host_position: local_position,
             },
-        )
-        .expect("local route should derive a delivery");
-        assert_eq!(delivery.drag_session_id(), Some(drag_session.id()));
-        assert_eq!(delivery.source_space(), &source);
-        assert_eq!(delivery.source_node(), source_tabs);
-        assert_eq!(
-            delivery.payload(),
-            &DockViewportDropPayload::Item(item.clone())
         );
-        let DockDropDeliveryKind::Workspace(local) = delivery.kind() else {
-            panic!("local route should derive a workspace commit");
-        };
-        assert_eq!(
-            local,
-            &DockDropWorkspaceTarget::ResolveLocalAtDelivery {
-                host_position: local_position,
-            }
-        );
+        assert_eq!(delivery, None);
     }
 
     #[test]

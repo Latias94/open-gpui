@@ -1,13 +1,13 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController,
-    DockDropDelivery, DockGraph, DockGraphMutationError, DockHost, DockItemId, DockMoveTarget,
-    DockNode, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportOpenStatus,
-    DockViewportResolvedDropRoute, DockViewportRuntime, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
-    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace,
+    DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController, DockGraph,
+    DockGraphMutationError, DockHost, DockItemId, DockMoveTarget, DockNode, DockPanel,
+    DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
+    DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
+    DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
+    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
+    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
+    DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -2308,15 +2308,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
         DockViewportDropRoute::Local {
             host_position: target_position,
         },
-        Some(
-            DockDropDelivery::from_route_request(
-                &request,
-                DockViewportDropRoute::Local {
-                    host_position: target_position,
-                },
-            )
-            .expect("local route should derive a delivery"),
-        ),
+        None,
     );
     runtime.update_routed_drop_preview(&local_resolution, "Panel A");
     assert_eq!(

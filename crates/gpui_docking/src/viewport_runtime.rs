@@ -610,7 +610,6 @@ impl DockViewportRuntime {
                         &self.adapter,
                         &self.host_scenes,
                         controller.workspace(),
-                        &source_space,
                         source_node,
                         &payload,
                         delivery,

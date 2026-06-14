@@ -6,7 +6,7 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
 };
-use open_gpui::{Point, WindowId};
+use open_gpui::WindowId;
 
 /// Current workspace target facts for a viewport route.
 pub(crate) enum DockViewportWorkspaceRouteTarget {
@@ -79,7 +79,6 @@ pub(crate) fn resolve_delivery_workspace_target(
     adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
     workspace: &DockWorkspace,
-    source_space: &DockSpaceId,
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
     target: DockDropWorkspaceTarget,
@@ -99,16 +98,6 @@ pub(crate) fn resolve_delivery_workspace_target(
             )
         }
         DockDropWorkspaceTarget::Resolved(_) => Err(DockActionApplyError::DropTargetUnavailable),
-        DockDropWorkspaceTarget::ResolveLocalAtDelivery { host_position } => {
-            resolve_local_route_target(
-                host_scenes,
-                workspace,
-                source_space,
-                host_position,
-                payload,
-                source_node,
-            )
-        }
     }
 }
 
@@ -142,34 +131,6 @@ fn validate_resolved_target_snapshot(
     let payload_classes = workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
     let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
     match validate_resolved_drop_target(target, &policy, Some(&target_validator)) {
-        DockDropResolution::Valid(target) => Ok((target_space.clone(), target)),
-        DockDropResolution::Rejected(rejection) => {
-            Err(DockActionApplyError::Policy(rejection.reason))
-        }
-    }
-}
-
-fn resolve_local_route_target(
-    host_scenes: &DockViewportHostSceneRegistry,
-    workspace: &DockWorkspace,
-    target_space: &DockSpaceId,
-    host_position: Point<open_gpui::Pixels>,
-    payload: &DockViewportDropPayload,
-    source_node: crate::DockNodeId,
-) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
-    let policy = workspace.policy().clone();
-    let payload_classes = workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
-    let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
-    let Some((_, resolution)) = host_scenes.resolve_frame_for_window(
-        target_space,
-        None,
-        host_position,
-        &policy,
-        Some(&target_validator),
-    ) else {
-        return Err(DockActionApplyError::DropTargetUnavailable);
-    };
-    match resolution {
         DockDropResolution::Valid(target) => Ok((target_space.clone(), target)),
         DockDropResolution::Rejected(rejection) => {
             Err(DockActionApplyError::Policy(rejection.reason))
