@@ -82,9 +82,9 @@ pub enum DockNode {
     },
 }
 
-/// A pure decision describing how an edge dock will mutate the graph.
+/// Pure n-ary topology plan for an edge dock mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeDockDecision {
+pub enum DockEdgeDockPlan {
     /// Insert a new child into an existing same-axis split.
     InsertIntoSplit {
         /// The split container receiving the new child.
@@ -95,7 +95,14 @@ pub enum EdgeDockDecision {
         insert_index: usize,
     },
     /// Wrap the target in a new split.
-    WrapNewSplit,
+    WrapTarget {
+        /// Target node being wrapped.
+        target: DockNodeId,
+        /// Axis of the new split.
+        axis: SplitAxis,
+        /// Position of the new child relative to the target.
+        zone: DropZone,
+    },
 }
 
 /// In-window floating container metadata.

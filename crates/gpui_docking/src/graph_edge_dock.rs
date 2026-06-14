@@ -1,16 +1,16 @@
 use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 use std::collections::HashMap;
 
-use super::{DockGraph, DockNode, DropZone, EdgeDockDecision, SplitAxis};
+use super::{DockEdgeDockPlan, DockGraph, DockNode, DropZone, SplitAxis};
 
 impl DockGraph {
-    /// Decides whether an edge dock will insert into an existing same-axis split.
-    pub fn edge_dock_decision(
+    /// Plans the n-ary topology change for an edge dock.
+    pub fn edge_dock_plan(
         &self,
         space: &DockSpaceId,
         target: DockNodeId,
         zone: DropZone,
-    ) -> Option<EdgeDockDecision> {
+    ) -> Option<DockEdgeDockPlan> {
         if zone == DropZone::Center {
             return None;
         }
@@ -39,7 +39,7 @@ impl DockGraph {
                 }
                 DropZone::Center => unreachable!(),
             };
-            return Some(EdgeDockDecision::InsertIntoSplit {
+            return Some(DockEdgeDockPlan::InsertIntoSplit {
                 split: target,
                 anchor_index,
                 insert_index,
@@ -67,7 +67,7 @@ impl DockGraph {
                     DropZone::Right | DropZone::Bottom => anchor_index.saturating_add(1),
                     DropZone::Center => unreachable!(),
                 };
-                return Some(EdgeDockDecision::InsertIntoSplit {
+                return Some(DockEdgeDockPlan::InsertIntoSplit {
                     split: parent,
                     anchor_index,
                     insert_index,
@@ -77,7 +77,7 @@ impl DockGraph {
             cur = parent;
         }
 
-        Some(EdgeDockDecision::WrapNewSplit)
+        Some(DockEdgeDockPlan::WrapTarget { target, axis, zone })
     }
 
     pub(in crate::graph) fn insert_edge_docked_child(
@@ -87,52 +87,42 @@ impl DockGraph {
         zone: DropZone,
         new_child: DockNodeId,
     ) -> bool {
-        let Some(axis) = zone.axis() else {
-            return false;
-        };
-
-        if self.insert_edge_child_prefer_same_axis_split(space, target, axis, zone, new_child) {
-            return true;
-        }
-
-        let (first, second) = ordered_edge_children(zone, new_child, target);
-        let split = self.insert_node(DockNode::Split {
-            axis,
-            children: vec![first, second],
-            fractions: vec![0.5, 0.5],
-        });
-        self.replace_node_in_space_tree(space, target, split)
+        self.edge_dock_plan(space, target, zone)
+            .is_some_and(|plan| self.apply_edge_dock_plan(space, plan, new_child))
     }
 
-    fn insert_edge_child_prefer_same_axis_split(
+    fn apply_edge_dock_plan(
         &mut self,
         space: &DockSpaceId,
-        target: DockNodeId,
-        axis: SplitAxis,
-        zone: DropZone,
+        plan: DockEdgeDockPlan,
         new_child: DockNodeId,
     ) -> bool {
-        let Some(EdgeDockDecision::InsertIntoSplit {
-            split,
-            anchor_index,
-            insert_index,
-        }) = self.edge_dock_decision(space, target, zone)
-        else {
-            return false;
-        };
-
-        let Some(DockNode::Split {
-            axis: split_axis,
-            children,
-            fractions,
-        }) = self.nodes.get_mut(split)
-        else {
-            return false;
-        };
-        if *split_axis != axis || children.len() != fractions.len() || children.is_empty() {
-            return false;
+        match plan {
+            DockEdgeDockPlan::InsertIntoSplit {
+                split,
+                anchor_index,
+                insert_index,
+            } => {
+                let Some(DockNode::Split {
+                    children,
+                    fractions,
+                    ..
+                }) = self.nodes.get_mut(split)
+                else {
+                    return false;
+                };
+                split_share_and_insert(children, fractions, anchor_index, insert_index, new_child)
+            }
+            DockEdgeDockPlan::WrapTarget { target, axis, zone } => {
+                let (first, second) = ordered_edge_children(zone, new_child, target);
+                let split = self.insert_node(DockNode::Split {
+                    axis,
+                    children: vec![first, second],
+                    fractions: vec![0.5, 0.5],
+                });
+                self.replace_node_in_space_tree(space, target, split)
+            }
         }
-        split_share_and_insert(children, fractions, anchor_index, insert_index, new_child)
     }
 
     fn replace_node_in_space_tree(

@@ -81,19 +81,25 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
-        if release.origin() == DockPayloadDropReleaseOrigin::HoveredHost
-            && let Some(delivery) = delivery
-            && delivery.accepts_hovered_host_window(
+        if let Some(delivery) = delivery {
+            let authority = delivery.release_authority_for_cached_preview(
+                release.origin(),
                 release.host_space(),
                 window.window_handle().window_id(),
-            )
-        {
-            let result = if delivery.accepts_drag_payload(release.payload()) {
-                runtime.deliver_payload_drop_with_outcome(delivery, cx)
-            } else {
-                Err(delivery.payload_mismatch_error())
-            };
-            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
+                release.payload(),
+            );
+            match authority {
+                Ok(true) => {
+                    let result = runtime.deliver_payload_drop_with_outcome(delivery, cx);
+                    return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
+                }
+                Err(error) => {
+                    return Some(DockHostInteractionOutcome::from_routed_drop_result(Err(
+                        error,
+                    )));
+                }
+                Ok(false) => {}
+            }
         }
 
         let drag_session = release.drag_session().cloned();

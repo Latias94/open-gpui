@@ -8,7 +8,8 @@ use crate::{
     DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportIdentity, DockViewportPlacementLayout,
     DockViewportPlacementValidationError, DockViewportResolvedDropRoute,
-    DockViewportRestoreReadiness, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
+    DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
+    DockViewportRoutedDropPreviewStore, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
     DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
@@ -17,7 +18,6 @@ use crate::{
     DockViewportTearOffPending, DockViewportTearOffRequest, DockViewportTearOffTick,
     DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
-    drop_preview::DockDropPreview,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     interaction::DockRuntimeDragSession,
@@ -57,7 +57,7 @@ pub(crate) struct DockViewportRuntime {
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
     pre_closed_merge_back_windows: HashSet<WindowId>,
-    routed_drop_preview: Option<DockViewportRoutedDropPreview>,
+    routed_drop_preview: DockViewportRoutedDropPreviewStore,
     status: DockViewportRuntimeStatus,
 }
 
@@ -184,47 +184,6 @@ impl DockViewportTearOffPlacementPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockViewportRoutedDropPreview {
-    identity: DockViewportIdentity,
-    pub(crate) preview: DockDropPreview,
-    delivery: DockDropDelivery,
-    pub(crate) payload_title: String,
-}
-
-impl DockViewportRoutedDropPreview {
-    fn new(
-        space: DockSpaceId,
-        window_id: WindowId,
-        preview: DockDropPreview,
-        delivery: DockDropDelivery,
-        payload_title: impl Into<String>,
-    ) -> Self {
-        Self {
-            identity: DockViewportIdentity::new(space, window_id),
-            preview,
-            delivery,
-            payload_title: payload_title.into(),
-        }
-    }
-
-    fn matches(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
-        self.identity.matches(space, window_id)
-    }
-
-    fn space(&self) -> &DockSpaceId {
-        self.identity.space()
-    }
-
-    fn window_id(&self) -> WindowId {
-        self.identity.window_id()
-    }
-
-    fn delivery(&self) -> &DockDropDelivery {
-        &self.delivery
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct DockViewportPreparedTearOffDrop {
     pub(crate) request: DockViewportTearOffRequest,
@@ -258,19 +217,6 @@ fn resolved_target_snapshot(
     }
 }
 
-fn push_unique_window(windows: &mut Vec<AnyWindowHandle>, window: Option<AnyWindowHandle>) {
-    let Some(window) = window else {
-        return;
-    };
-    if windows
-        .iter()
-        .any(|existing| existing.window_id() == window.window_id())
-    {
-        return;
-    }
-    windows.push(window);
-}
-
 impl DockViewportRuntime {
     /// Creates a runtime with the default close policy.
     pub(crate) fn new(controller: Entity<DockController>) -> Self {
@@ -294,7 +240,7 @@ impl DockViewportRuntime {
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             pre_closed_merge_back_windows: HashSet::new(),
-            routed_drop_preview: None,
+            routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -320,7 +266,7 @@ impl DockViewportRuntime {
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
             pre_closed_merge_back_windows: HashSet::new(),
-            routed_drop_preview: None,
+            routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
         }
     }
@@ -566,10 +512,7 @@ impl DockViewportRuntime {
         space: &DockSpaceId,
         window_id: WindowId,
     ) -> Option<DockViewportRoutedDropPreview> {
-        self.routed_drop_preview
-            .as_ref()
-            .filter(|preview| preview.matches(space, window_id))
-            .cloned()
+        self.routed_drop_preview.preview_for(space, window_id)
     }
 
     #[cfg(test)]
@@ -577,13 +520,7 @@ impl DockViewportRuntime {
         &self,
         session: Option<&DockRuntimeDragSession>,
     ) -> Option<DockDropDelivery> {
-        let session = session?;
-        let preview = self.routed_drop_preview.as_ref()?;
-        let delivery = preview.delivery();
-        if delivery.drag_session_id() != Some(session.id()) {
-            return None;
-        }
-        Some(delivery.clone())
+        self.routed_drop_preview.delivery_for_drag_session(session)
     }
 
     pub(crate) fn update_routed_drop_preview(
@@ -591,88 +528,31 @@ impl DockViewportRuntime {
         resolution: &DockViewportResolvedDropRoute,
         payload_title: impl Into<String>,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        let payload_title = payload_title.into();
-        let next = match resolution.route() {
-            DockViewportDropRoute::KnownViewport { .. } => {
-                self.routed_drop_preview_from_delivery(resolution.delivery(), payload_title)
-            }
-            DockViewportDropRoute::Local { .. }
-            | DockViewportDropRoute::TearOff(_)
-            | DockViewportDropRoute::Unavailable
-            | DockViewportDropRoute::Rejected(_) => None,
-        };
-        self.replace_routed_drop_preview(next)
+        self.routed_drop_preview
+            .update(resolution, payload_title, |space| {
+                self.adapter.window_for_space(space)
+            })
     }
 
     pub(crate) fn clear_routed_drop_preview(&mut self) -> (bool, Vec<AnyWindowHandle>) {
-        self.replace_routed_drop_preview(None)
-    }
-
-    fn routed_drop_preview_from_delivery(
-        &self,
-        delivery: &DockDropDelivery,
-        payload_title: String,
-    ) -> Option<DockViewportRoutedDropPreview> {
-        let (space, window_id, resolved) = delivery.routed_preview_target()?;
-        Some(DockViewportRoutedDropPreview::new(
-            space.clone(),
-            window_id,
-            DockDropPreview::from_resolved_target(&resolved)?,
-            delivery.clone(),
-            payload_title,
-        ))
-    }
-
-    fn replace_routed_drop_preview(
-        &mut self,
-        next: Option<DockViewportRoutedDropPreview>,
-    ) -> (bool, Vec<AnyWindowHandle>) {
-        if self.routed_drop_preview == next {
-            return (false, Vec::new());
-        }
-
-        let mut windows = Vec::new();
-        if let Some(current) = self.routed_drop_preview.as_ref() {
-            push_unique_window(&mut windows, self.adapter.window_for_space(current.space()));
-        }
-        if let Some(next) = next.as_ref() {
-            push_unique_window(&mut windows, self.adapter.window_for_space(next.space()));
-        }
-        self.routed_drop_preview = next;
-        (true, windows)
+        self.routed_drop_preview
+            .clear(|space| self.adapter.window_for_space(space))
     }
 
     fn clear_routed_drop_preview_if_window_matches(
         &mut self,
         window_id: WindowId,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        if self
-            .routed_drop_preview
-            .as_ref()
-            .is_some_and(|preview| preview.window_id() == window_id)
-        {
-            self.replace_routed_drop_preview(None)
-        } else {
-            (false, Vec::new())
-        }
+        self.routed_drop_preview
+            .clear_if_window_matches(window_id, |space| self.adapter.window_for_space(space))
     }
 
     fn clear_routed_drop_preview_for_drag_session(
         &mut self,
         session: Option<&DockRuntimeDragSession>,
     ) -> (bool, Vec<AnyWindowHandle>) {
-        let Some(session) = session else {
-            return (false, Vec::new());
-        };
-        if self
-            .routed_drop_preview
-            .as_ref()
-            .is_some_and(|preview| preview.delivery().drag_session_id() == Some(session.id()))
-        {
-            self.replace_routed_drop_preview(None)
-        } else {
-            (false, Vec::new())
-        }
+        self.routed_drop_preview
+            .clear_for_drag_session(session, |space| self.adapter.window_for_space(space))
     }
 
     fn clear_runtime_window_state(&mut self, space: &DockSpaceId, window_id: WindowId) {

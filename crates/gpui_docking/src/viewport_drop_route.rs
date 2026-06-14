@@ -1,11 +1,11 @@
 use crate::DockViewportTargetContext;
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest,
+    DockActionApplyError, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
+    DockViewportAdapter, DockViewportDropPayload, DockViewportPlatformSignals,
+    DockViewportTargetHit, DockViewportTearOffRequest,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_target::DockResolvedDropTarget,
-    interaction::DockRuntimeDragSession,
+    interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
@@ -423,17 +423,13 @@ impl DockDropDelivery {
         }
     }
 
-    pub(crate) fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
+    fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
         self.source_space() == &payload.source_space
             && self.source_node() == payload.source_node
             && self.payload() == &DockViewportDropPayload::from_drag_payload(payload)
     }
 
-    pub(crate) fn accepts_hovered_host_window(
-        &self,
-        host_space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
+    fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
         match self {
             DockDropDelivery::Workspace(delivery) => {
                 delivery.accepts_hovered_host_window(host_space, window_id)
@@ -444,11 +440,30 @@ impl DockDropDelivery {
         }
     }
 
-    pub(crate) fn payload_mismatch_error(&self) -> crate::DockActionApplyError {
-        crate::DockActionApplyError::DropPayloadMismatch {
+    fn payload_mismatch_error(&self) -> DockActionApplyError {
+        DockActionApplyError::DropPayloadMismatch {
             space: self.source_space().clone(),
             tabs: self.source_node(),
         }
+    }
+
+    pub(crate) fn release_authority_for_cached_preview(
+        &self,
+        origin: DockPayloadDropReleaseOrigin,
+        host_space: &DockSpaceId,
+        window_id: WindowId,
+        payload: &DockDragPayload,
+    ) -> Result<bool, DockActionApplyError> {
+        if origin != DockPayloadDropReleaseOrigin::HoveredHost {
+            return Ok(false);
+        }
+        if !self.accepts_hovered_host_window(host_space, window_id) {
+            return Ok(false);
+        }
+        if !self.accepts_drag_payload(payload) {
+            return Err(self.payload_mismatch_error());
+        }
+        Ok(true)
     }
 }
 
