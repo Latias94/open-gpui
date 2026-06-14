@@ -309,6 +309,8 @@ pub(crate) struct DockViewportTearOffCommitFailure {
     pending: DockViewportTearOffPending,
     /// Runtime viewport registration outcome before cleanup.
     registration: crate::DockViewportRegisterOutcome,
+    /// Runtime-owned windows superseded before graph commit failed.
+    replaced_windows: Vec<AnyWindowHandle>,
     /// Commit error returned by the docking workspace.
     error: crate::DockActionApplyError,
 }
@@ -317,11 +319,13 @@ impl DockViewportTearOffCommitFailure {
     pub(crate) fn new(
         pending: DockViewportTearOffPending,
         registration: crate::DockViewportRegisterOutcome,
+        replaced_windows: Vec<AnyWindowHandle>,
         error: crate::DockActionApplyError,
     ) -> Self {
         Self {
             pending,
             registration,
+            replaced_windows,
             error,
         }
     }
@@ -332,6 +336,10 @@ impl DockViewportTearOffCommitFailure {
 
     pub(crate) fn error(&self) -> &crate::DockActionApplyError {
         &self.error
+    }
+
+    pub(crate) fn replaced_windows(&self) -> &[AnyWindowHandle] {
+        &self.replaced_windows
     }
 }
 

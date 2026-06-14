@@ -986,7 +986,12 @@ impl DockViewportRuntime {
                 self.unregister_space_runtime_state(pending.target_space());
                 self.close_gate.sync_adapter(&self.adapter);
                 DockViewportTearOffCompletionOutcome::CommitFailed(
-                    DockViewportTearOffCommitFailure::new(pending, registration, error),
+                    DockViewportTearOffCommitFailure::new(
+                        pending,
+                        registration,
+                        replaced_windows,
+                        error,
+                    ),
                 )
             }
         }

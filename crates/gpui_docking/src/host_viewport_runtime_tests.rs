@@ -781,6 +781,55 @@ fn viewport_runtime_tear_off_commit_failure_cleans_runtime_mapping(cx: &mut Test
 }
 
 #[open_gpui::test]
+fn viewport_runtime_tear_off_commit_failure_reports_replaced_windows(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(primary_space.clone(), source_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let old_window = handle(933);
+    let new_window = handle(934);
+
+    runtime.register_opened_viewport(detached_space.clone(), old_window);
+    runtime.begin_tear_off_request_at(
+        tear_off_request(primary_space.clone(), source_tabs, item("a")),
+        detached_space.clone(),
+        None,
+        DockViewportTearOffTick::new(1),
+    );
+    let outcome = cx.update(|app| {
+        let key = item_tear_off_key(&primary_space, source_tabs, item("a"));
+        runtime.complete_tear_off_viewport_at(
+            &key,
+            new_window,
+            DockViewportTearOffTick::new(2),
+            app,
+        )
+    });
+
+    let DockViewportTearOffCompletionOutcome::CommitFailed(failure) = outcome else {
+        panic!("non-empty destination space should fail the tear-off move transaction");
+    };
+    assert_eq!(failure.replaced_windows(), &[old_window]);
+    assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
+}
+
+#[open_gpui::test]
 fn viewport_runtime_tear_off_commit_failure_closes_opened_window(cx: &mut TestAppContext) {
     let primary_space = DockSpaceId::from("primary");
     let detached_space = DockSpaceId::from("detached");

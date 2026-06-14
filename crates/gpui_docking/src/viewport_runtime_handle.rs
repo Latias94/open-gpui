@@ -356,6 +356,9 @@ impl DockViewportRuntimeHandle {
         if let DockViewportTearOffOpenOutcome::Completed(completed) = &outcome {
             close_windows_quietly(completed.replaced_windows().to_vec(), cx);
         }
+        if let DockViewportTearOffOpenOutcome::CommitFailed(failure) = &outcome {
+            close_windows_quietly(failure.replaced_windows().to_vec(), cx);
+        }
         if !matches!(outcome, DockViewportTearOffOpenOutcome::Completed(_)) {
             close_window_quietly(opened.window(), cx);
         }
