@@ -84,9 +84,9 @@ impl DockViewportRoutedDropPreviewStore {
     ) -> (bool, Vec<AnyWindowHandle>) {
         let payload_title = payload_title.into();
         let next = match resolution.route() {
-            crate::DockViewportDropRoute::KnownViewport { .. } => {
-                routed_drop_preview_from_delivery(resolution.delivery(), payload_title)
-            }
+            crate::DockViewportDropRoute::KnownViewport { .. } => resolution
+                .delivery()
+                .and_then(|delivery| routed_drop_preview_from_delivery(delivery, payload_title)),
             crate::DockViewportDropRoute::Local { .. }
             | crate::DockViewportDropRoute::TearOff
             | crate::DockViewportDropRoute::Unavailable

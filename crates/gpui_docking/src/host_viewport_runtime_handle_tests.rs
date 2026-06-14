@@ -1022,7 +1022,7 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
                 DockViewportTargetContext::new(),
             );
             let resolution = runtime.resolve_payload_drop_delivery(&request, app);
-            runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+            runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
         })
         .expect("tear-off route should commit through runtime handle");
 
@@ -1117,7 +1117,7 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
                 DockViewportTargetContext::new(),
             );
             let resolution = runtime.resolve_payload_drop_delivery(&request, app);
-            runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+            runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
         })
         .expect("stack tear-off route should commit through runtime handle");
 
@@ -1239,10 +1239,13 @@ fn viewport_runtime_handle_rejects_known_viewport_drop_without_host_scene(cx: &m
             "a registered viewport without host scene facts should not preview as droppable"
         );
         assert!(
-            resolution.delivery().routed_preview_target().is_none(),
-            "unavailable viewport routes must not render accepted cross-window previews"
+            resolution.delivery().is_none(),
+            "unavailable viewport routes must not carry a delivery"
         );
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        resolution
+            .delivery_result()
+            .cloned()
+            .and_then(|delivery| runtime.deliver_payload_drop_with_outcome(delivery, app))
     });
 
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
@@ -2989,7 +2992,7 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
         );
         let resolution = runtime.resolve_payload_drop_delivery(&request, app);
         runtime
-            .deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+            .deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
             .and_then(|outcome| outcome.action_result())
     });
 

@@ -472,7 +472,9 @@ impl DockInteractionRuntime {
         }
         let preview_changed =
             self.set_drop_route_preview(DockDropRoutePreview::from_route(route, host_position));
-        let delivery = resolution.delivery().clone();
+        let Some(delivery) = resolution.delivery().cloned() else {
+            return preview_changed || self.drop_delivery.take().is_some();
+        };
         let delivery_changed = if self.drop_delivery.as_ref() == Some(&delivery) {
             false
         } else {
@@ -699,8 +701,7 @@ impl DockInteractionRuntime {
 mod tests {
     use super::*;
     use crate::{
-        DockItemId, DockNodeId, DockViewportDropPayload, DockViewportDropRouteRequest,
-        DockViewportTargetContext,
+        DockItemId, DockNodeId,
         drop_target::{DockLeafDropTarget, DockResolvedDropTargetKind},
         workspace_transaction::DockWorkspaceDropPayload,
     };
@@ -1085,19 +1086,7 @@ mod tests {
         let position = point(px(80.0), px(60.0));
         let rejected_route =
             DockViewportDropRoute::Rejected(crate::DockPolicyError::PlatformViewportsDisabled);
-        let rejected_delivery = DockDropDelivery::from_route_request(
-            &DockViewportDropRouteRequest::from_target_context(
-                DockSpaceId::from("main"),
-                tabs,
-                DockViewportDropPayload::Item(DockItemId::from("a")),
-                position,
-                None,
-                DockViewportTargetContext::new(),
-            ),
-            rejected_route.clone(),
-        );
-        let rejected_resolution =
-            DockViewportResolvedDropRoute::new(rejected_route, rejected_delivery);
+        let rejected_resolution = DockViewportResolvedDropRoute::new(rejected_route, None);
 
         assert!(runtime.update_drop_route_preview(&rejected_resolution, position,));
         assert!(

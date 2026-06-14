@@ -1402,7 +1402,7 @@ fn viewport_runtime_rejects_stale_known_viewport_delivery_after_target_rebind(
     );
     let stale_delivery = cx
         .update(|app| runtime.resolve_payload_drop_delivery(&request, app))
-        .delivery()
+        .expect_delivery()
         .clone();
 
     runtime.register_opened_viewport(target_space.clone(), new_window);
@@ -1511,7 +1511,7 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
     );
 
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1589,14 +1589,17 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
         "fresh viewport facts should produce a known viewport route"
     );
     assert!(
-        resolution.delivery().routed_preview_target().is_some(),
+        resolution
+            .expect_delivery()
+            .routed_preview_target()
+            .is_some(),
         "fresh route should capture the resolved host scene target"
     );
 
     let (changed, _) = runtime.mark_viewport_window_snapshot_stale(target_window.window_id());
     assert!(changed);
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1665,15 +1668,18 @@ fn viewport_runtime_known_viewport_without_scene_is_unavailable(cx: &mut TestApp
         "viewport hit without a current host scene target should be unavailable"
     );
     assert!(
-        resolution.delivery().routed_preview_target().is_none(),
-        "unavailable route must not carry an accepted preview target"
+        resolution.delivery().is_none(),
+        "unavailable route must not carry a delivery"
     );
     let (changed, windows) = runtime.update_routed_drop_preview(&resolution, "Panel A");
     assert!(!changed);
     assert!(windows.is_empty());
 
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        resolution
+            .delivery_result()
+            .cloned()
+            .and_then(|delivery| runtime.deliver_payload_drop_with_outcome(delivery, app))
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -1751,11 +1757,14 @@ fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
-        resolution.delivery().routed_preview_target().is_some(),
+        resolution
+            .expect_delivery()
+            .routed_preview_target()
+            .is_some(),
         "preview should capture the accepted central target"
     );
     let (_, _, resolved_target) = resolution
-        .delivery()
+        .expect_delivery()
         .routed_preview_target()
         .expect("preview target should be captured");
     assert!(
@@ -1777,7 +1786,7 @@ fn viewport_runtime_revalidates_resolved_target_snapshot_against_current_policy(
     });
 
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
     });
     assert_eq!(
         result,
@@ -1866,12 +1875,15 @@ fn viewport_runtime_preview_respects_payload_dock_class_policy(cx: &mut TestAppC
         "policy-rejected cross-viewport targets should render as rejected routes"
     );
     assert!(
-        resolution.delivery().routed_preview_target().is_none(),
-        "policy-rejected cross-viewport targets must not render as accepted previews"
+        resolution.delivery().is_none(),
+        "policy-rejected cross-viewport targets must not carry a delivery"
     );
 
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(resolution.delivery().clone(), app)
+        resolution
+            .delivery_result()
+            .cloned()
+            .and_then(|delivery| runtime.deliver_payload_drop_with_outcome(delivery, app))
     });
     assert_eq!(
         result,
@@ -2196,7 +2208,10 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         "release should be retargeted to the current point instead of reusing cached host_position"
     );
     let result = cx.update(|app| {
-        runtime.deliver_payload_drop_with_outcome(release_resolution.delivery().clone(), app)
+        release_resolution
+            .delivery_result()
+            .cloned()
+            .and_then(|delivery| runtime.deliver_payload_drop_with_outcome(delivery, app))
     });
     assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
     cx.read_entity(&controller, |controller, _| {
@@ -2280,7 +2295,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
         ),
         "preview setup should resolve a known target viewport"
     );
-    let delivery = resolution.delivery().clone();
+    let delivery = resolution.expect_delivery().clone();
 
     runtime.update_routed_drop_preview(&resolution, "Panel A");
     assert_eq!(
@@ -2293,11 +2308,14 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
         DockViewportDropRoute::Local {
             host_position: target_position,
         },
-        DockDropDelivery::from_route_request(
-            &request,
-            DockViewportDropRoute::Local {
-                host_position: target_position,
-            },
+        Some(
+            DockDropDelivery::from_route_request(
+                &request,
+                DockViewportDropRoute::Local {
+                    host_position: target_position,
+                },
+            )
+            .expect("local route should derive a delivery"),
         ),
     );
     runtime.update_routed_drop_preview(&local_resolution, "Panel A");
@@ -2327,7 +2345,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
     .with_drag_session(Some(next_session.clone()));
     let next_resolution =
         cx.update(|app| runtime.resolve_payload_drop_delivery(&next_request, app));
-    let next_delivery = next_resolution.delivery().clone();
+    let next_delivery = next_resolution.expect_delivery().clone();
     runtime.update_routed_drop_preview(&next_resolution, "Panel A");
     assert_eq!(
         runtime.routed_drop_delivery_for_drag_session(Some(&next_session)),
@@ -2405,7 +2423,7 @@ fn viewport_runtime_rejects_known_viewport_delivery_from_stale_drag_session(
     .with_drag_session(Some(stale_session.clone()));
     let stale_delivery = cx
         .update(|app| runtime.resolve_payload_drop_delivery(&request, app))
-        .delivery()
+        .expect_delivery()
         .clone();
 
     let _replacement = runtime.begin_payload_drag(&payload);

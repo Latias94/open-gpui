@@ -540,7 +540,7 @@ impl DockViewportRuntimeHandle {
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let resolution = self.resolve_payload_drop_delivery(request, cx);
-        let delivery = resolution.delivery().clone();
+        let delivery = resolution.delivery_result()?.clone();
         self.deliver_payload_drop_with_outcome(delivery, cx)
     }
 

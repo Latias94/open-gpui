@@ -625,10 +625,6 @@ impl DockViewportRuntime {
                             .to_string(),
                 });
             }
-            crate::DockDropDeliveryKind::Unavailable => {
-                return Err(DockActionApplyError::DropTargetUnavailable);
-            }
-            crate::DockDropDeliveryKind::Rejected(error) => return Err(error.into()),
         };
 
         let (target_space, target) = target_space;
