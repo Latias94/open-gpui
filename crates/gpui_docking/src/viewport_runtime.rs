@@ -290,7 +290,7 @@ impl DockViewportRuntime {
         let session = DockRuntimeDragSession::new(id, payload);
         self.drag_session = Some(session.clone());
         self.drag_tear_off_geometry = None;
-        self.clear_routed_drop_preview_for_drag_session(Some(&session));
+        self.clear_routed_drop_preview();
         session
     }
 
