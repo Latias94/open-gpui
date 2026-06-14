@@ -768,8 +768,22 @@ impl DockViewportRuntime {
         host_position: Point<Pixels>,
         cx: &App,
     ) -> Option<crate::drop_target::DockResolvedDropTarget> {
+        let window = self.adapter.window_for_space(space)?;
+        if self
+            .adapter
+            .snapshot_facts_generation(space, window.window_id())
+            .is_none()
+        {
+            return None;
+        }
         let policy = self.controller.read(cx).workspace().policy().clone();
-        self.host_scenes.resolve(space, host_position, &policy)
+        self.host_scenes.resolve_for_window(
+            space,
+            Some(window.window_id()),
+            host_position,
+            &policy,
+            None,
+        )
     }
 
     /// Resolves a rendered payload release into route and delivery facts from one snapshot.

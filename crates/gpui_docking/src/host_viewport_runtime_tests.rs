@@ -1214,15 +1214,27 @@ fn viewport_runtime_window_closed_clears_host_scene_without_adapter_mapping(
     assert!(
         cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
             .is_some(),
-        "test setup should start with a resolvable stale host scene"
+        "test setup should start with a resolvable current host scene"
     );
 
     runtime.unregister_adapter_window_for_test(target_window.window_id());
+    assert!(
+        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            .is_none(),
+        "host scene target resolution must not bypass the runtime window mapping"
+    );
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&target_space)
+            .is_some(),
+        "test setup should leave behind a host scene after the adapter mapping is gone"
+    );
     let outcome = runtime.handle_window_closed(target_window.window_id());
 
     assert_eq!(outcome.status(), DockViewportCloseStatus::UnknownWindow);
     assert!(
-        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+        runtime
+            .last_host_scene_screen_position(&target_space)
             .is_none(),
         "closed window notifications must clear host scenes even after adapter mapping is gone"
     );
@@ -1698,6 +1710,81 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
             vec![item("b")]
         );
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_rejects_host_scene_resolution_after_window_facts_go_stale(
+    cx: &mut TestAppContext,
+) {
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(target_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let target_window = handle(31);
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+
+    runtime.register_opened_viewport(target_space.clone(), target_window);
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    assert!(runtime.viewport_route_ready(&target_space));
+    assert!(
+        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            .is_some(),
+        "fresh viewport facts should allow host scene target resolution"
+    );
+
+    let (changed, _) = runtime.mark_viewport_window_snapshot_stale(target_window.window_id());
+    assert!(changed);
+    assert!(!runtime.viewport_route_ready(&target_space));
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&target_space)
+            .is_some(),
+        "stale window facts should not delete the last rendered scene"
+    );
+    assert!(
+        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            .is_none(),
+        "stale window facts must block direct host scene target resolution"
+    );
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+    assert!(
+        cx.update(|app| runtime.resolve_host_scene_target(&target_space, host_position, app))
+            .is_some(),
+        "the next rendered host-scene frame should restore resolution"
+    );
 }
 
 #[open_gpui::test]
