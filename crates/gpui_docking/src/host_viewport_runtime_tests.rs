@@ -1713,6 +1713,106 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
 }
 
 #[open_gpui::test]
+fn viewport_runtime_rejects_cached_local_delivery_after_window_facts_go_stale(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: crate::SplitAxis::Horizontal,
+        children: vec![source_tabs, target_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(source_space.clone(), root);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let source_window = handle(32);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(source_space.clone(), source_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        source_space.clone(),
+        source_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &source_space,
+        source_window.window_id(),
+        leaf_host_scene_fact(root, target_tabs),
+    ));
+
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        screen_position_for_host_position(window_bounds, host_position),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(source_window),
+    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    assert!(
+        matches!(resolution.route(), DockViewportDropRoute::Local { .. }),
+        "fresh source viewport facts should resolve a local route, got {:?}",
+        resolution.route()
+    );
+    let delivery = resolution.expect_delivery().clone();
+
+    let (changed, _) = runtime.mark_viewport_window_snapshot_stale(source_window.window_id());
+    assert!(changed);
+
+    let validation = cx.update(|app| runtime.validate_payload_drop_delivery(&delivery, app));
+    assert_eq!(validation, Err(DockActionApplyError::DropTargetUnavailable));
+    let result = cx.update(|app| runtime.deliver_payload_drop_with_outcome(delivery, app));
+    assert_eq!(result, Err(DockActionApplyError::DropTargetUnavailable));
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a"), item("b")]
+        );
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(source_tabs)
+            .expect("source tabs should still exist")
+        else {
+            panic!("source should remain tabs");
+        };
+        assert_eq!(items, &vec![item("a")]);
+        assert_eq!(selected.as_ref(), items.first());
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_rejects_host_scene_resolution_after_window_facts_go_stale(
     cx: &mut TestAppContext,
 ) {

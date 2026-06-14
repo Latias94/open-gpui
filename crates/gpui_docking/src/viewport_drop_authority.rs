@@ -20,6 +20,7 @@ pub(crate) enum DockViewportWorkspaceRouteTarget {
 
 /// Resolves the workspace target authority for a viewport route.
 pub(crate) fn resolve_workspace_target_for_route(
+    adapter: &DockViewportAdapter,
     host_scenes: &DockViewportHostSceneRegistry,
     route: &DockViewportDropRoute,
     request: &DockViewportDropRouteRequest,
@@ -28,6 +29,11 @@ pub(crate) fn resolve_workspace_target_for_route(
 ) -> DockViewportWorkspaceRouteTarget {
     match route {
         DockViewportDropRoute::Local { host_position } => {
+            let Some((window_id, facts_generation)) =
+                current_route_window_facts(adapter, request.source_space())
+            else {
+                return DockViewportWorkspaceRouteTarget::Unavailable;
+            };
             let target_validator =
                 dock_target_validator(request.source_space(), payload_classes, policy);
             let resolved = host_scenes
@@ -41,9 +47,9 @@ pub(crate) fn resolve_workspace_target_for_route(
                 .map(|(frame, resolution)| {
                     resolved_target_snapshot(
                         request.source_space().clone(),
-                        None,
+                        Some(window_id),
                         frame,
-                        None,
+                        Some(facts_generation),
                         resolution,
                     )
                 });
@@ -78,6 +84,15 @@ pub(crate) fn resolve_workspace_target_for_route(
         | DockViewportDropRoute::Unavailable
         | DockViewportDropRoute::Rejected(_) => DockViewportWorkspaceRouteTarget::NotWorkspaceRoute,
     }
+}
+
+fn current_route_window_facts(
+    adapter: &DockViewportAdapter,
+    space: &DockSpaceId,
+) -> Option<(WindowId, u64)> {
+    let window_id = adapter.window_for_space(space)?.window_id();
+    let facts_generation = adapter.snapshot_facts_generation(space, window_id)?;
+    Some((window_id, facts_generation))
 }
 
 /// Resolves a delivery target against current viewport and workspace facts.

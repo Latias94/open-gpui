@@ -799,6 +799,7 @@ impl DockViewportRuntime {
         let payload_classes = workspace
             .payload_dock_classes_for_viewport_payload(request.payload(), request.source_node());
         let resolved_target = match crate::resolve_workspace_target_for_route(
+            &self.adapter,
             &self.host_scenes,
             &route,
             request,
