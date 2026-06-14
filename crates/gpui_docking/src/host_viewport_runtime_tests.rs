@@ -57,6 +57,53 @@ fn leaf_host_scene_fact(
     })
 }
 
+fn cache_known_viewport_preview_for_test(
+    runtime: &mut DockViewportRuntime,
+    source_space: DockSpaceId,
+    source_tabs: crate::DockNodeId,
+    target_space: &DockSpaceId,
+    target_window: AnyWindowHandle,
+    target_tabs: crate::DockNodeId,
+    cx: &mut TestAppContext,
+) -> crate::interaction::DockRuntimeDragSession {
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        target_space,
+        target_window.window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+    let request = DockViewportDropRouteRequest::from_target_context(
+        source_space,
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        point(px(220.0), px(200.0)),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(target_window),
+    )
+    .with_drag_session(Some(session.clone()));
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    let (changed, _) = runtime.update_routed_drop_preview(&resolution, "Panel A");
+    assert!(changed);
+    session
+}
+
 fn close_window_quietly_for_test(window: AnyWindowHandle, cx: &mut TestAppContext) {
     let _ = window.update(cx, |_, window, _| window.remove_window());
 }
@@ -1295,46 +1342,85 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
         DockViewportClosePolicy::RetainLayout,
     );
 
-    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
-    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
-    let host_position = center_drop_position(host_bounds);
-    assert!(runtime.begin_viewport_host_scene(
-        target_space.clone(),
-        old_window.window_id(),
-        DockViewportWindowFacts::from_window_bounds(window_bounds),
-        host_bounds,
-        host_position,
-    ));
-    assert!(runtime.push_viewport_host_scene_fact(
-        &target_space,
-        old_window.window_id(),
-        leaf_host_scene_fact(target_tabs, target_tabs),
-    ));
-
-    let payload = DockDragPayload::new_item(
-        source_space.clone(),
-        source_tabs,
-        item("a"),
-        "Panel A".to_string(),
-    );
-    let session = runtime.begin_payload_drag(&payload);
-    let request = DockViewportDropRouteRequest::from_target_context(
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
         source_space,
         source_tabs,
-        DockViewportDropPayload::Item(item("a")),
-        point(px(220.0), px(200.0)),
-        None,
-        DockViewportTargetContext::new().with_hovered_window(old_window),
-    )
-    .with_drag_session(Some(session.clone()));
-    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
-    let (changed, _) = runtime.update_routed_drop_preview(&resolution, "Panel A");
-    assert!(changed);
+        &target_space,
+        old_window,
+        target_tabs,
+        cx,
+    );
 
     runtime.register_opened_viewport(target_space.clone(), new_window);
 
     assert_eq!(
         runtime.routed_drop_preview_for(&target_space, old_window.window_id()),
+        None
+    );
+    assert_eq!(
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
+        None
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_reusable_stale_window_clears_routed_preview(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let stale_window = handle(63);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(target_space.clone(), stale_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space,
+        source_tabs,
+        &target_space,
+        stale_window,
+        target_tabs,
+        cx,
+    );
+    assert!(
+        runtime
+            .routed_drop_preview_for(&target_space, stale_window.window_id())
+            .is_some()
+    );
+
+    cx.update(|app| {
+        assert!(
+            matches!(
+                runtime.reusable_window_for_space(&target_space, app),
+                crate::DockViewportReusableWindow::Stale
+            ),
+            "test handle should behave like a stale GPUI window"
+        );
+    });
+
+    assert_eq!(
+        runtime.routed_drop_preview_for(&target_space, stale_window.window_id()),
         None
     );
     assert_eq!(

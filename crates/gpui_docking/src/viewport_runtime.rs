@@ -530,6 +530,13 @@ impl DockViewportRuntime {
         self.host_scenes.unregister_space(space);
     }
 
+    fn unregister_space_runtime_state(&mut self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
+        let snapshot = self.adapter.unregister_space(space)?;
+        let window = snapshot.window;
+        self.clear_runtime_window_state(space, window.window_id());
+        Some(window)
+    }
+
     pub(crate) fn reusable_window_for_space(
         &mut self,
         space: &DockSpaceId,
@@ -545,9 +552,9 @@ impl DockViewportRuntime {
             return DockViewportReusableWindow::Reused(window);
         }
 
-        self.discard_owned_window(window.window_id());
-        self.adapter.unregister_space(space);
-        self.host_scenes.unregister_space(space);
+        if let Some(window) = self.unregister_space_runtime_state(space) {
+            self.discard_owned_window(window.window_id());
+        }
         self.close_gate.sync_adapter(&self.adapter);
         DockViewportReusableWindow::Stale
     }
@@ -904,8 +911,7 @@ impl DockViewportRuntime {
             }
             Err(error) => {
                 self.discard_owned_window(window.window_id());
-                self.adapter.unregister_space(pending.target_space());
-                self.host_scenes.unregister_space(pending.target_space());
+                self.unregister_space_runtime_state(pending.target_space());
                 self.close_gate.sync_adapter(&self.adapter);
                 DockViewportTearOffCompletionOutcome::CommitFailed(
                     DockViewportTearOffCommitFailure::new(pending, registration, error),
@@ -952,9 +958,8 @@ impl DockViewportRuntime {
     }
 
     fn discard_tear_off_target(&mut self, target_space: &DockSpaceId) {
-        if let Some(snapshot) = self.adapter.unregister_space(target_space) {
-            self.clear_runtime_window_state(target_space, snapshot.window.window_id());
-            self.discard_owned_window(snapshot.window.window_id());
+        if let Some(window) = self.unregister_space_runtime_state(target_space) {
+            self.discard_owned_window(window.window_id());
         }
         self.close_gate.sync_adapter(&self.adapter);
     }
