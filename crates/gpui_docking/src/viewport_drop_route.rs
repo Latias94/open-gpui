@@ -58,7 +58,7 @@ pub(crate) enum DockDropDeliveryKind {
     /// Commit a route into an already registered viewport host scene.
     Workspace(DockDropWorkspaceTarget),
     /// Open and commit into a new platform viewport.
-    TearOff(DockDropTearOffDelivery),
+    TearOff(DockViewportTearOffRequest),
 }
 
 /// Route and delivery facts resolved from the same release snapshot.
@@ -115,12 +115,6 @@ pub(crate) enum DockDropWorkspaceTarget {
     Resolved(DockViewportResolvedDropTargetSnapshot),
     /// Resolve the source host's local target from current host-scene facts at delivery time.
     ResolveLocalAtDelivery { host_position: Point<Pixels> },
-}
-
-/// Delivery facts for a route that opens a new platform viewport.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropTearOffDelivery {
-    request: DockViewportTearOffRequest,
 }
 
 /// Resolved target snapshot captured from a concrete host-scene frame.
@@ -230,30 +224,6 @@ impl DockDropDeliverySource {
     }
 }
 
-impl DockDropTearOffDelivery {
-    fn from_request(request: &DockViewportDropRouteRequest) -> Self {
-        let request = DockViewportTearOffRequest::new(
-            request.source_space().clone(),
-            request.source_node(),
-            request.payload().clone(),
-            request.release_position(),
-            request.suggested_window_bounds(),
-        )
-        .with_drag_session(request.drag_session().cloned())
-        .with_tear_off_geometry(request.tear_off_geometry());
-        Self { request }
-    }
-
-    #[cfg(test)]
-    fn request(&self) -> &DockViewportTearOffRequest {
-        &self.request
-    }
-
-    fn into_request(self) -> DockViewportTearOffRequest {
-        self.request
-    }
-}
-
 impl DockViewportResolvedDropTargetSnapshot {
     pub(crate) fn new(
         target_space: DockSpaceId,
@@ -344,7 +314,7 @@ impl DockDropDelivery {
                 DockDropDeliveryKind::Workspace(DockDropWorkspaceTarget::resolved(resolved_target?))
             }
             DockViewportDropRoute::TearOff => {
-                DockDropDeliveryKind::TearOff(DockDropTearOffDelivery::from_request(request))
+                DockDropDeliveryKind::TearOff(tear_off_request_from_drop_route_request(request))
             }
             DockViewportDropRoute::Unavailable | DockViewportDropRoute::Rejected(_) => {
                 return None;
@@ -412,7 +382,7 @@ impl DockDropDelivery {
     #[cfg(test)]
     pub(crate) fn tear_off_request(&self) -> Option<DockViewportTearOffRequest> {
         match &self.kind {
-            DockDropDeliveryKind::TearOff(delivery) => Some(delivery.request().clone()),
+            DockDropDeliveryKind::TearOff(request) => Some(request.clone()),
             DockDropDeliveryKind::Workspace(_) => None,
         }
     }
@@ -420,7 +390,7 @@ impl DockDropDelivery {
     pub(crate) fn into_tear_off_request(self) -> Result<DockViewportTearOffRequest, Self> {
         let Self { source, kind } = self;
         match kind {
-            DockDropDeliveryKind::TearOff(delivery) => Ok(delivery.into_request()),
+            DockDropDeliveryKind::TearOff(request) => Ok(request),
             kind => Err(Self { source, kind }),
         }
     }
@@ -443,6 +413,20 @@ impl DockDropDelivery {
         }
         Ok(true)
     }
+}
+
+fn tear_off_request_from_drop_route_request(
+    request: &DockViewportDropRouteRequest,
+) -> DockViewportTearOffRequest {
+    DockViewportTearOffRequest::new(
+        request.source_space().clone(),
+        request.source_node(),
+        request.payload().clone(),
+        request.release_position(),
+        request.suggested_window_bounds(),
+    )
+    .with_drag_session(request.drag_session().cloned())
+    .with_tear_off_geometry(request.tear_off_geometry())
 }
 
 impl DockViewportDropRouteRequest {
