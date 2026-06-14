@@ -80,18 +80,7 @@ impl DockGraph {
         Some(DockEdgeDockPlan::WrapTarget { target, axis, zone })
     }
 
-    pub(in crate::graph) fn insert_edge_docked_child(
-        &mut self,
-        space: &DockSpaceId,
-        target: DockNodeId,
-        zone: DropZone,
-        new_child: DockNodeId,
-    ) -> bool {
-        self.edge_dock_plan(space, target, zone)
-            .is_some_and(|plan| self.apply_edge_dock_plan(space, plan, new_child))
-    }
-
-    fn apply_edge_dock_plan(
+    pub(in crate::graph) fn apply_edge_dock_plan(
         &mut self,
         space: &DockSpaceId,
         plan: DockEdgeDockPlan,

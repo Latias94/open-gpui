@@ -186,12 +186,9 @@ impl DockGraph {
             }
             DockMoveTarget::Edge { anchor, zone } => {
                 let target_node = anchor.node();
-                if self
-                    .root_for_node_in_space(target_space, target_node)
-                    .is_none()
-                {
+                let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
                     return false;
-                }
+                };
                 if !self.remove_item_from_tabs(source_tabs, source_index) {
                     return false;
                 }
@@ -200,7 +197,7 @@ impl DockGraph {
                     selected: Some(item),
                 });
 
-                if !self.insert_edge_docked_child(target_space, target_node, zone, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, edge_plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
@@ -281,12 +278,9 @@ impl DockGraph {
             }
             DockMoveTarget::Edge { anchor, zone } => {
                 let target_node = anchor.node();
-                if self
-                    .root_for_node_in_space(target_space, target_node)
-                    .is_none()
-                {
+                let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
                     return false;
-                }
+                };
                 let Some(detached) =
                     self.take_tabs_from_space_without_simplify(source_space, source_tabs)
                 else {
@@ -294,7 +288,7 @@ impl DockGraph {
                 };
                 let new_tabs = self.insert_detached_tabs(detached);
 
-                if !self.insert_edge_docked_child(target_space, target_node, zone, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, edge_plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
