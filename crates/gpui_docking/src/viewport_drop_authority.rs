@@ -39,7 +39,7 @@ pub(crate) fn resolve_workspace_target_for_route(
             let resolved = host_scenes
                 .resolve_frame_for_window(
                     request.source_space(),
-                    None,
+                    Some(window_id),
                     *host_position,
                     policy,
                     Some(&target_validator),
@@ -208,4 +208,86 @@ fn target_facts_generation_is_current(
         return true;
     };
     adapter.snapshot_facts_generation(target.target_space(), window_id) == Some(facts_generation)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DockGraph, DockNodeId, DockViewportTargetContext, DockViewportWindowFacts,
+        drop_runtime::DockHostDropSceneFact,
+        drop_target::DockEmptySpaceDropTarget,
+        viewport_drop_scene::DockViewportHostSceneSnapshot,
+        viewport_test_support::{bounds, handle, item, space},
+    };
+    use open_gpui::{WindowBounds, point, px};
+    use slotmap::Key;
+
+    #[test]
+    fn local_route_requires_current_window_host_scene_identity() {
+        let source_space = space("source");
+        let old_window = handle(1);
+        let new_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source_space.clone(), new_window);
+        adapter.update_snapshot(
+            &source_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+
+        let mut host_scenes = DockViewportHostSceneRegistry::default();
+        let old_frame = host_scenes
+            .register(DockViewportHostSceneSnapshot::new(
+                source_space.clone(),
+                old_window.window_id(),
+                bounds(100.0, 100.0, 320.0, 240.0),
+                bounds(0.0, 0.0, 320.0, 240.0),
+                point(px(24.0), px(24.0)),
+            ))
+            .frame;
+        assert!(
+            host_scenes
+                .push_frame_fact(
+                    &old_frame,
+                    DockHostDropSceneFact::EmptySpace(DockEmptySpaceDropTarget {
+                        space: source_space.clone(),
+                        bounds: bounds(0.0, 0.0, 320.0, 240.0),
+                        is_central: false,
+                    })
+                )
+                .is_some()
+        );
+
+        let workspace = DockWorkspace::new(source_space.clone(), DockGraph::new());
+        let payload = DockViewportDropPayload::Item(item("a"));
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space,
+            DockNodeId::null(),
+            payload,
+            point(px(124.0), px(124.0)),
+            None,
+            DockViewportTargetContext::new().with_hovered_window(new_window),
+        );
+
+        let target = resolve_workspace_target_for_route(
+            &adapter,
+            &host_scenes,
+            &DockViewportDropRoute::Local {
+                host_position: point(px(24.0), px(24.0)),
+            },
+            &request,
+            workspace.policy(),
+            &payload_classes,
+        );
+
+        assert!(
+            matches!(target, DockViewportWorkspaceRouteTarget::Missing),
+            "local route must not wrap a stale host scene from another window as the current window"
+        );
+    }
 }
