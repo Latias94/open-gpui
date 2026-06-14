@@ -2,10 +2,10 @@ use crate::{
     DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockPanel,
     DockSpaceId, DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportRouteStatus, DockViewportRuntimeHandle,
-    DockViewportShouldCloseStatus, DockViewportStaleStatusReason, DockViewportTargetContext,
-    DockViewportTearOffOpenOutcome, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace, DropZone, SplitAxis,
+    DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
+    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
+    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -328,6 +328,58 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
         )
         .is_some(),
         "reopened retained layout should render the original panel"
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_handle_open_does_not_reuse_close_pending_window(cx: &mut TestAppContext) {
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(secondary_space.clone(), graph);
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime handle");
+
+    assert!(
+        runtime
+            .handle_window_should_close(opened.window().window_id())
+            .allows_close(),
+        "RetainLayout should allow the platform close"
+    );
+    let reopened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("close-pending retained viewport should be replaced, not reused");
+
+    assert_eq!(reopened.status(), DockViewportOpenStatus::Replaced);
+    assert_ne!(reopened.window(), opened.window());
+    assert_eq!(
+        runtime
+            .borrow()
+            .adapter()
+            .window_for_space(&secondary_space),
+        Some(reopened.window())
     );
 }
 

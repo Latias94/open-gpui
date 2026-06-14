@@ -1465,6 +1465,92 @@ fn viewport_runtime_merge_back_should_close_disables_pending_window_routing(
 }
 
 #[open_gpui::test]
+fn viewport_runtime_retain_should_close_disables_pending_window_routing(cx: &mut TestAppContext) {
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(detached_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(48);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let window_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let host_bounds = floating_bounds(0.0, 0.0, 360.0, 220.0);
+    let host_position = center_drop_position(host_bounds);
+    assert!(runtime.begin_viewport_host_scene(
+        detached_space.clone(),
+        window.window_id(),
+        DockViewportWindowFacts::from_window_bounds(window_bounds),
+        host_bounds,
+        host_position,
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &detached_space,
+        window.window_id(),
+        leaf_host_scene_fact(detached_tabs, detached_tabs),
+    ));
+
+    let should_close =
+        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+
+    assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
+    assert_eq!(
+        runtime.adapter().window_for_space(&detached_space),
+        Some(window),
+        "pending close keeps the mapping for close callback attribution"
+    );
+    let lifecycle = runtime.runtime_status().viewport_lifecycle;
+    let detached_lifecycle = lifecycle
+        .iter()
+        .find(|record| record.space == detached_space)
+        .expect("pending retain close should keep lifecycle diagnostics");
+    assert_eq!(
+        detached_lifecycle.route_status,
+        DockViewportRouteStatus::Stale {
+            reason: DockViewportStaleStatusReason::PlatformCloseRequested,
+        }
+    );
+    assert_eq!(
+        runtime.last_host_scene_screen_position(&detached_space),
+        None
+    );
+    assert!(
+        !runtime.begin_viewport_host_scene(
+            detached_space.clone(),
+            window.window_id(),
+            DockViewportWindowFacts::from_window_bounds(window_bounds),
+            host_bounds,
+            host_position,
+        ),
+        "retain close pending windows must not republish route facts before close callback"
+    );
+
+    let request = DockViewportDropRouteRequest::from_target_context(
+        detached_space.clone(),
+        detached_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        screen_position_for_host_position(window_bounds, host_position),
+        None,
+        DockViewportTargetContext::new().with_hovered_window(window),
+    );
+    let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
+    assert_eq!(resolution.route(), &DockViewportDropRoute::Unavailable);
+    assert!(resolution.delivery().is_none());
+}
+
+#[open_gpui::test]
 fn viewport_runtime_discarded_precommitted_close_does_not_mark_reused_window(
     cx: &mut TestAppContext,
 ) {

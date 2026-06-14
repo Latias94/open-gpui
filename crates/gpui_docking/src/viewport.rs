@@ -63,6 +63,14 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
+    pub(crate) fn window_close_requested(&self, window_id: WindowId) -> bool {
+        let Some(space) = self.space_for_window_id(window_id) else {
+            return false;
+        };
+        self.snapshot(space)
+            .is_some_and(|snapshot| snapshot.is_platform_close_requested())
+    }
+
     pub(crate) fn unregister_window_id_snapshot(
         &mut self,
         window_id: WindowId,

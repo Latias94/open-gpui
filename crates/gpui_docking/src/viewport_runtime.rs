@@ -417,12 +417,18 @@ impl DockViewportRuntime {
         window_id: WindowId,
     ) -> (bool, Vec<AnyWindowHandle>) {
         let changed = self.adapter.mark_window_close_requested(window_id);
+        let mut changed = changed;
+        let mut windows = Vec::new();
         if let Some(space) = self.adapter.space_for_window_id(window_id).cloned() {
             self.status.clear_window_references(&space, window_id);
+            let (drag_changed, drag_windows) = self.finish_payload_drag_for_source_space(&space);
+            changed |= drag_changed;
+            extend_unique_windows(&mut windows, drag_windows);
         }
         self.host_scenes.unregister_window(window_id);
-        let (preview_changed, windows) =
+        let (preview_changed, preview_windows) =
             self.clear_routed_drop_preview_if_window_matches(window_id);
+        extend_unique_windows(&mut windows, preview_windows);
         (changed || preview_changed, windows)
     }
 
@@ -455,10 +461,7 @@ impl DockViewportRuntime {
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
         let window = self.adapter.window_for_space(&space)?;
-        if self
-            .close_coordinator
-            .has_merge_back_precommitted(window.window_id())
-        {
+        if self.adapter.window_close_requested(window.window_id()) {
             return None;
         }
         let current_identity = DockViewportIdentity::new(space.clone(), window.window_id());
@@ -545,30 +548,39 @@ impl DockViewportRuntime {
             .clear_for_drag_session(session, |space| self.adapter.window_for_space(space))
     }
 
-    fn clear_runtime_window_state(&mut self, space: &DockSpaceId, window_id: WindowId) {
-        let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
+    fn clear_runtime_window_state(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> Vec<AnyWindowHandle> {
+        let (_, mut windows) = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.close_coordinator.discard_window(window_id);
         self.host_scenes.unregister_space(space);
         self.status.clear_window_references(space, window_id);
+        let (_, drag_windows) = self.finish_payload_drag_for_source_space(space);
+        extend_unique_windows(&mut windows, drag_windows);
+        windows
     }
 
-    fn finish_payload_drag_for_source_space(&mut self, space: &DockSpaceId) {
+    fn finish_payload_drag_for_source_space(
+        &mut self,
+        space: &DockSpaceId,
+    ) -> (bool, Vec<AnyWindowHandle>) {
         let Some(session) = self
             .drag_session
             .as_ref()
             .filter(|session| session.source_space() == space)
             .cloned()
         else {
-            return;
+            return (false, Vec::new());
         };
-        let _ = self.finish_payload_drag(&session);
+        self.finish_payload_drag(&session)
     }
 
     fn unregister_space_runtime_state(&mut self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
         let snapshot = self.adapter.unregister_space(space)?;
-        self.finish_payload_drag_for_source_space(space);
         let window = snapshot.window;
-        self.clear_runtime_window_state(space, window.window_id());
+        let _ = self.clear_runtime_window_state(space, window.window_id());
         Some(window)
     }
 
@@ -601,6 +613,9 @@ impl DockViewportRuntime {
         let Some(window) = self.adapter.window_for_space(space) else {
             return DockViewportReusableWindow::Missing;
         };
+        if self.adapter.window_close_requested(window.window_id()) {
+            return DockViewportReusableWindow::Stale;
+        }
         if window.update(cx, |_, _, _| ()).is_ok() {
             return DockViewportReusableWindow::Reused(window);
         }
@@ -1092,17 +1107,16 @@ impl DockViewportRuntime {
     /// Once a closed notification arrives, the platform window is already gone and docking must
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
-        let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.discard_owned_window(window_id);
         let merge_back_prepared = self
             .close_coordinator
             .was_merge_back_precommitted(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         if let Some(space) = outcome.space().cloned() {
-            self.status.clear_window_references(&space, window_id);
-            self.finish_payload_drag_for_source_space(&space);
+            let _ = self.clear_runtime_window_state(&space, window_id);
+        } else {
+            let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         }
-        self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
         let outcome = if merge_back_prepared && outcome.status() == DockViewportCloseStatus::Closed
         {
@@ -1171,6 +1185,7 @@ impl DockViewportRuntime {
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
+        let _ = self.apply_allowed_should_close_route_invalidation(&outcome);
         self.status.record_should_close(&outcome);
         outcome
     }
@@ -1189,15 +1204,38 @@ impl DockViewportRuntime {
             &self.controller,
             cx,
         );
-        if outcome.status == crate::DockViewportShouldCloseStatus::Allowed
-            && self
-                .close_coordinator
-                .has_merge_back_precommitted(window_id)
-        {
-            let _ = self.mark_viewport_window_close_requested(window_id);
-        }
+        let _ = self.apply_allowed_should_close_route_invalidation(&outcome);
         self.status.record_should_close(&outcome);
         outcome
+    }
+
+    pub(crate) fn handle_window_should_close_with_app_and_refresh(
+        &mut self,
+        window_id: WindowId,
+        cx: &mut App,
+    ) -> (DockViewportShouldCloseOutcome, Vec<AnyWindowHandle>) {
+        let outcome = self
+            .adapter
+            .should_close_viewport(window_id, self.close_policy());
+        let outcome = self.close_coordinator.apply_should_close_plan(
+            outcome,
+            self.close_policy(),
+            &self.controller,
+            cx,
+        );
+        let (_, windows) = self.apply_allowed_should_close_route_invalidation(&outcome);
+        self.status.record_should_close(&outcome);
+        (outcome, windows)
+    }
+
+    fn apply_allowed_should_close_route_invalidation(
+        &mut self,
+        outcome: &DockViewportShouldCloseOutcome,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        if outcome.status == crate::DockViewportShouldCloseStatus::Allowed {
+            return self.mark_viewport_window_close_requested(outcome.window_id);
+        }
+        (false, Vec::new())
     }
 
     fn next_tear_off_tick(&mut self) -> DockViewportTearOffTick {
@@ -1289,6 +1327,21 @@ fn clamp_bounds_to_work_area(bounds: Bounds<Pixels>, work_area: Bounds<Pixels>) 
     );
     let origin = bounds.origin.clamp(&work_area.origin, &max_origin);
     Bounds::new(origin, bounds.size)
+}
+
+fn extend_unique_windows(
+    windows: &mut Vec<AnyWindowHandle>,
+    next_windows: impl IntoIterator<Item = AnyWindowHandle>,
+) {
+    for window in next_windows {
+        if windows
+            .iter()
+            .any(|existing| existing.window_id() == window.window_id())
+        {
+            continue;
+        }
+        windows.push(window);
+    }
 }
 
 pub(crate) enum DockViewportReusableWindow {

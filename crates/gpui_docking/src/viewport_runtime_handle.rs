@@ -632,9 +632,12 @@ impl DockViewportRuntimeHandle {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportShouldCloseOutcome {
-        self.runtime
+        let (outcome, windows) = self
+            .runtime
             .borrow_mut()
-            .handle_window_should_close_with_app(window_id, cx)
+            .handle_window_should_close_with_app_and_refresh(window_id, cx);
+        refresh_windows(windows, cx);
+        outcome
     }
 
     /// Ensures the application-level close observer is installed.
