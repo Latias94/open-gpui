@@ -79,6 +79,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
+        let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
         if let Some(delivery) = delivery {
             let authority = delivery.release_authority_for_cached_preview(
                 release.origin(),
@@ -88,18 +89,18 @@ impl DockHost {
             );
             match authority {
                 Ok(true) => {
-                    let result = match runtime.validate_payload_drop_delivery(&delivery, cx) {
-                        Ok(()) => runtime.deliver_payload_drop_with_outcome(delivery, cx),
-                        Err(error) => Err(error),
-                    };
-                    if matches!(result, Err(DockActionApplyError::DropTargetUnavailable)) {
-                        return Some(
-                            self.commit_runtime_routed_payload_drop_from_release(
-                                release, window, cx,
-                            ),
-                        );
+                    let fresh = runtime.resolve_payload_drop_delivery(&release_request, cx);
+                    if fresh.delivery() == Some(&delivery) {
+                        let result = match runtime.validate_payload_drop_delivery(&delivery, cx) {
+                            Ok(()) => runtime.deliver_payload_drop_with_outcome(delivery, cx),
+                            Err(error) => Err(error),
+                        };
+                        if !matches!(result, Err(DockActionApplyError::DropTargetUnavailable)) {
+                            return Some(DockHostInteractionOutcome::from_routed_drop_result(
+                                result,
+                            ));
+                        }
                     }
-                    return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
                 }
                 Err(error) => {
                     return Some(DockHostInteractionOutcome::from_routed_drop_result(Err(
@@ -110,21 +111,19 @@ impl DockHost {
             }
         }
 
-        Some(self.commit_runtime_routed_payload_drop_from_release(release, window, cx))
+        let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
+        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
     }
 
-    fn commit_runtime_routed_payload_drop_from_release(
-        &mut self,
+    fn viewport_drop_route_request_from_release(
+        &self,
         release: &DockPayloadDropRelease,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> DockHostInteractionOutcome {
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return DockHostInteractionOutcome::Notify;
-        };
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> DockViewportDropRouteRequest {
         let drag_session = release.drag_session().cloned();
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
-        let request = viewport_drop_route_request_from_host(
+        viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
             window,
@@ -132,9 +131,7 @@ impl DockHost {
             release.origin(),
             drag_session,
             tear_off_geometry,
-        );
-        let result = runtime.commit_payload_drop_from_screen(&request, cx);
-        DockHostInteractionOutcome::from_routed_drop_result(result)
+        )
     }
 }
 
