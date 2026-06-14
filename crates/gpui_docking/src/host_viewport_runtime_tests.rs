@@ -1990,7 +1990,6 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
         release_position,
         None,
         DockViewportTargetContext::new()
-            .with_active_window(source_opened.window())
             .with_window_stack([source_opened.window(), target_opened.window()]),
     );
     let baseline_route =
@@ -2010,7 +2009,6 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
         None,
         DockViewportTargetContext::new()
             .with_hovered_window(target_opened.window())
-            .with_active_window(source_opened.window())
             .with_window_stack([source_opened.window(), target_opened.window()]),
     );
     let hovered_route =
@@ -2040,7 +2038,6 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
         None,
         crate::DockViewportPlatformSignals::from_target_context(
             DockViewportTargetContext::new()
-                .with_active_window(source_opened.window())
                 .with_window_stack([source_opened.window(), target_opened.window()]),
         ),
     );
@@ -2176,7 +2173,6 @@ fn viewport_runtime_source_only_release_retargets_current_position(cx: &mut Test
         ),
         None,
         DockViewportTargetContext::new()
-            .with_active_window(target_opened.window())
             .with_window_stack([target_opened.window(), source_opened.window()]),
     )
     .with_drag_session(Some(session.clone()));

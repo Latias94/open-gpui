@@ -60,17 +60,16 @@ impl DockViewportPlatformSignals {
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
         DockViewportTargetContext::from_window_signals(
             self.hovered_window,
-            self.active_window,
             self.window_stack.clone(),
         )
     }
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
-        let (hovered_window, active_window, window_stack) = target_context.into_window_signals();
+        let (hovered_window, window_stack) = target_context.into_window_signals();
         Self {
             hovered_window,
-            active_window,
+            active_window: None,
             window_stack,
             capabilities: PlatformViewportCapabilities {
                 global_window_bounds: true,
@@ -82,6 +81,11 @@ impl DockViewportPlatformSignals {
     }
 
     #[cfg(test)]
+    pub(crate) fn active_window(&self) -> Option<WindowId> {
+        self.active_window
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_global_window_bounds(mut self, supported: bool) -> Self {
         self.capabilities.global_window_bounds = supported;
         self
@@ -90,10 +94,6 @@ impl DockViewportPlatformSignals {
 
 impl From<DockViewportPlatformSignals> for DockViewportTargetContext {
     fn from(signals: DockViewportPlatformSignals) -> Self {
-        Self::from_window_signals(
-            signals.hovered_window,
-            signals.active_window,
-            signals.window_stack,
-        )
+        Self::from_window_signals(signals.hovered_window, signals.window_stack)
     }
 }

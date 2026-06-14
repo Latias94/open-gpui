@@ -468,9 +468,7 @@ fn viewport_runtime_handle_merge_back_close_focuses_fallback_selected_item(
     let active_window = main_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app)
-                .target_context()
-                .active_window()
+            DockViewportPlatformSignals::from_app(app).active_window()
         })
         .expect("main viewport should remain live");
     assert_eq!(active_window, Some(main_opened.window().window_id()));
@@ -1300,9 +1298,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         .expect("source viewport should be activatable before drop");
     let before_drop_context = opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).target_context()
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("target window should be live");
     assert_eq!(
         before_drop_context.active_window(),
@@ -1390,9 +1386,7 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     );
     let after_drop_context = source_opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).target_context()
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source window should be live");
     assert_eq!(
         after_drop_context.active_window(),
@@ -1533,9 +1527,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
 
     let after_drop_context = source_opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).target_context()
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source window should be live");
     assert_eq!(
         after_drop_context.active_window(),
@@ -2629,7 +2621,6 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
         None,
         DockViewportTargetContext::new()
             .with_hovered_window(target_opened.window())
-            .with_active_window(source_opened.window())
             .with_window_stack([source_opened.window(), target_opened.window()]),
     )
     .with_drag_session(Some(session.clone()));

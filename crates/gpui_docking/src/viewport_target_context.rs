@@ -7,8 +7,6 @@ use open_gpui::WindowId;
 pub(crate) struct DockViewportTargetContext {
     /// Window known to be under the pointer for this docking route event.
     hovered_window: Option<WindowId>,
-    /// Platform-active window, recorded for diagnostics only.
-    active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
 }
@@ -24,12 +22,10 @@ pub(crate) struct DockViewportTargetPriority {
 impl DockViewportTargetContext {
     pub(crate) fn from_window_signals(
         hovered_window: Option<WindowId>,
-        active_window: Option<WindowId>,
         window_stack: Vec<WindowId>,
     ) -> Self {
         Self {
             hovered_window,
-            active_window,
             window_stack,
         }
     }
@@ -69,18 +65,13 @@ impl DockViewportTargetContext {
         self.hovered_window
     }
 
-    #[cfg(test)]
-    pub(crate) fn active_window(&self) -> Option<WindowId> {
-        self.active_window
-    }
-
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
     }
 
     #[cfg(test)]
-    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Option<WindowId>, Vec<WindowId>) {
-        (self.hovered_window, self.active_window, self.window_stack)
+    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Vec<WindowId>) {
+        (self.hovered_window, self.window_stack)
     }
 
     /// Creates an empty target context that falls back to deterministic adapter ordering.
@@ -93,13 +84,6 @@ impl DockViewportTargetContext {
     #[cfg(test)]
     pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
         self.hovered_window = Some(window.into().window_id());
-        self
-    }
-
-    /// Adds the active window signal for diagnostics only.
-    #[cfg(test)]
-    pub(crate) fn with_active_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.active_window = Some(window.into().window_id());
         self
     }
 
@@ -127,11 +111,8 @@ mod tests {
         let first = WindowId::from(1);
         let second = WindowId::from(2);
         let third = WindowId::from(3);
-        let context = DockViewportTargetContext::from_window_signals(
-            Some(third),
-            Some(second),
-            vec![second, first],
-        );
+        let context =
+            DockViewportTargetContext::from_window_signals(Some(third), vec![second, first]);
 
         assert!(
             context.priority_for_window(third, 2) < context.priority_for_window(second, 1),

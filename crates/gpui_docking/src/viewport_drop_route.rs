@@ -776,7 +776,7 @@ mod tests {
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
-            DockViewportTargetContext::new().with_active_window(zeta_window),
+            DockViewportTargetContext::new(),
         );
 
         assert_eq!(
@@ -851,9 +851,7 @@ mod tests {
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
-            DockViewportTargetContext::new()
-                .with_active_window(target_window)
-                .with_window_stack([target_window, source_window]),
+            DockViewportTargetContext::new().with_window_stack([target_window, source_window]),
         );
 
         assert_eq!(
@@ -1216,7 +1214,6 @@ mod tests {
         let target_window = handle(2);
         let target_context = DockViewportTargetContext::new()
             .with_hovered_window(target_window)
-            .with_active_window(source_window)
             .with_window_stack([target_window, source_window]);
         let request = DockViewportDropRouteRequest::from_platform_signals(
             source,

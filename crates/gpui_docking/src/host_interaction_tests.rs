@@ -863,9 +863,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         .expect("detached space should have a runtime window");
     let after_drop_context = opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).target_context()
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source viewport should still be live");
     assert_eq!(
         after_drop_context.active_window(),

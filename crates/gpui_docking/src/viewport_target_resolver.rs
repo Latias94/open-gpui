@@ -251,7 +251,6 @@ mod tests {
                 hits(),
                 &DockViewportTargetContext::new()
                     .with_hovered_window(first)
-                    .with_active_window(second)
                     .with_window_stack([second, first]),
             )
             .map(|hit| hit.space().clone()),
@@ -293,29 +292,6 @@ mod tests {
         assert_eq!(stacked.confidence(), DockViewportTargetConfidence::Trusted);
         assert!(stacked.is_trusted());
 
-        let active_only = resolve_viewport_target_with_confidence(
-            hits(),
-            &DockViewportTargetContext::new().with_active_window(second),
-        )
-        .expect("diagnostic active-window alone should not affect overlapping arbitration");
-        assert_eq!(active_only.target().space(), &space("alpha"));
-        assert_eq!(
-            active_only.confidence(),
-            DockViewportTargetConfidence::Ambiguous,
-            "active-window is diagnostic only and should not arbitrate overlapping hits"
-        );
-        assert!(!active_only.is_trusted());
-
-        let fallback_only = resolve_viewport_target_with_confidence(
-            hits(),
-            &DockViewportTargetContext::new().with_active_window(handle(9)),
-        )
-        .expect("diagnostic active-window alone should not affect overlapping arbitration");
-        assert_eq!(
-            fallback_only.confidence(),
-            DockViewportTargetConfidence::Ambiguous
-        );
-
         let single = resolve_viewport_target_with_confidence(
             vec![candidate("alpha", first)],
             &DockViewportTargetContext::new(),
@@ -325,14 +301,14 @@ mod tests {
 
         let single_unmatched_signal = resolve_viewport_target_with_confidence(
             vec![candidate("alpha", first)],
-            &DockViewportTargetContext::new().with_active_window(second),
+            &DockViewportTargetContext::new().with_window_stack([second]),
         )
         .expect("single hit should still be reported for diagnostics");
         assert_eq!(
             single_unmatched_signal.confidence(),
-            DockViewportTargetConfidence::Trusted,
-            "a single rectangle hit should stay trusted when only active-window is known"
+            DockViewportTargetConfidence::FallbackOnly,
+            "a single rectangle hit should be diagnostic-only when trusted arbitration points elsewhere"
         );
-        assert!(single_unmatched_signal.is_trusted());
+        assert!(!single_unmatched_signal.is_trusted());
     }
 }

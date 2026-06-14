@@ -90,19 +90,18 @@ mod tests {
             adapter
                 .resolve_diagnostic_viewport_target(
                     position,
-                    &DockViewportTargetContext::new().with_active_window(zeta_window),
+                    &DockViewportTargetContext::new()
+                        .with_window_stack([zeta_window, alpha_window]),
                 )
                 .map(|target| target.space().clone()),
-            Some(alpha.clone()),
-            "active-window remains diagnostic and should not change cross-viewport order"
+            Some(zeta.clone()),
+            "window stack should beat stable space order"
         );
         assert_eq!(
             adapter
                 .resolve_diagnostic_viewport_target(
                     position,
-                    &DockViewportTargetContext::new()
-                        .with_hovered_window(alpha_window)
-                        .with_active_window(zeta_window),
+                    &DockViewportTargetContext::new().with_hovered_window(alpha_window),
                 )
                 .map(|target| target.space().clone()),
             Some(alpha),
