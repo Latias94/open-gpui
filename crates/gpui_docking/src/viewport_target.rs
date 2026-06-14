@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::viewport_target_resolver::choose_viewport_target;
+use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
     DockViewportAdapter, DockViewportTargetContext, DockViewportTargetHit,
     viewport_target_resolver::{
@@ -9,15 +9,15 @@ use crate::{
 use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
-    /// Resolves a registered viewport target using explicit platform arbitration inputs.
+    /// Resolves the diagnostic viewport candidate chosen from explicit platform arbitration inputs.
     #[cfg(test)]
-    pub(crate) fn resolve_viewport_target(
+    pub(crate) fn resolve_diagnostic_viewport_target(
         &self,
         position: Point<Pixels>,
         context: &DockViewportTargetContext,
     ) -> Option<DockViewportTargetHit> {
         let hits = self.viewport_hits(position);
-        choose_viewport_target(hits, context)
+        choose_diagnostic_viewport_target(hits, context)
     }
 
     /// Resolves a registered viewport target with confidence for drop-route commit decisions.
@@ -81,14 +81,14 @@ mod tests {
         let position = point(px(120.0), px(140.0));
         assert_eq!(
             adapter
-                .resolve_viewport_target(position, &DockViewportTargetContext::new())
+                .resolve_diagnostic_viewport_target(position, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
             Some(alpha.clone()),
             "empty context uses stable space order as the final fallback"
         );
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     position,
                     &DockViewportTargetContext::new().with_active_window(zeta_window),
                 )
@@ -98,7 +98,7 @@ mod tests {
         );
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     position,
                     &DockViewportTargetContext::new()
                         .with_hovered_window(alpha_window)

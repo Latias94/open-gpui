@@ -294,7 +294,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     point(px(120.0), px(140.0)),
                     &DockViewportTargetContext::new()
                 )

@@ -168,7 +168,7 @@ impl<'a> DockViewportHoverArbiter<'a> {
 
     pub(crate) fn resolve(self, hits: Vec<DockViewportTargetHit>) -> DockViewportHoverArbitration {
         let hit_count = hits.len();
-        let Some(target) = choose_viewport_target(hits, self.context) else {
+        let Some(target) = choose_diagnostic_viewport_target(hits, self.context) else {
             return DockViewportHoverArbitration::Unavailable;
         };
 
@@ -197,7 +197,7 @@ impl<'a> DockViewportHoverArbiter<'a> {
     }
 }
 
-pub(crate) fn choose_viewport_target(
+pub(crate) fn choose_diagnostic_viewport_target(
     hits: Vec<DockViewportTargetHit>,
     context: &DockViewportTargetContext,
 ) -> Option<DockViewportTargetHit> {
@@ -227,19 +227,19 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_prefers_hovered_then_window_stack() {
+    fn diagnostic_viewport_target_prefers_hovered_then_window_stack() {
         let first = handle(1);
         let second = handle(2);
         let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
 
         assert_eq!(
-            choose_viewport_target(hits(), &DockViewportTargetContext::new())
+            choose_diagnostic_viewport_target(hits(), &DockViewportTargetContext::new())
                 .map(|hit| hit.space().clone()),
             Some(space("alpha")),
             "default fallback should preserve deterministic candidate order"
         );
         assert_eq!(
-            choose_viewport_target(
+            choose_diagnostic_viewport_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
             )
@@ -247,7 +247,7 @@ mod tests {
             Some(space("zeta"))
         );
         assert_eq!(
-            choose_viewport_target(
+            choose_diagnostic_viewport_target(
                 hits(),
                 &DockViewportTargetContext::new()
                     .with_hovered_window(first)

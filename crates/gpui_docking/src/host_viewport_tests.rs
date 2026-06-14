@@ -130,7 +130,7 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     assert_eq!(context.window_stack(), &[]);
     assert_eq!(
         adapter
-            .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
+            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &context)
             .map(|target| target.space().clone()),
         Some(alpha_space.clone()),
         "active window is diagnostic only and should not arbitrate overlapping hits"
@@ -146,7 +146,7 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     );
     assert_eq!(
         adapter
-            .resolve_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
+            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
             .map(|target| target.space().clone()),
         Some(alpha_space),
         "explicit hovered window should win viewport arbitration"
