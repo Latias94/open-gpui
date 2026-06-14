@@ -599,10 +599,11 @@ impl DockViewportRuntime {
         delivery: DockDropDelivery,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let (source_space, source_node, payload, target_space) = match delivery {
-            DockDropDelivery::Workspace(delivery) => {
-                self.validate_payload_drag_session(delivery.drag_session())?;
-                let (source_space, source_node, payload, target) = delivery.into_parts();
+        let (source, kind) = delivery.into_parts();
+        self.validate_payload_drag_session(source.drag_session())?;
+        let (source_space, source_node, payload, target_space) = match kind {
+            crate::DockDropDeliveryKind::Workspace(delivery) => {
+                let (source_space, source_node, payload, _) = source.into_parts();
                 let target_space = {
                     let controller = self.controller.read(cx);
                     crate::resolve_delivery_workspace_target(
@@ -612,27 +613,22 @@ impl DockViewportRuntime {
                         &source_space,
                         source_node,
                         &payload,
-                        target,
+                        delivery.into_target(),
                     )?
                 };
                 (source_space, source_node, payload, target_space)
             }
-            DockDropDelivery::TearOff(request) => {
-                self.validate_payload_drag_session(request.drag_session())?;
+            crate::DockDropDeliveryKind::TearOff(_) => {
                 return Err(DockActionApplyError::TearOffViewportOpenFailed {
                     message:
                         "tear-off viewport commits must be opened through DockViewportRuntimeHandle"
                             .to_string(),
                 });
             }
-            DockDropDelivery::Unavailable(delivery) => {
-                self.validate_payload_drag_session(delivery.drag_session())?;
+            crate::DockDropDeliveryKind::Unavailable => {
                 return Err(DockActionApplyError::DropTargetUnavailable);
             }
-            DockDropDelivery::Rejected(delivery) => {
-                self.validate_payload_drag_session(delivery.drag_session())?;
-                return Err(delivery.into_error().into());
-            }
+            crate::DockDropDeliveryKind::Rejected(error) => return Err(error.into()),
         };
 
         let (target_space, target) = target_space;

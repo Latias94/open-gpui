@@ -425,9 +425,9 @@ impl DockViewportRuntimeHandle {
         delivery: DockDropDelivery,
         cx: &mut App,
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
-        let result = match delivery {
-            DockDropDelivery::TearOff(request) => self.commit_tear_off_drop_route(request, cx),
-            delivery => self
+        let result = match delivery.into_tear_off_request() {
+            Ok(request) => self.commit_tear_off_drop_route(request, cx),
+            Err(delivery) => self
                 .runtime
                 .borrow_mut()
                 .deliver_payload_drop_with_outcome(delivery, cx),
