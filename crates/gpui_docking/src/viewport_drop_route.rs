@@ -56,7 +56,7 @@ pub(crate) struct DockDropDelivery {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockDropDeliveryKind {
     /// Commit a route into an already registered viewport host scene.
-    Workspace(DockDropWorkspaceTarget),
+    Workspace(DockViewportResolvedDropTargetSnapshot),
     /// Open and commit into a new platform viewport.
     TearOff(DockViewportTearOffRequest),
 }
@@ -108,13 +108,6 @@ pub(crate) struct DockDropDeliverySource {
     drag_session: Option<DockRuntimeDragSession>,
 }
 
-/// Destination facts for an existing-viewport workspace delivery.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DockDropWorkspaceTarget {
-    /// Commit against a resolved target snapshot if it still matches current runtime facts.
-    Resolved(DockViewportResolvedDropTargetSnapshot),
-}
-
 /// Resolved target snapshot captured from a concrete host-scene frame.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportResolvedDropTargetSnapshot {
@@ -123,31 +116,6 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
     frame: DockViewportHostSceneFrame,
     facts_generation: Option<u64>,
     target: DockResolvedDropTarget,
-}
-
-impl DockDropWorkspaceTarget {
-    fn resolved(resolved_target: DockViewportResolvedDropTargetSnapshot) -> Self {
-        DockDropWorkspaceTarget::Resolved(resolved_target)
-    }
-
-    fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        match self {
-            DockDropWorkspaceTarget::Resolved(target) => target.routed_preview_target(),
-        }
-    }
-
-    fn accepts_hovered_host_window(
-        &self,
-        _source_space: &DockSpaceId,
-        host_space: &DockSpaceId,
-        window_id: WindowId,
-    ) -> bool {
-        match self {
-            DockDropWorkspaceTarget::Resolved(target) => {
-                target.accepts_hovered_host_window(host_space, window_id)
-            }
-        }
-    }
 }
 
 impl DockDropDeliverySource {
@@ -160,6 +128,7 @@ impl DockDropDeliverySource {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
@@ -292,7 +261,7 @@ impl DockDropDelivery {
         let source = DockDropDeliverySource::from_request(request);
         let kind = match route {
             DockViewportDropRoute::Local { .. } | DockViewportDropRoute::KnownViewport { .. } => {
-                DockDropDeliveryKind::Workspace(DockDropWorkspaceTarget::resolved(resolved_target?))
+                DockDropDeliveryKind::Workspace(resolved_target?)
             }
             DockViewportDropRoute::TearOff => {
                 DockDropDeliveryKind::TearOff(tear_off_request_from_drop_route_request(request))
@@ -338,11 +307,9 @@ impl DockDropDelivery {
 
     fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
         match &self.kind {
-            DockDropDeliveryKind::Workspace(delivery) => delivery.accepts_hovered_host_window(
-                self.source.source_space(),
-                host_space,
-                window_id,
-            ),
+            DockDropDeliveryKind::Workspace(delivery) => {
+                delivery.accepts_hovered_host_window(host_space, window_id)
+            }
             DockDropDeliveryKind::TearOff(_) => false,
         }
     }
@@ -1151,7 +1118,7 @@ mod tests {
         assert_eq!(delivery.source_space(), &source);
         assert_eq!(delivery.source_node(), source_tabs);
         assert_eq!(delivery.payload(), &DockViewportDropPayload::Item(item));
-        assert_eq!(known, &DockDropWorkspaceTarget::Resolved(resolved_target));
+        assert_eq!(known, &resolved_target);
     }
 
     #[test]

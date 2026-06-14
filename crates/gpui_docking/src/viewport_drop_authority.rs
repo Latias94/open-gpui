@@ -1,7 +1,7 @@
 use crate::{
-    DockActionApplyError, DockDropWorkspaceTarget, DockPolicy, DockPolicyError, DockSpaceId,
-    DockViewportAdapter, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteRequest, DockViewportResolvedDropTargetSnapshot, DockWorkspace,
+    DockActionApplyError, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
+    DockViewportDropPayload, DockViewportDropRoute, DockViewportDropRouteRequest,
+    DockViewportResolvedDropTargetSnapshot, DockWorkspace,
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
@@ -81,23 +81,21 @@ pub(crate) fn resolve_delivery_workspace_target(
     workspace: &DockWorkspace,
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
-    target: DockDropWorkspaceTarget,
+    target: DockViewportResolvedDropTargetSnapshot,
 ) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
-    match target {
-        DockDropWorkspaceTarget::Resolved(target)
-            if target.frame().is_current_in(host_scenes)
-                && target_facts_generation_is_current(adapter, &target) =>
-        {
-            let target_space = target.target_space().clone();
-            validate_resolved_target_snapshot(
-                workspace,
-                &target_space,
-                target.into_target(),
-                payload,
-                source_node,
-            )
-        }
-        DockDropWorkspaceTarget::Resolved(_) => Err(DockActionApplyError::DropTargetUnavailable),
+    if target.frame().is_current_in(host_scenes)
+        && target_facts_generation_is_current(adapter, &target)
+    {
+        let target_space = target.target_space().clone();
+        validate_resolved_target_snapshot(
+            workspace,
+            &target_space,
+            target.into_target(),
+            payload,
+            source_node,
+        )
+    } else {
+        Err(DockActionApplyError::DropTargetUnavailable)
     }
 }
 

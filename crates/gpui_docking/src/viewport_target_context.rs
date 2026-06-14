@@ -33,6 +33,7 @@ impl DockViewportTargetContext {
         Self::from_window_and_event_signals(platform_hovered_window, None, window_stack)
     }
 
+    #[cfg(test)]
     pub(crate) fn from_window_and_event_signals(
         platform_hovered_window: Option<WindowId>,
         event_receiver_window: Option<WindowId>,

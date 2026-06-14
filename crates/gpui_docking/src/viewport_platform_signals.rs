@@ -49,11 +49,13 @@ impl DockViewportPlatformSignals {
     }
 
     /// Captures app-level signals for release paths that did not sample the hovered window.
+    #[cfg(test)]
     pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
         Self::from_app(cx).without_hovered_window_authority()
     }
 
     /// Removes hovered-window authority while preserving other platform signals.
+    #[cfg(test)]
     pub(crate) fn without_hovered_window_authority(mut self) -> Self {
         self.platform_hovered_window = None;
         self.capabilities.mouse_hovered_window = false;
