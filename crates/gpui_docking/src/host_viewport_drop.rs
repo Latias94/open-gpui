@@ -153,11 +153,13 @@ fn viewport_drop_route_request_from_host(
         }
         DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };
+    let release_position =
+        route_release_position(window.bounds(), host_position, &platform_signals);
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
         payload.source_node,
         DockViewportDropPayload::from_drag_payload(payload),
-        window_screen_position(window, host_position),
+        release_position,
         None,
         platform_signals,
     )
@@ -165,8 +167,19 @@ fn viewport_drop_route_request_from_host(
     .with_tear_off_geometry(tear_off_geometry)
 }
 
-fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
-    let window_bounds = window.bounds();
+fn route_release_position(
+    window_bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    platform_signals: &DockViewportPlatformSignals,
+) -> Point<Pixels> {
+    if platform_signals.has_global_window_bounds() {
+        return window_screen_position(window_bounds, position);
+    }
+
+    position
+}
+
+fn window_screen_position(window_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
     point(
         window_bounds.origin.x + position.x,
         window_bounds.origin.y + position.y,
@@ -186,4 +199,38 @@ fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Poi
         position.x - host_bounds.origin.x,
         position.y - host_bounds.origin.y,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DockViewportTargetContext;
+    use open_gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn route_release_position_uses_screen_coordinates_when_bounds_are_global() {
+        let window_bounds = Bounds::new(point(px(400.0), px(300.0)), size(px(320.0), px(240.0)));
+        let window_position = point(px(30.0), px(50.0));
+        let signals =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new());
+
+        assert_eq!(
+            route_release_position(window_bounds, window_position, &signals),
+            point(px(430.0), px(350.0))
+        );
+    }
+
+    #[test]
+    fn route_release_position_keeps_window_local_coordinates_without_global_bounds() {
+        let window_bounds = Bounds::new(point(px(400.0), px(300.0)), size(px(320.0), px(240.0)));
+        let window_position = point(px(30.0), px(50.0));
+        let signals =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new())
+                .with_global_window_bounds(false);
+
+        assert_eq!(
+            route_release_position(window_bounds, window_position, &signals),
+            window_position
+        );
+    }
 }
