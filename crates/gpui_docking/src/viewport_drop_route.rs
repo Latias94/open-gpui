@@ -766,6 +766,45 @@ mod tests {
     }
 
     #[test]
+    fn drop_route_rejects_window_stack_when_hovered_window_is_known_empty() {
+        let source = space("source");
+        let target = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.register_viewport(target, target_window);
+
+        for space in [&source, &space("target")] {
+            adapter.update_snapshot(
+                space,
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let route = adapter.resolve_payload_drop_route_with_context(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(120.0), px(140.0)),
+            None,
+            &DockPolicy::default(),
+            DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([target_window, source_window]),
+        );
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::Unavailable,
+            "when the platform can report hovered windows, hovered=None means a foreign or no window is under the pointer"
+        );
+    }
+
+    #[test]
     fn drop_route_rejects_active_only_overlap_arbitration_as_unavailable() {
         let source = space("source");
         let alpha = space("alpha");

@@ -2471,7 +2471,9 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+        })
         .expect("source window should still be live");
     // TestPlatform normalizes runtime-opened window origins to zero. Override only the source
     // snapshot so this models a native detached window releasing over main, not over itself.
@@ -3109,7 +3111,9 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
     );
     let source_release_signals = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+        })
         .expect("source window should still be live");
     assert!(runtime.begin_viewport_host_scene(
         source_space.clone(),

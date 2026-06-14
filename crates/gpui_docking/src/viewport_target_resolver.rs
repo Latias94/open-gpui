@@ -192,6 +192,9 @@ impl<'a> DockViewportHoverArbiter<'a> {
     }
 
     fn is_trusted_route_target(&self, window_id: WindowId) -> bool {
+        if self.context.hovered_window_known_empty() {
+            return false;
+        }
         self.context.hovered_window() == Some(window_id)
             || self.context.window_stack().contains(&window_id)
     }
@@ -291,6 +294,21 @@ mod tests {
         assert_eq!(stacked.target().space(), &space("zeta"));
         assert_eq!(stacked.confidence(), DockViewportTargetConfidence::Trusted);
         assert!(stacked.is_trusted());
+
+        let hovered_known_empty = resolve_viewport_target_with_confidence(
+            hits(),
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([second, first]),
+        )
+        .expect("window stack should still produce a diagnostic candidate");
+        assert_eq!(hovered_known_empty.target().space(), &space("zeta"));
+        assert_eq!(
+            hovered_known_empty.confidence(),
+            DockViewportTargetConfidence::FallbackOnly,
+            "window stack must not authorize a route when the platform says no app window is hovered"
+        );
+        assert!(!hovered_known_empty.is_trusted());
 
         let single = resolve_viewport_target_with_confidence(
             vec![candidate("alpha", first)],

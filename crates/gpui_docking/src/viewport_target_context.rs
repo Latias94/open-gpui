@@ -7,6 +7,9 @@ use open_gpui::WindowId;
 pub(crate) struct DockViewportTargetContext {
     /// Window reported by the platform as being under the pointer.
     platform_hovered_window: Option<WindowId>,
+    /// Whether the platform hovered-window signal is reliable for this snapshot, including
+    /// the case where no application window is hovered.
+    platform_hovered_window_known: bool,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
@@ -35,8 +38,23 @@ impl DockViewportTargetContext {
         event_receiver_window: Option<WindowId>,
         window_stack: Vec<WindowId>,
     ) -> Self {
+        Self::from_window_and_event_signals_with_hovered_known(
+            platform_hovered_window,
+            platform_hovered_window.is_some(),
+            event_receiver_window,
+            window_stack,
+        )
+    }
+
+    pub(crate) fn from_window_and_event_signals_with_hovered_known(
+        platform_hovered_window: Option<WindowId>,
+        platform_hovered_window_known: bool,
+        event_receiver_window: Option<WindowId>,
+        window_stack: Vec<WindowId>,
+    ) -> Self {
         Self {
             platform_hovered_window,
+            platform_hovered_window_known,
             event_receiver_window,
             window_stack,
         }
@@ -63,6 +81,7 @@ impl DockViewportTargetContext {
 
     pub(crate) fn has_arbitration_signal(&self) -> bool {
         self.platform_hovered_window.is_some()
+            || self.platform_hovered_window_known
             || self.event_receiver_window.is_some()
             || !self.window_stack.is_empty()
     }
@@ -79,6 +98,10 @@ impl DockViewportTargetContext {
 
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
         self.platform_hovered_window
+    }
+
+    pub(crate) fn hovered_window_known_empty(&self) -> bool {
+        self.platform_hovered_window_known && self.platform_hovered_window.is_none()
     }
 
     pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
@@ -108,6 +131,15 @@ impl DockViewportTargetContext {
     #[cfg(test)]
     pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
         self.platform_hovered_window = Some(window.into().window_id());
+        self.platform_hovered_window_known = true;
+        self
+    }
+
+    /// Marks the platform hovered window signal as reliable and currently empty.
+    #[cfg(test)]
+    pub(crate) fn with_hovered_window_known_empty(mut self) -> Self {
+        self.platform_hovered_window = None;
+        self.platform_hovered_window_known = true;
         self
     }
 

@@ -48,10 +48,23 @@ impl DockViewportPlatformSignals {
         Self::from_app(cx).with_event_receiver_window(window.window_handle())
     }
 
+    /// Captures app-level signals for release paths that did not sample the hovered window.
+    pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
+        Self::from_app(cx).without_hovered_window_authority()
+    }
+
+    /// Removes hovered-window authority while preserving other platform signals.
+    pub(crate) fn without_hovered_window_authority(mut self) -> Self {
+        self.platform_hovered_window = None;
+        self.capabilities.mouse_hovered_window = false;
+        self
+    }
+
     /// Adds the platform hovered window signal.
     #[cfg(test)]
     pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
         self.platform_hovered_window = Some(window.into().window_id());
+        self.capabilities.mouse_hovered_window = true;
         self
     }
 
@@ -68,8 +81,9 @@ impl DockViewportPlatformSignals {
     /// Converts the platform snapshot into the pure resolver context.
     #[cfg(test)]
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
-        DockViewportTargetContext::from_window_and_event_signals(
+        DockViewportTargetContext::from_window_and_event_signals_with_hovered_known(
             self.platform_hovered_window,
+            self.capabilities.mouse_hovered_window,
             self.event_receiver_window,
             self.window_stack.clone(),
         )
@@ -108,8 +122,9 @@ impl DockViewportPlatformSignals {
 
 impl From<DockViewportPlatformSignals> for DockViewportTargetContext {
     fn from(signals: DockViewportPlatformSignals) -> Self {
-        Self::from_window_and_event_signals(
+        Self::from_window_and_event_signals_with_hovered_known(
             signals.platform_hovered_window,
+            signals.capabilities.mouse_hovered_window,
             signals.event_receiver_window,
             signals.window_stack,
         )

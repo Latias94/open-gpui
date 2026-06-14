@@ -131,7 +131,9 @@ fn viewport_drop_route_request_from_host(
         DockPayloadDropReleaseOrigin::HoveredHost => {
             DockViewportPlatformSignals::from_event_receiver_window(window, cx)
         }
-        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
+        DockPayloadDropReleaseOrigin::SourceOnly => {
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(cx)
+        }
     };
     DockViewportDropRouteRequest::from_platform_signals(
         payload.source_space.clone(),
