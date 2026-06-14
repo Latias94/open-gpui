@@ -89,6 +89,44 @@ pub(crate) fn resolve_delivery_workspace_target(
     payload: &DockViewportDropPayload,
     target: DockViewportResolvedDropTargetSnapshot,
 ) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
+    validate_delivery_workspace_target_inner(
+        adapter,
+        host_scenes,
+        workspace,
+        source_node,
+        payload,
+        target,
+    )
+}
+
+/// Verifies that a resolved delivery still points at current route facts and policy.
+pub(crate) fn validate_delivery_workspace_target(
+    adapter: &DockViewportAdapter,
+    host_scenes: &DockViewportHostSceneRegistry,
+    workspace: &DockWorkspace,
+    source_node: crate::DockNodeId,
+    payload: &DockViewportDropPayload,
+    target: &DockViewportResolvedDropTargetSnapshot,
+) -> Result<(), DockActionApplyError> {
+    validate_delivery_workspace_target_inner(
+        adapter,
+        host_scenes,
+        workspace,
+        source_node,
+        payload,
+        target.clone(),
+    )
+    .map(|_| ())
+}
+
+fn validate_delivery_workspace_target_inner(
+    adapter: &DockViewportAdapter,
+    host_scenes: &DockViewportHostSceneRegistry,
+    workspace: &DockWorkspace,
+    source_node: crate::DockNodeId,
+    payload: &DockViewportDropPayload,
+    target: DockViewportResolvedDropTargetSnapshot,
+) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
     if target.frame().is_current_in(host_scenes)
         && target_facts_generation_is_current(adapter, &target)
     {

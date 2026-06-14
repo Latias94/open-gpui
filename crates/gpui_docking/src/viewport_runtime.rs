@@ -583,6 +583,29 @@ impl DockViewportRuntime {
         result
     }
 
+    pub(crate) fn validate_payload_drop_delivery(
+        &self,
+        delivery: &DockDropDelivery,
+        cx: &App,
+    ) -> Result<(), DockActionApplyError> {
+        let (source, kind) = delivery.parts();
+        self.validate_payload_drag_session(source.drag_session())?;
+        match kind {
+            crate::DockDropDeliveryKind::Workspace(delivery) => {
+                let controller = self.controller.read(cx);
+                crate::validate_delivery_workspace_target(
+                    &self.adapter,
+                    &self.host_scenes,
+                    controller.workspace(),
+                    source.source_node(),
+                    source.payload(),
+                    delivery,
+                )
+            }
+            crate::DockDropDeliveryKind::TearOff(_) => Ok(()),
+        }
+    }
+
     pub(crate) fn record_drop_route_result(
         &mut self,
         result: &Result<DockViewportDropRouteOutcome, DockActionApplyError>,

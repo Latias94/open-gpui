@@ -436,6 +436,16 @@ impl DockViewportRuntimeHandle {
         result
     }
 
+    pub(crate) fn validate_payload_drop_delivery(
+        &self,
+        delivery: &DockDropDelivery,
+        cx: &App,
+    ) -> Result<(), DockActionApplyError> {
+        self.runtime
+            .borrow()
+            .validate_payload_drop_delivery(delivery, cx)
+    }
+
     fn commit_tear_off_drop_route(
         &self,
         request: DockViewportTearOffRequest,

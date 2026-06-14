@@ -1,6 +1,6 @@
 use crate::{
-    DockDropDelivery, DockHost, DockViewportDropPayload, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockActionApplyError, DockDropDelivery, DockHost, DockViewportDropPayload,
+    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -88,7 +88,17 @@ impl DockHost {
             );
             match authority {
                 Ok(true) => {
-                    let result = runtime.deliver_payload_drop_with_outcome(delivery, cx);
+                    let result = match runtime.validate_payload_drop_delivery(&delivery, cx) {
+                        Ok(()) => runtime.deliver_payload_drop_with_outcome(delivery, cx),
+                        Err(error) => Err(error),
+                    };
+                    if matches!(result, Err(DockActionApplyError::DropTargetUnavailable)) {
+                        return Some(
+                            self.commit_runtime_routed_payload_drop_from_release(
+                                release, window, cx,
+                            ),
+                        );
+                    }
                     return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
                 }
                 Err(error) => {
@@ -100,6 +110,18 @@ impl DockHost {
             }
         }
 
+        Some(self.commit_runtime_routed_payload_drop_from_release(release, window, cx))
+    }
+
+    fn commit_runtime_routed_payload_drop_from_release(
+        &mut self,
+        release: &DockPayloadDropRelease,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DockHostInteractionOutcome {
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return DockHostInteractionOutcome::Notify;
+        };
         let drag_session = release.drag_session().cloned();
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
         let request = viewport_drop_route_request_from_host(
@@ -112,7 +134,7 @@ impl DockHost {
             tear_off_geometry,
         );
         let result = runtime.commit_payload_drop_from_screen(&request, cx);
-        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
+        DockHostInteractionOutcome::from_routed_drop_result(result)
     }
 }
 

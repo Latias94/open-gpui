@@ -1713,6 +1713,138 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
 }
 
 #[open_gpui::test]
+fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        target_center_host_position(),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let target_screen_position =
+        screen_position_for_host_position(target_bounds, target_center_host_position());
+    let resolution = cache_known_viewport_preview(
+        cx,
+        &runtime,
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        target_screen_position,
+        target_opened.window(),
+        "Panel A",
+    );
+
+    target_window
+        .update(cx, |host, window, cx| {
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
+            window.refresh();
+            cx.notify();
+        })
+        .expect("target host should cache routed delivery");
+
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        target_center_host_position(),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    target_window
+        .update(cx, |host, window, cx| {
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::hovered_host(
+                    payload.clone(),
+                    target_space.clone(),
+                    target_center_host_position(),
+                ),
+                window,
+                cx,
+            )
+        })
+        .expect("target host should reroute stale cached delivery from current release facts");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            Vec::<DockItemId>::new()
+        );
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(target_tabs)
+            .expect("target tabs should still exist")
+        else {
+            panic!("target should remain tabs");
+        };
+        assert_eq!(items, &vec![item("b"), item("a")]);
+        assert_eq!(selected.as_ref(), items.get(1));
+    });
+    let status = runtime.runtime_status();
+    assert_eq!(
+        status.last_drop_outcome.as_ref().map(|record| record.kind),
+        Some(DockViewportDropOutcomeKind::Action),
+        "fallback reroute should record the successful release outcome, not the stale cached attempt"
+    );
+}
+
+#[open_gpui::test]
 fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");

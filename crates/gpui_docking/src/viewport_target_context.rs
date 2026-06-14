@@ -102,6 +102,11 @@ impl DockViewportTargetContext {
             || (!self.window_stack.is_empty() && !self.window_stack.contains(&window_id))
     }
 
+    pub(crate) fn has_conflicting_hovered_window(&self, window_id: WindowId) -> bool {
+        self.platform_hovered_window
+            .is_some_and(|hovered| hovered != window_id)
+    }
+
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
         self.platform_hovered_window
     }

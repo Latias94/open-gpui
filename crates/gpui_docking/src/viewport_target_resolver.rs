@@ -201,10 +201,6 @@ impl<'a> DockViewportHoverArbiter<'a> {
             return DockViewportHoverArbitration::Unavailable;
         };
 
-        if self.context.hovered_window_known_empty() {
-            return DockViewportHoverArbitration::FallbackOnly(target);
-        }
-
         if self.context.hovered_window() == Some(target.window_id()) {
             return DockViewportHoverArbitration::TrustedHovered(target);
         }
@@ -215,9 +211,13 @@ impl<'a> DockViewportHoverArbiter<'a> {
                 .event_receiver_window_matches(target.window_id())
                 && !self
                     .context
-                    .has_conflicting_primary_signal(target.window_id())
+                    .has_conflicting_hovered_window(target.window_id())
             {
                 return DockViewportHoverArbitration::TrustedEventReceiver(target);
+            }
+
+            if self.context.hovered_window_known_empty() {
+                return DockViewportHoverArbitration::FallbackOnly(target);
             }
 
             if !self
@@ -226,6 +226,10 @@ impl<'a> DockViewportHoverArbiter<'a> {
             {
                 return DockViewportHoverArbitration::TrustedSingleHit(target);
             }
+        }
+
+        if self.context.hovered_window_known_empty() {
+            return DockViewportHoverArbitration::FallbackOnly(target);
         }
 
         if self.context.window_stack_contains(target.window_id()) {
@@ -406,6 +410,45 @@ mod tests {
         .expect("event receiver window should still produce a diagnostic candidate");
 
         assert_eq!(resolved.target().space(), &space("alpha"));
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::FallbackOnly
+        );
+        assert!(!resolved.is_trusted());
+    }
+
+    #[test]
+    fn event_receiver_window_authorizes_single_hit_even_when_hovered_window_is_known_empty() {
+        let window = handle(1);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", window)],
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_event_receiver_window(window),
+        )
+        .expect("event receiver should resolve its single hit");
+
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::TrustedEventReceiver
+        );
+        assert!(resolved.is_trusted());
+    }
+
+    #[test]
+    fn event_receiver_window_does_not_override_conflicting_hovered_window() {
+        let first = handle(1);
+        let second = handle(2);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", first)],
+            &DockViewportTargetContext::new()
+                .with_event_receiver_window(first)
+                .with_hovered_window(second),
+        )
+        .expect("event receiver should still resolve diagnostics");
+
         assert_eq!(
             resolved.confidence(),
             DockViewportTargetConfidence::FallbackOnly
