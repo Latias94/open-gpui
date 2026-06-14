@@ -7,7 +7,7 @@ use crate::{
     drop_target::{DockDropTargetValidator, DockResolvedDropTarget},
     geometry,
     viewport_drop_scene::DockViewportHostSceneFrame,
-    workspace_transaction::DockWorkspacePayloadDropRequest,
+    workspace_transaction::{DockWorkspacePayloadDropRequest, DockWorkspaceResolvedDropTarget},
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -215,8 +215,10 @@ impl DockLocalDropDelivery {
         DockWorkspacePayloadDropRequest {
             source_space: &self.source_space,
             payload: self.payload.as_workspace_payload(),
-            target_space: &self.target_space,
-            target: self.target.clone(),
+            target: DockWorkspaceResolvedDropTarget::new(
+                self.target_space.clone(),
+                self.target.clone(),
+            ),
         }
     }
 }
@@ -828,13 +830,13 @@ mod tests {
         let request = delivery.workspace_request();
 
         assert_eq!(request.source_space, &DockSpaceId::from("main"));
-        assert_eq!(request.target_space, &DockSpaceId::from("main"));
+        assert_eq!(request.target.target_space(), &DockSpaceId::from("main"));
         assert!(matches!(
             &request.payload,
             DockWorkspaceDropPayload::Item { item, .. } if *item == &DockItemId::from("a")
         ));
         assert_eq!(
-            request.target.kind,
+            request.target.target().kind,
             DockResolvedDropTargetKind::LeafCenter {
                 root: tabs,
                 target_tabs: tabs,

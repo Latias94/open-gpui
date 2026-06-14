@@ -12,8 +12,35 @@ use crate::{
 pub(crate) struct DockWorkspacePayloadDropRequest<'a> {
     pub(crate) source_space: &'a DockSpaceId,
     pub(crate) payload: DockWorkspaceDropPayload<'a>,
-    pub(crate) target_space: &'a DockSpaceId,
-    pub(crate) target: DockResolvedDropTarget,
+    pub(crate) target: DockWorkspaceResolvedDropTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockWorkspaceResolvedDropTarget {
+    target_space: DockSpaceId,
+    target: DockResolvedDropTarget,
+}
+
+impl DockWorkspaceResolvedDropTarget {
+    pub(crate) fn new(target_space: DockSpaceId, target: DockResolvedDropTarget) -> Self {
+        Self {
+            target_space,
+            target,
+        }
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
+    }
+
+    #[cfg(test)]
+    pub(crate) fn target(&self) -> &DockResolvedDropTarget {
+        &self.target
+    }
+
+    pub(crate) fn into_parts(self) -> (DockSpaceId, DockResolvedDropTarget) {
+        (self.target_space, self.target)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,14 +65,14 @@ impl DockWorkspace {
         let DockWorkspacePayloadDropRequest {
             source_space,
             payload,
-            target_space,
             target,
         } = request;
+        let (target_space, target) = target.into_parts();
 
         let target = {
             let payload_classes = self.payload_dock_classes_for_workspace_payload(&payload);
             let target_validator =
-                dock_target_validator(target_space, &payload_classes, self.policy());
+                dock_target_validator(&target_space, &payload_classes, self.policy());
             match validate_resolved_drop_target(target, self.policy(), Some(&target_validator)) {
                 DockDropResolution::Valid(target) => target,
                 DockDropResolution::Rejected(rejection) => {
@@ -54,7 +81,7 @@ impl DockWorkspace {
             }
         };
         validate_resolved_target_drop_box(&target)?;
-        validate_resolved_target_graph_identity(self, target_space, &target)?;
+        validate_resolved_target_graph_identity(self, &target_space, &target)?;
 
         match target.kind {
             DockResolvedDropTargetKind::TabBar {
@@ -63,7 +90,7 @@ impl DockWorkspace {
             } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
-                target_space,
+                &target_space,
                 DockMoveTarget::tab_bar(target_tabs, insert_index),
             ),
             DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
@@ -71,7 +98,7 @@ impl DockWorkspace {
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
-                    target_space,
+                    &target_space,
                     DockMoveTarget::center(target_tabs),
                 ),
             DockResolvedDropTargetKind::InnerEdge {
@@ -81,14 +108,14 @@ impl DockWorkspace {
             } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
-                target_space,
+                &target_space,
                 DockMoveTarget::inner_edge(root, target_tabs, zone),
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
-                    target_space,
+                    &target_space,
                     DockMoveTarget::root_edge(root, zone),
                 ),
             DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
@@ -334,6 +361,20 @@ mod tests {
         }
     }
 
+    fn workspace_target(
+        target_space: &DockSpaceId,
+        target: DockResolvedDropTarget,
+    ) -> DockWorkspaceResolvedDropTarget {
+        DockWorkspaceResolvedDropTarget::new(target_space.clone(), target)
+    }
+
+    fn workspace_kind_target(
+        target_space: &DockSpaceId,
+        kind: DockResolvedDropTargetKind,
+    ) -> DockWorkspaceResolvedDropTarget {
+        workspace_target(target_space, resolved_target(kind))
+    }
+
     #[test]
     fn resolved_targets_expose_center_tabs_for_reorder_holds() {
         let (_workspace, root, left, right) = split_workspace();
@@ -384,11 +425,13 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
-                    root,
-                    target_tabs: right,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::LeafCenter {
+                        root,
+                        target_tabs: right,
+                    },
+                ),
             })
             .expect("resolved center drop should commit");
 
@@ -419,11 +462,13 @@ mod tests {
                     source_tabs: tabs,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::TabBar {
-                    target_tabs: tabs,
-                    insert_index: 3,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::TabBar {
+                        target_tabs: tabs,
+                        insert_index: 3,
+                    },
+                ),
             })
             .expect("same-stack reorder should commit");
 
@@ -456,8 +501,7 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target,
+                target: workspace_target(&space(), target),
             })
             .expect_err("central center target should obey current policy");
 
@@ -496,8 +540,7 @@ mod tests {
                     source_tabs: tabs,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target,
+                target: workspace_target(&space(), target),
             })
             .expect_err("central tab bar target should obey current policy");
 
@@ -526,12 +569,14 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::InnerEdge {
-                    root: right,
-                    target_tabs: right,
-                    zone: DropZone::Right,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::InnerEdge {
+                        root: right,
+                        target_tabs: right,
+                        zone: DropZone::Right,
+                    },
+                ),
             })
             .expect_err("edge split policy should reject resolved target");
 
@@ -562,8 +607,7 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target,
+                target: workspace_target(&space(), target),
             })
             .expect_err("edge target without drop box should not commit");
 
@@ -594,8 +638,7 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target,
+                target: workspace_target(&space(), target),
             })
             .expect_err("edge target with mismatched preview bounds should not commit");
 
@@ -617,11 +660,13 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
-                    root: right,
-                    target_tabs: right,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::LeafCenter {
+                        root: right,
+                        target_tabs: right,
+                    },
+                ),
             })
             .expect_err("leaf center target with a fake root should not commit");
 
@@ -663,8 +708,7 @@ mod tests {
                     source_tabs,
                     item: &item_a,
                 },
-                target_space: &target_space,
-                target,
+                target: workspace_target(&target_space, target),
             })
             .expect_err("root edge with inner box metadata should not commit");
 
@@ -688,11 +732,13 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &detached,
-                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
-                    space: detached.clone(),
-                    is_central: false,
-                }),
+                target: workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                        is_central: false,
+                    },
+                ),
             })
             .expect("empty-space target should commit");
 
@@ -716,11 +762,13 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
-                    space: detached.clone(),
-                    is_central: false,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                        is_central: false,
+                    },
+                ),
             })
             .expect_err("empty-space target should not conflict with route target space");
 
@@ -748,11 +796,13 @@ mod tests {
                     source_tabs: left,
                     item: &item("a"),
                 },
-                target_space: &central,
-                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
-                    space: central.clone(),
-                    is_central: true,
-                }),
+                target: workspace_kind_target(
+                    &central,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: central.clone(),
+                        is_central: true,
+                    },
+                ),
             })
             .expect_err("central empty-space target should obey central dock-over policy");
 
@@ -790,11 +840,10 @@ mod tests {
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::LeafCenter {
-                    root,
-                    target_tabs,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::LeafCenter { root, target_tabs },
+                ),
             })
             .expect("resolved center stack drop should commit");
 
@@ -826,11 +875,13 @@ mod tests {
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
-                target_space: &detached,
-                target: resolved_target(DockResolvedDropTargetKind::EmptyDockSpace {
-                    space: detached.clone(),
-                    is_central: false,
-                }),
+                target: workspace_kind_target(
+                    &detached,
+                    DockResolvedDropTargetKind::EmptyDockSpace {
+                        space: detached.clone(),
+                        is_central: false,
+                    },
+                ),
             })
             .expect("resolved empty-space stack drop should commit");
 
@@ -893,12 +944,14 @@ mod tests {
                     .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                         source_space: &source_space,
                         payload,
-                        target_space: &target_space,
-                        target: resolved_target(DockResolvedDropTargetKind::RootEdge {
-                            root: target_root,
-                            leaf_tabs: Some(leaf_tabs),
-                            zone,
-                        }),
+                        target: workspace_kind_target(
+                            &target_space,
+                            DockResolvedDropTargetKind::RootEdge {
+                                root: target_root,
+                                leaf_tabs: Some(leaf_tabs),
+                                zone,
+                            },
+                        ),
                     })
                     .unwrap_or_else(|error| {
                         panic!("{zone:?} root-edge payload drop should commit: {error}")
@@ -941,12 +994,14 @@ mod tests {
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &space(),
                 payload: DockWorkspaceDropPayload::Tabs { source_tabs },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::RootEdge {
-                    root,
-                    leaf_tabs: Some(target_tabs),
-                    zone: DropZone::Right,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::RootEdge {
+                        root,
+                        leaf_tabs: Some(target_tabs),
+                        zone: DropZone::Right,
+                    },
+                ),
             })
             .expect("same-space root-edge tabs move should commit");
 
@@ -1022,12 +1077,14 @@ mod tests {
             .commit_resolved_payload_drop(DockWorkspacePayloadDropRequest {
                 source_space: &source_space,
                 payload: DockWorkspaceDropPayload::Floating { floating },
-                target_space: &target_space,
-                target: resolved_target(DockResolvedDropTargetKind::RootEdge {
-                    root: target_root,
-                    leaf_tabs: None,
-                    zone: DropZone::Right,
-                }),
+                target: workspace_kind_target(
+                    &target_space,
+                    DockResolvedDropTargetKind::RootEdge {
+                        root: target_root,
+                        leaf_tabs: None,
+                        zone: DropZone::Right,
+                    },
+                ),
             })
             .expect("floating root-edge drop should commit");
 
@@ -1101,11 +1158,13 @@ mod tests {
                     source_tabs,
                     item: &item("a"),
                 },
-                target_space: &space(),
-                target: resolved_target(DockResolvedDropTargetKind::FloatingTitleBar {
-                    floating,
-                    target_tabs: unrelated_tabs,
-                }),
+                target: workspace_kind_target(
+                    &space(),
+                    DockResolvedDropTargetKind::FloatingTitleBar {
+                        floating,
+                        target_tabs: unrelated_tabs,
+                    },
+                ),
             })
             .expect_err("floating title target should bind tabs to its floating subtree");
 

@@ -5,6 +5,7 @@ use crate::{
     drop_target::{DockDropResolution, DockResolvedDropTarget, validate_resolved_drop_target},
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistry},
     workspace_move_validation::{DockPayloadDockClasses, dock_target_validator},
+    workspace_transaction::DockWorkspaceResolvedDropTarget,
 };
 use open_gpui::WindowId;
 
@@ -87,7 +88,7 @@ pub(crate) fn resolve_delivery_workspace_target(
     source_node: crate::DockNodeId,
     payload: &DockViewportDropPayload,
     target: DockViewportResolvedDropTargetSnapshot,
-) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
+) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
     if target.frame().is_current_in(host_scenes)
         && target_facts_generation_is_current(adapter, &target)
     {
@@ -129,12 +130,15 @@ fn validate_resolved_target_snapshot(
     target: DockResolvedDropTarget,
     payload: &DockViewportDropPayload,
     source_node: crate::DockNodeId,
-) -> Result<(DockSpaceId, DockResolvedDropTarget), DockActionApplyError> {
+) -> Result<DockWorkspaceResolvedDropTarget, DockActionApplyError> {
     let policy = workspace.policy().clone();
     let payload_classes = workspace.payload_dock_classes_for_viewport_payload(payload, source_node);
     let target_validator = dock_target_validator(target_space, &payload_classes, &policy);
     match validate_resolved_drop_target(target, &policy, Some(&target_validator)) {
-        DockDropResolution::Valid(target) => Ok((target_space.clone(), target)),
+        DockDropResolution::Valid(target) => Ok(DockWorkspaceResolvedDropTarget::new(
+            target_space.clone(),
+            target,
+        )),
         DockDropResolution::Rejected(rejection) => {
             Err(DockActionApplyError::Policy(rejection.reason))
         }

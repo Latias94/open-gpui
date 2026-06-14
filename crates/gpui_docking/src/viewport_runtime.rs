@@ -601,7 +601,7 @@ impl DockViewportRuntime {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let (source, kind) = delivery.into_parts();
         self.validate_payload_drag_session(source.drag_session())?;
-        let (source_space, source_node, payload, target_space) = match kind {
+        let (source_space, source_node, payload, target) = match kind {
             crate::DockDropDeliveryKind::Workspace(delivery) => {
                 let (source_space, source_node, payload, _) = source.into_parts();
                 let target_space = {
@@ -626,14 +626,13 @@ impl DockViewportRuntime {
             }
         };
 
-        let (target_space, target) = target_space;
+        let target_space = target.target_space().clone();
         let focus_item = self.focus_item_for_payload(&payload, source_node, cx);
         let action = self.controller.update(cx, |controller, cx| {
             let outcome = controller.workspace_mut().commit_resolved_payload_drop(
                 DockWorkspacePayloadDropRequest {
                     source_space: &source_space,
                     payload: payload.as_workspace_payload(source_node),
-                    target_space: &target_space,
                     target,
                 },
             );
