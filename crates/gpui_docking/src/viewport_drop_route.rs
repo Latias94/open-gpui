@@ -622,7 +622,7 @@ mod tests {
     use slotmap::Key;
 
     #[test]
-    fn drop_route_treats_source_viewport_hit_as_local() {
+    fn drop_route_requires_hover_authority_for_source_viewport_hit() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -645,6 +645,18 @@ mod tests {
                 None,
                 &DockPolicy::default(),
                 DockViewportTargetContext::new(),
+            ),
+            DockViewportDropRoute::Unavailable
+        );
+        assert_eq!(
+            adapter.resolve_payload_drop_route_with_context(
+                main.clone(),
+                DockNodeId::null(),
+                DockViewportDropPayload::Item(item("a")),
+                point(px(115.0), px(225.0)),
+                None,
+                &DockPolicy::default(),
+                DockViewportTargetContext::new().with_hovered_window(window),
             ),
             DockViewportDropRoute::Local {
                 host_position: point(px(5.0), px(5.0)),

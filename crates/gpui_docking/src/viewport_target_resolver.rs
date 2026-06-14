@@ -87,8 +87,8 @@ pub(crate) enum DockViewportTargetConfidence {
     TrustedHovered,
     /// The event receiver owns the only live hit and no stronger signal conflicts.
     TrustedEventReceiver,
-    /// A single live rectangle hit exists and no stronger signal conflicts.
-    TrustedSingleHit,
+    /// A single live rectangle hit exists, but no current platform target signal authorized it.
+    SingleHitFallback,
     /// A platform window-stack/focus fallback selected a diagnostic target.
     WindowStackFallback,
     /// Multiple live hits overlap and no platform signal can arbitrate them.
@@ -111,8 +111,8 @@ pub(crate) enum DockViewportHoverArbitration {
     TrustedHovered(DockViewportTargetHit),
     /// The event receiver owns the only live hit and can commit locally.
     TrustedEventReceiver(DockViewportTargetHit),
-    /// A single live rectangle hit can commit because no stronger signal conflicts.
-    TrustedSingleHit(DockViewportTargetHit),
+    /// A single live rectangle hit exists, but is diagnostic-only without current target signal.
+    SingleHitFallback(DockViewportTargetHit),
     /// Window-stack/focus fallback selected a diagnostic target, but it is not commit authority.
     WindowStackFallback(DockViewportTargetHit),
     /// Multiple live hits overlap and no trusted signal can pick one.
@@ -153,7 +153,6 @@ impl DockViewportTargetResolution {
             self.confidence,
             DockViewportTargetConfidence::TrustedHovered
                 | DockViewportTargetConfidence::TrustedEventReceiver
-                | DockViewportTargetConfidence::TrustedSingleHit
         )
     }
 }
@@ -169,9 +168,9 @@ impl DockViewportHoverArbitration {
                 target,
                 DockViewportTargetConfidence::TrustedEventReceiver,
             )),
-            Self::TrustedSingleHit(target) => Some(DockViewportTargetResolution::new(
+            Self::SingleHitFallback(target) => Some(DockViewportTargetResolution::new(
                 target,
-                DockViewportTargetConfidence::TrustedSingleHit,
+                DockViewportTargetConfidence::SingleHitFallback,
             )),
             Self::WindowStackFallback(target) => Some(DockViewportTargetResolution::new(
                 target,
@@ -224,7 +223,7 @@ impl<'a> DockViewportHoverArbiter<'a> {
                 .context
                 .has_conflicting_single_hit_signal(target.window_id())
             {
-                return DockViewportHoverArbitration::TrustedSingleHit(target);
+                return DockViewportHoverArbitration::SingleHitFallback(target);
             }
         }
 
@@ -367,7 +366,11 @@ mod tests {
         .expect("single hit should resolve");
         assert_eq!(
             single.confidence(),
-            DockViewportTargetConfidence::TrustedSingleHit
+            DockViewportTargetConfidence::SingleHitFallback
+        );
+        assert!(
+            !single.is_trusted(),
+            "single rectangle hits are diagnostics-only without current platform target authority"
         );
 
         let single_hovered_known_empty = resolve_viewport_target_with_confidence(
