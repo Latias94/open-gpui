@@ -273,6 +273,61 @@ fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let preview_position = target_bounds.center();
+    let release_position = point(px(900.0), px(900.0));
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                target_bounds,
+                preview_position,
+                window,
+                cx,
+            );
+            host.update_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
+                preview_position,
+                window,
+                cx,
+            );
+            host.interaction_mut().mark_drop_preview_rendered();
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
+                window,
+                cx,
+            )
+        })
+        .expect("host should handle release");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(right_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
 fn dragging_tab_bar_empty_area_moves_whole_stack(cx: &mut TestAppContext) {
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {

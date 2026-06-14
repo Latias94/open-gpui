@@ -458,8 +458,14 @@ impl DockInteractionRuntime {
     pub(crate) fn take_local_drop_delivery(
         &mut self,
         release: &DockPayloadDropRelease,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
     ) -> Option<DockLocalDropDelivery> {
-        let target = self.drop.take_accepted_target()?;
+        let target = self.drop.take_accepted_target_at(
+            release.release_position(),
+            policy,
+            target_validator,
+        )?;
         Some(DockLocalDropDelivery::from_release(release, target))
     }
 
@@ -829,7 +835,7 @@ mod tests {
             position,
         );
         let delivery = runtime
-            .take_local_drop_delivery(&release)
+            .take_local_drop_delivery(&release, &DockPolicy::default(), None)
             .expect("previewed target should produce a local delivery");
         let request = delivery.workspace_request();
 

@@ -5,6 +5,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockFloatingBoundsRequest, DockPayloadDropRelease, DockSplitterResizeRequest},
+    workspace_move_validation::dock_target_validator,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
@@ -132,8 +133,20 @@ impl DockHost {
             .viewport_runtime()
             .cloned()
             .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
+        let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
+            (
+                workspace.policy().clone(),
+                workspace.payload_dock_classes_for_drag_payload(release.payload()),
+            )
+        });
+        let default_space = self.space().clone();
+        let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
         let mut drop_preview_cleared = false;
-        let local_delivery = self.interaction_mut().take_local_drop_delivery(&release);
+        let local_delivery = self.interaction_mut().take_local_drop_delivery(
+            &release,
+            &policy,
+            Some(&target_validator),
+        );
         let outcome = if let Some(delivery) = local_delivery {
             let focus_item = self.focus_item_for_drag_payload(delivery.payload(), cx);
             let outcome = self.commit_resolved_payload_drop_interaction(

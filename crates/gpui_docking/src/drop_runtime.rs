@@ -192,6 +192,13 @@ impl DockHostDropScene {
             empty_spaces: &self.empty_spaces,
         })
     }
+
+    fn for_release_position(&self, position: Point<Pixels>) -> Self {
+        let mut scene = self.clone();
+        scene.position = position;
+        scene.clear_on_miss = true;
+        scene
+    }
 }
 
 impl DockHostDropSceneFact {
@@ -279,10 +286,28 @@ impl DockDropRuntime {
         self.replace_resolution(resolution)
     }
 
-    pub(crate) fn take_accepted_target(&mut self) -> Option<DockResolvedDropTarget> {
+    pub(crate) fn take_accepted_target_at(
+        &mut self,
+        release_position: Point<Pixels>,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> Option<DockResolvedDropTarget> {
+        let Some(scene) = self.scene.as_ref() else {
+            self.accept.clear();
+            self.resolution = None;
+            return None;
+        };
+        let release_scene = scene.for_release_position(release_position);
+        let _ = self.resolve_scene(&release_scene, policy, target_validator);
         self.scene = None;
         self.resolution = None;
         self.accept.take_delivery_target()
+    }
+
+    #[cfg(test)]
+    fn take_accepted_target(&mut self) -> Option<DockResolvedDropTarget> {
+        let position = self.scene.as_ref()?.position;
+        self.take_accepted_target_at(position, &DockPolicy::default(), None)
     }
 
     pub(crate) fn mark_preview_rendered(&mut self) -> bool {
@@ -507,6 +532,66 @@ mod tests {
             runtime.take_accepted_target().is_none(),
             "a miss frame must clear stale preview authority"
         );
+    }
+
+    #[test]
+    fn release_revalidation_requires_pointer_to_still_hit_previewed_target() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = leaf_center_position(leaf_bounds);
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(runtime.mark_preview_rendered());
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(point(px(900.0), px(900.0))).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+
+        assert!(
+            runtime
+                .take_accepted_target_at(point(px(900.0), px(900.0)), &DockPolicy::default(), None)
+                .is_none(),
+            "release outside the current scene must not deliver a stale preview target"
+        );
+        assert!(runtime.resolved_target().is_none());
+    }
+
+    #[test]
+    fn release_revalidation_requires_same_previewed_target_key() {
+        let first = DockNodeId::null();
+        let mut graph = crate::DockGraph::new();
+        let second = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("target")],
+            selected: Some(crate::DockItemId::from("target")),
+        });
+        let mut runtime = DockDropRuntime::default();
+        let first_bounds = bounds(0.0, 0.0, 160.0, 160.0);
+        let second_bounds = bounds(180.0, 0.0, 160.0, 160.0);
+        let first_position = leaf_center_position(first_bounds);
+        let second_position = leaf_center_position(second_bounds);
+
+        accepted_leaf_center(&mut runtime, first, first_position, first_bounds);
+        let _ = runtime.push_scene_fact(
+            first_position,
+            None,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: second,
+                target_tabs: second,
+                bounds: second_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.mark_preview_rendered());
+
+        assert!(
+            runtime
+                .take_accepted_target_at(second_position, &DockPolicy::default(), None)
+                .is_none(),
+            "release on a different target must not reuse the previous preview authority"
+        );
+        assert!(runtime.resolved_target().is_none());
     }
 
     #[test]
