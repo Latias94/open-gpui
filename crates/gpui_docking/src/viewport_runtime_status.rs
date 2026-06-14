@@ -110,6 +110,8 @@ pub enum DockViewportRouteTarget {
     Local {
         /// Source dock space that should commit locally.
         space: DockSpaceId,
+        /// GPUI window id that rendered the source viewport, when known.
+        window_id: Option<WindowId>,
         /// Pointer position in source host coordinates.
         host_position: Point<Pixels>,
     },
@@ -409,6 +411,30 @@ impl DockViewportRuntimeStatus {
     pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
         self.last_platform_sync = Some(record);
     }
+
+    pub(crate) fn clear_window_references(&mut self, space: &DockSpaceId, window_id: WindowId) {
+        if self
+            .last_route
+            .as_ref()
+            .is_some_and(|route| route.references_window(space, window_id))
+        {
+            self.last_route = None;
+        }
+        if self
+            .last_activation
+            .as_ref()
+            .is_some_and(|activation| activation.references_window(space, window_id))
+        {
+            self.last_activation = None;
+        }
+        if self
+            .last_platform_sync
+            .as_ref()
+            .is_some_and(|sync| sync.window_id == window_id)
+        {
+            self.last_platform_sync = None;
+        }
+    }
 }
 
 impl DockViewportLifecycleRecord {
@@ -459,10 +485,8 @@ impl DockViewportRouteTarget {
     pub fn window_id(&self) -> Option<WindowId> {
         match self {
             Self::KnownViewport { window_id, .. } => Some(*window_id),
-            Self::Local { .. }
-            | Self::TearOff { .. }
-            | Self::Unavailable
-            | Self::Rejected { .. } => None,
+            Self::Local { window_id, .. } => *window_id,
+            Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => None,
         }
     }
 
@@ -502,6 +526,7 @@ impl DockViewportRouteTarget {
         match route {
             DockViewportDropRoute::Local { host_position } => Self::Local {
                 space: request.source_space().clone(),
+                window_id: request.target_context().hovered_window(),
                 host_position: *host_position,
             },
             DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
@@ -517,6 +542,33 @@ impl DockViewportRouteTarget {
                 reason: reason.clone(),
             },
         }
+    }
+
+    fn references_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        match self {
+            Self::Local {
+                space: route_space,
+                window_id: Some(route_window),
+                ..
+            }
+            | Self::KnownViewport {
+                space: route_space,
+                window_id: route_window,
+                ..
+            } => route_space == space && *route_window == window_id,
+            Self::Local {
+                space: route_space,
+                window_id: None,
+                ..
+            } => route_space == space,
+            Self::TearOff { .. } | Self::Unavailable | Self::Rejected { .. } => false,
+        }
+    }
+}
+
+impl DockViewportRouteRecord {
+    fn references_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        self.target.references_window(space, window_id)
     }
 }
 
@@ -584,6 +636,12 @@ impl From<&DockViewportActivationTarget> for DockViewportActivationRecord {
             window_id: target.window().window_id(),
             focus_item: target.focus_item().cloned(),
         }
+    }
+}
+
+impl DockViewportActivationRecord {
+    fn references_window(&self, space: &DockSpaceId, window_id: WindowId) -> bool {
+        self.space == *space && self.window_id == window_id
     }
 }
 
@@ -711,7 +769,7 @@ mod tests {
             DockViewportDropPayload::Tabs,
             host_position,
             None,
-            crate::DockViewportPlatformSignals::default(),
+            crate::DockViewportPlatformSignals::default().with_hovered_window(handle(7)),
         );
 
         status.record_route(&request, &DockViewportDropRoute::Local { host_position });
@@ -724,7 +782,7 @@ mod tests {
         assert_eq!(route.drag_session_id, None);
         assert_eq!(route.target.space(), Some(&source));
         assert_eq!(route.target.host_position(), Some(host_position));
-        assert_eq!(route.target.window_id(), None);
+        assert_eq!(route.target.window_id(), Some(WindowId::from(7)));
     }
 
     #[test]
@@ -793,5 +851,64 @@ mod tests {
             Some(DockViewportDropOutcomeKind::Error)
         );
         assert_eq!(status.last_activation, None);
+    }
+
+    #[test]
+    fn clearing_window_references_removes_current_window_diagnostics() {
+        let source = DockSpaceId::from("source");
+        let target = DockSpaceId::from("target");
+        let source_tabs = DockNodeId::null();
+        let target_window = handle(44);
+        let host_position = point(px(12.0), px(34.0));
+        let focus_item = DockItemId::from("a");
+        let mut status = DockViewportRuntimeStatus::default();
+
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            source_tabs,
+            DockViewportDropPayload::Tabs,
+            host_position,
+            None,
+            crate::DockViewportPlatformSignals::default().with_hovered_window(target_window),
+        );
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::KnownViewport {
+                target: crate::DockViewportTargetHit::new(
+                    target.clone(),
+                    target_window,
+                    host_position,
+                ),
+            },
+        );
+        status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
+            crate::DockViewportDropActionOutcome::new(
+                DockActionOutcome::Changed,
+                Some(DockViewportActivationTarget::new(
+                    target.clone(),
+                    target_window,
+                    Some(focus_item),
+                )),
+            ),
+        )));
+        status.record_platform_sync(DockViewportPlatformSyncRecord {
+            window_id: target_window.window_id(),
+            applied: Vec::new(),
+            unsupported_requests: Vec::new(),
+        });
+
+        status.clear_window_references(&target, target_window.window_id());
+
+        assert_eq!(status.last_route, None);
+        assert_eq!(status.last_activation, None);
+        assert_eq!(status.last_platform_sync, None);
+        assert_eq!(
+            status
+                .last_drop_outcome
+                .as_ref()
+                .map(|outcome| outcome.kind),
+            Some(DockViewportDropOutcomeKind::Action),
+            "drop outcomes remain historical commit results rather than live window references"
+        );
     }
 }

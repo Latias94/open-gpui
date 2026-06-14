@@ -417,6 +417,9 @@ impl DockViewportRuntime {
         window_id: WindowId,
     ) -> (bool, Vec<AnyWindowHandle>) {
         let changed = self.adapter.mark_window_close_requested(window_id);
+        if let Some(space) = self.adapter.space_for_window_id(window_id).cloned() {
+            self.status.clear_window_references(&space, window_id);
+        }
         self.host_scenes.unregister_window(window_id);
         let (preview_changed, windows) =
             self.clear_routed_drop_preview_if_window_matches(window_id);
@@ -546,6 +549,7 @@ impl DockViewportRuntime {
         let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         self.close_coordinator.discard_window(window_id);
         self.host_scenes.unregister_space(space);
+        self.status.clear_window_references(space, window_id);
     }
 
     fn finish_payload_drag_for_source_space(&mut self, space: &DockSpaceId) {
@@ -1090,6 +1094,7 @@ impl DockViewportRuntime {
             .was_merge_back_precommitted(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         if let Some(space) = outcome.space().cloned() {
+            self.status.clear_window_references(&space, window_id);
             self.finish_payload_drag_for_source_space(&space);
         }
         self.host_scenes.unregister_window(window_id);

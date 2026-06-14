@@ -5,11 +5,11 @@ use crate::{
     DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
     DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportPlatformSyncAction,
     DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupportedReason,
-    DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRuntime,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
-    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace,
+    DockViewportResolvedDropRoute, DockViewportRouteStatus, DockViewportRouteTarget,
+    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -1547,6 +1547,66 @@ fn viewport_runtime_window_closed_cleans_mapping_after_prevent_policy(cx: &mut T
     assert_eq!(outcome.status(), DockViewportCloseStatus::Closed);
     assert_eq!(outcome.space(), Some(&secondary_space));
     assert_eq!(runtime.adapter().window_for_space(&secondary_space), None);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_window_closed_clears_live_window_diagnostics(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let source_window = handle(50);
+    let target_window = handle(51);
+    runtime.register_opened_viewport(source_space.clone(), source_window);
+    runtime.register_opened_viewport(target_space.clone(), target_window);
+
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space,
+        source_tabs,
+        &target_space,
+        target_window,
+        target_tabs,
+        cx,
+    );
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            status.last_route.as_ref().map(|record| &record.target),
+            Some(DockViewportRouteTarget::KnownViewport { window_id, .. })
+                if *window_id == target_window.window_id()
+        ),
+        "test setup should record a route into the target window"
+    );
+    assert!(
+        runtime
+            .routed_drop_delivery_for_drag_session(Some(&session))
+            .is_some()
+    );
+
+    let outcome = runtime.handle_window_closed(target_window.window_id());
+
+    assert_eq!(outcome.status(), DockViewportCloseStatus::Closed);
+    assert_eq!(runtime.runtime_status().last_route, None);
+    assert_eq!(
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
+        None
+    );
 }
 
 #[open_gpui::test]
