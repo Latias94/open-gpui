@@ -140,6 +140,7 @@ mod viewport_placement_adapter;
 mod viewport_placement_options;
 mod viewport_placement_validation;
 mod viewport_platform_signals;
+mod viewport_platform_sync;
 mod viewport_registration;
 mod viewport_registry;
 mod viewport_routed_preview;

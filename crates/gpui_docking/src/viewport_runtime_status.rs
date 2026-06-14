@@ -8,7 +8,9 @@ use crate::{
         DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
     },
 };
-use open_gpui::{Pixels, Point, WindowId};
+use open_gpui::{
+    DisplayId, Pixels, Point, Size, WindowBackgroundAppearance, WindowDecorations, WindowId,
+};
 
 /// Read-only diagnostic snapshot for the viewport runtime.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -27,6 +29,8 @@ pub struct DockViewportRuntimeStatus {
     pub last_should_close: Option<DockViewportShouldCloseOutcome>,
     /// Most recent tear-off transaction outcome.
     pub last_tear_off: Option<DockViewportTearOffRecord>,
+    /// Most recent live platform-window sync attempted for a reused viewport.
+    pub last_platform_sync: Option<DockViewportPlatformSyncRecord>,
 }
 
 /// Current route-readiness record for one registered viewport.
@@ -169,6 +173,155 @@ pub struct DockViewportActivationRecord {
     pub focus_item: Option<DockItemId>,
 }
 
+/// Live platform-window sync attempted for a reused viewport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportPlatformSyncRecord {
+    /// GPUI window that received the sync attempt.
+    pub window_id: WindowId,
+    /// Requests that were applied through the current GPUI window interface.
+    pub applied: Vec<DockViewportPlatformSyncAction>,
+    /// Requests that could not be applied because GPUI has no matching live mutation interface yet.
+    pub unsupported_requests: Vec<DockViewportPlatformSyncUnsupported>,
+}
+
+/// Platform-window request successfully applied while reusing an existing viewport.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockViewportPlatformSyncAction {
+    /// Focused and raised the platform window.
+    Activate,
+    /// Updated the platform window title.
+    Title {
+        /// Requested title.
+        title: String,
+    },
+    /// Updated the platform application id.
+    AppId {
+        /// Requested application id.
+        app_id: String,
+    },
+    /// Updated the window content size.
+    Resize {
+        /// Requested content size.
+        size: Size<Pixels>,
+    },
+    /// Updated the platform window fullscreen state.
+    Fullscreen {
+        /// Whether fullscreen was enabled.
+        enabled: bool,
+    },
+    /// Updated the platform window background appearance.
+    BackgroundAppearance {
+        /// Requested background appearance.
+        appearance: WindowBackgroundAppearance,
+    },
+    /// Requested client/server decorations from the platform window.
+    WindowDecorations {
+        /// Requested decoration mode.
+        decorations: WindowDecorations,
+    },
+    /// Updated the macOS traffic-light position.
+    TrafficLightPosition {
+        /// Requested traffic-light position.
+        position: Point<Pixels>,
+    },
+}
+
+/// Platform-window request that could not be applied to a reused viewport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockViewportPlatformSyncUnsupported {
+    /// Unsupported request.
+    pub request: DockViewportPlatformSyncRequest,
+    /// Why the request was not applied.
+    pub reason: DockViewportPlatformSyncUnsupportedReason,
+}
+
+/// Platform-window request shape used by sync diagnostics.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DockViewportPlatformSyncRequest {
+    /// Requested platform visibility differs from the already-open window.
+    Show {
+        /// Requested visibility.
+        requested: bool,
+    },
+    /// Requested platform window kind differs from the already-open window.
+    WindowKind,
+    /// Requested movability differs from the already-open window.
+    Movable {
+        /// Requested movability.
+        requested: bool,
+    },
+    /// Requested resizability differs from the already-open window.
+    Resizable {
+        /// Requested resizability.
+        requested: bool,
+    },
+    /// Requested minimizability differs from the already-open window.
+    Minimizable {
+        /// Requested minimizability.
+        requested: bool,
+    },
+    /// Requested display differs from the already-open window.
+    Display {
+        /// Requested display id.
+        requested: DisplayId,
+    },
+    /// Requested minimum window size differs from the already-open window.
+    WindowMinSize {
+        /// Requested minimum size.
+        requested: Size<Pixels>,
+    },
+    /// Requested icon differs from the already-open window.
+    Icon,
+    /// Requested native tabbing identifier differs from the already-open window.
+    TabbingIdentifier {
+        /// Requested native tabbing identifier.
+        requested: String,
+    },
+    /// Requested titlebar presence differs from the already-open window.
+    TitlebarPresence {
+        /// Requested titlebar presence.
+        requested: bool,
+    },
+    /// Requested window origin differs from the already-open window.
+    WindowOrigin {
+        /// Requested window origin.
+        requested: Point<Pixels>,
+    },
+    /// Requested platform window state differs from the already-open window.
+    WindowState {
+        /// Requested window state.
+        requested: DockViewportPlatformWindowState,
+    },
+    /// Requested titlebar transparency differs from the already-open window.
+    TitlebarTransparency {
+        /// Requested titlebar transparency.
+        requested: bool,
+    },
+    /// Requested macOS traffic-light position could not be applied on this platform.
+    TrafficLightPosition {
+        /// Requested traffic-light position.
+        requested: Point<Pixels>,
+    },
+}
+
+/// Platform window state requested through `WindowOptions`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportPlatformWindowState {
+    /// Normal windowed state.
+    Windowed,
+    /// Maximized state.
+    Maximized,
+    /// Fullscreen state.
+    Fullscreen,
+}
+
+/// Why a platform-window sync request could not be applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockViewportPlatformSyncUnsupportedReason {
+    /// GPUI's public `Window` interface does not expose a live mutation for this request.
+    UnsupportedByWindowApi,
+}
+
 /// Tear-off transaction outcome recorded by the viewport runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockViewportTearOffRecord {
@@ -249,6 +402,10 @@ impl DockViewportRuntimeStatus {
 
     pub(crate) fn record_should_close(&mut self, outcome: &DockViewportShouldCloseOutcome) {
         self.last_should_close = Some(outcome.clone());
+    }
+
+    pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
+        self.last_platform_sync = Some(record);
     }
 }
 

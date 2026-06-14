@@ -3,11 +3,12 @@ use crate::{
     DockGraphDropTarget, DockGraphMutationError, DockHost, DockItemId, DockNode, DockPanel,
     DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
-    DockViewportRuntime, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
-    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
-    DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace,
+    DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportPlatformSyncAction,
+    DockViewportPlatformSyncRequest, DockViewportPlatformSyncUnsupportedReason,
+    DockViewportResolvedDropRoute, DockViewportRuntime, DockViewportRuntimeHandle,
+    DockViewportShouldCloseStatus, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffOutcomeKind, DockViewportTearOffPlacementSource, DockViewportTearOffRequest,
+    DockViewportWindowFacts, DockWorkspace,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -19,8 +20,8 @@ use crate::{
     viewport_test_support::handle,
 };
 use open_gpui::{
-    AnyWindowHandle, AppContext as _, TestAppContext, VisualTestContext, WindowBounds,
-    WindowHandle, WindowId, WindowOptions, point, px, size,
+    AnyWindowHandle, AppContext as _, SharedString, TestAppContext, TitlebarOptions,
+    VisualTestContext, WindowBounds, WindowHandle, WindowId, WindowOptions, point, px, size,
 };
 
 fn tear_off_request(
@@ -160,6 +161,194 @@ fn viewport_runtime_opens_and_reuses_controller_backed_window(cx: &mut TestAppCo
     assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
     assert_eq!(reused.window(), opened.window());
     assert_eq!(runtime.borrow().adapter().spaces().len(), 1);
+}
+
+#[open_gpui::test]
+fn viewport_runtime_syncs_supported_options_when_reusing_window(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(primary_space.clone(), primary_tabs);
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space, graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+                        0.0, 0.0, 360.0, 220.0,
+                    ))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(SharedString::from("Initial")),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("secondary viewport should open through runtime");
+
+    let reused = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+                        24.0, 32.0, 480.0, 260.0,
+                    ))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(SharedString::from("Retitled")),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("live viewport should be reused through runtime");
+
+    assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), opened.window());
+    let bounds = reused
+        .window()
+        .update(cx, |_, window, _| window.bounds())
+        .expect("reused viewport should remain live");
+    assert_eq!(bounds.size, size(px(480.0), px(260.0)));
+    assert_eq!(
+        bounds.origin,
+        point(px(0.0), px(0.0)),
+        "GPUI exposes live resize but not live screen-origin updates"
+    );
+
+    let sync = runtime
+        .runtime_status()
+        .last_platform_sync
+        .expect("reuse should record platform sync diagnostics");
+    assert_eq!(sync.window_id, reused.window().window_id());
+    assert!(
+        sync.applied
+            .contains(&DockViewportPlatformSyncAction::Activate)
+    );
+    assert!(
+        sync.applied
+            .contains(&DockViewportPlatformSyncAction::Title {
+                title: "Retitled".to_string(),
+            })
+    );
+    assert!(
+        sync.applied
+            .contains(&DockViewportPlatformSyncAction::Resize {
+                size: size(px(480.0), px(260.0)),
+            })
+    );
+    assert!(sync.unsupported_requests.iter().any(|unsupported| {
+        unsupported.request
+            == DockViewportPlatformSyncRequest::WindowOrigin {
+                requested: point(px(24.0), px(32.0)),
+            }
+            && unsupported.reason
+                == DockViewportPlatformSyncUnsupportedReason::UnsupportedByWindowApi
+    }));
+}
+
+#[open_gpui::test]
+fn viewport_runtime_reuse_respects_focus_option(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let secondary_space = DockSpaceId::from("secondary");
+    let mut graph = DockGraph::new();
+    let primary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let secondary_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(primary_space.clone(), primary_tabs);
+    graph.set_root(secondary_space.clone(), secondary_tabs);
+
+    let mut workspace = DockWorkspace::new(primary_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller);
+
+    let primary = cx
+        .update(|app| {
+            runtime.open_viewport(primary_space, viewport_window_options(360.0, 220.0), app)
+        })
+        .expect("primary viewport should open");
+    let secondary = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                WindowOptions {
+                    focus: false,
+                    ..viewport_window_options(360.0, 220.0)
+                },
+                app,
+            )
+        })
+        .expect("secondary viewport should open");
+    primary
+        .window()
+        .update(cx, |_, window, _| window.activate_window())
+        .expect("primary viewport should be activatable");
+    cx.run_until_parked();
+    assert_eq!(cx.update(|app| app.active_window()), Some(primary.window()));
+
+    let reused = cx
+        .update(|app| {
+            runtime.open_viewport(
+                secondary_space.clone(),
+                WindowOptions {
+                    focus: false,
+                    ..viewport_window_options(420.0, 240.0)
+                },
+                app,
+            )
+        })
+        .expect("secondary viewport should be reused");
+    cx.run_until_parked();
+
+    assert_eq!(reused.status(), DockViewportOpenStatus::Reused);
+    assert_eq!(reused.window(), secondary.window());
+    assert_eq!(
+        cx.update(|app| app.active_window()),
+        Some(primary.window()),
+        "reusing a viewport with focus=false should not raise it during stale probing"
+    );
+    let sync = runtime
+        .runtime_status()
+        .last_platform_sync
+        .expect("reuse should record platform sync diagnostics");
+    assert!(
+        !sync
+            .applied
+            .contains(&DockViewportPlatformSyncAction::Activate)
+    );
+    assert!(
+        sync.applied
+            .contains(&DockViewportPlatformSyncAction::Resize {
+                size: size(px(420.0), px(240.0)),
+            })
+    );
 }
 
 #[open_gpui::test]

@@ -7,9 +7,9 @@ use crate::{
     DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
     DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportIdentity,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
-    DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
-    DockViewportRoutedDropPreviewStore, DockViewportRuntimeHandle, DockViewportRuntimeStatus,
-    DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
+    DockViewportPlatformSyncRecord, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
+    DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewStore, DockViewportRuntimeHandle,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
     DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
@@ -566,10 +566,7 @@ impl DockViewportRuntime {
         let Some(window) = self.adapter.window_for_space(space) else {
             return DockViewportReusableWindow::Missing;
         };
-        if window
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-        {
+        if window.update(cx, |_, _, _| ()).is_ok() {
             return DockViewportReusableWindow::Reused(window);
         }
 
@@ -643,6 +640,10 @@ impl DockViewportRuntime {
 
     pub(crate) fn record_tear_off_outcome(&mut self, outcome: &DockViewportTearOffOpenOutcome) {
         self.status.record_tear_off(outcome);
+    }
+
+    pub(crate) fn record_platform_sync(&mut self, record: DockViewportPlatformSyncRecord) {
+        self.status.record_platform_sync(record);
     }
 
     fn deliver_payload_drop_inner(

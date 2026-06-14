@@ -11,6 +11,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
+    viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{DockViewportReusableWindow, DockViewportTearOffCommitPreparation},
 };
 #[cfg(test)]
@@ -251,13 +252,19 @@ impl DockViewportRuntimeHandle {
         self.ensure_window_closed_observer(cx);
 
         let space = space.into();
-        let status = match self
-            .runtime
-            .borrow_mut()
-            .reusable_window_for_space(&space, cx)
-        {
+        let reusable_window = {
+            self.runtime
+                .borrow_mut()
+                .reusable_window_for_space(&space, cx)
+        };
+        let status = match reusable_window {
             DockViewportReusableWindow::Reused(window) => {
                 install_should_close_hook(self.clone(), window, cx)?;
+                let sync_record = window.update(cx, |_, window, _| {
+                    sync_reused_viewport_window(window, options)
+                })?;
+                self.runtime.borrow_mut().record_platform_sync(sync_record);
+                refresh_windows(vec![window], cx);
                 return Ok(DockViewportOpenOutcome::new(
                     space,
                     window,
