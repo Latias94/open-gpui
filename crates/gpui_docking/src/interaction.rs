@@ -1,5 +1,6 @@
 use crate::{
     DockDropDelivery, DockNodeId, DockPolicy, DockSpaceId, DockViewportDropRoute,
+    DockViewportResolvedDropRoute,
     drag::{DockDragPayload, DockDragPayloadIdentity},
     drop_preview::{DockDropPreview, DockDropRoutePreview},
     drop_runtime::{DockDropRuntime, DockHostDropScene, DockHostDropSceneFact},
@@ -462,15 +463,16 @@ impl DockInteractionRuntime {
 
     pub(crate) fn update_drop_route_preview(
         &mut self,
-        route: &DockViewportDropRoute,
+        resolution: &DockViewportResolvedDropRoute,
         host_position: Point<Pixels>,
-        delivery: DockDropDelivery,
     ) -> bool {
+        let route = resolution.route();
         if matches!(route, DockViewportDropRoute::Unavailable) {
             return self.clear_drop_route_preview();
         }
         let preview_changed =
             self.set_drop_route_preview(DockDropRoutePreview::from_route(route, host_position));
+        let delivery = resolution.delivery().clone();
         let delivery_changed = if self.drop_delivery.as_ref() == Some(&delivery) {
             false
         } else {
@@ -1094,8 +1096,10 @@ mod tests {
             ),
             rejected_route.clone(),
         );
+        let rejected_resolution =
+            DockViewportResolvedDropRoute::new(rejected_route, rejected_delivery);
 
-        assert!(runtime.update_drop_route_preview(&rejected_route, position, rejected_delivery,));
+        assert!(runtime.update_drop_route_preview(&rejected_resolution, position,));
         assert!(
             runtime.drop_preview().is_none(),
             "route marker should not be exposed as a target drop preview"

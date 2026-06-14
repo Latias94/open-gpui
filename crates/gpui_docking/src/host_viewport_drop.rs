@@ -62,13 +62,11 @@ impl DockHost {
             tear_off_geometry,
         );
         let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
-        let route = resolution.route().clone();
-        let delivery = resolution.delivery().clone();
         let routed_preview_changed =
             runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
-                .update_drop_route_preview(&route, position, delivery)
+                .update_drop_route_preview(&resolution, position)
                 || routed_preview_changed,
         )
     }

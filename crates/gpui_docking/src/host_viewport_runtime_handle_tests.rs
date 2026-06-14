@@ -1659,11 +1659,8 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
 
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut().update_drop_route_preview(
-                resolution.route(),
-                target_center_host_position(),
-                resolution.delivery().clone(),
-            );
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
             host.drop_payload_release_from_render(
                 DockPayloadDropRelease::hovered_host(
                     payload.clone(),
@@ -1783,11 +1780,8 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
 
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut().update_drop_route_preview(
-                resolution.route(),
-                target_center_host_position(),
-                resolution.delivery().clone(),
-            );
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
             window.refresh();
             cx.notify();
         })
@@ -1891,11 +1885,8 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
 
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut().update_drop_route_preview(
-                resolution.route(),
-                target_center_host_position(),
-                resolution.delivery().clone(),
-            );
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
             window.refresh();
             cx.notify();
         })
@@ -2032,11 +2023,8 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
 
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut().update_drop_route_preview(
-                resolution.route(),
-                target_center_host_position(),
-                resolution.delivery().clone(),
-            );
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
             window.refresh();
             cx.notify();
         })
@@ -2218,11 +2206,8 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
     );
     source_window
         .update(cx, |host, window, cx| {
-            host.interaction_mut().update_drop_route_preview(
-                resolution.route(),
-                target_center_host_position(),
-                resolution.delivery().clone(),
-            );
+            host.interaction_mut()
+                .update_drop_route_preview(&resolution, target_center_host_position());
             window.refresh();
             cx.notify();
         })
