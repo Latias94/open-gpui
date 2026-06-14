@@ -227,6 +227,7 @@ impl DockViewportRuntimeStatus {
         result: &Result<DockViewportDropRouteOutcome, DockActionApplyError>,
     ) {
         self.last_drop_outcome = Some(DockViewportDropOutcomeRecord::from_result(result));
+        self.last_activation = None;
         if let Ok(outcome) = result {
             self.last_activation = outcome
                 .activation_target()
@@ -584,5 +585,43 @@ mod tests {
                 .map(|route| route.drag_session_id),
             Some(Some(19))
         );
+    }
+
+    #[test]
+    fn drop_error_clears_previous_activation_record() {
+        let mut status = DockViewportRuntimeStatus::default();
+        let target_space = DockSpaceId::from("target");
+        let target_window = handle(44);
+        let focus_item = DockItemId::from("a");
+
+        status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
+            crate::DockViewportDropActionOutcome::new(
+                DockActionOutcome::Changed,
+                Some(DockViewportActivationTarget::new(
+                    target_space.clone(),
+                    target_window,
+                    Some(focus_item.clone()),
+                )),
+            ),
+        )));
+        assert_eq!(
+            status.last_activation,
+            Some(DockViewportActivationRecord {
+                space: target_space,
+                window_id: target_window.window_id(),
+                focus_item: Some(focus_item),
+            })
+        );
+
+        status.record_drop_result(&Err(DockActionApplyError::DropTargetUnavailable));
+
+        assert_eq!(
+            status
+                .last_drop_outcome
+                .as_ref()
+                .map(|outcome| outcome.kind),
+            Some(DockViewportDropOutcomeKind::Error)
+        );
+        assert_eq!(status.last_activation, None);
     }
 }
