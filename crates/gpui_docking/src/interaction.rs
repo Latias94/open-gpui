@@ -6,6 +6,7 @@ use crate::{
     drop_target::{DockDropTargetValidator, DockResolvedDropTarget},
     geometry,
     viewport_drop_scene::DockViewportHostSceneFrame,
+    workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Pixels, Point, point};
 
@@ -109,6 +110,14 @@ pub(crate) struct DockPayloadDropRelease {
     release_position: Point<Pixels>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DockLocalDropDelivery {
+    source_space: DockSpaceId,
+    payload: DockDragPayload,
+    target_space: DockSpaceId,
+    target: DockResolvedDropTarget,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockPayloadDropReleaseOrigin {
     /// Release was observed by the host/window under the dragged payload.
@@ -184,6 +193,30 @@ impl DockPayloadDropRelease {
 
     pub(crate) fn release_position(&self) -> Point<Pixels> {
         self.release_position
+    }
+}
+
+impl DockLocalDropDelivery {
+    fn from_release(release: &DockPayloadDropRelease, target: DockResolvedDropTarget) -> Self {
+        Self {
+            source_space: release.payload.source_space.clone(),
+            payload: release.payload.clone(),
+            target_space: release.host_space.clone(),
+            target,
+        }
+    }
+
+    pub(crate) fn payload(&self) -> &DockDragPayload {
+        &self.payload
+    }
+
+    pub(crate) fn workspace_request(&self) -> DockWorkspacePayloadDropRequest<'_> {
+        DockWorkspacePayloadDropRequest {
+            source_space: &self.source_space,
+            payload: self.payload.as_workspace_payload(),
+            target_space: &self.target_space,
+            target: self.target.clone(),
+        }
     }
 }
 
@@ -415,8 +448,12 @@ impl DockInteractionRuntime {
         self.viewport_host_scene_frame.as_ref()
     }
 
-    pub(crate) fn take_accepted_drop_target(&mut self) -> Option<DockResolvedDropTarget> {
-        self.drop.take_accepted_target()
+    pub(crate) fn take_local_drop_delivery(
+        &mut self,
+        release: &DockPayloadDropRelease,
+    ) -> Option<DockLocalDropDelivery> {
+        let target = self.drop.take_accepted_target()?;
+        Some(DockLocalDropDelivery::from_release(release, target))
     }
 
     pub(crate) fn clear_drop_acceptance(&mut self) -> bool {
@@ -662,6 +699,8 @@ mod tests {
     use crate::{
         DockItemId, DockNodeId, DockViewportDropPayload, DockViewportDropRouteRequest,
         DockViewportTargetContext,
+        drop_target::{DockLeafDropTarget, DockResolvedDropTargetKind},
+        workspace_transaction::DockWorkspaceDropPayload,
     };
     use open_gpui::{point, px, size};
     use slotmap::Key;
@@ -754,6 +793,50 @@ mod tests {
             Some(drag_session.clone()),
         );
         assert_eq!(session_release.drag_session(), Some(&drag_session));
+    }
+
+    #[test]
+    fn local_drop_delivery_packages_previewed_target_for_workspace_commit() {
+        let tabs = DockNodeId::null();
+        let position = point(px(120.0), px(90.0));
+        let mut runtime = DockInteractionRuntime::default();
+        runtime.begin_drop_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        runtime.push_drop_scene_fact(
+            position,
+            None,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: tabs,
+                target_tabs: tabs,
+                bounds: bounds(0.0, 0.0, 240.0, 180.0),
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.mark_drop_preview_rendered());
+
+        let release = DockPayloadDropRelease::hovered_host(
+            item_payload("a", "Panel A"),
+            DockSpaceId::from("main"),
+            position,
+        );
+        let delivery = runtime
+            .take_local_drop_delivery(&release)
+            .expect("previewed target should produce a local delivery");
+        let request = delivery.workspace_request();
+
+        assert_eq!(request.source_space, &DockSpaceId::from("main"));
+        assert_eq!(request.target_space, &DockSpaceId::from("main"));
+        assert!(matches!(
+            &request.payload,
+            DockWorkspaceDropPayload::Item { item, .. } if *item == &DockItemId::from("a")
+        ));
+        assert_eq!(
+            request.target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: tabs,
+                target_tabs: tabs,
+            }
+        );
     }
 
     #[test]

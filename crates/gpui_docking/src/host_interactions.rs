@@ -126,7 +126,6 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let payload = release.payload();
         let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let runtime_preview_cleared = self
@@ -134,16 +133,11 @@ impl DockHost {
             .cloned()
             .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
         let mut drop_preview_cleared = false;
-        let target = self.interaction_mut().take_accepted_drop_target();
-        let outcome = if let Some(target) = target {
-            let focus_item = self.focus_item_for_drag_payload(payload, cx);
+        let local_delivery = self.interaction_mut().take_local_drop_delivery(&release);
+        let outcome = if let Some(delivery) = local_delivery {
+            let focus_item = self.focus_item_for_drag_payload(delivery.payload(), cx);
             let outcome = self.commit_resolved_payload_drop_interaction(
-                DockWorkspacePayloadDropRequest {
-                    source_space: &payload.source_space,
-                    payload: payload.as_workspace_payload(),
-                    target_space: release.host_space(),
-                    target,
-                },
+                delivery.workspace_request(),
                 cx,
                 true,
             );
