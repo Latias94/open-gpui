@@ -36,16 +36,17 @@ impl DockHostInteractionOutcome {
         let should_notify = self.should_notify();
         if let Some(activation) = self.activation_target() {
             let activation_space = activation.space().clone();
-            let focus_item = activation.focus_item().cloned();
             let _ = activation.window().update(cx, move |view, window, cx| {
                 window.activate_window();
-                if let Some(focus_item) = focus_item
-                    && let Ok(host) = view.downcast::<DockHost>()
-                {
+                if let Ok(host) = view.downcast::<DockHost>() {
                     host.update(cx, |host, cx| {
-                        if host.space() == &activation_space && host.request_panel_focus(focus_item)
-                        {
-                            cx.notify();
+                        if host.space() == &activation_space {
+                            host.clear_viewport_focus_restore_pending();
+                            if let Some(focus_item) = activation.focus_item().cloned()
+                                && host.request_panel_focus(focus_item)
+                            {
+                                cx.notify();
+                            }
                         }
                     });
                 }

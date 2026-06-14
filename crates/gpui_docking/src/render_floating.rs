@@ -9,7 +9,7 @@ use crate::{
 use open_gpui::{
     AnyElement, AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, StatefulInteractiveElement,
-    Styled, canvas, div, px, rgb, rgba, white,
+    Styled, Window, canvas, div, px, rgb, rgba, white,
 };
 
 impl DockHost {
@@ -19,6 +19,7 @@ impl DockHost {
         child: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -32,7 +33,7 @@ impl DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .child(self.render_node(child, session, viewport_host_scene_frame, cx))
+            .child(self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .into_any_element()
     }
 
@@ -41,6 +42,7 @@ impl DockHost {
         container: DockFloatingContainer,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -56,7 +58,7 @@ impl DockHost {
         let child = session.floating_child(container.node);
         let bounds = container.bounds;
         let content = child
-            .map(|child| self.render_node(child, session, viewport_host_scene_frame, cx))
+            .map(|child| self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
         let title = child
             .map(|child| session.floating_title(child))

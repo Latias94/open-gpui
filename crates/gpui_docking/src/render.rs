@@ -28,7 +28,9 @@ impl Render for DockHost {
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
         let session = self.render_session(cx);
+        self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
         self.focus_pending_panel_from_render(&session, window, cx);
+        self.restore_viewport_panel_focus_from_render(&session, window, cx);
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame =
@@ -126,18 +128,21 @@ impl Render for DockHost {
                 root,
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         } else if session.empty_central_passthrough() {
             host = host.child(self.render_passthrough_empty_central_space(
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         } else {
             host = host.child(self.render_empty_space(
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         }
@@ -147,6 +152,7 @@ impl Render for DockHost {
                 *floating,
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         }
@@ -169,7 +175,41 @@ impl DockHost {
         let Some(item) = self.take_pending_panel_focus() else {
             return;
         };
-        session.request_panel_focus(&item, window, cx);
+        if session.request_panel_focus(&item, window, cx) {
+            self.clear_viewport_focus_restore_pending();
+            self.remember_panel_focus(item);
+        } else {
+            self.set_viewport_focus_restore_pending(true);
+        }
+    }
+
+    fn restore_viewport_panel_focus_from_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let visible_items = session.visible_panel_items();
+        let visible_focused_panel = self.visible_focused_panel_item(&visible_items, window, cx);
+        if let Some(item) = visible_focused_panel {
+            self.remember_panel_focus(item);
+            self.clear_viewport_focus_restore_pending();
+            return;
+        }
+
+        if !self.viewport_focus_restore_pending() || self.has_pending_panel_focus() {
+            return;
+        }
+
+        let Some(item) = self.restore_panel_focus_target(&visible_items) else {
+            self.clear_viewport_focus_restore_pending();
+            return;
+        };
+
+        if session.request_panel_focus(&item, window, cx) {
+            self.remember_panel_focus(item);
+        }
+        self.clear_viewport_focus_restore_pending();
     }
 
     pub(crate) fn render_node(
@@ -177,6 +217,7 @@ impl DockHost {
         node_id: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(node) = session.node(node_id).cloned() else {
@@ -192,6 +233,7 @@ impl DockHost {
                 DockRenderSplitInput::new(node_id, axis, children, fractions),
                 session,
                 viewport_host_scene_frame,
+                window,
                 cx,
             ),
             DockNode::Tabs { items, selected } => {
@@ -202,12 +244,18 @@ impl DockHost {
                     selected,
                     session,
                     viewport_host_scene_frame,
+                    window,
                     cx,
                 )
             }
-            DockNode::Floating { child } => {
-                self.render_floating_node(node_id, child, session, viewport_host_scene_frame, cx)
-            }
+            DockNode::Floating { child } => self.render_floating_node(
+                node_id,
+                child,
+                session,
+                viewport_host_scene_frame,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -216,9 +264,10 @@ impl DockHost {
         root: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let root_child = self.render_node(root, session, viewport_host_scene_frame, cx);
+        let root_child = self.render_node(root, session, viewport_host_scene_frame, window, cx);
         let mut root_container = div()
             .relative()
             .flex()
@@ -255,6 +304,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -304,6 +354,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(

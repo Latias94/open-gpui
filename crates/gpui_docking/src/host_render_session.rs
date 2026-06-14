@@ -176,6 +176,17 @@ impl DockHostRenderSession {
         &self.floating_containers
     }
 
+    pub(crate) fn visible_panel_items(&self) -> Vec<DockItemId> {
+        let mut items = Vec::new();
+        if let Some(root) = self.root {
+            self.collect_visible_panel_items_in_subtree(root, &mut items);
+        }
+        for container in &self.floating_containers {
+            self.collect_visible_panel_items_in_subtree(container.node, &mut items);
+        }
+        items
+    }
+
     pub(crate) fn empty_message(&self) -> &str {
         &self.empty_message
     }
@@ -267,6 +278,35 @@ impl DockHostRenderSession {
                 .any(|child| self.subtree_contains(child, target)),
             Some(DockNode::Floating { child }) => self.subtree_contains(*child, target),
             Some(DockNode::Tabs { .. }) | None => false,
+        }
+    }
+
+    fn collect_visible_panel_items_in_subtree(
+        &self,
+        node_id: DockNodeId,
+        items: &mut Vec<DockItemId>,
+    ) {
+        let Some(node) = self.node(node_id) else {
+            return;
+        };
+
+        match node {
+            DockNode::Tabs {
+                items: tabs,
+                selected,
+            } => {
+                if let Some(item) = selected_tab_item(tabs, selected) {
+                    items.push(item.clone());
+                }
+            }
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_visible_panel_items_in_subtree(*child, items);
+                }
+            }
+            DockNode::Floating { child } => {
+                self.collect_visible_panel_items_in_subtree(*child, items);
+            }
         }
     }
 }

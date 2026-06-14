@@ -4,7 +4,8 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Styled, canvas, div, px, relative, rgb,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Styled, Window, canvas, div, px, relative,
+    rgb,
 };
 
 pub(crate) struct DockRenderSplitInput {
@@ -36,6 +37,7 @@ impl DockHost {
         input: DockRenderSplitInput,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let DockRenderSplitInput {
@@ -91,7 +93,7 @@ impl DockHost {
                     .flex_shrink_1()
                     .flex_basis(relative(0.0))
                     .overflow_hidden()
-                    .child(self.render_node(child, session, viewport_host_scene_frame, cx)),
+                    .child(self.render_node(child, session, viewport_host_scene_frame, window, cx)),
             );
         }
 

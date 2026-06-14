@@ -56,12 +56,18 @@ fn apply_viewport_activation(activation: Option<DockViewportActivationTarget>, c
     let focus_item = activation.focus_item().cloned();
     let _ = activation.window().update(cx, move |view, window, cx| {
         window.activate_window();
-        if let Some(focus_item) = focus_item
-            && let Ok(host) = view.downcast::<DockHost>()
-        {
+        if let Ok(host) = view.downcast::<DockHost>() {
             host.update(cx, |host, cx| {
-                if host.space() == &activation_space && host.request_panel_focus(focus_item) {
-                    cx.notify();
+                if host.space() == &activation_space {
+                    if let Some(focus_item) = focus_item.clone() {
+                        host.clear_viewport_focus_restore_pending();
+                        if host.request_panel_focus(focus_item) {
+                            cx.notify();
+                        }
+                    } else {
+                        host.set_viewport_focus_restore_pending(true);
+                        cx.notify();
+                    }
                 }
             });
         }
