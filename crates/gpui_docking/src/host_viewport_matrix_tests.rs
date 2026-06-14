@@ -1,7 +1,7 @@
 use crate::{
-    DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
+    DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportPlatformSignals,
+    DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
     DropZone, SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
@@ -71,7 +71,7 @@ impl MatrixPayload {
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_targets(
+fn source_only_known_viewport_release_matrix_rejects_untrusted_rectangle_hits(
     cx: &mut TestAppContext,
 ) {
     for case in matrix_cases() {
@@ -80,7 +80,9 @@ fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_target
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_root_edge_matrix_commits_without_leaf_hit(cx: &mut TestAppContext) {
+fn source_only_known_viewport_root_edge_matrix_rejects_without_target_authority(
+    cx: &mut TestAppContext,
+) {
     for case in root_only_matrix_cases() {
         run_source_only_root_only_release_case(cx, case);
     }
@@ -345,28 +347,27 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         )
     });
 
-    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
-        panic!("{}: source-only release should commit: {error}", case.name)
-    }) else {
-        panic!(
-            "{}: source-only release should produce an action",
-            case.name
-        );
-    };
-    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "{}: source-only release must not commit from rectangle/window-stack fallback",
+        case.name
+    );
     let status = runtime.runtime_status();
-    let target = &status
-        .last_route
-        .as_ref()
-        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-        .target;
-    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    let routed_position = target
-        .host_position()
-        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
-    assert_point_close(routed_position, host_position);
-
-    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+    assert!(
+        matches!(
+            status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::Unavailable
+        ),
+        "{}: untrusted source-only release should be routed as unavailable, got {:?}",
+        case.name,
+        status.last_route
+    );
+    assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
 }
 
 fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
@@ -455,31 +456,55 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         )
     });
 
-    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
-        panic!(
-            "{}: root-only source release should commit: {error}",
-            case.name
-        )
-    }) else {
-        panic!(
-            "{}: root-only source release should produce an action",
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "{}: root-only source release must not commit from rectangle/window-stack fallback",
+        case.name
+    );
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::Unavailable
+        ),
+        "{}: untrusted root-only release should be routed as unavailable, got {:?}",
+        case.name,
+        status.last_route
+    );
+    assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
+}
+
+fn assert_case_graph_unmoved(
+    cx: &TestAppContext,
+    controller: &open_gpui::Entity<DockController>,
+    source_space: &DockSpaceId,
+    target_space: &DockSpaceId,
+    case: MatrixCase,
+) {
+    cx.read_entity(controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(source_space),
+            case.payload.source_items(),
+            "{}: source payload should remain in the source space",
             case.name
         );
-    };
-    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
-    let status = runtime.runtime_status();
-    let target = &status
-        .last_route
-        .as_ref()
-        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-        .target;
-    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    let routed_position = target
-        .host_position()
-        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
-    assert_point_close(routed_position, host_position);
-
-    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+        let expected_target_items = match case.target {
+            MatrixTarget::LeafCenter => vec![item("b")],
+            MatrixTarget::RootEdge { .. } => vec![item("b"), item("d")],
+            MatrixTarget::EmptySpace => Vec::new(),
+        };
+        assert_eq!(
+            controller.graph().collect_items_in_space(target_space),
+            expected_target_items,
+            "{}: target space should not receive an untrusted source-only drop",
+            case.name
+        );
+    });
 }
 
 fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
