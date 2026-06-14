@@ -246,7 +246,8 @@ pub(crate) fn dock_target_validator<'a>(
         if payload_classes.visible_split_floating
             && matches!(
                 target.kind,
-                DockResolvedDropTargetKind::LeafCenter { .. }
+                DockResolvedDropTargetKind::TabBar { .. }
+                    | DockResolvedDropTargetKind::LeafCenter { .. }
                     | DockResolvedDropTargetKind::FloatingTitleBar { .. }
             )
         {

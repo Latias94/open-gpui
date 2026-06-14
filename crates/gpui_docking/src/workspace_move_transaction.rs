@@ -339,11 +339,8 @@ impl DockWorkspace {
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
         validate_move_target_policy(self.policy(), target)?;
-        if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
+        if source_space == target_space && target.center_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
-            if target.insert_index().is_none() {
-                return Ok(DockActionOutcome::Unchanged);
-            }
         }
 
         self.commit_graph_op(DockOp::MoveItem {
@@ -364,9 +361,8 @@ impl DockWorkspace {
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
         validate_move_target_policy(self.policy(), target)?;
-        if source_space == target_space && target.noop_tabs() == Some(source_tabs) {
+        if source_space == target_space && target.center_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
-            return Ok(DockActionOutcome::Unchanged);
         }
 
         self.commit_graph_op(DockOp::MoveTabs {

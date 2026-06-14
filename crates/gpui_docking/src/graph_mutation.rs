@@ -130,8 +130,8 @@ impl DockGraph {
         };
 
         match target {
-            DockMoveTarget::Stack { tabs, insert_index } => {
-                if source_space == target_space && source_tabs == tabs && insert_index.is_none() {
+            DockMoveTarget::Center { tabs } => {
+                if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
                 if self.root_for_node_in_space(target_space, tabs).is_none() {
@@ -144,13 +144,37 @@ impl DockGraph {
                     return false;
                 }
 
-                let mut index = insert_index;
+                let ok = self.insert_item_into_tabs_at(tabs, item, None);
+                self.simplify_space(source_space);
+                if source_space != target_space {
+                    self.simplify_space(target_space);
+                }
+                ok
+            }
+            DockMoveTarget::TabBar { tabs, insert_index } => {
+                if self.root_for_node_in_space(target_space, tabs).is_none() {
+                    return false;
+                }
+                if !matches!(self.nodes.get(tabs), Some(DockNode::Tabs { .. })) {
+                    return false;
+                }
+                if source_space == target_space && source_tabs == tabs {
+                    let same_position = insert_index == source_index
+                        || insert_index == source_index.saturating_add(1);
+                    if same_position {
+                        return false;
+                    }
+                }
+                if !self.remove_item_from_tabs(source_tabs, source_index) {
+                    return false;
+                }
+
+                let mut index = Some(insert_index);
                 if source_space == target_space
                     && source_tabs == tabs
-                    && let Some(i) = index.as_mut()
-                    && *i > source_index
+                    && insert_index > source_index
                 {
-                    *i = i.saturating_sub(1);
+                    index = Some(insert_index.saturating_sub(1));
                 }
 
                 let ok = self.insert_item_into_tabs_at(tabs, item, index);
@@ -224,7 +248,7 @@ impl DockGraph {
         target: DockMoveTarget,
     ) -> bool {
         match target {
-            DockMoveTarget::Stack { tabs, insert_index } => {
+            DockMoveTarget::Center { tabs } | DockMoveTarget::TabBar { tabs, .. } => {
                 if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
@@ -242,7 +266,11 @@ impl DockGraph {
                 let ok = self.insert_items_into_tabs_at(
                     tabs,
                     &detached.items,
-                    insert_index,
+                    match target {
+                        DockMoveTarget::Center { .. } => None,
+                        DockMoveTarget::TabBar { insert_index, .. } => Some(insert_index),
+                        DockMoveTarget::Edge { .. } | DockMoveTarget::EmptySpace => unreachable!(),
+                    },
                     detached.selected.as_ref(),
                 );
                 self.simplify_space(source_space);

@@ -4,12 +4,17 @@ use thiserror::Error;
 /// Graph-level target for a dock tree move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockMoveTarget {
-    /// Merge into an existing tab stack.
-    Stack {
+    /// Merge into an existing tab stack through a center dock-over target.
+    Center {
         /// Target tabs node.
         tabs: DockNodeId,
-        /// Optional insertion index in the target tabs node.
-        insert_index: Option<usize>,
+    },
+    /// Insert into an existing tab bar at a concrete tab index.
+    TabBar {
+        /// Target tabs node.
+        tabs: DockNodeId,
+        /// Insertion index in the target tabs node.
+        insert_index: usize,
     },
     /// Dock against an edge anchor.
     Edge {
@@ -42,18 +47,12 @@ pub(crate) enum DockMoveTargetAnchor {
 impl DockMoveTarget {
     /// Builds a center merge target.
     pub(crate) fn center(tabs: DockNodeId) -> Self {
-        Self::Stack {
-            tabs,
-            insert_index: None,
-        }
+        Self::Center { tabs }
     }
 
     /// Builds a tab-bar insertion target.
     pub(crate) fn tab_bar(tabs: DockNodeId, insert_index: usize) -> Self {
-        Self::Stack {
-            tabs,
-            insert_index: Some(insert_index),
-        }
+        Self::TabBar { tabs, insert_index }
     }
 
     /// Builds an inner-edge target around a leaf.
@@ -79,7 +78,7 @@ impl DockMoveTarget {
 
     pub(crate) fn existing_node(self) -> Option<DockNodeId> {
         match self {
-            Self::Stack { tabs, .. } => Some(tabs),
+            Self::Center { tabs } | Self::TabBar { tabs, .. } => Some(tabs),
             Self::Edge { anchor, .. } => Some(anchor.node()),
             Self::EmptySpace => None,
         }
@@ -87,23 +86,16 @@ impl DockMoveTarget {
 
     pub(crate) fn drop_zone(self) -> Option<DropZone> {
         match self {
-            Self::Stack { .. } => Some(DropZone::Center),
+            Self::Center { .. } | Self::TabBar { .. } => Some(DropZone::Center),
             Self::Edge { zone, .. } => Some(zone),
             Self::EmptySpace => None,
         }
     }
 
-    pub(crate) fn insert_index(self) -> Option<usize> {
+    pub(crate) fn center_tabs(self) -> Option<DockNodeId> {
         match self {
-            Self::Stack { insert_index, .. } => insert_index,
-            Self::Edge { .. } | Self::EmptySpace => None,
-        }
-    }
-
-    pub(crate) fn noop_tabs(self) -> Option<DockNodeId> {
-        match self {
-            Self::Stack { tabs, .. } => Some(tabs),
-            Self::Edge { .. } | Self::EmptySpace => None,
+            Self::Center { tabs } => Some(tabs),
+            Self::TabBar { .. } | Self::Edge { .. } | Self::EmptySpace => None,
         }
     }
 }

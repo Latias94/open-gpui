@@ -796,7 +796,7 @@ fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
-fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppContext) {
+fn workspace_same_stack_tab_bar_drop_reorders(cx: &mut TestAppContext) {
     let (graph, tabs) = tabs_graph(&["a", "b", "c"]);
     let mut workspace = workspace_with_panels(
         cx,
@@ -812,7 +812,7 @@ fn workspace_same_stack_center_drop_reorders_with_insert_index(cx: &mut TestAppC
             &space(),
             DockMoveTarget::tab_bar(tabs, 3),
         )
-        .expect("same-stack center drop with an index should reorder");
+        .expect("same-stack tab-bar drop should reorder");
 
     assert_eq!(outcome, DockActionOutcome::Changed);
     let DockNode::Tabs { items, selected } = workspace

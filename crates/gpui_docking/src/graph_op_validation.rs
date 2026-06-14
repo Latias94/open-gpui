@@ -66,10 +66,17 @@ impl DockGraph {
             } => {
                 self.validate_move_item(source_space, item, target_space, *target)?;
                 if source_space == target_space
-                    && self
-                        .find_item_in_space(source_space, item)
-                        .is_some_and(|(source_tabs, _)| target.noop_tabs() == Some(source_tabs))
-                    && target.insert_index().is_none()
+                    && self.find_item_in_space(source_space, item).is_some_and(
+                        |(source_tabs, source_index)| match target {
+                            DockMoveTarget::Center { tabs } => *tabs == source_tabs,
+                            DockMoveTarget::TabBar { tabs, insert_index } => {
+                                *tabs == source_tabs
+                                    && (*insert_index == source_index
+                                        || *insert_index == source_index.saturating_add(1))
+                            }
+                            DockMoveTarget::Edge { .. } | DockMoveTarget::EmptySpace => false,
+                        },
+                    )
                 {
                     return Ok(false);
                 }
@@ -89,8 +96,12 @@ impl DockGraph {
             } => {
                 self.validate_move_tabs(source_space, *source_tabs, target_space, *target)?;
                 if source_space == target_space
-                    && target.noop_tabs() == Some(*source_tabs)
-                    && target.insert_index().is_none()
+                    && matches!(target, DockMoveTarget::Center { tabs } if *tabs == *source_tabs)
+                {
+                    return Ok(false);
+                }
+                if source_space == target_space
+                    && matches!(target, DockMoveTarget::TabBar { tabs, .. } if *tabs == *source_tabs)
                 {
                     return Ok(false);
                 }
@@ -303,7 +314,7 @@ impl DockGraph {
                 floating,
             });
         }
-        if let DockMoveTarget::Stack { tabs, .. } = target
+        if let DockMoveTarget::Center { tabs } | DockMoveTarget::TabBar { tabs, .. } = target
             && let Some(DockNode::Floating { child }) = self.node(floating)
             && self.is_visible_split_payload(*child)
         {
@@ -340,7 +351,7 @@ impl DockGraph {
         target: DockMoveTarget,
     ) -> Result<(), DockGraphMutationError> {
         match target {
-            DockMoveTarget::Stack { tabs, .. } => {
+            DockMoveTarget::Center { tabs } | DockMoveTarget::TabBar { tabs, .. } => {
                 self.require_target_node_in_space(space, tabs)?;
                 self.require_tabs_node(tabs)?;
             }

@@ -49,7 +49,31 @@ fn checked_move_item_same_stack_center_reports_noop() {
                 target_space: space(),
                 target: DockMoveTarget::center(root),
             })
-            .expect("same-stack center move without insert index should be valid")
+            .expect("same-stack center move should be valid")
+    );
+
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_same_tab_bar_position_reports_noop() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("a"),
+                target_space: space(),
+                target: DockMoveTarget::tab_bar(root, 1),
+            })
+            .expect("dropping a tab back into its current slot should be a valid no-op")
     );
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
@@ -313,7 +337,7 @@ fn checked_open_item_rejects_duplicate_items_without_mutation() {
 }
 
 #[test]
-fn move_item_center_inserts_and_selects_item() {
+fn move_item_tab_bar_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
     assert!(

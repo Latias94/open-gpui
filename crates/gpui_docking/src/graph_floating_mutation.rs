@@ -117,7 +117,7 @@ impl DockGraph {
         }
 
         match target {
-            DockMoveTarget::Stack { tabs, .. } => {
+            DockMoveTarget::Center { tabs } => {
                 let Some(child) = self.nodes.get(floating).and_then(|node| match node {
                     DockNode::Floating { child } => Some(*child),
                     _ => None,
@@ -127,7 +127,31 @@ impl DockGraph {
                 if self.is_visible_split_payload(child) {
                     return false;
                 }
-                self.merge_floating_subtree_into_tabs(source_space, floating, target_space, tabs)
+                self.merge_floating_subtree_into_tabs(
+                    source_space,
+                    floating,
+                    target_space,
+                    tabs,
+                    None,
+                )
+            }
+            DockMoveTarget::TabBar { tabs, insert_index } => {
+                let Some(child) = self.nodes.get(floating).and_then(|node| match node {
+                    DockNode::Floating { child } => Some(*child),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                if !matches!(self.nodes.get(child), Some(DockNode::Tabs { .. })) {
+                    return false;
+                }
+                self.merge_floating_subtree_into_tabs(
+                    source_space,
+                    floating,
+                    target_space,
+                    tabs,
+                    Some(insert_index),
+                )
             }
             DockMoveTarget::Edge { anchor, zone } => {
                 let Some(child) = self.take_floating_child_from_space(source_space, floating)
@@ -200,6 +224,7 @@ impl DockGraph {
         floating: DockNodeId,
         target_space: &DockSpaceId,
         target_tabs: DockNodeId,
+        insert_index: Option<usize>,
     ) -> bool {
         if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
             return false;
@@ -216,11 +241,6 @@ impl DockGraph {
             return false;
         }
         let source_selected = self.selected_item_in_subtree(child);
-        let target_insert_index = match self.nodes.get(target_tabs) {
-            Some(DockNode::Tabs { items, .. }) => items.len(),
-            _ => return false,
-        };
-
         if self
             .take_floating_child_from_space(source_space, floating)
             .is_none()
@@ -231,7 +251,7 @@ impl DockGraph {
         if !self.insert_items_into_tabs_at(
             target_tabs,
             &source_items,
-            Some(target_insert_index),
+            insert_index,
             source_selected.as_ref(),
         ) {
             return false;
