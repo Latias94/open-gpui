@@ -1,5 +1,5 @@
 use crate::{
-    DockItemId, DockMoveTarget, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
+    DockGraphDropTarget, DockItemId, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
 };
 
 use super::{DockGraph, DockNode};
@@ -123,14 +123,14 @@ impl DockGraph {
         source_space: &DockSpaceId,
         item: DockItemId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> bool {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
 
         match target {
-            DockMoveTarget::Center { tabs } => {
+            DockGraphDropTarget::Center { tabs } => {
                 if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
@@ -151,7 +151,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockMoveTarget::TabBar { tabs, insert_index } => {
+            DockGraphDropTarget::TabBar { tabs, insert_index } => {
                 if self.root_for_node_in_space(target_space, tabs).is_none() {
                     return false;
                 }
@@ -184,7 +184,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockMoveTarget::Edge { anchor, zone } => {
+            DockGraphDropTarget::Edge { anchor, zone } => {
                 let target_node = anchor.node();
                 let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
                     return false;
@@ -206,7 +206,7 @@ impl DockGraph {
                 }
                 true
             }
-            DockMoveTarget::EmptySpace => {
+            DockGraphDropTarget::EmptySpace => {
                 if !self.target_space_is_empty_for_item_move(source_space, &item, target_space) {
                     return false;
                 }
@@ -242,10 +242,10 @@ impl DockGraph {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> bool {
         match target {
-            DockMoveTarget::Center { tabs } | DockMoveTarget::TabBar { tabs, .. } => {
+            DockGraphDropTarget::Center { tabs } | DockGraphDropTarget::TabBar { tabs, .. } => {
                 if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
@@ -264,9 +264,11 @@ impl DockGraph {
                     tabs,
                     &detached.items,
                     match target {
-                        DockMoveTarget::Center { .. } => None,
-                        DockMoveTarget::TabBar { insert_index, .. } => Some(insert_index),
-                        DockMoveTarget::Edge { .. } | DockMoveTarget::EmptySpace => unreachable!(),
+                        DockGraphDropTarget::Center { .. } => None,
+                        DockGraphDropTarget::TabBar { insert_index, .. } => Some(insert_index),
+                        DockGraphDropTarget::Edge { .. } | DockGraphDropTarget::EmptySpace => {
+                            unreachable!()
+                        }
                     },
                     detached.selected.as_ref(),
                 );
@@ -276,7 +278,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockMoveTarget::Edge { anchor, zone } => {
+            DockGraphDropTarget::Edge { anchor, zone } => {
                 let target_node = anchor.node();
                 let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
                     return false;
@@ -297,7 +299,7 @@ impl DockGraph {
                 }
                 true
             }
-            DockMoveTarget::EmptySpace => {
+            DockGraphDropTarget::EmptySpace => {
                 if !self.target_space_is_empty_for_tabs_move(
                     source_space,
                     source_tabs,

@@ -112,9 +112,9 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .0;
             let zone: DropZone = zone.into();
             let target = if zone == DropZone::Center {
-                DockMoveTarget::center(target_tabs)
+                DockGraphDropTarget::center(target_tabs)
             } else {
-                DockMoveTarget::inner_edge(
+                DockGraphDropTarget::inner_edge(
                     graph.root(&space()).expect("fixture should have a root"),
                     target_tabs,
                     zone,
@@ -162,7 +162,7 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                         source_space: space(),
                         floating,
                         target_space: space(),
-                        target: DockMoveTarget::center(target_tabs),
+                        target: DockGraphDropTarget::center(target_tabs),
                     })
                     .expect("fixture floating merge should commit")
             );

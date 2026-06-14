@@ -106,7 +106,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(floating_tabs),
+                target: DockGraphDropTarget::center(floating_tabs),
             })
             .expect_err("floating cannot merge into its own tabs"),
         DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
@@ -121,7 +121,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(orphan_tabs),
+                target: DockGraphDropTarget::center(orphan_tabs),
             })
             .expect_err("merge target outside space should be reported"),
         DockGraphMutationError::TargetNodeNotInSpace {
@@ -158,7 +158,7 @@ fn merge_floating_into_moves_items_and_removes_floating() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
             .expect("floating merge should commit")
     );
@@ -199,7 +199,7 @@ fn merge_floating_tabs_preserves_selected_item() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
             .expect("floating merge should commit")
     );
@@ -250,7 +250,7 @@ fn merge_floating_tabs_into_tab_bar_uses_insert_index() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::tab_bar(root, 1),
+                target: DockGraphDropTarget::tab_bar(root, 1),
             })
             .expect("floating tabs tab-bar merge should commit")
     );
@@ -304,7 +304,7 @@ fn merge_visible_split_floating_into_center_is_rejected_without_flattening() {
             source_space: space(),
             floating,
             target_space: space(),
-            target: DockMoveTarget::center(root),
+            target: DockGraphDropTarget::center(root),
         })
         .expect_err("visible split floating payload should not be center-flattened");
 
@@ -367,7 +367,7 @@ fn merge_visible_split_floating_into_tab_bar_is_rejected_without_flattening() {
             source_space: space(),
             floating,
             target_space: space(),
-            target: DockMoveTarget::tab_bar(root, 1),
+            target: DockGraphDropTarget::tab_bar(root, 1),
         })
         .expect_err("visible split floating payload should not be tab-bar flattened");
 
@@ -431,7 +431,7 @@ fn move_floating_edge_preserves_child_subtree() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
             })
             .expect("floating edge drop should be valid")
     );
@@ -486,7 +486,7 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
                 source_space: space(),
                 floating,
                 target_space: detached.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("floating tear-off move should be valid")
     );
@@ -529,7 +529,7 @@ fn move_floating_to_empty_space_rebinds_empty_central_region() {
                 source_space: space(),
                 floating,
                 target_space: central.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("moving floating content into an empty central space should create a root")
     );

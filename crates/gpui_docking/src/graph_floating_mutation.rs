@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockMoveTarget, DockNodeId, DockSpaceId};
+use crate::{DockGraphDropTarget, DockItemId, DockNodeId, DockSpaceId};
 use open_gpui::{Bounds, Pixels};
 
 use super::{DockFloatingContainer, DockGraph, DockNode};
@@ -97,7 +97,7 @@ impl DockGraph {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> bool {
         if self.floating_container(source_space, floating).is_none() {
             return false;
@@ -117,7 +117,7 @@ impl DockGraph {
         }
 
         match target {
-            DockMoveTarget::Center { tabs } => {
+            DockGraphDropTarget::Center { tabs } => {
                 let Some(child) = self.nodes.get(floating).and_then(|node| match node {
                     DockNode::Floating { child } => Some(*child),
                     _ => None,
@@ -135,7 +135,7 @@ impl DockGraph {
                     None,
                 )
             }
-            DockMoveTarget::TabBar { tabs, insert_index } => {
+            DockGraphDropTarget::TabBar { tabs, insert_index } => {
                 let Some(child) = self.nodes.get(floating).and_then(|node| match node {
                     DockNode::Floating { child } => Some(*child),
                     _ => None,
@@ -153,7 +153,7 @@ impl DockGraph {
                     Some(insert_index),
                 )
             }
-            DockMoveTarget::Edge { anchor, zone } => {
+            DockGraphDropTarget::Edge { anchor, zone } => {
                 let Some(edge_plan) = self.edge_dock_plan(target_space, anchor.node(), zone) else {
                     return false;
                 };
@@ -170,7 +170,7 @@ impl DockGraph {
                 }
                 true
             }
-            DockMoveTarget::EmptySpace => {
+            DockGraphDropTarget::EmptySpace => {
                 self.move_floating_to_empty_space(source_space, floating, target_space)
             }
         }

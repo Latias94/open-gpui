@@ -1,6 +1,6 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockItemId, DockMoveTarget,
-    DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace,
+    DockActionApplyError, DockActionOutcome, DockGraphDropTarget, DockGraphMutationError,
+    DockItemId, DockNode, DockNodeId, DockOp, DockPolicy, DockSpaceId, DockWorkspace,
 };
 
 pub(crate) enum DockWorkspaceMove<'a> {
@@ -9,19 +9,19 @@ pub(crate) enum DockWorkspaceMove<'a> {
         source_tabs: DockNodeId,
         item: &'a DockItemId,
         target_space: &'a DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     },
     Tabs {
         source_space: &'a DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &'a DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     },
     Floating {
         source_space: &'a DockSpaceId,
         floating: DockNodeId,
         target_space: &'a DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     },
 }
 
@@ -141,7 +141,7 @@ impl DockWorkspace {
         source_tabs: DockNodeId,
         item: &DockItemId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.commit_move(DockWorkspaceMove::Item {
             source_space,
@@ -157,7 +157,7 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.commit_move(DockWorkspaceMove::Tabs {
             source_space,
@@ -180,7 +180,7 @@ impl DockWorkspace {
             source_space: source_space.clone(),
             item: item.clone(),
             target_space: target_space.clone(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
     }
 
@@ -197,7 +197,7 @@ impl DockWorkspace {
             source_space: source_space.clone(),
             source_tabs,
             target_space: target_space.clone(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
     }
 
@@ -332,13 +332,13 @@ impl DockWorkspace {
         source_tabs: DockNodeId,
         item: &DockItemId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.move_validation()
             .validate_move_tab_source(source_space, source_tabs, item)?;
         self.move_validation()
             .validate_item_target_space(target_space, item)?;
-        validate_move_target_policy(self.policy(), target)?;
+        validate_graph_drop_target_policy(self.policy(), target)?;
         if source_space == target_space && target.center_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
         }
@@ -356,11 +356,11 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.move_validation()
             .validate_tabs_target_space(target_space, source_tabs)?;
-        validate_move_target_policy(self.policy(), target)?;
+        validate_graph_drop_target_policy(self.policy(), target)?;
         if source_space == target_space && target.center_tabs() == Some(source_tabs) {
             self.policy().validate_same_stack_center_drop()?;
         }
@@ -378,11 +378,11 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         self.move_validation()
             .validate_floating_target_space(target_space, floating)?;
-        validate_move_target_policy(self.policy(), target)?;
+        validate_graph_drop_target_policy(self.policy(), target)?;
         self.commit_graph_op(DockOp::MoveFloating {
             source_space: source_space.clone(),
             floating,
@@ -392,9 +392,9 @@ impl DockWorkspace {
     }
 }
 
-pub(crate) fn validate_move_target_policy(
+pub(crate) fn validate_graph_drop_target_policy(
     policy: &DockPolicy,
-    target: DockMoveTarget,
+    target: DockGraphDropTarget,
 ) -> Result<(), DockActionApplyError> {
     if let Some(zone) = target.drop_zone() {
         policy.validate_drop_zone(zone)?;

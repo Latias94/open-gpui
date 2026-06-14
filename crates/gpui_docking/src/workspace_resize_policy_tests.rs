@@ -1,6 +1,7 @@
 use crate::{
-    DockAction, DockActionApplyError, DockActionOutcome, DockGraphMutationError, DockMoveTarget,
-    DockNode, DockNodeId, DockPolicyError, DropZone, SplitAxis, host_test_support::*,
+    DockAction, DockActionApplyError, DockActionOutcome, DockGraphDropTarget,
+    DockGraphMutationError, DockNode, DockNodeId, DockPolicyError, DropZone, SplitAxis,
+    host_test_support::*,
 };
 use open_gpui::TestAppContext;
 use slotmap::Key;
@@ -103,7 +104,7 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
             left_tabs,
             &item("a"),
             &space(),
-            DockMoveTarget::inner_edge(split, right_tabs, DropZone::Right),
+            DockGraphDropTarget::inner_edge(split, right_tabs, DropZone::Right),
         )
         .expect_err("edge drop should be rejected by policy");
 

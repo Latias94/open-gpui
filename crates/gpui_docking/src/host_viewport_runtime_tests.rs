@@ -1,6 +1,6 @@
 use crate::{
     DockAction, DockActionApplyError, DockActionOutcome, DockClassId, DockController, DockGraph,
-    DockGraphMutationError, DockHost, DockItemId, DockMoveTarget, DockNode, DockPanel,
+    DockGraphDropTarget, DockGraphMutationError, DockHost, DockItemId, DockNode, DockPanel,
     DockPolicyError, DockSpaceId, DockViewportAdapter, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportDropPayload, DockViewportDropRoute,
     DockViewportDropRouteRequest, DockViewportOpenStatus, DockViewportResolvedDropRoute,
@@ -399,7 +399,7 @@ fn viewport_runtime_tear_off_cancels_when_source_item_moves_before_window_create
                 source_tabs,
                 &item("a"),
                 &other_space,
-                DockMoveTarget::center(other_tabs),
+                DockGraphDropTarget::center(other_tabs),
             )
             .expect("source item move should commit before window creation");
     });

@@ -11,7 +11,7 @@ fn checked_set_split_fraction_two_reports_only_real_changes() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
             })
             .expect("initial edge dock should commit")
     );
@@ -160,7 +160,7 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
             })
             .expect("first edge dock should commit")
     );
@@ -174,7 +174,7 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
                 source_space: space(),
                 item: item("c"),
                 target_space: space(),
-                target: DockMoveTarget::inner_edge(
+                target: DockGraphDropTarget::inner_edge(
                     graph.root(&space()).expect("space should keep root"),
                     target_tabs,
                     DropZone::Right,
@@ -208,7 +208,7 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
             })
             .expect("first edge dock should commit")
     );
@@ -223,7 +223,7 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
                 source_space: space(),
                 item: item("c"),
                 target_space: space(),
-                target: DockMoveTarget::inner_edge(
+                target: DockGraphDropTarget::inner_edge(
                     graph.root(&space()).expect("space should keep root"),
                     left_tabs,
                     DropZone::Top,

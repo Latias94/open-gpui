@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockActionOutcome, DockItemId, DockMoveTarget, DockNode, DockNodeId,
+    DockActionApplyError, DockActionOutcome, DockGraphDropTarget, DockItemId, DockNode, DockNodeId,
     DockSpaceId, DockWorkspace,
     drop_target::{
         DockDropResolution, DockResolvedDropTarget, DockResolvedDropTargetKind,
@@ -91,7 +91,7 @@ impl DockWorkspace {
                 source_space,
                 payload,
                 &target_space,
-                DockMoveTarget::tab_bar(target_tabs, insert_index),
+                DockGraphDropTarget::tab_bar(target_tabs, insert_index),
             ),
             DockResolvedDropTargetKind::LeafCenter { target_tabs, .. }
             | DockResolvedDropTargetKind::FloatingTitleBar { target_tabs, .. } => self
@@ -99,7 +99,7 @@ impl DockWorkspace {
                     source_space,
                     payload,
                     &target_space,
-                    DockMoveTarget::center(target_tabs),
+                    DockGraphDropTarget::center(target_tabs),
                 ),
             DockResolvedDropTargetKind::InnerEdge {
                 root,
@@ -109,14 +109,14 @@ impl DockWorkspace {
                 source_space,
                 payload,
                 &target_space,
-                DockMoveTarget::inner_edge(root, target_tabs, zone),
+                DockGraphDropTarget::inner_edge(root, target_tabs, zone),
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
                     &target_space,
-                    DockMoveTarget::root_edge(root, zone),
+                    DockGraphDropTarget::root_edge(root, zone),
                 ),
             DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
                 if is_central {
@@ -142,7 +142,7 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         payload: DockWorkspaceDropPayload<'_>,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
         match payload {
             DockWorkspaceDropPayload::Item { source_tabs, item } => {

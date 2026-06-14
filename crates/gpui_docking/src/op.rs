@@ -1,9 +1,9 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId, DropZone};
 use thiserror::Error;
 
-/// Graph-level target for a dock tree move.
+/// Graph-level target consumed by dock tree drop mutations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockMoveTarget {
+pub(crate) enum DockGraphDropTarget {
     /// Merge into an existing tab stack through a center dock-over target.
     Center {
         /// Target tabs node.
@@ -19,17 +19,17 @@ pub(crate) enum DockMoveTarget {
     /// Dock against an edge anchor.
     Edge {
         /// Edge anchor carrying whether this is a leaf or root edge.
-        anchor: DockMoveTargetAnchor,
+        anchor: DockGraphDropTargetAnchor,
         /// Edge zone.
         zone: DropZone,
     },
-    /// Promote the moved subtree as the root of an empty dock space.
+    /// Promote the payload subtree as the root of an empty dock space.
     EmptySpace,
 }
 
 /// Anchor for graph-level edge docking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockMoveTargetAnchor {
+pub(crate) enum DockGraphDropTargetAnchor {
     /// Inner edge around a leaf, tied to its owning root.
     Leaf {
         /// Root containing the leaf.
@@ -44,7 +44,7 @@ pub(crate) enum DockMoveTargetAnchor {
     },
 }
 
-impl DockMoveTarget {
+impl DockGraphDropTarget {
     /// Builds a center merge target.
     pub(crate) fn center(tabs: DockNodeId) -> Self {
         Self::Center { tabs }
@@ -58,7 +58,7 @@ impl DockMoveTarget {
     /// Builds an inner-edge target around a leaf.
     pub(crate) fn inner_edge(root: DockNodeId, tabs: DockNodeId, zone: DropZone) -> Self {
         Self::Edge {
-            anchor: DockMoveTargetAnchor::Leaf { root, tabs },
+            anchor: DockGraphDropTargetAnchor::Leaf { root, tabs },
             zone,
         }
     }
@@ -66,7 +66,7 @@ impl DockMoveTarget {
     /// Builds an outer-edge target around a root.
     pub(crate) fn root_edge(root: DockNodeId, zone: DropZone) -> Self {
         Self::Edge {
-            anchor: DockMoveTargetAnchor::Root { root },
+            anchor: DockGraphDropTargetAnchor::Root { root },
             zone,
         }
     }
@@ -100,7 +100,7 @@ impl DockMoveTarget {
     }
 }
 
-impl DockMoveTargetAnchor {
+impl DockGraphDropTargetAnchor {
     pub(crate) fn node(self) -> DockNodeId {
         match self {
             Self::Leaf { root: _, tabs } => tabs,
@@ -148,8 +148,8 @@ pub(crate) enum DockOp {
         item: DockItemId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Moves an entire tabs node as a group.
@@ -160,8 +160,8 @@ pub(crate) enum DockOp {
         source_tabs: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Moves an in-window floating subtree into another dock target.
@@ -172,8 +172,8 @@ pub(crate) enum DockOp {
         floating: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Floats one item inside a dock space without creating a platform window.

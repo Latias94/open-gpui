@@ -91,7 +91,7 @@ fn layout_roundtrips_roots_splits_and_floatings() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
             })
             .expect("root-edge move should commit")
     );
