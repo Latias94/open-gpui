@@ -27,6 +27,7 @@ impl Render for DockHost {
         self.clear_debug_selectors();
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
+        self.ensure_viewport_release_subscription(window, cx);
         let session = self.render_session(cx);
         self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
         self.focus_pending_panel_from_render(&session, window, cx);

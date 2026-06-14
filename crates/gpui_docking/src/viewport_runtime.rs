@@ -537,6 +537,27 @@ impl DockViewportRuntime {
         Some(window)
     }
 
+    pub(crate) fn unregister_host_for_space(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        if self
+            .adapter
+            .window_for_space(space)
+            .is_none_or(|window| window.window_id() != window_id)
+        {
+            return false;
+        }
+        if let Some(window) = self.unregister_space_runtime_state(space) {
+            self.discard_owned_window(window.window_id());
+            self.close_gate.sync_adapter(&self.adapter);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn reusable_window_for_space(
         &mut self,
         space: &DockSpaceId,

@@ -373,6 +373,16 @@ impl DockViewportRuntimeHandle {
         )
     }
 
+    pub(crate) fn unregister_host_for_space(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+    ) -> bool {
+        self.runtime
+            .borrow_mut()
+            .unregister_host_for_space(space, window_id)
+    }
+
     pub(crate) fn begin_viewport_host_scene_frame(
         &self,
         space: impl Into<DockSpaceId>,

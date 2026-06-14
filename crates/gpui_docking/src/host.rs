@@ -49,6 +49,7 @@ pub struct DockHost {
     viewport_runtime: Option<DockViewportRuntimeHandle>,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
+    viewport_release_subscription: Option<Subscription>,
     pending_panel_focus: Option<DockItemId>,
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
     last_focused_panel: Option<DockItemId>,
@@ -72,6 +73,7 @@ impl DockHost {
             viewport_runtime: None,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
+            viewport_release_subscription: None,
             pending_panel_focus: None,
             panel_focus_trackers: HashMap::new(),
             last_focused_panel: None,
@@ -88,6 +90,7 @@ impl DockHost {
         viewport_runtime: DockViewportRuntimeHandle,
         cx: &mut Context<Self>,
     ) -> Self {
+        let space = space.into();
         let mut host = Self::from_controller(controller, space, cx);
         host.viewport_runtime = Some(viewport_runtime);
         host
@@ -180,6 +183,25 @@ impl DockHost {
         self.viewport_bounds_subscription =
             Some(cx.observe_window_bounds(window, move |_, window, cx| {
                 runtime.mark_viewport_window_snapshot_stale(window.window_handle().window_id(), cx);
+            }));
+    }
+
+    pub(crate) fn ensure_viewport_release_subscription(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.viewport_release_subscription.is_some() {
+            return;
+        }
+
+        let Some(runtime) = self.viewport_runtime().cloned() else {
+            return;
+        };
+
+        self.viewport_release_subscription =
+            Some(cx.on_release_in(window, move |host, window, _| {
+                runtime.unregister_host_for_space(host.space(), window.window_handle().window_id());
             }));
     }
 

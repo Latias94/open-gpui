@@ -1442,6 +1442,83 @@ fn viewport_runtime_reusable_stale_window_clears_routed_preview(cx: &mut TestApp
 }
 
 #[open_gpui::test]
+fn viewport_runtime_unregister_host_for_space_clears_runtime_state(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+
+    let target_window = handle(93);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(target_space.clone(), target_window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space,
+        source_tabs,
+        &target_space,
+        target_window,
+        target_tabs,
+        cx,
+    );
+    assert!(
+        runtime
+            .last_host_scene_screen_position(&target_space)
+            .is_some()
+    );
+    assert!(
+        runtime
+            .routed_drop_preview_for(&target_space, target_window.window_id())
+            .is_some()
+    );
+
+    assert!(
+        !runtime.unregister_host_for_space(&target_space, WindowId::from(999)),
+        "release cleanup must not clear a space that has already rebound to another window"
+    );
+    assert_eq!(
+        runtime.adapter().window_for_space(&target_space),
+        Some(target_window)
+    );
+    assert!(
+        runtime
+            .routed_drop_delivery_for_drag_session(Some(&session))
+            .is_some()
+    );
+
+    assert!(runtime.unregister_host_for_space(&target_space, target_window.window_id()));
+    assert_eq!(runtime.adapter().window_for_space(&target_space), None);
+    assert_eq!(runtime.last_host_scene_screen_position(&target_space), None);
+    assert_eq!(
+        runtime.routed_drop_preview_for(&target_space, target_window.window_id()),
+        None
+    );
+    assert_eq!(
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
+        None
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_rejects_stale_known_viewport_delivery_after_target_rebind(
     cx: &mut TestAppContext,
 ) {
