@@ -118,6 +118,15 @@ impl DockGraph {
 
         match target {
             DockMoveTarget::Stack { tabs, .. } => {
+                let Some(child) = self.nodes.get(floating).and_then(|node| match node {
+                    DockNode::Floating { child } => Some(*child),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                if self.is_visible_split_payload(child) {
+                    return false;
+                }
                 self.merge_floating_subtree_into_tabs(source_space, floating, target_space, tabs)
             }
             DockMoveTarget::Edge { anchor, zone } => {

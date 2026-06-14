@@ -1,6 +1,6 @@
 use crate::{DockGraphMutationError, DockItemId, DockMoveTarget, DockNodeId, DockOp, DockSpaceId};
 
-use super::{DockGraph, DropZone};
+use super::{DockGraph, DockNode, DropZone};
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
@@ -302,6 +302,17 @@ impl DockGraph {
                 space: source_space.clone(),
                 floating,
             });
+        }
+        if let DockMoveTarget::Stack { tabs, .. } = target
+            && let Some(DockNode::Floating { child }) = self.node(floating)
+            && self.is_visible_split_payload(*child)
+        {
+            return Err(
+                DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+                    payload: *child,
+                    target: tabs,
+                },
+            );
         }
         if matches!(target, DockMoveTarget::EmptySpace)
             && !self.target_space_is_empty_for_floating_move(source_space, floating, target_space)

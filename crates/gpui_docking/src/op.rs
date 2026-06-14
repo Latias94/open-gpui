@@ -367,6 +367,17 @@ pub enum DockGraphMutationError {
         target: DockNodeId,
     },
 
+    /// A visibly split payload cannot be center-merged into a non-empty target.
+    #[error(
+        "visible split payload {payload:?} cannot be center-merged into non-empty target {target:?}"
+    )]
+    VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+        /// The split payload root.
+        payload: DockNodeId,
+        /// The non-empty target node.
+        target: DockNodeId,
+    },
+
     /// A split fraction update has the wrong number of fractions.
     #[error(
         "split node {split:?} has {children_len} children but received {fractions_len} fractions"

@@ -348,13 +348,8 @@ impl DockGraph {
                 target_space,
                 target_root,
             ),
-            Some(DockNode::Split { .. }) | Some(DockNode::Floating { .. }) => self
-                .move_root_subtree_to_non_empty_space(
-                    source_space,
-                    source_root,
-                    target_space,
-                    target_root,
-                ),
+            Some(DockNode::Split { .. }) => false,
+            Some(DockNode::Floating { .. }) => false,
             None => false,
         }
     }
@@ -382,39 +377,6 @@ impl DockGraph {
             return false;
         }
         self.remove_subtree(source_root);
-        self.simplify_space(source_space);
-        self.simplify_space(target_space);
-        true
-    }
-
-    fn move_root_subtree_to_non_empty_space(
-        &mut self,
-        source_space: &DockSpaceId,
-        source_root: DockNodeId,
-        target_space: &DockSpaceId,
-        target_root: DockNodeId,
-    ) -> bool {
-        let Some(target_merge_tabs) = self.selected_tabs_in_subtree(target_root) else {
-            return false;
-        };
-        let source_items = self.collect_items_in_subtree(source_root);
-        if source_items.is_empty() {
-            return false;
-        }
-        let source_selected = self.selected_item_in_subtree(source_root);
-
-        self.remove_root(source_space);
-
-        if !self.insert_items_into_tabs_at(
-            target_merge_tabs,
-            &source_items,
-            None,
-            source_selected.as_ref(),
-        ) {
-            return false;
-        }
-        self.remove_subtree(source_root);
-
         self.simplify_space(source_space);
         self.simplify_space(target_space);
         true

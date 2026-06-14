@@ -124,6 +124,10 @@ impl DockGraph {
             .map(|(tabs, _)| tabs)
     }
 
+    pub(crate) fn is_visible_split_payload(&self, root: DockNodeId) -> bool {
+        matches!(self.nodes.get(root), Some(DockNode::Split { .. }))
+    }
+
     pub(in crate::graph) fn root_subtree_contains(
         &self,
         space: &DockSpaceId,

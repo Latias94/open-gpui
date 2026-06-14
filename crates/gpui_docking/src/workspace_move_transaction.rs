@@ -43,6 +43,7 @@ impl DockWorkspace {
         }
 
         if source_root.is_some() {
+            self.validate_non_empty_merge_payload(source_space, target_space)?;
             for source_tabs in self.graph().root_tabs_in_space(source_space) {
                 if self
                     .graph()
@@ -64,6 +65,33 @@ impl DockWorkspace {
         self.move_validation()
             .validate_space_floating_forest_target_space(source_space, target_space)?;
 
+        Ok(())
+    }
+
+    fn validate_non_empty_merge_payload(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<(), DockActionApplyError> {
+        let Some(source_root) = self.graph().root(source_space) else {
+            return Ok(());
+        };
+        if self.graph().root(target_space).is_none() {
+            return Ok(());
+        }
+        if self.graph().is_visible_split_payload(source_root) {
+            let target_root = self
+                .graph()
+                .root(target_space)
+                .expect("target root should exist after non-empty check");
+            return Err(
+                DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+                    payload: source_root,
+                    target: target_root,
+                }
+                .into(),
+            );
+        }
         Ok(())
     }
 
@@ -201,6 +229,7 @@ impl DockWorkspace {
             });
         }
 
+        self.validate_non_empty_merge_payload(source_space, target_space)?;
         let mut next = self.graph().clone();
         let changed = next.move_root_to_non_empty_space(source_space, target_space);
         if !changed {
