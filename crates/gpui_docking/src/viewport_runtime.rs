@@ -613,7 +613,7 @@ impl DockViewportRuntime {
                         &source_space,
                         source_node,
                         &payload,
-                        delivery.into_target(),
+                        delivery,
                     )?
                 };
                 (source_space, source_node, payload, target_space)

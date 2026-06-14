@@ -56,7 +56,7 @@ pub(crate) struct DockDropDelivery {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockDropDeliveryKind {
     /// Commit a route into an already registered viewport host scene.
-    Workspace(DockDropWorkspaceDelivery),
+    Workspace(DockDropWorkspaceTarget),
     /// Open and commit into a new platform viewport.
     TearOff(DockDropTearOffDelivery),
     /// Reject the delivery because the target viewport has no current dock target.
@@ -84,12 +84,6 @@ impl DockViewportResolvedDropRoute {
     pub(crate) fn delivery(&self) -> &DockDropDelivery {
         &self.delivery
     }
-}
-
-/// Delivery facts for a drop route that lands in an existing viewport workspace.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropWorkspaceDelivery {
-    target: DockDropWorkspaceTarget,
 }
 
 /// Source facts shared by every resolved drop delivery variant.
@@ -128,34 +122,23 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
     target: DockResolvedDropTarget,
 }
 
-impl DockDropWorkspaceDelivery {
+impl DockDropWorkspaceTarget {
     fn local_from_request(
         host_position: Point<Pixels>,
         resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
     ) -> Self {
-        let target = match resolved_target {
+        match resolved_target {
             Some(resolved) => DockDropWorkspaceTarget::Resolved(resolved),
             None => DockDropWorkspaceTarget::ResolveLocalAtDelivery { host_position },
-        };
-        Self { target }
-    }
-
-    fn resolved(resolved_target: DockViewportResolvedDropTargetSnapshot) -> Self {
-        Self {
-            target: DockDropWorkspaceTarget::Resolved(resolved_target),
         }
     }
 
-    pub(crate) fn target(&self) -> &DockDropWorkspaceTarget {
-        &self.target
-    }
-
-    pub(crate) fn into_target(self) -> DockDropWorkspaceTarget {
-        self.target
+    fn resolved(resolved_target: DockViewportResolvedDropTargetSnapshot) -> Self {
+        DockDropWorkspaceTarget::Resolved(resolved_target)
     }
 
     fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        match &self.target {
+        match self {
             DockDropWorkspaceTarget::Resolved(target) => target.routed_preview_target(),
             DockDropWorkspaceTarget::ResolveLocalAtDelivery { .. } => None,
         }
@@ -167,7 +150,7 @@ impl DockDropWorkspaceDelivery {
         host_space: &DockSpaceId,
         window_id: WindowId,
     ) -> bool {
-        match &self.target {
+        match self {
             DockDropWorkspaceTarget::Resolved(target) => {
                 target.accepts_hovered_host_window(host_space, window_id)
             }
@@ -353,11 +336,11 @@ impl DockDropDelivery {
         let source = DockDropDeliverySource::from_request(request);
         let kind = match route {
             DockViewportDropRoute::Local { host_position } => DockDropDeliveryKind::Workspace(
-                DockDropWorkspaceDelivery::local_from_request(host_position, resolved_target),
+                DockDropWorkspaceTarget::local_from_request(host_position, resolved_target),
             ),
             DockViewportDropRoute::KnownViewport { target: _ } => {
                 if let Some(resolved_target) = resolved_target {
-                    DockDropDeliveryKind::Workspace(DockDropWorkspaceDelivery::resolved(
+                    DockDropDeliveryKind::Workspace(DockDropWorkspaceTarget::resolved(
                         resolved_target,
                     ))
                 } else {
@@ -1138,7 +1121,7 @@ mod tests {
             panic!("local route should derive a workspace commit");
         };
         assert_eq!(
-            local.target(),
+            local,
             &DockDropWorkspaceTarget::ResolveLocalAtDelivery {
                 host_position: local_position,
             }
@@ -1225,10 +1208,7 @@ mod tests {
         assert_eq!(delivery.source_space(), &source);
         assert_eq!(delivery.source_node(), source_tabs);
         assert_eq!(delivery.payload(), &DockViewportDropPayload::Item(item));
-        assert_eq!(
-            known.target(),
-            &DockDropWorkspaceTarget::Resolved(resolved_target)
-        );
+        assert_eq!(known, &DockDropWorkspaceTarget::Resolved(resolved_target));
     }
 
     #[test]
