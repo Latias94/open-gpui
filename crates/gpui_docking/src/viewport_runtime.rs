@@ -527,6 +527,7 @@ impl DockViewportRuntime {
 
     fn clear_runtime_window_state(&mut self, space: &DockSpaceId, window_id: WindowId) {
         let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
+        self.close_coordinator.discard_window(window_id);
         self.host_scenes.unregister_space(space);
     }
 

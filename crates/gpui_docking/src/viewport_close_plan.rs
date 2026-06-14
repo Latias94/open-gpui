@@ -11,6 +11,10 @@ pub(crate) struct DockViewportCloseCoordinator {
 }
 
 impl DockViewportCloseCoordinator {
+    pub(crate) fn discard_window(&mut self, window_id: WindowId) -> bool {
+        self.pre_closed_merge_back_windows.remove(&window_id)
+    }
+
     pub(crate) fn was_merge_back_precommitted(&mut self, window_id: WindowId) -> bool {
         self.pre_closed_merge_back_windows.remove(&window_id)
     }

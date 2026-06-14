@@ -774,6 +774,54 @@ fn workspace_merge_space_rejects_visible_split_root_into_non_empty_target(cx: &m
 }
 
 #[open_gpui::test]
+fn workspace_merge_space_rejects_incompatible_target_space_class(cx: &mut TestAppContext) {
+    let detached = DockSpaceId::from("detached");
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(detached.clone(), detached_tabs);
+    graph.set_root(target.clone(), target_tabs);
+    let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
+    workspace.register_panel_descriptor(
+        item("a"),
+        DockPanelDescriptor::new("A").with_dock_class("editor"),
+    );
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(target.clone(), "inspector");
+
+    let err = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect_err("merge-back must respect target-space dock class policy");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Policy(DockPolicyError::DockClassRejected {
+            space: target.clone(),
+            item: item("a"),
+            dock_class: Some(DockClassId::from("editor")),
+        })
+    );
+    assert_eq!(workspace.graph().root(&detached), Some(detached_tabs));
+    assert_eq!(workspace.graph().root(&target), Some(target_tabs));
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&detached),
+        vec![item("a")]
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("b")]
+    );
+}
+
+#[open_gpui::test]
 fn workspace_same_stack_center_drop_is_noop(cx: &mut TestAppContext) {
     let (graph, tabs) = tabs_graph(&["a", "b"]);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);

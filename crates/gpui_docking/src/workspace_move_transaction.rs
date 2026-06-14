@@ -206,6 +206,8 @@ impl DockWorkspace {
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
+        self.validate_merge_space_into(source_space, target_space)?;
+
         if source_space == target_space {
             return Ok(DockActionOutcome::Unchanged);
         }
