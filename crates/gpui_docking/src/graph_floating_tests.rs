@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 use slotmap::Key;
 
@@ -431,7 +431,7 @@ fn move_floating_edge_preserves_child_subtree() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("floating edge drop should be valid")
     );

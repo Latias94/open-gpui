@@ -102,21 +102,21 @@ impl DockWorkspace {
                     DockGraphDropTarget::center(target_tabs),
                 ),
             DockResolvedDropTargetKind::InnerEdge {
-                root,
+                root: _,
                 target_tabs,
                 zone,
             } => self.commit_resolved_payload_graph_target_drop(
                 source_space,
                 payload,
                 &target_space,
-                DockGraphDropTarget::inner_edge(root, target_tabs, zone),
+                self.resolve_edge_graph_drop_target(&target_space, target_tabs, zone)?,
             ),
             DockResolvedDropTargetKind::RootEdge { root, zone, .. } => self
                 .commit_resolved_payload_graph_target_drop(
                     source_space,
                     payload,
                     &target_space,
-                    DockGraphDropTarget::root_edge(root, zone),
+                    self.resolve_edge_graph_drop_target(&target_space, root, zone)?,
                 ),
             DockResolvedDropTargetKind::EmptyDockSpace { space, is_central } => {
                 if is_central {
@@ -155,6 +155,18 @@ impl DockWorkspace {
                 self.commit_floating_move(source_space, floating, target_space, target)
             }
         }
+    }
+
+    fn resolve_edge_graph_drop_target(
+        &self,
+        target_space: &DockSpaceId,
+        target_node: DockNodeId,
+        zone: crate::DropZone,
+    ) -> Result<DockGraphDropTarget, DockActionApplyError> {
+        self.graph()
+            .edge_dock_plan(target_space, target_node, zone)
+            .map(DockGraphDropTarget::edge)
+            .ok_or(DockActionApplyError::DropTargetUnavailable)
     }
 }
 

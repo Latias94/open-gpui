@@ -1,4 +1,4 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId, DropZone};
+use crate::{DockEdgeDockPlan, DockItemId, DockNodeId, DockSpaceId, DropZone};
 use thiserror::Error;
 
 /// Graph-level target consumed by dock tree drop mutations.
@@ -18,30 +18,11 @@ pub(crate) enum DockGraphDropTarget {
     },
     /// Dock against an edge anchor.
     Edge {
-        /// Edge anchor carrying whether this is a leaf or root edge.
-        anchor: DockGraphDropTargetAnchor,
-        /// Edge zone.
-        zone: DropZone,
+        /// Precomputed topology plan for the edge drop.
+        plan: DockEdgeDockPlan,
     },
     /// Promote the payload subtree as the root of an empty dock space.
     EmptySpace,
-}
-
-/// Anchor for graph-level edge docking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockGraphDropTargetAnchor {
-    /// Inner edge around a leaf, tied to its owning root.
-    Leaf {
-        /// Root containing the leaf.
-        root: DockNodeId,
-        /// Leaf tabs node.
-        tabs: DockNodeId,
-    },
-    /// Outer edge around a dock root.
-    Root {
-        /// Root node.
-        root: DockNodeId,
-    },
 }
 
 impl DockGraphDropTarget {
@@ -55,20 +36,9 @@ impl DockGraphDropTarget {
         Self::TabBar { tabs, insert_index }
     }
 
-    /// Builds an inner-edge target around a leaf.
-    pub(crate) fn inner_edge(root: DockNodeId, tabs: DockNodeId, zone: DropZone) -> Self {
-        Self::Edge {
-            anchor: DockGraphDropTargetAnchor::Leaf { root, tabs },
-            zone,
-        }
-    }
-
-    /// Builds an outer-edge target around a root.
-    pub(crate) fn root_edge(root: DockNodeId, zone: DropZone) -> Self {
-        Self::Edge {
-            anchor: DockGraphDropTargetAnchor::Root { root },
-            zone,
-        }
+    /// Builds an edge target from a precomputed dock topology plan.
+    pub(crate) fn edge(plan: DockEdgeDockPlan) -> Self {
+        Self::Edge { plan }
     }
 
     /// Builds an empty-space promotion target.
@@ -79,7 +49,7 @@ impl DockGraphDropTarget {
     pub(crate) fn existing_node(self) -> Option<DockNodeId> {
         match self {
             Self::Center { tabs } | Self::TabBar { tabs, .. } => Some(tabs),
-            Self::Edge { anchor, .. } => Some(anchor.node()),
+            Self::Edge { plan } => Some(plan.target_node()),
             Self::EmptySpace => None,
         }
     }
@@ -87,7 +57,7 @@ impl DockGraphDropTarget {
     pub(crate) fn drop_zone(self) -> Option<DropZone> {
         match self {
             Self::Center { .. } | Self::TabBar { .. } => Some(DropZone::Center),
-            Self::Edge { zone, .. } => Some(zone),
+            Self::Edge { plan } => Some(plan.drop_zone()),
             Self::EmptySpace => None,
         }
     }
@@ -96,15 +66,6 @@ impl DockGraphDropTarget {
         match self {
             Self::Center { tabs } => Some(tabs),
             Self::TabBar { .. } | Self::Edge { .. } | Self::EmptySpace => None,
-        }
-    }
-}
-
-impl DockGraphDropTargetAnchor {
-    pub(crate) fn node(self) -> DockNodeId {
-        match self {
-            Self::Leaf { root: _, tabs } => tabs,
-            Self::Root { root } => root,
         }
     }
 }

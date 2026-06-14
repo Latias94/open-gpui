@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 
 #[test]
@@ -91,7 +91,7 @@ fn layout_roundtrips_roots_splits_and_floatings() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("root-edge move should commit")
     );

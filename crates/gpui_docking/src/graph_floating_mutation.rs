@@ -153,15 +153,12 @@ impl DockGraph {
                     Some(insert_index),
                 )
             }
-            DockGraphDropTarget::Edge { anchor, zone } => {
-                let Some(edge_plan) = self.edge_dock_plan(target_space, anchor.node(), zone) else {
-                    return false;
-                };
+            DockGraphDropTarget::Edge { plan } => {
                 let Some(child) = self.take_floating_child_from_space(source_space, floating)
                 else {
                     return false;
                 };
-                if !self.apply_edge_dock_plan(target_space, edge_plan, child) {
+                if !self.apply_edge_dock_plan(target_space, plan, child) {
                     return false;
                 }
                 self.simplify_space(source_space);

@@ -360,9 +360,14 @@ impl DockGraph {
                 self.require_target_node_in_space(space, tabs)?;
                 self.require_tabs_node(tabs)?;
             }
-            DockGraphDropTarget::Edge { anchor, zone } => {
-                self.require_target_node_in_space(space, anchor.node())?;
-                if zone == DropZone::Center {
+            DockGraphDropTarget::Edge { plan } => {
+                if !self.edge_dock_plan_is_current(space, plan) {
+                    return Err(DockGraphMutationError::MutationInvariantViolation {
+                        op: "DockGraphDropTarget",
+                        reason: "edge graph drop plan is no longer current".into(),
+                    });
+                }
+                if plan.drop_zone() == DropZone::Center {
                     return Err(DockGraphMutationError::MutationInvariantViolation {
                         op: "DockGraphDropTarget",
                         reason: "edge graph drop target cannot use center drop zone".into(),

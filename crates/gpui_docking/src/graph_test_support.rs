@@ -1,4 +1,6 @@
-use crate::{DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId};
+use crate::{
+    DockGraph, DockGraphDropTarget, DockItemId, DockNode, DockNodeId, DockSpaceId, DropZone,
+};
 
 pub(crate) fn main_space() -> DockSpaceId {
     DockSpaceId::new("main")
@@ -19,4 +21,17 @@ pub(crate) fn root_tabs_graph(items: &[&str]) -> (DockGraph, DockNodeId) {
     let root = graph.insert_node(DockNode::Tabs { items, selected });
     graph.set_root(main_space(), root);
     (graph, root)
+}
+
+pub(crate) fn edge_target(
+    graph: &DockGraph,
+    space: &DockSpaceId,
+    target: DockNodeId,
+    zone: DropZone,
+) -> DockGraphDropTarget {
+    DockGraphDropTarget::edge(
+        graph
+            .edge_dock_plan(space, target, zone)
+            .expect("edge drop target should be plannable"),
+    )
 }

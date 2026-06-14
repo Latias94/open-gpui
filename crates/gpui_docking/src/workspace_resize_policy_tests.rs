@@ -94,7 +94,7 @@ fn workspace_resize_split_transaction_rejects_invalid_targets(cx: &mut TestAppCo
 
 #[open_gpui::test]
 fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppContext) {
-    let (graph, split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
     let mut workspace = workspace_with_panels(cx, graph, &[("a", "A", "A"), ("b", "B", "B")]);
     workspace.policy_mut().set_allow_edge_split(false);
 
@@ -104,7 +104,12 @@ fn workspace_policy_blocks_edge_drop_without_mutating_graph(cx: &mut TestAppCont
             left_tabs,
             &item("a"),
             &space(),
-            DockGraphDropTarget::inner_edge(split, right_tabs, DropZone::Right),
+            DockGraphDropTarget::edge(
+                workspace
+                    .graph()
+                    .edge_dock_plan(&space(), right_tabs, DropZone::Right)
+                    .expect("edge target should be plannable"),
+            ),
         )
         .expect_err("edge drop should be rejected by policy");
 

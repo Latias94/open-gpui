@@ -39,8 +39,11 @@ impl DockGraph {
                 }
                 DropZone::Center => unreachable!(),
             };
+            let anchor_child = children[anchor_index];
             return Some(DockEdgeDockPlan::InsertIntoSplit {
                 split: target,
+                zone,
+                anchor_child,
                 anchor_index,
                 insert_index,
             });
@@ -67,8 +70,11 @@ impl DockGraph {
                     DropZone::Right | DropZone::Bottom => anchor_index.saturating_add(1),
                     DropZone::Center => unreachable!(),
                 };
+                let anchor_child = children[anchor_index];
                 return Some(DockEdgeDockPlan::InsertIntoSplit {
                     split: parent,
+                    zone,
+                    anchor_child,
                     anchor_index,
                     insert_index,
                 });
@@ -89,6 +95,8 @@ impl DockGraph {
         match plan {
             DockEdgeDockPlan::InsertIntoSplit {
                 split,
+                zone: _,
+                anchor_child: _,
                 anchor_index,
                 insert_index,
             } => {
@@ -111,6 +119,46 @@ impl DockGraph {
                 });
                 self.replace_node_in_space_tree(space, target, split)
             }
+        }
+    }
+
+    pub(in crate::graph) fn edge_dock_plan_is_current(
+        &self,
+        space: &DockSpaceId,
+        plan: DockEdgeDockPlan,
+    ) -> bool {
+        match plan {
+            DockEdgeDockPlan::InsertIntoSplit {
+                split,
+                zone,
+                anchor_child,
+                anchor_index,
+                insert_index,
+            } => {
+                if zone == DropZone::Center || self.root_for_node_in_space(space, split).is_none() {
+                    return false;
+                }
+                let Some(DockNode::Split {
+                    axis,
+                    children,
+                    fractions,
+                }) = self.nodes.get(split)
+                else {
+                    return false;
+                };
+                if zone.axis() != Some(*axis) {
+                    return false;
+                }
+                !children.is_empty()
+                    && children.len() == fractions.len()
+                    && anchor_index < fractions.len()
+                    && children.get(anchor_index) == Some(&anchor_child)
+                    && insert_index <= fractions.len()
+                    && edge_insert_index_matches_zone(zone, anchor_index, insert_index)
+            }
+            DockEdgeDockPlan::WrapTarget {
+                target, axis, zone, ..
+            } => zone.axis() == Some(axis) && self.root_for_node_in_space(space, target).is_some(),
         }
     }
 
@@ -237,6 +285,18 @@ impl DockGraph {
                 }
             }
         }
+    }
+}
+
+fn edge_insert_index_matches_zone(
+    zone: DropZone,
+    anchor_index: usize,
+    insert_index: usize,
+) -> bool {
+    match zone {
+        DropZone::Left | DropZone::Top => insert_index == anchor_index,
+        DropZone::Right | DropZone::Bottom => insert_index == anchor_index.saturating_add(1),
+        DropZone::Center => false,
     }
 }
 

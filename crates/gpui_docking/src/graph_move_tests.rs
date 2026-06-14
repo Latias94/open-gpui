@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 
 #[test]
@@ -133,7 +133,7 @@ fn checked_move_tabs_edge_drop_onto_same_space_root_preserves_items() {
                 source_space: space(),
                 source_tabs,
                 target_space: space(),
-                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("same-space root-edge tabs move should commit transactionally")
     );
@@ -390,12 +390,17 @@ fn checked_move_item_reports_target_outside_space_without_mutation() {
         selected: Some(item("orphan")),
     });
 
+    assert!(
+        graph
+            .edge_dock_plan(&space(), orphan, DropZone::Right)
+            .is_none()
+    );
     let err = graph
         .apply_op_checked(&DockOp::MoveItem {
             source_space: space(),
             item: item("b"),
             target_space: space(),
-            target: DockGraphDropTarget::root_edge(orphan, DropZone::Right),
+            target: DockGraphDropTarget::center(orphan),
         })
         .expect_err("orphan target should fail");
 
@@ -424,7 +429,7 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockGraphDropTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("root-edge move should commit")
     );
@@ -440,6 +445,58 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
         .expect_err("center target must be tabs");
 
     assert_eq!(err, DockGraphMutationError::NodeIsNotTabs { node: split });
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_rejects_stale_edge_plan_without_replanning() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    assert!(
+        graph
+            .edge_dock_plan(&space(), root, DropZone::Right)
+            .is_some()
+    );
+
+    let stale_plan = DockEdgeDockPlan::InsertIntoSplit {
+        split: root,
+        zone: DropZone::Right,
+        anchor_child: left,
+        anchor_index: 1,
+        insert_index: 2,
+    };
+    let before = graph.export_layout();
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItem {
+            source_space: space(),
+            item: item("a"),
+            target_space: space(),
+            target: DockGraphDropTarget::edge(stale_plan),
+        })
+        .expect_err("stale edge plan should not be re-planned at commit time");
+
+    assert_eq!(
+        err,
+        DockGraphMutationError::MutationInvariantViolation {
+            op: "DockGraphDropTarget",
+            reason: "edge graph drop plan is no longer current".into(),
+        }
+    );
+    assert_eq!(graph.export_layout(), before);
     graph.assert_canonical_space(&space());
 }
 

@@ -323,7 +323,12 @@ fn workspace_move_floating_rejects_when_subtree_contains_incompatible_class(
             &space(),
             floating,
             &target,
-            DockGraphDropTarget::root_edge(target_root, DropZone::Right),
+            DockGraphDropTarget::edge(
+                workspace
+                    .graph()
+                    .edge_dock_plan(&target, target_root, DropZone::Right)
+                    .expect("edge target should be plannable"),
+            ),
         )
         .expect_err("incompatible floating subtree should be rejected");
 

@@ -89,6 +89,10 @@ pub enum DockEdgeDockPlan {
     InsertIntoSplit {
         /// The split container receiving the new child.
         split: DockNodeId,
+        /// Original edge zone resolved by preview.
+        zone: DropZone,
+        /// Existing child whose share was selected by preview-time planning.
+        anchor_child: DockNodeId,
         /// Existing child whose share will be split.
         anchor_index: usize,
         /// Position where the new child will be inserted.
@@ -103,6 +107,30 @@ pub enum DockEdgeDockPlan {
         /// Position of the new child relative to the target.
         zone: DropZone,
     },
+}
+
+impl DockEdgeDockPlan {
+    /// Returns the existing node this plan was built around.
+    pub(crate) fn target_node(self) -> DockNodeId {
+        match self {
+            Self::InsertIntoSplit {
+                split,
+                zone: _,
+                anchor_child: _,
+                anchor_index: _,
+                insert_index: _,
+            } => split,
+            Self::WrapTarget { target, .. } => target,
+        }
+    }
+
+    /// Returns the logical drop zone represented by this plan.
+    pub(crate) fn drop_zone(self) -> DropZone {
+        match self {
+            Self::InsertIntoSplit { zone, .. } => zone,
+            Self::WrapTarget { zone, .. } => zone,
+        }
+    }
 }
 
 /// In-window floating container metadata.

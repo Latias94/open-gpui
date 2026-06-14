@@ -184,11 +184,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockGraphDropTarget::Edge { anchor, zone } => {
-                let target_node = anchor.node();
-                let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
-                    return false;
-                };
+            DockGraphDropTarget::Edge { plan } => {
                 if !self.remove_item_from_tabs(source_tabs, source_index) {
                     return false;
                 }
@@ -197,7 +193,7 @@ impl DockGraph {
                     selected: Some(item),
                 });
 
-                if !self.apply_edge_dock_plan(target_space, edge_plan, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
@@ -278,11 +274,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockGraphDropTarget::Edge { anchor, zone } => {
-                let target_node = anchor.node();
-                let Some(edge_plan) = self.edge_dock_plan(target_space, target_node, zone) else {
-                    return false;
-                };
+            DockGraphDropTarget::Edge { plan } => {
                 let Some(detached) =
                     self.take_tabs_from_space_without_simplify(source_space, source_tabs)
                 else {
@@ -290,7 +282,7 @@ impl DockGraph {
                 };
                 let new_tabs = self.insert_detached_tabs(detached);
 
-                if !self.apply_edge_dock_plan(target_space, edge_plan, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
