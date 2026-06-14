@@ -1566,6 +1566,135 @@ fn viewport_runtime_replacement_clears_routed_preview_for_old_window(cx: &mut Te
 }
 
 #[open_gpui::test]
+fn viewport_runtime_window_closed_finishes_source_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let source_window = handle(41);
+    let target_window = handle(42);
+    runtime.register_opened_viewport(source_space.clone(), source_window);
+    runtime.register_opened_viewport(target_space.clone(), target_window);
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space.clone(),
+        source_tabs,
+        &target_space,
+        target_window,
+        target_tabs,
+        cx,
+    );
+    let geometry = DockDragTearOffGeometry::from_source_bounds(
+        floating_bounds(10.0, 10.0, 120.0, 40.0),
+        point(px(24.0), px(18.0)),
+    );
+    assert!(runtime.update_payload_drag_tear_off_geometry(&session, geometry));
+    assert!(runtime.active_payload_drag_session(&payload).is_some());
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&session)),
+        Some(geometry)
+    );
+    assert!(
+        runtime
+            .routed_drop_delivery_for_drag_session(Some(&session))
+            .is_some()
+    );
+
+    let outcome = runtime.handle_window_closed(source_window.window_id());
+
+    assert_eq!(outcome.status(), DockViewportCloseStatus::Closed);
+    assert_eq!(outcome.space(), Some(&source_space));
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+    assert_eq!(
+        runtime.active_payload_drag_tear_off_geometry(Some(&session)),
+        None
+    );
+    assert_eq!(
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
+        None
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_host_release_finishes_source_drag_session(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let source_window = handle(51);
+    let target_window = handle(52);
+    runtime.register_opened_viewport(source_space.clone(), source_window);
+    runtime.register_opened_viewport(target_space.clone(), target_window);
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = cache_known_viewport_preview_for_test(
+        &mut runtime,
+        source_space.clone(),
+        source_tabs,
+        &target_space,
+        target_window,
+        target_tabs,
+        cx,
+    );
+    assert!(runtime.active_payload_drag_session(&payload).is_some());
+    assert!(
+        runtime
+            .routed_drop_delivery_for_drag_session(Some(&session))
+            .is_some()
+    );
+
+    assert!(runtime.unregister_host_for_space(&source_space, source_window.window_id()));
+
+    assert_eq!(runtime.active_payload_drag_session(&payload), None);
+    assert_eq!(
+        runtime.routed_drop_delivery_for_drag_session(Some(&session)),
+        None
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_reusable_stale_window_clears_routed_preview(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");

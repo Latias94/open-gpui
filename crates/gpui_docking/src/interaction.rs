@@ -74,6 +74,10 @@ impl DockRuntimeDragSession {
     pub(crate) fn accepts_payload(&self, payload: &DockDragPayload) -> bool {
         self.payload == payload.identity()
     }
+
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        self.payload.source_space()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

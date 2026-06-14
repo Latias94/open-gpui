@@ -530,8 +530,21 @@ impl DockViewportRuntime {
         self.host_scenes.unregister_space(space);
     }
 
+    fn finish_payload_drag_for_source_space(&mut self, space: &DockSpaceId) {
+        let Some(session) = self
+            .drag_session
+            .as_ref()
+            .filter(|session| session.source_space() == space)
+            .cloned()
+        else {
+            return;
+        };
+        let _ = self.finish_payload_drag(&session);
+    }
+
     fn unregister_space_runtime_state(&mut self, space: &DockSpaceId) -> Option<AnyWindowHandle> {
         let snapshot = self.adapter.unregister_space(space)?;
+        self.finish_payload_drag_for_source_space(space);
         let window = snapshot.window;
         self.clear_runtime_window_state(space, window.window_id());
         Some(window)
@@ -1058,6 +1071,9 @@ impl DockViewportRuntime {
             .close_coordinator
             .was_merge_back_precommitted(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
+        if let Some(space) = outcome.space().cloned() {
+            self.finish_payload_drag_for_source_space(&space);
+        }
         self.host_scenes.unregister_window(window_id);
         self.close_gate.sync_adapter(&self.adapter);
         let outcome = if merge_back_prepared && outcome.status() == DockViewportCloseStatus::Closed
