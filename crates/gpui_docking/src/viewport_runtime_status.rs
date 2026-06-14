@@ -67,6 +67,8 @@ pub enum DockViewportRouteStatus {
 pub enum DockViewportStaleStatusReason {
     /// GPUI reported platform window facts changed after the last rendered host scene.
     WindowFactsChanged,
+    /// GPUI accepted a platform close request and the window is waiting for the close callback.
+    PlatformCloseRequested,
 }
 
 /// Payload shape recorded in viewport runtime diagnostics.
@@ -439,6 +441,7 @@ impl From<DockViewportStaleReason> for DockViewportStaleStatusReason {
     fn from(reason: DockViewportStaleReason) -> Self {
         match reason {
             DockViewportStaleReason::WindowFactsChanged => Self::WindowFactsChanged,
+            DockViewportStaleReason::PlatformCloseRequested => Self::PlatformCloseRequested,
         }
     }
 }
@@ -676,7 +679,7 @@ mod tests {
         assert_eq!(ready.facts_generation, 1);
 
         assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged));
-        let stale = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
+        let stale = DockViewportLifecycleRecord::from_snapshot(space.clone(), &snapshot);
         assert_eq!(
             stale.route_status,
             DockViewportRouteStatus::Stale {
@@ -684,6 +687,16 @@ mod tests {
             }
         );
         assert_eq!(stale.facts_generation, 2);
+
+        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
+        let closing = DockViewportLifecycleRecord::from_snapshot(space, &snapshot);
+        assert_eq!(
+            closing.route_status,
+            DockViewportRouteStatus::Stale {
+                reason: DockViewportStaleStatusReason::PlatformCloseRequested
+            }
+        );
+        assert_eq!(closing.facts_generation, 3);
     }
 
     #[test]

@@ -19,6 +19,10 @@ impl DockViewportCloseCoordinator {
         self.pre_closed_merge_back_windows.remove(&window_id)
     }
 
+    pub(crate) fn has_merge_back_precommitted(&self, window_id: WindowId) -> bool {
+        self.pre_closed_merge_back_windows.contains(&window_id)
+    }
+
     pub(crate) fn apply_should_close_plan(
         &mut self,
         mut outcome: DockViewportShouldCloseOutcome,

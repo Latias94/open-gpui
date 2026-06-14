@@ -412,6 +412,17 @@ impl DockViewportRuntime {
         (changed || preview_changed, windows)
     }
 
+    fn mark_viewport_window_close_requested(
+        &mut self,
+        window_id: WindowId,
+    ) -> (bool, Vec<AnyWindowHandle>) {
+        let changed = self.adapter.mark_window_close_requested(window_id);
+        self.host_scenes.unregister_window(window_id);
+        let (preview_changed, windows) =
+            self.clear_routed_drop_preview_if_window_matches(window_id);
+        (changed || preview_changed, windows)
+    }
+
     #[cfg(test)]
     pub(crate) fn begin_viewport_host_scene(
         &mut self,
@@ -441,6 +452,12 @@ impl DockViewportRuntime {
     ) -> Option<DockViewportHostSceneRegistration> {
         let space = space.into();
         let window = self.adapter.window_for_space(&space)?;
+        if self
+            .close_coordinator
+            .has_merge_back_precommitted(window.window_id())
+        {
+            return None;
+        }
         let current_identity = DockViewportIdentity::new(space.clone(), window.window_id());
         if !current_identity.matches(&space, window_id) {
             return None;
@@ -1162,6 +1179,13 @@ impl DockViewportRuntime {
             &self.controller,
             cx,
         );
+        if outcome.status == crate::DockViewportShouldCloseStatus::Allowed
+            && self
+                .close_coordinator
+                .has_merge_back_precommitted(window_id)
+        {
+            let _ = self.mark_viewport_window_close_requested(window_id);
+        }
         self.status.record_should_close(&outcome);
         outcome
     }

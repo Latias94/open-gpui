@@ -19,6 +19,8 @@ pub(crate) enum DockViewportLifecycleState {
 pub(crate) enum DockViewportStaleReason {
     /// GPUI reported platform window facts changed after the last rendered host scene.
     WindowFactsChanged,
+    /// GPUI accepted a platform close request and the window is waiting for the close callback.
+    PlatformCloseRequested,
 }
 
 /// Why a registered viewport cannot currently authorize routing.

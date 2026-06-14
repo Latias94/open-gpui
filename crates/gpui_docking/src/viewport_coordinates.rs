@@ -33,6 +33,20 @@ impl DockViewportAdapter {
         snapshot.mark_route_facts_stale(DockViewportStaleReason::WindowFactsChanged)
     }
 
+    /// Marks a registered window as closing until the platform close callback unregisters it.
+    ///
+    /// This keeps the space/window mapping available for close attribution while removing the
+    /// route authority of a viewport whose contents were already merged back during should-close.
+    pub(crate) fn mark_window_close_requested(&mut self, window_id: WindowId) -> bool {
+        let Some(space) = self.space_for_window_id(window_id).cloned() else {
+            return false;
+        };
+        let Some(snapshot) = self.snapshot_mut(&space) else {
+            return false;
+        };
+        snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested)
+    }
+
     pub(crate) fn snapshot_facts_generation(
         &self,
         space: &DockSpaceId,
