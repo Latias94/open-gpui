@@ -123,7 +123,7 @@ fn viewport_drop_route_request_from_host(
 ) -> DockViewportDropRouteRequest {
     let platform_signals = match origin {
         DockPayloadDropReleaseOrigin::HoveredHost => {
-            DockViewportPlatformSignals::from_hovered_window(window, cx)
+            DockViewportPlatformSignals::from_event_receiver_window(window, cx)
         }
         DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };

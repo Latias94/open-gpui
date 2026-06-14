@@ -592,7 +592,10 @@ impl DockViewportAdapter {
             return DockViewportDropRoute::Unavailable;
         }
         if !request.has_global_window_bounds() {
-            if let Some(hovered_window) = target_context.hovered_window()
+            let route_local_window = target_context
+                .hovered_window()
+                .or_else(|| target_context.event_receiver_window());
+            if let Some(hovered_window) = route_local_window
                 && self
                     .window_for_space(request.source_space())
                     .is_some_and(|window| {
@@ -931,6 +934,41 @@ mod tests {
             None,
             DockViewportPlatformSignals::from_target_context(
                 DockViewportTargetContext::new().with_hovered_window(source_window),
+            )
+            .with_global_window_bounds(false),
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::Local {
+                host_position: point(px(20.0), px(30.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn drop_route_without_global_window_bounds_keeps_event_receiver_source_local() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 300.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_event_receiver_window(source_window),
             )
             .with_global_window_bounds(false),
         );

@@ -5,8 +5,10 @@ use open_gpui::WindowId;
 /// Pure resolver context derived from platform window signals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportTargetContext {
-    /// Window known to be under the pointer for this docking route event.
-    hovered_window: Option<WindowId>,
+    /// Window reported by the platform as being under the pointer.
+    platform_hovered_window: Option<WindowId>,
+    /// Window that delivered the GPUI drag/drop event.
+    event_receiver_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
 }
@@ -20,12 +22,22 @@ pub(crate) struct DockViewportTargetPriority {
 }
 
 impl DockViewportTargetContext {
+    #[cfg(test)]
     pub(crate) fn from_window_signals(
-        hovered_window: Option<WindowId>,
+        platform_hovered_window: Option<WindowId>,
+        window_stack: Vec<WindowId>,
+    ) -> Self {
+        Self::from_window_and_event_signals(platform_hovered_window, None, window_stack)
+    }
+
+    pub(crate) fn from_window_and_event_signals(
+        platform_hovered_window: Option<WindowId>,
+        event_receiver_window: Option<WindowId>,
         window_stack: Vec<WindowId>,
     ) -> Self {
         Self {
-            hovered_window,
+            platform_hovered_window,
+            event_receiver_window,
             window_stack,
         }
     }
@@ -37,7 +49,7 @@ impl DockViewportTargetContext {
     ) -> DockViewportTargetPriority {
         DockViewportTargetPriority {
             hovered: self
-                .hovered_window
+                .platform_hovered_window
                 .map(|hovered| usize::from(hovered != window_id))
                 .unwrap_or(1),
             stacked: self
@@ -50,11 +62,15 @@ impl DockViewportTargetContext {
     }
 
     pub(crate) fn has_arbitration_signal(&self) -> bool {
-        self.hovered_window.is_some() || !self.window_stack.is_empty()
+        self.platform_hovered_window.is_some()
+            || self.event_receiver_window.is_some()
+            || !self.window_stack.is_empty()
     }
 
     pub(crate) fn has_signal_for_window(&self, window_id: WindowId) -> bool {
-        self.hovered_window == Some(window_id) || self.window_stack.contains(&window_id)
+        self.platform_hovered_window == Some(window_id)
+            || self.event_receiver_window == Some(window_id)
+            || self.window_stack.contains(&window_id)
     }
 
     pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
@@ -62,7 +78,11 @@ impl DockViewportTargetContext {
     }
 
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
-        self.hovered_window
+        self.platform_hovered_window
+    }
+
+    pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
+        self.event_receiver_window
     }
 
     pub(crate) fn window_stack(&self) -> &[WindowId] {
@@ -70,8 +90,12 @@ impl DockViewportTargetContext {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Vec<WindowId>) {
-        (self.hovered_window, self.window_stack)
+    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Option<WindowId>, Vec<WindowId>) {
+        (
+            self.platform_hovered_window,
+            self.event_receiver_window,
+            self.window_stack,
+        )
     }
 
     /// Creates an empty target context that falls back to deterministic adapter ordering.
@@ -83,7 +107,14 @@ impl DockViewportTargetContext {
     /// Adds the hovered window signal.
     #[cfg(test)]
     pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.hovered_window = Some(window.into().window_id());
+        self.platform_hovered_window = Some(window.into().window_id());
+        self
+    }
+
+    /// Adds the event receiver window signal.
+    #[cfg(test)]
+    pub(crate) fn with_event_receiver_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.event_receiver_window = Some(window.into().window_id());
         self
     }
 

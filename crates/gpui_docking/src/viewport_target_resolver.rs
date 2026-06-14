@@ -311,4 +311,24 @@ mod tests {
         );
         assert!(!single_unmatched_signal.is_trusted());
     }
+
+    #[test]
+    fn event_receiver_window_does_not_authorize_overlap_commit() {
+        let first = handle(1);
+        let second = handle(2);
+        let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
+
+        let resolved = resolve_viewport_target_with_confidence(
+            hits(),
+            &DockViewportTargetContext::new().with_event_receiver_window(second),
+        )
+        .expect("event receiver window should still produce a diagnostic candidate");
+
+        assert_eq!(resolved.target().space(), &space("alpha"));
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::FallbackOnly
+        );
+        assert!(!resolved.is_trusted());
+    }
 }

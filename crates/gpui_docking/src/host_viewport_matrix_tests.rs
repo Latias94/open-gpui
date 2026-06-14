@@ -534,6 +534,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_opened.window()));
     target_visual.simulate_mouse_move(target_position, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -551,6 +552,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     target_visual.simulate_mouse_up(target_position, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
