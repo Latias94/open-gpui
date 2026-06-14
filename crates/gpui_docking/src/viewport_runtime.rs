@@ -748,18 +748,6 @@ impl DockViewportRuntime {
         self.host_scenes.resolve(space, host_position, &policy)
     }
 
-    /// Resolves a rendered payload release into a runtime route without mutating the graph.
-    #[cfg(test)]
-    pub(crate) fn resolve_payload_drop_route(
-        &mut self,
-        request: &DockViewportDropRouteRequest,
-        cx: &App,
-    ) -> DockViewportDropRoute {
-        self.resolve_payload_drop_delivery(request, cx)
-            .route()
-            .clone()
-    }
-
     /// Resolves a rendered payload release into route and delivery facts from one snapshot.
     pub(crate) fn resolve_payload_drop_delivery(
         &mut self,

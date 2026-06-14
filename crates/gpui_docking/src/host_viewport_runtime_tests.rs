@@ -1992,8 +1992,12 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
         DockViewportTargetContext::new()
             .with_window_stack([source_opened.window(), target_opened.window()]),
     );
-    let baseline_route =
-        cx.update(|app| runtime.resolve_payload_drop_route(&request_without_hovered, app));
+    let baseline_route = cx.update(|app| {
+        runtime
+            .resolve_payload_drop_delivery(&request_without_hovered, app)
+            .route()
+            .clone()
+    });
     match baseline_route {
         DockViewportDropRoute::Local { .. } => {}
         DockViewportDropRoute::KnownViewport { ref target }
@@ -2011,8 +2015,12 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
             .with_hovered_window(target_opened.window())
             .with_window_stack([source_opened.window(), target_opened.window()]),
     );
-    let hovered_route =
-        cx.update(|app| runtime.resolve_payload_drop_route(&request_with_hovered, app));
+    let hovered_route = cx.update(|app| {
+        runtime
+            .resolve_payload_drop_delivery(&request_with_hovered, app)
+            .route()
+            .clone()
+    });
     assert!(
         matches!(
             hovered_route,
@@ -2041,8 +2049,12 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
                 .with_window_stack([source_opened.window(), target_opened.window()]),
         ),
     );
-    let source_only_route =
-        cx.update(|app| runtime.resolve_payload_drop_route(&source_only_request, app));
+    let source_only_route = cx.update(|app| {
+        runtime
+            .resolve_payload_drop_delivery(&source_only_request, app)
+            .route()
+            .clone()
+    });
     assert_eq!(
         source_only_route, baseline_route,
         "source-only release must not promote last-hovered preview state into current hover authority"

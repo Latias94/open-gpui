@@ -717,15 +717,18 @@ fn viewport_runtime_handle_tear_off_is_not_route_ready_before_first_host_scene(
         Some(DockViewportRouteStatus::RegisteredNotReady)
     );
     let route_before_scene = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             primary_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("b")),
             target_point,
             None,
             DockViewportPlatformSignals::from_app(app).with_hovered_window(detached_window),
-            app,
-        )
+        );
+        runtime
+            .resolve_payload_drop_delivery(&request, app)
+            .route()
+            .clone()
     });
     assert_eq!(
         route_before_scene,
@@ -795,15 +798,18 @@ fn viewport_runtime_handle_tear_off_is_not_route_ready_before_first_host_scene(
     );
 
     let route_after_scene_without_target = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             primary_space,
             source_tabs,
             DockViewportDropPayload::Item(item("b")),
             target_point,
             None,
             DockViewportPlatformSignals::from_app(app).with_hovered_window(detached_window),
-            app,
-        )
+        );
+        runtime
+            .resolve_payload_drop_delivery(&request, app)
+            .route()
+            .clone()
     });
     assert_eq!(
         route_after_scene_without_target,
@@ -866,15 +872,18 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
     let target_point = screen_position_for_host_position(target_window_bounds, host_position);
 
     let route = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             target_point,
             Some(target_window_bounds),
             DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
-            app,
-        )
+        );
+        runtime
+            .resolve_payload_drop_delivery(&request, app)
+            .route()
+            .clone()
     });
 
     let expected_generation = runtime
@@ -920,16 +929,19 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
     let runtime = DockViewportRuntimeHandle::new(controller.clone());
     let release_position = point(px(900.0), px(900.0));
 
+    let rejected_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+        DockViewportTargetContext::new(),
+    );
     let rejected = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_context(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            release_position,
-            None,
-            DockViewportTargetContext::new(),
-            app,
-        )
+        runtime
+            .resolve_payload_drop_delivery(&rejected_request, app)
+            .route()
+            .clone()
     });
     assert!(
         matches!(
@@ -952,16 +964,19 @@ fn viewport_runtime_handle_drop_route_uses_workspace_platform_policy(cx: &mut Te
     cx.update_entity(&controller, |controller, _| {
         controller.policy_mut().set_allow_platform_viewports(true);
     });
+    let tear_off_request = DockViewportDropRouteRequest::from_target_context(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Item(item("a")),
+        release_position,
+        None,
+        DockViewportTargetContext::new(),
+    );
     let tear_off = cx.update(|app| {
-        runtime.resolve_payload_drop_route_with_context(
-            source_space.clone(),
-            source_tabs,
-            DockViewportDropPayload::Item(item("a")),
-            release_position,
-            None,
-            DockViewportTargetContext::new(),
-            app,
-        )
+        runtime
+            .resolve_payload_drop_delivery(&tear_off_request, app)
+            .route()
+            .clone()
     });
     assert!(
         matches!(tear_off, DockViewportDropRoute::TearOff),
