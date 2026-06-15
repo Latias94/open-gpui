@@ -225,7 +225,7 @@ impl DockHost {
     }
 
     pub(crate) fn request_viewport_focus_restore_if_idle(&mut self) -> bool {
-        if self.pending_focus_request.is_some() {
+        if self.pending_focus_request.is_some() || self.last_focused_panel.is_none() {
             return false;
         }
         self.request_viewport_focus_restore()

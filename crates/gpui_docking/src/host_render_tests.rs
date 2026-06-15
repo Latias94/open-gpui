@@ -207,7 +207,7 @@ fn viewport_activation_restores_last_focused_panel(cx: &mut TestAppContext) {
     });
 
     host.update(cx, |host, cx| {
-        assert!(host.request_viewport_focus_restore());
+        assert!(host.request_viewport_focus_restore_if_idle());
         cx.notify();
     });
     cx.run_until_parked();
@@ -244,6 +244,19 @@ fn viewport_activation_keeps_pending_panel_focus_when_request_fails(cx: &mut Tes
             host.pending_focus_request().cloned(),
             Some(DockViewportFocusRequest::panel(item("a")))
         );
+    });
+}
+
+#[open_gpui::test]
+fn viewport_restore_request_is_ignored_without_focus_history(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph(&["a"]);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let (_window, host, _visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    host.update(cx, |host, _| {
+        assert!(!host.request_viewport_focus_restore_if_idle());
+        assert_eq!(host.pending_focus_request(), None);
     });
 }
 
