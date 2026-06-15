@@ -3981,7 +3981,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
     let local_resolution = DockViewportResolvedDropRoute::new(
         DockViewportDropRoute::Local {
             host_position: target_position,
-            authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+            authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
         },
         None,
     );

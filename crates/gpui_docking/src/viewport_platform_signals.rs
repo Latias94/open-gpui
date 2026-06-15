@@ -39,7 +39,12 @@ impl DockViewportPlatformSignals {
 
     /// Captures GPUI platform signals for a host that delivered this drag/drop event.
     pub(crate) fn from_event_receiver_window(window: &Window, cx: &App) -> Self {
-        Self::from_app(cx).with_event_receiver_window(window.window_handle())
+        let signals = Self::from_app(cx).with_event_receiver_window(window.window_handle());
+        if signals.platform_hovered_window.is_some() {
+            signals
+        } else {
+            signals.without_hovered_window_authority()
+        }
     }
 
     /// Captures app-level signals for release paths that did not sample the hovered window.
@@ -49,7 +54,6 @@ impl DockViewportPlatformSignals {
     }
 
     /// Removes hovered-window authority while preserving other platform signals.
-    #[cfg(test)]
     pub(crate) fn without_hovered_window_authority(mut self) -> Self {
         self.platform_hovered_window = None;
         self.capabilities.mouse_hovered_window = false;

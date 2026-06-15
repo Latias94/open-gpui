@@ -968,7 +968,7 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
                 host_position,
                 expected_generation,
             ),
-            authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+            authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
         }
     );
     let status = runtime.runtime_status();

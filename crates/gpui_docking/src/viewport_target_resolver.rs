@@ -85,8 +85,6 @@ impl DockViewportTargetHit {
 pub(crate) enum DockViewportTargetConfidence {
     /// Backend/platform hovered-window authority matched the target.
     TrustedHovered,
-    /// The event receiver owns the only live hit and no stronger signal conflicts.
-    TrustedEventReceiver,
     /// Exactly one live rectangle hit exists and no current platform signal conflicts with it.
     UniqueGeometryHit,
     /// A platform window-stack/focus fallback selected a diagnostic target.
@@ -100,8 +98,10 @@ pub(crate) enum DockViewportTargetConfidence {
 /// Commit authority derived from viewport hit arbitration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportRouteAuthority {
-    /// Current backend/platform signal authorizes this viewport.
-    TrustedPlatform,
+    /// Current backend hovered-window signal authorizes this viewport.
+    TrustedHoveredWindow,
+    /// The event receiver supplies receiver-local coordinates for this viewport.
+    ReceiverLocal,
     /// The point has exactly one non-conflicting live geometry hit.
     UniqueGeometry,
     /// The target is useful for diagnostics or preview ranking only.
@@ -120,8 +120,6 @@ pub(crate) struct DockViewportTargetResolution {
 pub(crate) enum DockViewportHoverArbitration {
     /// A route-authoritative viewport target was selected.
     TrustedHovered(DockViewportTargetHit),
-    /// The event receiver owns the only live hit and can commit locally.
-    TrustedEventReceiver(DockViewportTargetHit),
     /// Exactly one live rectangle hit exists and no current platform signal conflicts with it.
     UniqueGeometryHit(DockViewportTargetHit),
     /// Window-stack/focus fallback selected a diagnostic target, but it is not commit authority.
@@ -161,9 +159,8 @@ impl DockViewportTargetResolution {
 
     pub(crate) fn route_authority(&self) -> DockViewportRouteAuthority {
         match self.confidence {
-            DockViewportTargetConfidence::TrustedHovered
-            | DockViewportTargetConfidence::TrustedEventReceiver => {
-                DockViewportRouteAuthority::TrustedPlatform
+            DockViewportTargetConfidence::TrustedHovered => {
+                DockViewportRouteAuthority::TrustedHoveredWindow
             }
             DockViewportTargetConfidence::UniqueGeometryHit => {
                 DockViewportRouteAuthority::UniqueGeometry
@@ -179,11 +176,14 @@ impl DockViewportTargetResolution {
 
 impl DockViewportRouteAuthority {
     pub(crate) fn can_authorize_known_viewport_route(self) -> bool {
-        matches!(self, Self::TrustedPlatform | Self::UniqueGeometry)
+        matches!(
+            self,
+            Self::TrustedHoveredWindow | Self::ReceiverLocal | Self::UniqueGeometry
+        )
     }
 
     pub(crate) fn can_authorize_local_route(self) -> bool {
-        matches!(self, Self::TrustedPlatform)
+        matches!(self, Self::TrustedHoveredWindow | Self::ReceiverLocal)
     }
 }
 
@@ -193,10 +193,6 @@ impl DockViewportHoverArbitration {
             Self::TrustedHovered(target) => Some(DockViewportTargetResolution::new(
                 target,
                 DockViewportTargetConfidence::TrustedHovered,
-            )),
-            Self::TrustedEventReceiver(target) => Some(DockViewportTargetResolution::new(
-                target,
-                DockViewportTargetConfidence::TrustedEventReceiver,
             )),
             Self::UniqueGeometryHit(target) => Some(DockViewportTargetResolution::new(
                 target,
@@ -234,32 +230,17 @@ impl<'a> DockViewportHoverArbiter<'a> {
             return DockViewportHoverArbitration::TrustedHovered(target);
         }
 
+        if self.context.hovered_window_known_empty() {
+            return DockViewportHoverArbitration::FallbackOnly(target);
+        }
+
         if hit_count == 1 {
-            if self
-                .context
-                .event_receiver_window()
-                .is_some_and(|window_id| window_id == target.window_id())
-                && !self
-                    .context
-                    .has_conflicting_hovered_window(target.window_id())
-            {
-                return DockViewportHoverArbitration::TrustedEventReceiver(target);
-            }
-
-            if self.context.hovered_window_known_empty() {
-                return DockViewportHoverArbitration::FallbackOnly(target);
-            }
-
             if !self
                 .context
                 .has_conflicting_single_hit_signal(target.window_id())
             {
                 return DockViewportHoverArbitration::UniqueGeometryHit(target);
             }
-        }
-
-        if self.context.hovered_window_known_empty() {
-            return DockViewportHoverArbitration::FallbackOnly(target);
         }
 
         if self.context.window_stack_contains(target.window_id()) {
@@ -366,7 +347,7 @@ mod tests {
         );
         assert_eq!(
             hovered.route_authority(),
-            DockViewportRouteAuthority::TrustedPlatform
+            DockViewportRouteAuthority::TrustedHoveredWindow
         );
 
         let stacked = resolve_viewport_target_with_confidence(
@@ -474,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn event_receiver_window_authorizes_single_hit_even_when_hovered_window_is_known_empty() {
+    fn hovered_window_known_empty_blocks_global_event_receiver_single_hit_authority() {
         let window = handle(1);
 
         let resolved = resolve_viewport_target_with_confidence(
@@ -487,11 +468,11 @@ mod tests {
 
         assert_eq!(
             resolved.confidence(),
-            DockViewportTargetConfidence::TrustedEventReceiver
+            DockViewportTargetConfidence::FallbackOnly
         );
         assert_eq!(
             resolved.route_authority(),
-            DockViewportRouteAuthority::TrustedPlatform
+            DockViewportRouteAuthority::DiagnosticOnly
         );
     }
 
@@ -507,11 +488,11 @@ mod tests {
 
         assert_eq!(
             resolved.confidence(),
-            DockViewportTargetConfidence::TrustedEventReceiver
+            DockViewportTargetConfidence::UniqueGeometryHit
         );
         assert_eq!(
             resolved.route_authority(),
-            DockViewportRouteAuthority::TrustedPlatform
+            DockViewportRouteAuthority::UniqueGeometry
         );
     }
 

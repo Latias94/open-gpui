@@ -279,7 +279,7 @@ mod tests {
             &host_scenes,
             &DockViewportDropRoute::Local {
                 host_position: point(px(24.0), px(24.0)),
-                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
             },
             &request,
             workspace.policy(),

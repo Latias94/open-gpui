@@ -777,7 +777,7 @@ mod tests {
             &request,
             &DockViewportDropRoute::Local {
                 host_position,
-                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
             },
         );
 
@@ -815,7 +815,7 @@ mod tests {
             &request,
             &DockViewportDropRoute::Local {
                 host_position,
-                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
             },
         );
 
@@ -892,7 +892,7 @@ mod tests {
                     target_window,
                     host_position,
                 ),
-                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+                authority: crate::DockViewportRouteAuthority::TrustedHoveredWindow,
             },
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(

@@ -115,7 +115,7 @@ mod tests {
                     handle(7),
                     point(px(300.0), px(20.0)),
                 ),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             },
             point(px(40.0), px(50.0)),
         )

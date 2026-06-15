@@ -631,7 +631,7 @@ impl DockViewportAdapter {
                 if &target_space == request.source_space() {
                     return DockViewportDropRoute::Local {
                         host_position,
-                        authority: DockViewportRouteAuthority::TrustedPlatform,
+                        authority: DockViewportRouteAuthority::ReceiverLocal,
                     };
                 }
 
@@ -645,7 +645,7 @@ impl DockViewportAdapter {
                         host_position,
                         facts_generation,
                     ),
-                    authority: DockViewportRouteAuthority::TrustedPlatform,
+                    authority: DockViewportRouteAuthority::ReceiverLocal,
                 };
             }
         }
@@ -670,7 +670,7 @@ impl DockViewportAdapter {
         {
             return DockViewportDropRoute::Local {
                 host_position,
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             };
         }
         DockViewportDropRoute::Unavailable
@@ -758,7 +758,7 @@ mod tests {
             ),
             DockViewportDropRoute::Local {
                 host_position: point(px(5.0), px(5.0)),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             }
         );
     }
@@ -1026,7 +1026,7 @@ mod tests {
             route,
             DockViewportDropRoute::Local {
                 host_position: point(px(20.0), px(30.0)),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             }
         );
     }
@@ -1062,7 +1062,7 @@ mod tests {
             route,
             DockViewportDropRoute::Local {
                 host_position: point(px(20.0), px(30.0)),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::ReceiverLocal,
             }
         );
     }
@@ -1153,14 +1153,13 @@ mod tests {
                     point(px(20.0), px(30.0)),
                     1,
                 ),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::ReceiverLocal,
             }
         );
     }
 
     #[test]
-    fn global_drop_route_keeps_event_receiver_single_hit_authority_when_hovered_window_is_known_empty()
-     {
+    fn global_drop_route_rejects_event_receiver_single_hit_when_hovered_window_is_known_empty() {
         let source = space("source");
         let target = space("target");
         let target_window = handle(2);
@@ -1190,16 +1189,8 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target,
-                    target_window,
-                    point(px(20.0), px(30.0)),
-                    1,
-                ),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
-            },
-            "a single non-conflicting event-receiver hit should remain route-authoritative even when hovered=None is known"
+            DockViewportDropRoute::Unavailable,
+            "with global bounds, reliable hovered=None means no app viewport is hovered and the event receiver cannot become hovered-window authority"
         );
     }
 
@@ -1242,7 +1233,7 @@ mod tests {
                     point(px(20.0), px(30.0)),
                     1,
                 ),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::ReceiverLocal,
             },
             "without global bounds, the event receiver is the adapter's coordinate authority"
         );
@@ -1309,7 +1300,7 @@ mod tests {
             &request,
             DockViewportDropRoute::Local {
                 host_position: local_position,
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             },
         );
         assert_eq!(delivery, None);
@@ -1371,7 +1362,7 @@ mod tests {
             &request,
             DockViewportDropRoute::KnownViewport {
                 target: DockViewportTargetHit::new(target.clone(), target_window, known_position),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             },
         );
         assert_eq!(delivery, None);
@@ -1413,7 +1404,7 @@ mod tests {
                     known_position,
                     target_facts_generation,
                 ),
-                authority: DockViewportRouteAuthority::TrustedPlatform,
+                authority: DockViewportRouteAuthority::TrustedHoveredWindow,
             }
             .into_authorized_drop_route()
             .expect("known viewport route should be authorized"),
