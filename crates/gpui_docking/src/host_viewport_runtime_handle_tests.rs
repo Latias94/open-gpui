@@ -271,9 +271,10 @@ fn viewport_runtime_handle_retain_close_clears_scene_and_reopens_layout(cx: &mut
     );
 
     assert!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .allows_close(),
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .allows_close(),
         "RetainLayout should allow GPUI to close the platform viewport"
     );
     opened
@@ -358,9 +359,10 @@ fn viewport_runtime_handle_open_does_not_reuse_close_pending_window(cx: &mut Tes
         .expect("secondary viewport should open through runtime handle");
 
     assert!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .allows_close(),
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .allows_close(),
         "RetainLayout should allow the platform close"
     );
     let reopened = cx
@@ -3200,9 +3202,10 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
         "updated Prevent policy should veto GPUI should-close before the window closes"
     );
     assert_eq!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .status,
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .status,
         DockViewportShouldCloseStatus::Vetoed
     );
     assert_eq!(
@@ -3538,9 +3541,10 @@ fn viewport_runtime_handle_allows_platform_close_with_retain_policy(cx: &mut Tes
         "RetainLayout policy should allow GPUI should-close to continue"
     );
     assert_eq!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .status,
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .status,
         DockViewportShouldCloseStatus::Allowed
     );
 }

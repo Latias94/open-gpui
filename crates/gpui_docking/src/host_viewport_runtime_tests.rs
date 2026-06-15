@@ -1199,9 +1199,10 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
         "updated Prevent policy should veto the already-open window"
     );
     assert_eq!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .status,
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .status,
         DockViewportShouldCloseStatus::Vetoed
     );
 
@@ -1255,9 +1256,10 @@ fn viewport_runtime_should_close_allows_windows_after_mapping_cleanup(cx: &mut T
         None
     );
     assert_eq!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .status,
+        cx.update(
+            |app| runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+        )
+        .status,
         DockViewportShouldCloseStatus::UnknownWindow
     );
     assert!(

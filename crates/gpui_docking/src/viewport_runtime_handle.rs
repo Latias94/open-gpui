@@ -625,16 +625,6 @@ impl DockViewportRuntimeHandle {
         outcome
     }
 
-    /// Handles a GPUI window should-close query through the shared runtime.
-    pub fn handle_window_should_close(
-        &self,
-        window_id: WindowId,
-    ) -> DockViewportShouldCloseOutcome {
-        self.runtime
-            .borrow_mut()
-            .handle_window_should_close(window_id)
-    }
-
     /// Handles a GPUI window should-close query with workspace lifecycle policy.
     pub fn handle_window_should_close_with_app(
         &self,

@@ -1195,24 +1195,6 @@ impl DockViewportRuntime {
         self.activate_viewport_for_space(&target_space, focus_item, cx)
     }
 
-    /// Handles a GPUI window should-close query by applying this runtime's close policy.
-    pub(crate) fn handle_window_should_close(
-        &mut self,
-        window_id: WindowId,
-    ) -> DockViewportShouldCloseOutcome {
-        if self.adapter.window_close_requested(window_id) {
-            let outcome = self.allowed_should_close_outcome(window_id);
-            self.status.record_should_close(&outcome);
-            return outcome;
-        }
-        let outcome = self
-            .adapter
-            .should_close_viewport(window_id, self.close_policy());
-        let _ = self.apply_allowed_should_close_route_invalidation(&outcome);
-        self.status.record_should_close(&outcome);
-        outcome
-    }
-
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
         &mut self,
         window_id: WindowId,
