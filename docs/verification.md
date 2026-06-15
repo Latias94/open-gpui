@@ -31,13 +31,15 @@ cargo bench -p open-gpui-canvas --bench large_canvas
 Use the benchmark to compare spatial-index, visible-query, and paint-frame culling changes. It is
 not part of the default CI gate because benchmark timing is runner-dependent.
 
-For focused `open-gpui-ui-core` or UI foundation gallery work, run:
+For focused `open-gpui-ui-core`, `open-gpui-ui-components`, or UI foundation gallery work, run:
 
 ```sh
-cargo fmt -p open-gpui-ui-core -p open-gpui-ui-foundation-gallery
+cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery
 cargo check -p open-gpui-ui-core
+cargo check -p open-gpui-ui-components
 cargo check -p open-gpui-ui-foundation-gallery
 cargo nextest run -p open-gpui-ui-core
+cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
@@ -60,8 +62,11 @@ cargo run -p open-gpui-ui-foundation-gallery
 5. Open `Overlay`, click `open overlay`, confirm the anchored popover appears from the trigger, then
    close it from the popover or press Escape. The geometry readout should keep anchor, layout,
    visual, preferred, and safe-window rectangles visible.
-6. Re-run `cargo nextest run -p open-gpui-ui-foundation-gallery` if a manual check exposes a gallery
-   or foundation API regression.
+6. Open `Components`, confirm Button and Switch samples render with enabled, disabled, selected,
+   checked, and unchecked states. Tab through the controls and confirm they fit inside the existing
+   scrollable content area.
+7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
+   open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:

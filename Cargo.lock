@@ -4674,6 +4674,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "open-gpui-ui-components"
+version = "0.1.0"
+dependencies = [
+ "open-gpui",
+ "open-gpui-ui-core",
+]
+
+[[package]]
 name = "open-gpui-ui-core"
 version = "0.1.0"
 dependencies = [
@@ -4686,6 +4694,7 @@ version = "0.1.0"
 dependencies = [
  "open-gpui",
  "open-gpui-platform",
+ "open-gpui-ui-components",
  "open-gpui-ui-core",
 ]
 

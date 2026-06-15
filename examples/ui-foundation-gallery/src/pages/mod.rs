@@ -1,6 +1,7 @@
 //! Foundation gallery page registry.
 
 pub mod adaptive;
+pub mod components;
 pub mod focus_a11y;
 pub mod overlay;
 pub mod sizing;
@@ -19,6 +20,8 @@ pub enum GalleryPage {
     FocusAccessibility,
     /// Overlay geometry vocabulary.
     Overlay,
+    /// First concrete component consumers.
+    Components,
 }
 
 impl GalleryPage {
@@ -30,6 +33,7 @@ impl GalleryPage {
             Self::Adaptive => "adaptive",
             Self::FocusAccessibility => "focus-a11y",
             Self::Overlay => "overlay",
+            Self::Components => "components",
         }
     }
 
@@ -41,6 +45,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::TITLE,
             Self::FocusAccessibility => focus_a11y::TITLE,
             Self::Overlay => overlay::TITLE,
+            Self::Components => components::TITLE,
         }
     }
 
@@ -52,6 +57,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::SUMMARY,
             Self::FocusAccessibility => focus_a11y::SUMMARY,
             Self::Overlay => overlay::SUMMARY,
+            Self::Components => components::SUMMARY,
         }
     }
 
@@ -63,6 +69,7 @@ impl GalleryPage {
             Self::Adaptive => adaptive::SIGNALS,
             Self::FocusAccessibility => focus_a11y::SIGNALS,
             Self::Overlay => overlay::SIGNALS,
+            Self::Components => components::SIGNALS,
         }
     }
 }
@@ -93,10 +100,11 @@ impl GalleryPageSpec {
 }
 
 /// The canonical foundation section order.
-pub const GALLERY_SECTIONS: [GalleryPageSpec; 5] = [
+pub const GALLERY_SECTIONS: [GalleryPageSpec; 6] = [
     GalleryPageSpec::new(GalleryPage::Tokens),
     GalleryPageSpec::new(GalleryPage::SizingDensity),
     GalleryPageSpec::new(GalleryPage::Adaptive),
     GalleryPageSpec::new(GalleryPage::FocusAccessibility),
     GalleryPageSpec::new(GalleryPage::Overlay),
+    GalleryPageSpec::new(GalleryPage::Components),
 ];

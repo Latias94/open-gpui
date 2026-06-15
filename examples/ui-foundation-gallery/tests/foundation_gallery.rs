@@ -22,7 +22,8 @@ fn gallery_sections_cover_the_foundation_slices() {
             "sizing-density",
             "adaptive",
             "focus-a11y",
-            "overlay"
+            "overlay",
+            "components"
         ]
     );
 }
@@ -63,11 +64,12 @@ fn labels_are_stable_for_manual_dogfood_output() {
 }
 
 #[test]
-fn package_manifest_stays_pure_foundation() {
+fn package_manifest_stays_foundation_scoped() {
     let manifest = include_str!("../Cargo.toml");
 
     assert!(manifest.contains("open_gpui.workspace = true"));
     assert!(manifest.contains("open_gpui_ui_core.workspace = true"));
+    assert!(manifest.contains("open_gpui_ui_components.workspace = true"));
     assert!(manifest.contains("open_gpui_platform.workspace = true"));
     assert!(!manifest.contains("open_gpui_canvas"));
     assert!(!manifest.contains("open_gpui_docking"));
@@ -139,4 +141,26 @@ fn overlay_page_geometry_prefers_visual_bounds_and_insets_window() {
     assert_eq!(geometry.safe_window_rect.origin.y, px(12.0));
     assert_eq!(geometry.safe_window_rect.size.width, px(616.0));
     assert_eq!(geometry.safe_window_rect.size.height, px(336.0));
+}
+
+#[test]
+fn components_page_samples_expose_button_and_switch_metadata() {
+    let tokens = ThemeTokens::default();
+    let buttons = pages::components::button_samples(tokens);
+    let switches = pages::components::switch_samples(tokens);
+
+    assert_eq!(buttons.len(), 6);
+    assert_eq!(buttons[0].id, "default");
+    assert_eq!(buttons[0].state.role(), Role::Button);
+    assert_eq!(
+        buttons[3].state.colors().background().token(),
+        semantic::DESTRUCTIVE
+    );
+    assert!(!buttons[5].state.activation_enabled());
+
+    assert_eq!(switches.len(), 4);
+    assert_eq!(switches[0].state.role(), Role::Switch);
+    assert_eq!(switches[0].state.toggled(), Toggled::False);
+    assert_eq!(switches[1].state.toggled(), Toggled::True);
+    assert!(!switches[3].state.activation_enabled());
 }

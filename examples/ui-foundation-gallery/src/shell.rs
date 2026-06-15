@@ -7,9 +7,10 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Toggled, Window, WindowBounds, WindowOptions, anchored,
     deferred, div, point, px, rgb, size,
 };
+use open_gpui_ui_components::{Button, ButtonState, Switch, SwitchState};
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
-    PanelAdaptiveClass, Rect, Size, ThemeTokens,
+    PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -330,6 +331,7 @@ impl GalleryShell {
                 self.render_focus_a11y_page(snapshot, cx).into_any_element()
             }
             GalleryPage::Overlay => self.render_overlay_page(snapshot, cx).into_any_element(),
+            GalleryPage::Components => self.render_components_page(snapshot).into_any_element(),
         }
     }
 
@@ -395,6 +397,100 @@ impl GalleryShell {
                                 )
                         }),
                 ),
+            )
+            .child(self.render_signal_list(snapshot.selected_page))
+    }
+
+    fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+        div()
+            .id("gallery-components-page")
+            .flex()
+            .flex_col()
+            .gap_5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Button"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::button_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state;
+                                    div()
+                                        .id(format!("component-button-sample:{}", sample.id))
+                                        .min_w(px(180.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            Button::new(
+                                                format!("component-button:{}", sample.id),
+                                                sample.label,
+                                            )
+                                            .variant(state.variant())
+                                            .with_size(state.size())
+                                            .disabled(state.disabled())
+                                            .selected(state.selected())
+                                            .tokens(snapshot.tokens),
+                                        )
+                                        .child(component_button_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Switch"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::switch_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state;
+                                    div()
+                                        .id(format!("component-switch-sample:{}", sample.id))
+                                        .min_w(px(200.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            Switch::new(format!("component-switch:{}", sample.id))
+                                                .label(sample.label)
+                                                .checked(state.checked())
+                                                .disabled(state.disabled())
+                                                .with_size(state.size())
+                                                .tokens(snapshot.tokens),
+                                        )
+                                        .child(component_switch_state_row(state))
+                                }),
+                        ),
+                    ),
             )
             .child(self.render_signal_list(snapshot.selected_page))
     }
@@ -1151,12 +1247,6 @@ fn label_pill(label: &'static str) -> impl IntoElement {
 }
 
 fn toggled_label(toggled: Toggled) -> impl IntoElement {
-    let label = match toggled {
-        Toggled::True => "on",
-        Toggled::False => "off",
-        Toggled::Mixed => "mixed",
-    };
-
     div()
         .px_2()
         .py_1()
@@ -1166,7 +1256,64 @@ fn toggled_label(toggled: Toggled) -> impl IntoElement {
         .bg(rgb(0xf6f7f2))
         .text_xs()
         .text_color(rgb(0x3f4a57))
-        .child(label)
+        .child(toggled_label_text(toggled))
+}
+
+fn component_button_state_row(state: ButtonState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            state.variant().as_str(),
+            size_label(state.size()),
+            if state.activation_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ))
+        .child(format!(
+            "h {} px {}",
+            format_px(state.metrics().height()),
+            format_px(state.metrics().padding_x())
+        ))
+}
+
+fn component_switch_state_row(state: SwitchState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            toggled_label_text(state.toggled()),
+            size_label(state.size()),
+            if state.activation_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ))
+        .child(format!(
+            "{} x {} / thumb {}",
+            format_px(state.metrics().track_width()),
+            format_px(state.metrics().track_height()),
+            format_px(state.metrics().thumb_size())
+        ))
+}
+
+fn toggled_label_text(toggled: Toggled) -> &'static str {
+    match toggled {
+        Toggled::True => "on",
+        Toggled::False => "off",
+        Toggled::Mixed => "mixed",
+    }
 }
 
 fn geometry_row(label: &'static str, rect: Rect) -> impl IntoElement {
