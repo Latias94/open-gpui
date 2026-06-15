@@ -1224,6 +1224,38 @@ fn viewport_runtime_floating_payload_focus_requires_unique_selected_item(cx: &mu
 }
 
 #[open_gpui::test]
+fn viewport_runtime_unregister_space_clears_recorded_panel_focus(cx: &mut TestAppContext) {
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(detached_space.clone(), tabs);
+
+    let mut workspace = DockWorkspace::new(detached_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(149);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller,
+        adapter,
+        DockViewportClosePolicy::RetainLayout,
+    );
+    runtime.record_panel_focus(detached_space.clone(), item("a"));
+
+    assert_eq!(
+        runtime.recorded_panel_focus(&detached_space),
+        Some(&item("a"))
+    );
+    assert!(runtime.unregister_host_for_space(&detached_space, window.window_id()));
+    assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
+    assert_eq!(runtime.recorded_panel_focus(&detached_space), None);
+}
+
+#[open_gpui::test]
 fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut TestAppContext) {
     let secondary_space = DockSpaceId::from("secondary");
     let mut graph = DockGraph::new();

@@ -377,6 +377,11 @@ impl DockViewportRuntime {
         self.focused_items.insert(space, item);
     }
 
+    #[cfg(test)]
+    pub(crate) fn recorded_panel_focus(&self, space: &DockSpaceId) -> Option<&DockItemId> {
+        self.focused_items.get(space)
+    }
+
     fn record_space_focus(&mut self, space: &DockSpaceId) {
         self.adapter.record_space_focus(space);
     }
@@ -568,6 +573,7 @@ impl DockViewportRuntime {
         self.close_coordinator.discard_window(window_id);
         self.host_scenes.unregister_space(space);
         self.status.clear_window_references(space, window_id);
+        self.focused_items.remove(space);
         let (_, drag_windows) = self.finish_payload_drag_for_source_space(space);
         extend_unique_windows(&mut windows, drag_windows);
         windows
@@ -1156,6 +1162,14 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> DockViewportCloseOutcome {
         let close_policy = self.close_policy();
+        let focus_item = matches!(close_policy, DockViewportClosePolicy::MergeBack { .. })
+            .then(|| {
+                self.adapter
+                    .space_for_window_id(window_id)
+                    .cloned()
+                    .and_then(|space| self.focus_item_for_space(&space, cx))
+            })
+            .flatten();
         let outcome = self.handle_window_closed(window_id);
         let Some(source_space) = outcome.space().cloned() else {
             return outcome;
@@ -1166,7 +1180,6 @@ impl DockViewportRuntime {
         if outcome.status() == DockViewportCloseStatus::MergedBack {
             return outcome;
         }
-        let focus_item = self.focus_item_for_space(&source_space, cx);
 
         let outcome = outcome
             .with_status(crate::merge_space_back(
