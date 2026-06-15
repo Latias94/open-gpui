@@ -75,7 +75,6 @@ fn unique_selected_item_in_subtree_requires_single_visible_selection() {
 
     assert_eq!(graph.selected_item_in_subtree(root), Some(item("a")));
     assert_eq!(graph.unique_selected_item_in_subtree(root), None);
-    assert_eq!(graph.unique_selected_item_in_space(&space()), None);
 }
 
 #[test]

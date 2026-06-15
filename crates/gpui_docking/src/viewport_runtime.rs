@@ -1119,14 +1119,10 @@ impl DockViewportRuntime {
     fn focus_item_for_space(&self, space: &DockSpaceId, cx: &App) -> Option<DockItemId> {
         let controller = self.controller.read(cx);
         let graph = controller.graph();
-        if let Some(item) = self
-            .focused_items
+        self.focused_items
             .get(space)
             .filter(|item| graph.find_item_in_space(space, item).is_some())
-        {
-            return Some(item.clone());
-        }
-        graph.unique_selected_item_in_space(space)
+            .cloned()
     }
 
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.

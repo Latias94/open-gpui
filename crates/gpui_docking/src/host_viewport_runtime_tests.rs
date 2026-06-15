@@ -465,6 +465,7 @@ fn viewport_runtime_refreshes_focus_stamp_for_close_activation_before_render(
     let detached = cx
         .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
         .expect("detached viewport should open");
+    runtime.record_panel_focus(detached_space.clone(), item("c"));
 
     let outcome = cx.update(|app| {
         let outcome = runtime
@@ -478,7 +479,7 @@ fn viewport_runtime_refreshes_focus_stamp_for_close_activation_before_render(
                 .as_ref()
                 .and_then(|target| target.focus_item().cloned()),
             Some(item("c")),
-            "close activation should restore focus to the source viewport's selected item"
+            "close activation should restore focus to the source viewport's recorded focus item"
         );
         assert!(apply_viewport_activation(activation, app));
         outcome
@@ -1392,8 +1393,8 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
     assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
     assert_eq!(
         outcome.focus_item().cloned(),
-        Some(item("c")),
-        "merge-back close should restore focus to the source viewport's selected item"
+        None,
+        "merge-back close should not infer panel focus from selected tabs without a recorded GPUI focus"
     );
     assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
     cx.read_entity(&controller, |controller, _| {
@@ -1582,6 +1583,7 @@ fn viewport_runtime_merge_back_should_close_rejects_non_unique_target_tabs(
             target_space: main_space.clone(),
         },
     );
+    runtime.record_panel_focus(detached_space.clone(), item("a"));
 
     let should_close = cx.update(|app| {
         runtime
@@ -1766,6 +1768,7 @@ fn viewport_runtime_merge_back_commits_during_should_close(cx: &mut TestAppConte
             target_space: main_space.clone(),
         },
     );
+    runtime.record_panel_focus(detached_space.clone(), item("a"));
 
     let should_close = cx.update(|app| {
         runtime
@@ -1865,6 +1868,7 @@ fn viewport_runtime_precommitted_merge_back_activation_uses_committed_target(
     let detached = cx
         .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
         .expect("detached viewport should open");
+    runtime.record_panel_focus(detached_space.clone(), item("a"));
 
     let should_close = cx.update(|app| {
         runtime.handle_window_should_close_with_app(detached.window().window_id(), app)

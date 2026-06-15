@@ -101,13 +101,6 @@ impl DockGraph {
         selected_item(items, selected)
     }
 
-    /// Returns the only selected item reachable in a dock space.
-    pub(crate) fn unique_selected_item_in_space(&self, space: &DockSpaceId) -> Option<DockItemId> {
-        let mut selected = self.selected_items_in_space(space).into_iter();
-        let first = selected.next()?;
-        selected.next().is_none().then_some(first)
-    }
-
     /// Returns the only selected item reachable in a subtree.
     pub(crate) fn unique_selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         let mut selected = Vec::new();
@@ -127,17 +120,6 @@ impl DockGraph {
                 .copied()
                 .find_map(|child| self.selected_item_in_subtree(child)),
         }
-    }
-
-    fn selected_items_in_space(&self, space: &DockSpaceId) -> Vec<DockItemId> {
-        let mut out = Vec::new();
-        if let Some(root) = self.root(space) {
-            self.collect_selected_items_in_subtree_into(root, &mut out);
-        }
-        for floating in self.floating_containers(space) {
-            self.collect_selected_items_in_subtree_into(floating.node, &mut out);
-        }
-        out
     }
 
     pub(crate) fn is_visible_split_payload(&self, root: DockNodeId) -> bool {

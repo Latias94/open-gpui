@@ -464,9 +464,7 @@ fn viewport_runtime_handle_merge_back_close_moves_content_to_fallback(cx: &mut T
 }
 
 #[open_gpui::test]
-fn viewport_runtime_handle_merge_back_close_focuses_fallback_selected_item(
-    cx: &mut TestAppContext,
-) {
+fn viewport_runtime_handle_merge_back_close_focuses_recorded_source_item(cx: &mut TestAppContext) {
     let main_space = DockSpaceId::from("main");
     let detached_space = DockSpaceId::from("detached");
     let mut graph = DockGraph::new();
@@ -513,6 +511,7 @@ fn viewport_runtime_handle_merge_back_close_focuses_fallback_selected_item(
             )
         })
         .expect("detached viewport should open");
+    runtime.record_panel_focus(detached_space.clone(), item("c"));
 
     detached_opened
         .window()
@@ -533,7 +532,7 @@ fn viewport_runtime_handle_merge_back_close_focuses_fallback_selected_item(
             assert_eq!(
                 window.focused(cx),
                 Some(panel_c_focus),
-                "merge-back close should focus the selected item in the fallback viewport"
+                "merge-back close should focus the recorded source item in the fallback viewport"
             );
         })
         .expect("main viewport should remain live");
