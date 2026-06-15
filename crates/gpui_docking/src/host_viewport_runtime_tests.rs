@@ -10,7 +10,7 @@ use crate::{
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
     DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffOutcomeKind,
     DockViewportTearOffPlacementSource, DockViewportTearOffRequest, DockViewportWindowFacts,
-    DockWorkspace,
+    DockWorkspace, SplitAxis,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
@@ -1166,6 +1166,61 @@ fn viewport_runtime_tear_off_rejects_already_open_target_space_without_reuse(
             vec![item("a")]
         );
     });
+}
+
+#[open_gpui::test]
+fn viewport_runtime_floating_payload_focus_requires_unique_selected_item(cx: &mut TestAppContext) {
+    let primary_space = DockSpaceId::from("primary");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let left_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left_tabs, right_tabs],
+        fractions: vec![0.5, 0.5],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    graph
+        .floating_containers_mut(primary_space.clone())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: floating_bounds(10.0, 20.0, 260.0, 150.0),
+        });
+
+    let workspace = DockWorkspace::new(primary_space.clone(), graph);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller);
+    let outcome = cx.update(|app| {
+        runtime.begin_tear_off_request(
+            DockViewportTearOffRequest::new(
+                primary_space,
+                floating,
+                DockViewportDropPayload::Floating(floating),
+                point(px(900.0), px(900.0)),
+                None,
+            ),
+            detached_space,
+            app,
+        )
+    });
+
+    let DockViewportTearOffBeginOutcome::Pending(pending) = outcome else {
+        panic!("floating tear-off should begin");
+    };
+    assert_eq!(
+        pending.focus_item(),
+        None,
+        "split floating payload focus must not be inferred from depth-first selected tab order"
+    );
 }
 
 #[open_gpui::test]

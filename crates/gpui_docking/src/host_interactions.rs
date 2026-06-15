@@ -288,7 +288,7 @@ impl DockHost {
                 workspace.graph().selected_item_in_tabs(payload.source_node)
             }),
             DockDragPayloadKind::Floating { floating } => self.with_workspace(cx, |workspace| {
-                workspace.graph().selected_item_in_subtree(*floating)
+                workspace.graph().unique_selected_item_in_subtree(*floating)
             }),
         }
     }

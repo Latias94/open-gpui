@@ -1101,7 +1101,7 @@ impl DockViewportRuntime {
                 .controller
                 .read(cx)
                 .graph()
-                .selected_item_in_subtree(*floating),
+                .unique_selected_item_in_subtree(*floating),
         }
     }
 

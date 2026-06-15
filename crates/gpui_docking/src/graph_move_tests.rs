@@ -56,6 +56,29 @@ fn selected_item_queries_do_not_repair_invalid_selection() {
 }
 
 #[test]
+fn unique_selected_item_in_subtree_requires_single_visible_selection() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+
+    assert_eq!(graph.selected_item_in_subtree(root), Some(item("a")));
+    assert_eq!(graph.unique_selected_item_in_subtree(root), None);
+    assert_eq!(graph.unique_selected_item_in_space(&space()), None);
+}
+
+#[test]
 fn checked_move_item_same_stack_center_reports_noop() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 

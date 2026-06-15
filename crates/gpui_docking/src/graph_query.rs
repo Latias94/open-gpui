@@ -113,6 +113,15 @@ impl DockGraph {
         selected.next().is_none().then_some(first)
     }
 
+    /// Returns the only selected item reachable in a subtree.
+    pub(crate) fn unique_selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
+        let mut selected = Vec::new();
+        self.collect_selected_items_in_subtree_into(root, &mut selected);
+        let mut selected = selected.into_iter();
+        let first = selected.next()?;
+        selected.next().is_none().then_some(first)
+    }
+
     /// Returns the selected item of a reachable subtree in stable depth-first order.
     pub(crate) fn selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         match self.nodes.get(root)? {
@@ -127,15 +136,11 @@ impl DockGraph {
 
     fn selected_items_in_space(&self, space: &DockSpaceId) -> Vec<DockItemId> {
         let mut out = Vec::new();
-        if let Some(root) = self.root(space)
-            && let Some(item) = self.selected_item_in_subtree(root)
-        {
-            out.push(item);
+        if let Some(root) = self.root(space) {
+            self.collect_selected_items_in_subtree_into(root, &mut out);
         }
         for floating in self.floating_containers(space) {
-            if let Some(item) = self.selected_item_in_subtree(floating.node) {
-                out.push(item);
-            }
+            self.collect_selected_items_in_subtree_into(floating.node, &mut out);
         }
         out
     }
@@ -202,6 +207,27 @@ impl DockGraph {
             DockNode::Split { children, .. } => {
                 for child in children {
                     self.collect_tabs_in_subtree_into(*child, out);
+                }
+            }
+        }
+    }
+
+    fn collect_selected_items_in_subtree_into(&self, root: DockNodeId, out: &mut Vec<DockItemId>) {
+        let Some(node) = self.nodes.get(root) else {
+            return;
+        };
+        match node {
+            DockNode::Tabs { items, selected } => {
+                if let Some(item) = selected_item(items, selected) {
+                    out.push(item);
+                }
+            }
+            DockNode::Floating { child } => {
+                self.collect_selected_items_in_subtree_into(*child, out)
+            }
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_selected_items_in_subtree_into(*child, out);
                 }
             }
         }
