@@ -532,6 +532,7 @@ impl Platform for WindowsPlatform {
 
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
+            global_window_bounds: true,
             mouse_hovered_window: true,
             active_window: true,
             display_work_area: true,
