@@ -9,8 +9,8 @@ use crate::{
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformSyncRecord, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
     DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewStore, DockViewportRuntimeHandle,
-    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportTearOffBeginOutcome,
-    DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
+    DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
+    DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason, DockViewportTearOffCancelled,
     DockViewportTearOffCommitFailure, DockViewportTearOffCompleted,
     DockViewportTearOffCompletionOutcome, DockViewportTearOffCompletionPending,
     DockViewportTearOffKey, DockViewportTearOffMachine, DockViewportTearOffOpenOutcome,
@@ -1172,6 +1172,11 @@ impl DockViewportRuntime {
         &mut self,
         window_id: WindowId,
     ) -> DockViewportShouldCloseOutcome {
+        if self.adapter.window_close_requested(window_id) {
+            let outcome = self.allowed_should_close_outcome(window_id);
+            self.status.record_should_close(&outcome);
+            return outcome;
+        }
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
@@ -1185,6 +1190,11 @@ impl DockViewportRuntime {
         window_id: WindowId,
         cx: &mut App,
     ) -> DockViewportShouldCloseOutcome {
+        if self.adapter.window_close_requested(window_id) {
+            let outcome = self.allowed_should_close_outcome(window_id);
+            self.status.record_should_close(&outcome);
+            return outcome;
+        }
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
@@ -1204,6 +1214,11 @@ impl DockViewportRuntime {
         window_id: WindowId,
         cx: &mut App,
     ) -> (DockViewportShouldCloseOutcome, Vec<AnyWindowHandle>) {
+        if self.adapter.window_close_requested(window_id) {
+            let outcome = self.allowed_should_close_outcome(window_id);
+            self.status.record_should_close(&outcome);
+            return (outcome, Vec::new());
+        }
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
@@ -1216,6 +1231,14 @@ impl DockViewportRuntime {
         let (_, windows) = self.apply_allowed_should_close_route_invalidation(&outcome);
         self.status.record_should_close(&outcome);
         (outcome, windows)
+    }
+
+    fn allowed_should_close_outcome(&self, window_id: WindowId) -> DockViewportShouldCloseOutcome {
+        DockViewportShouldCloseOutcome {
+            space: self.adapter.space_for_window_id(window_id).cloned(),
+            window_id,
+            status: DockViewportShouldCloseStatus::Allowed,
+        }
     }
 
     fn apply_allowed_should_close_route_invalidation(

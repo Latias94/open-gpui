@@ -22,14 +22,12 @@ pub(crate) fn apply_viewport_activation<C: AppContext>(
         if let Ok(host) = view.downcast::<DockHost>() {
             host.update(cx, |host, cx| {
                 if host.space() == &activation_space {
+                    host_changed_flag.set(true);
                     if let Some(focus_item) = focus_item.clone() {
                         host.clear_viewport_focus_restore_pending();
-                        if host.request_panel_focus(focus_item) {
-                            host_changed_flag.set(true);
-                        }
+                        let _ = host.request_panel_focus(focus_item);
                     } else {
                         host.set_viewport_focus_restore_pending(true);
-                        host_changed_flag.set(true);
                     }
                     if host_changed_flag.get() {
                         cx.notify();

@@ -1242,6 +1242,82 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
 }
 
 #[open_gpui::test]
+fn viewport_runtime_merge_back_should_close_is_idempotent_after_precommit(cx: &mut TestAppContext) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller.clone(),
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                detached_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .expect("detached viewport should open through runtime");
+
+    let first_should_close = cx.update(|app| {
+        runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+    });
+    assert_eq!(
+        first_should_close.status,
+        DockViewportShouldCloseStatus::Allowed
+    );
+
+    controller.update(cx, |controller, _| {
+        let mut graph = controller.workspace().graph().clone();
+        let reinjected_tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![item("c")],
+            selected: Some(item("c")),
+        });
+        graph.set_root(detached_space.clone(), reinjected_tabs);
+        controller.workspace_mut().set_graph(graph);
+    });
+
+    let second_should_close = cx.update(|app| {
+        runtime.handle_window_should_close_with_app(opened.window().window_id(), app)
+    });
+    assert_eq!(
+        second_should_close.status,
+        DockViewportShouldCloseStatus::Allowed
+    );
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("b"), item("a")]
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&detached_space),
+            vec![item("c")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_merge_back_should_close_vetoes_invalid_target(cx: &mut TestAppContext) {
     let main_space = DockSpaceId::from("main");
     let detached_space = DockSpaceId::from("detached");

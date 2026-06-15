@@ -266,15 +266,10 @@ impl DockHost {
         &self,
         visible_items: &[DockItemId],
     ) -> Option<DockItemId> {
-        if let Some(item) = self
-            .last_focused_panel
+        self.last_focused_panel
             .as_ref()
             .filter(|item| visible_items.contains(item))
-        {
-            return Some(item.clone());
-        }
-
-        visible_items.first().cloned()
+            .cloned()
     }
 
     pub(crate) fn visible_focused_panel_item(

@@ -219,6 +219,40 @@ fn viewport_activation_restores_last_focused_panel(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn viewport_activation_without_history_does_not_pick_first_panel(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph(&["a", "b"]);
+    let panel_a = test_view(cx, "A");
+    let panel_b = test_view(cx, "B");
+    let focus_a = cx.read_entity(&panel_a, |panel, cx| panel.focus_handle(cx));
+    let focus_b = cx.read_entity(&panel_b, |panel, cx| panel.focus_handle(cx));
+
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_focusable_panel_view(item("a"), "Panel A", panel_a);
+    workspace.register_focusable_panel_view(item("b"), "Panel B", panel_b);
+    let (_window, host, mut visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    let stealer = visual.update(|_, cx| cx.focus_handle());
+    visual.update(|window, cx| {
+        window.focus(&stealer, cx);
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+
+    visual.deactivate_window();
+    cx.run_until_parked();
+
+    host.update(cx, |host, cx| {
+        host.set_viewport_focus_restore_pending(true);
+        cx.notify();
+    });
+    cx.run_until_parked();
+
+    visual.update(|window, cx| {
+        assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+    assert_ne!(focus_a, focus_b);
+}
+
+#[open_gpui::test]
 fn missing_selected_panel_renders_placeholder(cx: &mut TestAppContext) {
     let (graph, _root) = tabs_graph_with_selected(&["a", "missing"], "missing");
     let (_window, host, mut visual) = open_host(
