@@ -258,7 +258,9 @@ impl DockHost {
                 cx,
             ),
             DockNode::Tabs { items, selected } => {
-                let selected = selected_index(&items, &selected).unwrap_or(0);
+                let Some(selected) = selected_index(&items, &selected) else {
+                    return self.render_missing_node(node_id, session);
+                };
                 self.render_tabs(
                     node_id,
                     items,

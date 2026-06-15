@@ -38,6 +38,24 @@ fn checked_select_tab_reports_only_real_changes() {
 }
 
 #[test]
+fn selected_item_queries_do_not_repair_invalid_selection() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("missing")),
+    });
+    graph.set_root(space(), root);
+
+    assert_eq!(graph.selected_item_in_tabs(root), None);
+    assert_eq!(graph.selected_item_in_subtree(root), None);
+
+    graph.simplify_space(&space());
+
+    assert_eq!(graph.selected_item_in_tabs(root), Some(item("a")));
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
 fn checked_move_item_same_stack_center_reports_noop() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 

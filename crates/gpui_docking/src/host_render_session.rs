@@ -330,7 +330,6 @@ pub(crate) fn selected_index(items: &[DockItemId], selected: &Option<DockItemId>
     selected
         .as_ref()
         .and_then(|selected| items.iter().position(|item| item == selected))
-        .or_else(|| (!items.is_empty()).then_some(0))
 }
 
 fn selected_tab_item<'a>(
@@ -365,6 +364,25 @@ mod tests {
         assert_eq!(session.panel_title(&item("inactive")), "Inactive");
         assert!(session.panels.contains_key(&item("selected")));
         assert!(!session.panels.contains_key(&item("inactive")));
+    }
+
+    #[test]
+    fn render_session_does_not_repair_invalid_tab_selection() {
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("b")],
+            selected: Some(item("missing")),
+        });
+        graph.set_root(space(), root);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.register_panel_factory("a", "A", |_| unreachable!());
+        workspace.register_panel_factory("b", "B", |_| unreachable!());
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert_eq!(session.selected_tabs(), &[]);
+        assert!(!session.panels.contains_key(&item("a")));
+        assert!(!session.panels.contains_key(&item("b")));
     }
 
     #[test]

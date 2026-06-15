@@ -34,7 +34,7 @@ impl DockGraph {
 
         let (items, selected) = match self.nodes.get(tabs) {
             Some(DockNode::Tabs { items, selected }) if !items.is_empty() => {
-                (items.clone(), sanitize_selected_item(items, selected))
+                (items.clone(), repair_selected_item(items, selected))
             }
             _ => return None,
         };
@@ -156,7 +156,7 @@ impl DockGraph {
     }
 }
 
-pub(in crate::graph) fn sanitize_selected_item(
+pub(in crate::graph) fn selected_item(
     items: &[DockItemId],
     selected: &Option<DockItemId>,
 ) -> Option<DockItemId> {
@@ -164,5 +164,11 @@ pub(in crate::graph) fn sanitize_selected_item(
         .as_ref()
         .filter(|candidate| items.contains(candidate))
         .cloned()
-        .or_else(|| items.first().cloned())
+}
+
+pub(in crate::graph) fn repair_selected_item(
+    items: &[DockItemId],
+    selected: &Option<DockItemId>,
+) -> Option<DockItemId> {
+    selected_item(items, selected).or_else(|| items.first().cloned())
 }

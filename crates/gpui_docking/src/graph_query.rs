@@ -1,6 +1,6 @@
 use crate::{DockItemId, DockNodeId, DockSpaceId};
 
-use super::{DockGraph, DockNode, graph_tab_stack::sanitize_selected_item};
+use super::{DockGraph, DockNode, graph_tab_stack::selected_item};
 
 impl DockGraph {
     /// Returns all dock items reachable from a dock space.
@@ -103,13 +103,13 @@ impl DockGraph {
         let DockNode::Tabs { items, selected } = self.nodes.get(tabs)? else {
             return None;
         };
-        sanitize_selected_item(items, selected)
+        selected_item(items, selected)
     }
 
     /// Returns the selected item of a reachable subtree in stable depth-first order.
     pub(crate) fn selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         match self.nodes.get(root)? {
-            DockNode::Tabs { items, selected } => sanitize_selected_item(items, selected),
+            DockNode::Tabs { items, selected } => selected_item(items, selected),
             DockNode::Floating { child } => self.selected_item_in_subtree(*child),
             DockNode::Split { children, .. } => children
                 .iter()

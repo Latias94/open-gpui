@@ -2,7 +2,7 @@ use crate::{DockNodeId, DockSpaceId, split_fraction::normalize_shares};
 #[cfg(test)]
 use std::collections::HashSet;
 
-use super::{DockGraph, DockNode, SplitAxis, graph_tab_stack::sanitize_selected_item};
+use super::{DockGraph, DockNode, SplitAxis, graph_tab_stack::repair_selected_item};
 
 impl DockGraph {
     /// Simplifies every tree in one dock space into canonical form.
@@ -58,7 +58,7 @@ impl DockGraph {
                 if items.is_empty() {
                     return None;
                 }
-                let selected = sanitize_selected_item(&items, &selected);
+                let selected = repair_selected_item(&items, &selected);
                 if let Some(DockNode::Tabs {
                     items: current_items,
                     selected: current_selected,
