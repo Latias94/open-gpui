@@ -906,6 +906,66 @@ fn workspace_merge_space_rejects_visible_split_root_into_non_empty_target(cx: &m
 }
 
 #[open_gpui::test]
+fn workspace_merge_space_rejects_wrapped_visible_split_root_into_non_empty_target(
+    cx: &mut TestAppContext,
+) {
+    let detached = DockSpaceId::from("detached");
+    let target = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target")],
+        selected: Some(item("target")),
+    });
+    let detached_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![detached_left, detached_right],
+        fractions: vec![0.25, 0.75],
+    });
+    let detached_root = graph.insert_node(DockNode::Floating {
+        child: detached_split,
+    });
+    graph.set_root(target.clone(), target_tabs);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target", "Target", "Target"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let err = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect_err(
+            "wrapped visible split payload should not be flattened into a non-empty center",
+        );
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Graph(
+            DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+                payload: detached_root,
+                target: target_tabs,
+            },
+        )
+    );
+    assert_eq!(workspace.graph().root(&detached), Some(detached_root));
+    assert_eq!(workspace.graph().root(&target), Some(target_tabs));
+}
+
+#[open_gpui::test]
 fn workspace_merge_space_rejects_incompatible_target_space_class(cx: &mut TestAppContext) {
     let detached = DockSpaceId::from("detached");
     let target = DockSpaceId::from("target");
