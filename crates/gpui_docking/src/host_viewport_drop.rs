@@ -152,13 +152,14 @@ fn viewport_drop_route_request_from_host(
     };
     let release_position =
         route_release_position(window.bounds(), host_position, &platform_signals);
-    DockViewportDropRouteRequest::from_platform_signals(
+    DockViewportDropRouteRequest::from_platform_signals_with_origin(
         payload.source_space.clone(),
         payload.source_node,
         DockViewportDropPayload::from_drag_payload(payload),
         release_position,
         None,
         platform_signals,
+        origin,
     )
     .with_drag_session(drag_session)
     .with_tear_off_geometry(tear_off_geometry)
