@@ -1612,8 +1612,11 @@ fn viewport_runtime_merge_back_commits_during_should_close(cx: &mut TestAppConte
         },
     );
 
-    let should_close =
-        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+    let should_close = cx.update(|app| {
+        runtime
+            .handle_window_should_close_with_app_and_refresh(window.window_id(), app)
+            .0
+    });
     assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
@@ -1704,8 +1707,11 @@ fn viewport_runtime_merge_back_should_close_disables_pending_window_routing(
         leaf_host_scene_fact(detached_tabs, detached_tabs),
     ));
 
-    let should_close =
-        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+    let should_close = cx.update(|app| {
+        runtime
+            .handle_window_should_close_with_app_and_refresh(window.window_id(), app)
+            .0
+    });
 
     assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
     assert_eq!(
@@ -1800,8 +1806,11 @@ fn viewport_runtime_retain_should_close_disables_pending_window_routing(cx: &mut
         leaf_host_scene_fact(detached_tabs, detached_tabs),
     ));
 
-    let should_close =
-        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+    let should_close = cx.update(|app| {
+        runtime
+            .handle_window_should_close_with_app_and_refresh(window.window_id(), app)
+            .0
+    });
 
     assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
     assert_eq!(
@@ -1897,8 +1906,11 @@ fn viewport_runtime_discarded_precommitted_close_does_not_mark_reused_window(
         },
     );
 
-    let should_close =
-        cx.update(|app| runtime.handle_window_should_close_with_app(window.window_id(), app));
+    let should_close = cx.update(|app| {
+        runtime
+            .handle_window_should_close_with_app_and_refresh(window.window_id(), app)
+            .0
+    });
     assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
     assert!(runtime.unregister_host_for_space(&detached_space, window.window_id()));
     runtime.register_opened_viewport(inspector_space.clone(), window);

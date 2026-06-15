@@ -1213,35 +1213,6 @@ impl DockViewportRuntime {
         outcome
     }
 
-    pub(crate) fn handle_window_should_close_with_app(
-        &mut self,
-        window_id: WindowId,
-        cx: &mut App,
-    ) -> DockViewportShouldCloseOutcome {
-        if self.adapter.window_close_requested(window_id) {
-            let outcome = self.allowed_should_close_outcome(window_id);
-            self.status.record_should_close(&outcome);
-            return outcome;
-        }
-        let outcome = self
-            .adapter
-            .should_close_viewport(window_id, self.close_policy());
-        let focus_item = outcome
-            .space
-            .as_ref()
-            .and_then(|space| self.focus_item_for_space(space, cx));
-        let outcome = self.close_coordinator.apply_should_close_plan(
-            outcome,
-            self.close_policy(),
-            focus_item,
-            &self.controller,
-            cx,
-        );
-        let _ = self.apply_allowed_should_close_route_invalidation(&outcome);
-        self.status.record_should_close(&outcome);
-        outcome
-    }
-
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
         &mut self,
         window_id: WindowId,

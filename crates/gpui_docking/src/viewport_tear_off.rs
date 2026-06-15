@@ -337,6 +337,7 @@ impl DockViewportTearOffCommitFailure {
         &self.error
     }
 
+    #[cfg(test)]
     pub(crate) fn window(&self) -> AnyWindowHandle {
         self.window
     }

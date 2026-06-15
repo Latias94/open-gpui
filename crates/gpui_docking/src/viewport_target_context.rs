@@ -123,6 +123,7 @@ impl DockViewportTargetContext {
         self.event_receiver_window == Some(window_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
     }
