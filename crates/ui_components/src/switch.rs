@@ -5,11 +5,12 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
 
 use crate::color::ColorIntent;
+use crate::theme::ThemeResolver;
 
 /// Resolved switch metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -74,11 +75,11 @@ impl SwitchMetrics {
 /// Resolved switch color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SwitchColors {
-    track: ColorIntent,
-    thumb: ColorIntent,
-    border: ColorIntent,
-    label: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) track: ColorIntent,
+    pub(crate) thumb: ColorIntent,
+    pub(crate) border: ColorIntent,
+    pub(crate) label: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl SwitchColors {
@@ -126,7 +127,7 @@ impl SwitchState {
             disabled,
             size,
             metrics: SwitchMetrics::from_size(size),
-            colors: switch_colors(checked, tokens),
+            colors: ThemeResolver::switch_colors(tokens, checked),
         }
     }
 
@@ -273,7 +274,7 @@ impl RenderOnce for Switch {
             .focus_visible(|style| {
                 style
                     .border_2()
-                    .border_color(rgb(colors.focus_ring().fallback_rgb()))
+                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
             })
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
@@ -293,8 +294,8 @@ impl RenderOnce for Switch {
                     .h(metrics.track_height())
                     .rounded(metrics.track_height())
                     .border_1()
-                    .border_color(rgb(colors.border().fallback_rgb()))
-                    .bg(rgb(colors.track().fallback_rgb()))
+                    .border_color(ThemeResolver::resolve(colors.border()))
+                    .bg(ThemeResolver::resolve(colors.track()))
                     .child(
                         div()
                             .absolute()
@@ -307,7 +308,7 @@ impl RenderOnce for Switch {
                             .w(metrics.thumb_size())
                             .h(metrics.thumb_size())
                             .rounded(metrics.thumb_size())
-                            .bg(rgb(colors.thumb().fallback_rgb()))
+                            .bg(ThemeResolver::resolve(colors.thumb()))
                             .shadow_sm(),
                     ),
             )
@@ -316,32 +317,9 @@ impl RenderOnce for Switch {
                     div()
                         .text_size(metrics.label_text_size())
                         .line_height(metrics.track_height())
-                        .text_color(rgb(colors.label().fallback_rgb()))
+                        .text_color(ThemeResolver::resolve(colors.label()))
                         .child(label),
                 )
             })
-    }
-}
-
-fn switch_colors(checked: bool, tokens: ThemeTokens) -> SwitchColors {
-    let track_token = if checked {
-        tokens.accent
-    } else {
-        tokens.surface_muted
-    };
-    let track_fallback = if checked { 0x1f7a66 } else { 0xdfe6dc };
-    let border_token = if checked {
-        tokens.accent
-    } else {
-        tokens.border
-    };
-    let border_fallback = if checked { 0x1f7a66 } else { 0xcfd5cc };
-
-    SwitchColors {
-        track: ColorIntent::new(track_token, track_fallback),
-        thumb: ColorIntent::new(tokens.surface, 0xffffff),
-        border: ColorIntent::new(border_token, border_fallback),
-        label: ColorIntent::new(tokens.text, 0x18202a),
-        focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
     }
 }

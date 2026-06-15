@@ -11,9 +11,11 @@ pub mod field;
 pub mod prelude;
 pub mod switch;
 pub mod text_input;
+pub mod theme;
 
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use color::ColorIntent;
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
+pub use theme::ThemeResolver;

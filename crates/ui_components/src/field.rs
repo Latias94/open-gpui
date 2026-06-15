@@ -3,11 +3,12 @@
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
-    div, rgb,
+    div,
 };
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
+use crate::theme::ThemeResolver;
 
 /// The resolved field message.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,9 +36,9 @@ impl FieldMessage {
 /// Resolved field color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldColors {
-    label: ColorIntent,
-    message: ColorIntent,
-    required_marker: ColorIntent,
+    pub(crate) label: ColorIntent,
+    pub(crate) message: ColorIntent,
+    pub(crate) required_marker: ColorIntent,
 }
 
 impl FieldColors {
@@ -129,7 +130,7 @@ impl FieldState {
             disabled,
             invalid,
             metrics: FieldMetrics::from_size(size),
-            colors: field_colors(disabled, invalid, tokens),
+            colors: ThemeResolver::field_colors(tokens, disabled, invalid),
         }
     }
 
@@ -352,12 +353,12 @@ impl RenderOnce for Field {
                     .gap_1()
                     .text_size(metrics.label_text_size())
                     .line_height(metrics.label_text_size())
-                    .text_color(rgb(colors.label().fallback_rgb()))
+                    .text_color(ThemeResolver::resolve(colors.label()))
                     .child(self.label)
                     .when(state.required(), |this| {
                         this.child(
                             div()
-                                .text_color(rgb(colors.required_marker().fallback_rgb()))
+                                .text_color(ThemeResolver::resolve(colors.required_marker()))
                                 .child("*"),
                         )
                     }),
@@ -369,28 +370,9 @@ impl RenderOnce for Field {
                         .id(format!("{}:message", state.control_id()))
                         .text_size(metrics.message_text_size())
                         .line_height(open_gpui::px(18.0))
-                        .text_color(rgb(colors.message().fallback_rgb()))
+                        .text_color(ThemeResolver::resolve(colors.message()))
                         .child(message.text().to_string()),
                 )
             })
-    }
-}
-
-fn field_colors(disabled: bool, invalid: bool, tokens: ThemeTokens) -> FieldColors {
-    let message = if invalid {
-        ColorIntent::new(tokens.destructive, 0xb42318)
-    } else {
-        ColorIntent::new(tokens.text_muted, 0x5a6472)
-    };
-    let label = if disabled {
-        ColorIntent::new(tokens.text_muted, 0x7a8491)
-    } else {
-        ColorIntent::new(tokens.text, 0x18202a)
-    };
-
-    FieldColors {
-        label,
-        message,
-        required_marker: ColorIntent::new(tokens.destructive, 0xb42318),
     }
 }

@@ -5,11 +5,12 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, rgb,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
+use crate::theme::ThemeResolver;
 
 /// Visual intent for a [`Button`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -43,11 +44,11 @@ impl ButtonVariant {
 /// Resolved button color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ButtonColors {
-    background: ColorIntent,
-    foreground: ColorIntent,
-    border: ColorIntent,
-    hover_background: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) background: ColorIntent,
+    pub(crate) foreground: ColorIntent,
+    pub(crate) border: ColorIntent,
+    pub(crate) hover_background: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl ButtonColors {
@@ -145,7 +146,7 @@ impl ButtonState {
         selected: bool,
         tokens: ThemeTokens,
     ) -> Self {
-        let colors = button_colors(variant, selected, tokens);
+        let colors = ThemeResolver::button_colors(tokens, variant, selected);
 
         Self {
             variant,
@@ -297,9 +298,9 @@ impl RenderOnce for Button {
             .gap_2()
             .rounded(metrics.radius())
             .border_1()
-            .border_color(rgb(colors.border().fallback_rgb()))
-            .bg(rgb(colors.background().fallback_rgb()))
-            .text_color(rgb(colors.foreground().fallback_rgb()))
+            .border_color(ThemeResolver::resolve(colors.border()))
+            .bg(ThemeResolver::resolve(colors.background()))
+            .text_color(ThemeResolver::resolve(colors.foreground()))
             .text_size(metrics.text_size())
             .line_height(metrics.text_size())
             .focusable()
@@ -310,12 +311,12 @@ impl RenderOnce for Button {
             .focus_visible(|style| {
                 style
                     .border_2()
-                    .border_color(rgb(colors.focus_ring().fallback_rgb()))
+                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
             })
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(colors.hover_background().fallback_rgb())))
+                    .hover(move |style| style.bg(ThemeResolver::resolve(colors.hover_background())))
             })
             .when_some(self.on_click.filter(|_| !disabled), |this, on_click| {
                 this.on_click(move |event, window, cx| {
@@ -324,53 +325,5 @@ impl RenderOnce for Button {
                 })
             })
             .child(label)
-    }
-}
-
-fn button_colors(variant: ButtonVariant, selected: bool, tokens: ThemeTokens) -> ButtonColors {
-    if selected {
-        return accent_button_colors(tokens);
-    }
-
-    match variant {
-        ButtonVariant::Default => accent_button_colors(tokens),
-        ButtonVariant::Secondary => ButtonColors {
-            background: ColorIntent::new(tokens.surface_muted, 0xe8ede6),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            border: ColorIntent::new(tokens.border, 0xd6d8ce),
-            hover_background: ColorIntent::new(tokens.surface_muted, 0xdfe6dc),
-            focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
-        },
-        ButtonVariant::Outline => ButtonColors {
-            background: ColorIntent::new(tokens.surface, 0xffffff),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            border: ColorIntent::new(tokens.border, 0xcfd5cc),
-            hover_background: ColorIntent::new(tokens.surface_muted, 0xf1f5ee),
-            focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
-        },
-        ButtonVariant::Ghost => ButtonColors {
-            background: ColorIntent::new(tokens.surface, 0xf6f7f2),
-            foreground: ColorIntent::new(tokens.text, 0x18202a),
-            border: ColorIntent::new(tokens.surface, 0xf6f7f2),
-            hover_background: ColorIntent::new(tokens.surface_muted, 0xe8ede6),
-            focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
-        },
-        ButtonVariant::Destructive => ButtonColors {
-            background: ColorIntent::new(tokens.destructive, 0xb42318),
-            foreground: ColorIntent::new(tokens.destructive_foreground, 0xffffff),
-            border: ColorIntent::new(tokens.destructive, 0xb42318),
-            hover_background: ColorIntent::new(tokens.destructive, 0x971b12),
-            focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
-        },
-    }
-}
-
-fn accent_button_colors(tokens: ThemeTokens) -> ButtonColors {
-    ButtonColors {
-        background: ColorIntent::new(tokens.accent, 0x1f7a66),
-        foreground: ColorIntent::new(tokens.accent_foreground, 0xffffff),
-        border: ColorIntent::new(tokens.accent, 0x1f7a66),
-        hover_background: ColorIntent::new(tokens.accent, 0x176656),
-        focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
     }
 }

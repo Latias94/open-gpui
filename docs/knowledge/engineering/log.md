@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Added `ThemeResolver` to `open-gpui-ui-components` and migrated Button, Switch,
+  TextInput, and Field render paths to resolve `ColorIntent` values centrally while keeping token
+  intent visible in component state.
 * **Update**: Implemented the TextInput/Field component slice from ADR 0005: added
   `TextInputState`, `FieldState`, `FieldMessage`, component exports, gallery samples, tests, and
   `docs/ui/component-contract.md`; focused component and gallery checks pass.

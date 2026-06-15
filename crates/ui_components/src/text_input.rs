@@ -3,20 +3,21 @@
 use open_gpui::prelude::*;
 use open_gpui::{
     CursorStyle, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, rgb,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
+use crate::theme::ThemeResolver;
 
 /// Resolved text input color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextInputColors {
-    background: ColorIntent,
-    foreground: ColorIntent,
-    placeholder: ColorIntent,
-    border: ColorIntent,
-    focus_ring: ColorIntent,
+    pub(crate) background: ColorIntent,
+    pub(crate) foreground: ColorIntent,
+    pub(crate) placeholder: ColorIntent,
+    pub(crate) border: ColorIntent,
+    pub(crate) focus_ring: ColorIntent,
 }
 
 impl TextInputColors {
@@ -129,7 +130,7 @@ impl TextInputState {
             invalid,
             required,
             metrics: TextInputMetrics::from_size(size),
-            colors: text_input_colors(disabled, invalid, tokens),
+            colors: ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid),
         }
     }
 
@@ -355,13 +356,13 @@ impl RenderOnce for TextInput {
             .items_center()
             .rounded(metrics.radius())
             .border_1()
-            .border_color(rgb(colors.border().fallback_rgb()))
-            .bg(rgb(colors.background().fallback_rgb()))
+            .border_color(ThemeResolver::resolve(colors.border()))
+            .bg(ThemeResolver::resolve(colors.background()))
             .px(metrics.padding_x())
             .py(metrics.padding_y())
             .text_size(metrics.text_size())
             .line_height(metrics.text_size())
-            .text_color(rgb(text_color.fallback_rgb()))
+            .text_color(ThemeResolver::resolve(text_color))
             .focusable()
             .tab_stop(state.tab_stop_enabled())
             .role(state.role())
@@ -369,7 +370,7 @@ impl RenderOnce for TextInput {
             .focus_visible(|style| {
                 style
                     .border_2()
-                    .border_color(rgb(colors.focus_ring().fallback_rgb()))
+                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
             })
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
@@ -378,7 +379,7 @@ impl RenderOnce for TextInput {
                 this.cursor(CursorStyle::IBeam)
             })
             .when(state.read_only() && !state.disabled(), |this| {
-                this.cursor_default().bg(rgb(0xf8f9f5))
+                this.cursor_default()
             })
             .child(
                 div()
@@ -386,32 +387,5 @@ impl RenderOnce for TextInput {
                     .truncate()
                     .child(display_text),
             )
-    }
-}
-
-fn text_input_colors(disabled: bool, invalid: bool, tokens: ThemeTokens) -> TextInputColors {
-    let border = if invalid {
-        ColorIntent::new(tokens.destructive, 0xb42318)
-    } else {
-        ColorIntent::new(tokens.border, 0xcfd5cc)
-    };
-    let foreground = if disabled {
-        ColorIntent::new(tokens.text_muted, 0x7a8491)
-    } else {
-        ColorIntent::new(tokens.text, 0x18202a)
-    };
-
-    let background = if disabled {
-        ColorIntent::new(tokens.surface_muted, 0xf1f5ee)
-    } else {
-        ColorIntent::new(tokens.surface, 0xffffff)
-    };
-
-    TextInputColors {
-        background,
-        foreground,
-        placeholder: ColorIntent::new(tokens.text_muted, 0x6d7785),
-        border,
-        focus_ring: ColorIntent::new(tokens.focus_ring, 0x2f80ed),
     }
 }

@@ -1,5 +1,5 @@
 use open_gpui::px;
-use open_gpui_ui_components::{Button, ButtonVariant, Field, Switch, TextInput};
+use open_gpui_ui_components::{Button, ButtonVariant, Field, Switch, TextInput, ThemeResolver};
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic};
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
@@ -78,6 +78,17 @@ fn button_accepts_custom_token_bundle() {
 
     assert_eq!(state.colors().border().token(), tokens.border);
     assert_eq!(state.colors().focus_ring().token(), tokens.focus_ring);
+}
+
+#[test]
+fn theme_resolver_keeps_token_intent_and_resolves_fallback_color() {
+    let tokens = custom_tokens();
+    let state = Button::new("default", "Default").tokens(tokens).state();
+    let background = state.colors().background();
+
+    assert_eq!(background.token(), tokens.accent);
+    assert_eq!(background.fallback_rgb(), 0x1f7a66);
+    assert_eq!(u32::from(ThemeResolver::resolve(background)), 0x1f7a66ff);
 }
 
 #[test]
@@ -176,6 +187,10 @@ fn disabled_and_read_only_text_inputs_block_editability() {
     assert!(read_only.read_only());
     assert!(!read_only.editable());
     assert!(!read_only.activation_enabled());
+    assert_eq!(
+        read_only.colors().background().token(),
+        ThemeTokens::default().surface_muted
+    );
     assert_eq!(read_only.role(), Role::TextInput);
 }
 

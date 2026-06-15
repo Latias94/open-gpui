@@ -30,7 +30,7 @@ The concrete component owns the GPUI adapter. This layer may use:
 - AccessKit role/action/state mapping;
 - hitboxes, pointer events, keyboard actions, cursor behavior, and event propagation;
 - scroll handles, overlay anchoring, portals, and deferred rendering;
-- concrete token-to-color fallback resolution until the theme resolver exists.
+- concrete color values produced by `open_gpui_ui_components::ThemeResolver`.
 
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
@@ -44,10 +44,20 @@ bootstrap API.
 
 Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
 
+## Theme Resolution
+
+Component state should expose `ColorIntent` values rather than concrete GPUI colors. A color intent
+keeps the semantic `TokenKey` visible for tests, documentation, and future headless extraction.
+
+The GPUI adapter should resolve intents through `ThemeResolver` immediately before calling style
+APIs such as `bg`, `border_color`, and `text_color`. The current resolver is intentionally narrow:
+it centralizes fallback RGB values and returns GPUI colors, but it does not yet read from a runtime
+theme table.
+
 ## Current Known Gaps
 
-The first component slices still rely on fallback RGB values because the theme resolver is not
-implemented yet. Focus rings use the current GPUI focus-visible style path and may need replacement
-when a no-layout-shift focus primitive lands. Rich text input editing must use GPUI's
-`EntityInputHandler`/`ElementInputHandler` path and is intentionally separate from display-level
-field composition.
+The first component slices still rely on fallback RGB values inside `ThemeResolver` because a
+runtime theme table is not implemented yet. Focus rings use the current GPUI focus-visible style path
+and may need replacement when a no-layout-shift focus primitive lands. Rich text input editing must
+use GPUI's `EntityInputHandler`/`ElementInputHandler` path and is intentionally separate from
+display-level field composition.

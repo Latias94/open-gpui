@@ -35,9 +35,11 @@ status: "active"
   `EntityInputHandler` / `ElementInputHandler` path, so this slice intentionally remains a
   display/semantic contract slice.
 - Done: Committed the TextInput/Field slice as `33842c4 feat(ui): add text field component slice`.
+- Done: Added `ThemeResolver` to `open-gpui-ui-components`, moved Button/Switch/TextInput/Field
+  render-time color conversion through it, and kept `ColorIntent` as the resolved state contract for
+  token-aware tests and future headless extraction.
 - Blocked: None.
-- Next action: Plan the theme resolver and no-layout-shift focus ring follow-ups from ADR 0005,
-  then decide when to start the real `EntityInputHandler` text editing controller.
+- Next action: Plan and implement the no-layout-shift focus ring primitive from ADR 0005.
 
 # Citations
 
