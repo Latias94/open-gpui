@@ -1,7 +1,7 @@
 use crate::{
-    DockGraph, DockGraphMutationError, DockItemId, DockOp, DockPanel, DockPanelAttachError,
-    DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry, DockPolicy, DockSpaceId,
-    host::DockHostOptions,
+    DockGraph, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockPanel,
+    DockPanelAttachError, DockPanelDescriptor, DockPanelRegistration, DockPanelRegistry,
+    DockPolicy, DockSpaceId, host::DockHostOptions, workspace_tab_focus::DockWorkspaceTabFocus,
 };
 use open_gpui::{AnyView, Entity, Focusable, Render};
 
@@ -17,6 +17,7 @@ pub struct DockWorkspace {
     panels: DockPanelRegistry,
     options: DockHostOptions,
     policy: DockPolicy,
+    tab_focus: DockWorkspaceTabFocus,
 }
 
 impl DockWorkspace {
@@ -37,6 +38,7 @@ impl DockWorkspace {
             panels: DockPanelRegistry::new(),
             options,
             policy: DockPolicy::default(),
+            tab_focus: DockWorkspaceTabFocus::default(),
         }
     }
 
@@ -53,10 +55,28 @@ impl DockWorkspace {
     /// Replaces the workspace graph.
     pub fn set_graph(&mut self, graph: DockGraph) {
         self.graph = graph;
+        self.tab_focus.clear();
     }
 
     pub(crate) fn apply_op_checked(&mut self, op: &DockOp) -> Result<bool, DockGraphMutationError> {
         self.graph.apply_op_checked(op)
+    }
+
+    pub(crate) fn refresh_tab_selected_stamp(&mut self, tabs: DockNodeId, item: &DockItemId) {
+        self.tab_focus.refresh_selected(tabs, item);
+    }
+
+    pub(crate) fn preferred_tab_after_close(
+        &self,
+        tabs: DockNodeId,
+        item: &DockItemId,
+    ) -> Option<DockItemId> {
+        self.tab_focus
+            .preferred_after_close(&self.graph, tabs, item)
+    }
+
+    pub(crate) fn prune_tab_focus_history(&mut self) {
+        self.tab_focus.prune_to_graph(&self.graph);
     }
 
     /// Returns the panel registry.

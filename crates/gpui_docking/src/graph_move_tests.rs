@@ -292,6 +292,7 @@ fn checked_close_item_rebinds_collapsed_central_region() {
             .apply_op_checked(&DockOp::CloseItem {
                 space: space(),
                 item: item("a"),
+                preferred_after_close: None,
             })
             .expect("closing a reachable item should be valid")
     );

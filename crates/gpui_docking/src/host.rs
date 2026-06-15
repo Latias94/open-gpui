@@ -100,6 +100,10 @@ impl DockHost {
         &self.space
     }
 
+    pub(crate) fn controller(&self) -> &Entity<DockController> {
+        &self.controller
+    }
+
     pub(crate) fn with_workspace<R>(
         &self,
         cx: &Context<Self>,
@@ -213,11 +217,20 @@ impl DockHost {
         true
     }
 
-    pub(crate) fn remember_panel_focus(&mut self, item: DockItemId) {
+    pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
         let space = self.space().clone();
         if let Some(runtime) = self.viewport_runtime().cloned() {
             runtime.record_panel_focus(space, item.clone());
         }
+        let controller = self.controller.clone();
+        let space = self.space().clone();
+        cx.update_entity(&controller, |controller, _| {
+            if let Some((tabs, _)) = controller.graph().find_item_in_space(&space, &item) {
+                controller
+                    .workspace_mut()
+                    .refresh_tab_selected_stamp(tabs, &item);
+            }
+        });
         if self.last_focused_panel.as_ref() != Some(&item) {
             self.last_focused_panel = Some(item);
         }
@@ -252,7 +265,7 @@ impl DockHost {
         let focus_handle = cx.focus_handle();
         let focus_item = item.clone();
         let subscription = cx.on_focus_in(&focus_handle, window, move |host, _window, cx| {
-            host.remember_panel_focus(focus_item.clone());
+            host.remember_panel_focus(focus_item.clone(), cx);
             host.clear_viewport_focus_restore_pending();
             cx.notify();
         });

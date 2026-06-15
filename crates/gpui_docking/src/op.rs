@@ -87,6 +87,8 @@ pub(crate) enum DockOp {
         space: DockSpaceId,
         /// The item to close.
         item: DockItemId,
+        /// Preferred remaining item to select after closing, when still present in the same tabs.
+        preferred_after_close: Option<DockItemId>,
     },
 
     /// Opens a registered item into an existing tabs node or an empty dock space.

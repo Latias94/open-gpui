@@ -14,7 +14,7 @@ impl DockGraph {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(source_tabs, source_index) {
+        if !self.remove_item_from_tabs(source_tabs, source_index, None) {
             return false;
         }
 

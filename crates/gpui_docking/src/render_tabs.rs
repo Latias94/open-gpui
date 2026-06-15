@@ -257,6 +257,7 @@ impl DockHost {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.close_item_from_render(close_item.clone(), cx);
+                        cx.stop_propagation();
                     }))
                     .child("x");
                 tab = tab.child(close);

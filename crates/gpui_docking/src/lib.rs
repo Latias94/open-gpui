@@ -161,6 +161,7 @@ mod workspace_move_validation;
 mod workspace_panel_lifecycle;
 mod workspace_panel_transaction;
 mod workspace_resize_transaction;
+mod workspace_tab_focus;
 mod workspace_transaction;
 
 #[cfg(test)]

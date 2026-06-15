@@ -127,6 +127,7 @@ impl DockGraph {
         &mut self,
         tabs: DockNodeId,
         index: usize,
+        preferred_after_close: Option<&DockItemId>,
     ) -> bool {
         let Some(DockNode::Tabs { items, selected }) = self.nodes.get_mut(tabs) else {
             return false;
@@ -143,8 +144,13 @@ impl DockGraph {
                 .as_ref()
                 .is_none_or(|candidate| !items.contains(candidate))
         {
-            let next_index = index.min(items.len().saturating_sub(1));
-            *selected = items.get(next_index).cloned();
+            *selected = preferred_after_close
+                .filter(|candidate| items.contains(candidate))
+                .cloned()
+                .or_else(|| {
+                    let next_index = index.min(items.len().saturating_sub(1));
+                    items.get(next_index).cloned()
+                });
         }
         true
     }

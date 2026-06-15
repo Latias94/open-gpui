@@ -77,11 +77,16 @@ impl DockGraph {
         true
     }
 
-    pub(in crate::graph) fn close_item(&mut self, space: &DockSpaceId, item: DockItemId) -> bool {
+    pub(in crate::graph) fn close_item(
+        &mut self,
+        space: &DockSpaceId,
+        item: DockItemId,
+        preferred_after_close: Option<&DockItemId>,
+    ) -> bool {
         let Some((tabs, index)) = self.find_item_in_space(space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(tabs, index) {
+        if !self.remove_item_from_tabs(tabs, index, preferred_after_close) {
             return false;
         }
         self.simplify_space(space);
@@ -140,7 +145,7 @@ impl DockGraph {
                 if !matches!(self.nodes.get(tabs), Some(DockNode::Tabs { .. })) {
                     return false;
                 }
-                if !self.remove_item_from_tabs(source_tabs, source_index) {
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
                     return false;
                 }
 
@@ -165,7 +170,7 @@ impl DockGraph {
                         return false;
                     }
                 }
-                if !self.remove_item_from_tabs(source_tabs, source_index) {
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
                     return false;
                 }
 
@@ -185,7 +190,7 @@ impl DockGraph {
                 ok
             }
             DockGraphDropTarget::Edge { plan } => {
-                if !self.remove_item_from_tabs(source_tabs, source_index) {
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
                     return false;
                 }
                 let new_tabs = self.insert_node(DockNode::Tabs {
@@ -220,7 +225,7 @@ impl DockGraph {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(source_tabs, source_index) {
+        if !self.remove_item_from_tabs(source_tabs, source_index, None) {
             return false;
         }
         let tabs = self.insert_node(DockNode::Tabs {

@@ -9,7 +9,11 @@ impl DockGraph {
     pub(in crate::graph) fn apply_op_unchecked(&mut self, op: &DockOp) -> bool {
         match op {
             DockOp::SelectTab { tabs, item } => self.select_tab(*tabs, item.clone()),
-            DockOp::CloseItem { space, item } => self.close_item(space, item.clone()),
+            DockOp::CloseItem {
+                space,
+                item,
+                preferred_after_close,
+            } => self.close_item(space, item.clone(), preferred_after_close.as_ref()),
             DockOp::OpenItem {
                 space,
                 target_tabs,

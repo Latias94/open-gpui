@@ -14,9 +14,9 @@ use crate::{
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
-    AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
-    px, relative, rgb, rgba,
+    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas,
+    div, point, px, relative, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -29,6 +29,7 @@ impl Render for DockHost {
         self.ensure_viewport_bounds_subscription(window, cx);
         self.ensure_viewport_release_subscription(window, cx);
         let session = self.render_session(cx);
+        self.record_rendered_selected_tabs(&session, cx);
         self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
         self.focus_pending_panel_from_render(&session, window, cx);
         self.restore_viewport_panel_focus_from_render(&session, window, cx);
@@ -167,6 +168,25 @@ impl Render for DockHost {
 }
 
 impl DockHost {
+    fn record_rendered_selected_tabs(
+        &mut self,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) {
+        if session.selected_tabs().is_empty() {
+            return;
+        }
+        let controller = self.controller().clone();
+        let selected_tabs = session.selected_tabs().to_vec();
+        cx.update_entity(&controller, |controller, _| {
+            for (tabs, item) in selected_tabs {
+                controller
+                    .workspace_mut()
+                    .refresh_tab_selected_stamp(tabs, &item);
+            }
+        });
+    }
+
     fn focus_pending_panel_from_render(
         &mut self,
         session: &DockHostRenderSession,
@@ -178,7 +198,7 @@ impl DockHost {
         };
         if session.request_panel_focus(&item, window, cx) {
             self.clear_viewport_focus_restore_pending();
-            self.remember_panel_focus(item);
+            self.remember_panel_focus(item, cx);
         } else {
             self.set_viewport_focus_restore_pending(true);
         }
@@ -193,7 +213,7 @@ impl DockHost {
         let visible_items = session.visible_panel_items();
         let visible_focused_panel = self.visible_focused_panel_item(&visible_items, window, cx);
         if let Some(item) = visible_focused_panel {
-            self.remember_panel_focus(item);
+            self.remember_panel_focus(item, cx);
             self.clear_viewport_focus_restore_pending();
             return;
         }
@@ -208,7 +228,7 @@ impl DockHost {
         };
 
         if session.request_panel_focus(&item, window, cx) {
-            self.remember_panel_focus(item);
+            self.remember_panel_focus(item, cx);
         }
         self.clear_viewport_focus_restore_pending();
     }
