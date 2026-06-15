@@ -3,7 +3,7 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragPreview, DockDragTearOffGeometry},
     drop_scene_fact,
-    host_render_session::DockHostRenderSession,
+    host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
@@ -119,7 +119,7 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
-        let primary_tabs = session.first_tabs_in_subtree(floating);
+        let chrome_target = session.floating_chrome_target(floating);
 
         let mut handle = div()
             .id(selector.clone())
@@ -137,7 +137,7 @@ impl DockHost {
             .text_sm()
             .cursor_pointer();
 
-        if let Some(target_tabs) = primary_tabs {
+        if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
             if let Some(probe) = self.render_viewport_drop_scene_fact_probe(
                 viewport_host_scene_frame,
                 move |title_bounds| {

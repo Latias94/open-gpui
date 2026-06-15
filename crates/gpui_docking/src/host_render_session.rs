@@ -10,6 +10,12 @@ pub(crate) enum DockHostPanelRenderResolution {
     Missing { prefix: String, item: DockItemId },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockFloatingChromeTarget {
+    SingleTabs(DockNodeId),
+    AmbiguousSplit,
+}
+
 /// Read-only docking state captured for one GPUI render pass.
 ///
 /// Render code reads this session instead of repeatedly reaching through `DockHost` into the
@@ -170,13 +176,19 @@ impl DockHostRenderSession {
         }
     }
 
-    pub(crate) fn first_tabs_in_subtree(&self, node_id: DockNodeId) -> Option<DockNodeId> {
+    pub(crate) fn floating_chrome_target(
+        &self,
+        node_id: DockNodeId,
+    ) -> Option<DockFloatingChromeTarget> {
         match self.node(node_id)? {
-            DockNode::Tabs { .. } => Some(node_id),
-            DockNode::Split { children, .. } => children
-                .iter()
-                .find_map(|child| self.first_tabs_in_subtree(*child)),
-            DockNode::Floating { child } => self.first_tabs_in_subtree(*child),
+            DockNode::Floating { child } => match self.node(*child)? {
+                DockNode::Tabs { .. } => Some(DockFloatingChromeTarget::SingleTabs(*child)),
+                DockNode::Split { .. } | DockNode::Floating { .. } => {
+                    Some(DockFloatingChromeTarget::AmbiguousSplit)
+                }
+            },
+            DockNode::Tabs { .. } => Some(DockFloatingChromeTarget::SingleTabs(node_id)),
+            DockNode::Split { .. } => Some(DockFloatingChromeTarget::AmbiguousSplit),
         }
     }
 
@@ -396,10 +408,16 @@ mod tests {
 
         assert!(session.floating_child(floating).is_some());
         assert_eq!(session.floating_title(floating), "Floating A");
+        assert_eq!(
+            session.floating_chrome_target(floating),
+            session
+                .floating_child(floating)
+                .map(DockFloatingChromeTarget::SingleTabs)
+        );
     }
 
     #[test]
-    fn render_session_uses_floating_root_as_drop_root_for_floating_tabs() {
+    fn render_session_marks_split_floating_chrome_as_ambiguous() {
         let mut graph = DockGraph::new();
         let root = graph.insert_node(DockNode::Tabs {
             items: vec![item("root")],
@@ -433,6 +451,10 @@ mod tests {
 
         let session = DockHostRenderSession::new(space(), &workspace);
 
+        assert_eq!(
+            session.floating_chrome_target(floating),
+            Some(DockFloatingChromeTarget::AmbiguousSplit)
+        );
         assert_eq!(session.drop_root_for_tabs(left), floating);
         assert_eq!(session.drop_root_for_tabs(right), floating);
         assert_eq!(session.drop_root_for_tabs(root), root);

@@ -1560,15 +1560,15 @@ fn dragging_split_floating_title_bar_to_center_rejects_visible_split_payload(
     cx.run_until_parked();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
 
-    let preview = selector_for(&visual, &host, DockDebugRegion::DropPreview)
-        .expect("split floating center rejection should render a rejected preview");
-    assert!(debug_bounds(&mut visual, &preview).size.width > px(0.0));
+    assert!(
+        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
+        "split floating title bar should not publish a commit-capable preview"
+    );
     cx.read_entity(&host, |host, _| {
-        let preview = host
-            .interaction()
-            .drop_preview()
-            .expect("drop preview should be tracked");
-        assert!(preview.rejected);
+        assert!(
+            host.interaction().drop_preview().is_none(),
+            "split floating title bar should not track a drop preview for a non-single-tabs chrome target"
+        );
     });
 
     visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
