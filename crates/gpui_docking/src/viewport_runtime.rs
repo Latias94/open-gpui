@@ -186,12 +186,8 @@ impl DockViewportTearOffPlacementPolicy {
 pub(crate) struct DockViewportPreparedTearOffDrop {
     pub(crate) request: DockViewportTearOffRequest,
     pub(crate) target_space: DockSpaceId,
+    pub(crate) focus_item: Option<DockItemId>,
     pub(crate) options: WindowOptions,
-}
-
-#[derive(Debug)]
-pub(crate) enum DockViewportTearOffCommitPreparation {
-    Prepared(Box<DockViewportPreparedTearOffDrop>),
 }
 
 impl DockViewportRuntime {
@@ -819,11 +815,9 @@ impl DockViewportRuntime {
         &mut self,
         request: DockViewportTearOffRequest,
         cx: &mut App,
-    ) -> Result<DockViewportTearOffCommitPreparation, DockActionApplyError> {
+    ) -> Result<DockViewportPreparedTearOffDrop, DockActionApplyError> {
         self.validate_payload_drag_session(request.drag_session())?;
-        Ok(DockViewportTearOffCommitPreparation::Prepared(Box::new(
-            self.prepare_tear_off_drop_route(request, cx)?,
-        )))
+        self.prepare_tear_off_drop_route(request, cx)
     }
 
     pub(crate) fn prepare_tear_off_drop_route(
@@ -834,10 +828,12 @@ impl DockViewportRuntime {
         crate::validate_tear_off_request(self.controller.read(cx).graph(), &request)?;
 
         let target_space = self.next_tear_off_space(&request, cx);
+        let focus_item = self.focus_item_for_request(&request, cx);
         let options = self.tear_off_window_options(&request);
         Ok(DockViewportPreparedTearOffDrop {
             request,
             target_space,
+            focus_item,
             options,
         })
     }
@@ -975,6 +971,16 @@ impl DockViewportRuntime {
         cx: &App,
     ) -> DockViewportTearOffBeginOutcome {
         let focus_item = self.focus_item_for_request(&request, cx);
+        let now = self.next_tear_off_tick();
+        self.begin_tear_off_request_at(request, target_space, focus_item, now)
+    }
+
+    pub(crate) fn begin_tear_off_request_with_focus(
+        &mut self,
+        request: DockViewportTearOffRequest,
+        target_space: impl Into<DockSpaceId>,
+        focus_item: Option<DockItemId>,
+    ) -> DockViewportTearOffBeginOutcome {
         let now = self.next_tear_off_tick();
         self.begin_tear_off_request_at(request, target_space, focus_item, now)
     }

@@ -4496,6 +4496,56 @@ fn viewport_runtime_rejects_tear_off_delivery_from_stale_drag_session(cx: &mut T
 }
 
 #[open_gpui::test]
+fn viewport_runtime_prepared_tear_off_freezes_focus_item(cx: &mut TestAppContext) {
+    let source_space = DockSpaceId::from("source");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let mut runtime = DockViewportRuntime::new(controller.clone());
+
+    let payload = DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
+    let session = runtime.begin_payload_drag(&payload);
+    let request = DockViewportTearOffRequest::new(
+        source_space.clone(),
+        source_tabs,
+        DockViewportDropPayload::Tabs,
+        point(px(900.0), px(900.0)),
+        None,
+    )
+    .with_drag_session(Some(session));
+
+    let prepared = cx
+        .update(|app| runtime.prepare_tear_off_drop_delivery(request, app))
+        .expect("active drag session should prepare tear-off delivery");
+    assert_eq!(
+        prepared.focus_item,
+        Some(item("c")),
+        "prepared tear-off should freeze focus from the delivery snapshot"
+    );
+
+    controller.update(cx, |controller, _| {
+        controller
+            .select_tab(source_tabs, item("a"))
+            .expect("test should be able to change selected tab after preparation");
+    });
+
+    assert_eq!(
+        prepared.focus_item,
+        Some(item("c")),
+        "later selected-tab changes must not rewrite prepared tear-off focus"
+    );
+}
+
+#[open_gpui::test]
 fn viewport_runtime_drag_geometry_is_bound_to_active_drag_session(cx: &mut TestAppContext) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();

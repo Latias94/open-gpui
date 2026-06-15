@@ -14,8 +14,7 @@ use crate::{
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{
-        DockViewportPanelFocusState, DockViewportReusableWindow,
-        DockViewportTearOffCommitPreparation,
+        DockViewportPanelFocusState, DockViewportPreparedTearOffDrop, DockViewportReusableWindow,
     },
 };
 #[cfg(test)]
@@ -329,6 +328,7 @@ impl DockViewportRuntimeHandle {
     }
 
     /// Opens a controller-backed viewport window and completes a tear-off transaction.
+    #[cfg(test)]
     pub(crate) fn open_tear_off_viewport(
         &self,
         request: DockViewportTearOffRequest,
@@ -336,10 +336,41 @@ impl DockViewportRuntimeHandle {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<DockViewportTearOffOpenOutcome> {
+        self.open_tear_off_viewport_inner(request, target_space, None, options, cx)
+    }
+
+    fn open_prepared_tear_off_viewport(
+        &self,
+        prepared: DockViewportPreparedTearOffDrop,
+        cx: &mut App,
+    ) -> Result<DockViewportTearOffOpenOutcome> {
+        self.open_tear_off_viewport_inner(
+            prepared.request,
+            prepared.target_space,
+            Some(prepared.focus_item),
+            prepared.options,
+            cx,
+        )
+    }
+
+    fn open_tear_off_viewport_inner(
+        &self,
+        request: DockViewportTearOffRequest,
+        target_space: impl Into<DockSpaceId>,
+        focus_item: Option<Option<DockItemId>>,
+        options: WindowOptions,
+        cx: &mut App,
+    ) -> Result<DockViewportTearOffOpenOutcome> {
         let key = request.key();
         let pending = {
             let mut runtime = self.runtime.borrow_mut();
-            match runtime.begin_tear_off_request(request, target_space, cx) {
+            let begin = match focus_item {
+                Some(focus_item) => {
+                    runtime.begin_tear_off_request_with_focus(request, target_space, focus_item)
+                }
+                None => runtime.begin_tear_off_request(request, target_space, cx),
+            };
+            match begin {
                 DockViewportTearOffBeginOutcome::Pending(pending) => pending,
                 DockViewportTearOffBeginOutcome::Duplicate(pending) => {
                     let outcome = DockViewportTearOffOpenOutcome::Duplicate(pending);
@@ -511,18 +542,11 @@ impl DockViewportRuntimeHandle {
     ) -> Result<DockViewportDropRouteOutcome, DockActionApplyError> {
         let prepared = {
             let mut runtime = self.runtime.borrow_mut();
-            match runtime.prepare_tear_off_drop_delivery(request, cx)? {
-                DockViewportTearOffCommitPreparation::Prepared(prepared) => *prepared,
-            }
+            runtime.prepare_tear_off_drop_delivery(request, cx)?
         };
 
         let result = self
-            .open_tear_off_viewport(
-                prepared.request,
-                prepared.target_space,
-                prepared.options,
-                cx,
-            )
+            .open_prepared_tear_off_viewport(prepared, cx)
             .map(DockViewportDropRouteOutcome::tear_off)
             .map_err(|error| DockActionApplyError::TearOffViewportOpenFailed {
                 message: error.to_string(),
