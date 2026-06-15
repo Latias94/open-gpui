@@ -28,7 +28,7 @@ pub(crate) fn resolve_workspace_target_for_route(
     payload_classes: &DockPayloadDockClasses,
 ) -> DockViewportWorkspaceRouteTarget {
     match route {
-        DockViewportDropRoute::Local { host_position } => {
+        DockViewportDropRoute::Local { host_position, .. } => {
             let Some((window_id, facts_generation)) =
                 current_route_window_facts(adapter, request.source_space())
             else {
@@ -58,7 +58,7 @@ pub(crate) fn resolve_workspace_target_for_route(
                 Some(Err(_)) | None => DockViewportWorkspaceRouteTarget::Missing,
             }
         }
-        DockViewportDropRoute::KnownViewport { target } => {
+        DockViewportDropRoute::KnownViewport { target, .. } => {
             let target_validator = dock_target_validator(target.space(), payload_classes, policy);
             let Some((frame, resolution)) = host_scenes.resolve_frame_for_window(
                 target.space(),
@@ -279,6 +279,7 @@ mod tests {
             &host_scenes,
             &DockViewportDropRoute::Local {
                 host_position: point(px(24.0), px(24.0)),
+                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
             },
             &request,
             workspace.policy(),

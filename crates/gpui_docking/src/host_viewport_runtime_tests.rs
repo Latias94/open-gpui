@@ -2932,7 +2932,7 @@ fn viewport_runtime_revalidates_preview_resolved_target_after_scene_changes(
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
-        matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target }
+        matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target, .. }
             if target.window_id() == target_window.window_id()),
         "preview route should target the registered viewport"
     );
@@ -3025,7 +3025,7 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
     );
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
-        matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target }
+        matches!(resolution.route(), DockViewportDropRoute::KnownViewport { target, .. }
             if target.window_id() == target_window.window_id()),
         "fresh viewport facts should produce a known viewport route"
     );
@@ -3710,7 +3710,7 @@ fn viewport_runtime_source_only_release_does_not_use_last_hovered_viewport(
     assert!(
         matches!(
             hovered_route,
-            DockViewportDropRoute::KnownViewport { target }
+            DockViewportDropRoute::KnownViewport { target, .. }
                 if target.window_id() == target_opened.window().window_id()
         ),
         "a current hovered signal should still authorize the target viewport"
@@ -3964,7 +3964,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
     assert!(
         matches!(
             resolution.route(),
-            DockViewportDropRoute::KnownViewport { target }
+            DockViewportDropRoute::KnownViewport { target, .. }
                 if target.window_id() == target_window.window_id()
         ),
         "preview setup should resolve a known target viewport"
@@ -3981,6 +3981,7 @@ fn viewport_runtime_scopes_routed_preview_delivery_to_drag_session(cx: &mut Test
     let local_resolution = DockViewportResolvedDropRoute::new(
         DockViewportDropRoute::Local {
             host_position: target_position,
+            authority: crate::DockViewportRouteAuthority::TrustedPlatform,
         },
         None,
     );

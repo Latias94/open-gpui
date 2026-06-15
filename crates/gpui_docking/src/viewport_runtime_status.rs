@@ -524,12 +524,12 @@ impl DockViewportRouteTarget {
 
     fn from_route(request: &DockViewportDropRouteRequest, route: &DockViewportDropRoute) -> Self {
         match route {
-            DockViewportDropRoute::Local { host_position } => Self::Local {
+            DockViewportDropRoute::Local { host_position, .. } => Self::Local {
                 space: request.source_space().clone(),
                 window_id: request.target_context().hovered_window(),
                 host_position: *host_position,
             },
-            DockViewportDropRoute::KnownViewport { target } => Self::KnownViewport {
+            DockViewportDropRoute::KnownViewport { target, .. } => Self::KnownViewport {
                 space: target.space().clone(),
                 window_id: target.window_id(),
                 host_position: target.host_position(),
@@ -772,7 +772,13 @@ mod tests {
             crate::DockViewportPlatformSignals::default().with_hovered_window(handle(7)),
         );
 
-        status.record_route(&request, &DockViewportDropRoute::Local { host_position });
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::Local {
+                host_position,
+                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+            },
+        );
 
         let route = status
             .last_route
@@ -804,7 +810,13 @@ mod tests {
         )
         .with_drag_session(Some(drag_session));
 
-        status.record_route(&request, &DockViewportDropRoute::Local { host_position });
+        status.record_route(
+            &request,
+            &DockViewportDropRoute::Local {
+                host_position,
+                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
+            },
+        );
 
         assert_eq!(
             status
@@ -879,6 +891,7 @@ mod tests {
                     target_window,
                     host_position,
                 ),
+                authority: crate::DockViewportRouteAuthority::TrustedPlatform,
             },
         );
         status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(

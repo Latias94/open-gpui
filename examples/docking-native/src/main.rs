@@ -960,11 +960,11 @@ mod tests {
     }
 
     fn tabs_items(graph: &DockGraph, tabs: DockNodeId) -> (Vec<DockItemId>, usize) {
-        let DockNode::Tabs { items, active } = graph.node(tabs).expect("tabs node should exist")
+        let DockNode::Tabs { items, selected } = graph.node(tabs).expect("tabs node should exist")
         else {
             panic!("node should be tabs");
         };
-        (items.clone(), *active)
+        (items.clone(), *selected)
     }
 
     fn tab_selector(space: &str, tabs: DockNodeId, item: &str) -> String {

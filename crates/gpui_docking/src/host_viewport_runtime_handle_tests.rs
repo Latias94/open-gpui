@@ -966,7 +966,8 @@ fn viewport_runtime_handle_resolves_drop_route_with_current_policy(cx: &mut Test
                 opened.window(),
                 host_position,
                 expected_generation,
-            )
+            ),
+            authority: crate::DockViewportRouteAuthority::TrustedPlatform,
         }
     );
     let status = runtime.runtime_status();
@@ -2565,7 +2566,7 @@ fn source_only_release_does_not_consume_cached_route_delivery(cx: &mut TestAppCo
     assert!(
         matches!(
             resolution.route(),
-            DockViewportDropRoute::KnownViewport { target }
+            DockViewportDropRoute::KnownViewport { target, .. }
                 if target.window_id() == target_opened.window().window_id()
         ),
         "preview setup should resolve the target viewport"
@@ -2981,7 +2982,7 @@ fn runtime_opened_viewports_do_not_reuse_previewed_target_when_source_only_relea
     assert!(
         matches!(
             resolution.route(),
-            DockViewportDropRoute::KnownViewport { target }
+            DockViewportDropRoute::KnownViewport { target, .. }
                 if target.window_id() == target_opened.window().window_id()
         ),
         "preview route should target the main viewport"
