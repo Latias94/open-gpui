@@ -1136,9 +1136,9 @@ impl DockViewportRuntime {
     /// discard the runtime mapping even when the current policy is [`DockViewportClosePolicy::Prevent`].
     pub(crate) fn handle_window_closed(&mut self, window_id: WindowId) -> DockViewportCloseOutcome {
         self.discard_owned_window(window_id);
-        let merge_back_prepared = self
+        let precommitted_merge_back = self
             .close_coordinator
-            .take_merge_back_precommitted(window_id);
+            .take_precommitted_merge_back(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         if let Some(space) = outcome.space().cloned() {
             let _ = self.clear_runtime_window_state(&space, window_id);
@@ -1147,12 +1147,11 @@ impl DockViewportRuntime {
             let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         }
         self.close_gate.sync_adapter(&self.adapter);
-        let outcome = if let Some(focus_item) = merge_back_prepared
+        let outcome = if let Some(plan) = precommitted_merge_back
             && outcome.status() == DockViewportCloseStatus::Closed
+            && outcome.space() == Some(plan.source_space())
         {
-            outcome
-                .with_status(DockViewportCloseStatus::MergedBack)
-                .with_focus_item(focus_item)
+            outcome.with_merge_back(plan)
         } else {
             outcome
         };
@@ -1186,14 +1185,17 @@ impl DockViewportRuntime {
             return outcome;
         }
 
-        let outcome = outcome
-            .with_status(crate::merge_space_back(
-                &self.controller,
-                &source_space,
-                &target_space,
-                cx,
+        let close_status =
+            crate::merge_space_back(&self.controller, &source_space, &target_space, cx);
+        let outcome = if close_status == DockViewportCloseStatus::MergedBack {
+            outcome.with_merge_back(crate::DockViewportMergeBackClosePlan::new(
+                source_space,
+                target_space,
+                focus_item,
             ))
-            .with_focus_item(focus_item);
+        } else {
+            outcome.with_status(close_status)
+        };
         self.status.record_close(&outcome);
         outcome
     }
@@ -1206,9 +1208,7 @@ impl DockViewportRuntime {
         if outcome.status() != DockViewportCloseStatus::MergedBack {
             return None;
         }
-        let DockViewportClosePolicy::MergeBack { target_space } = self.close_policy() else {
-            return None;
-        };
+        let target_space = outcome.merge_target_space()?.clone();
         let focus_item = outcome.focus_item().cloned();
         self.activate_viewport_for_space(&target_space, focus_item, cx)
     }

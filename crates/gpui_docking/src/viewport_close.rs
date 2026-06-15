@@ -30,8 +30,8 @@ pub struct DockViewportCloseOutcome {
     window_id: WindowId,
     /// How the close request resolved.
     status: DockViewportCloseStatus,
-    /// Panel item that should regain focus after a successful merge-back activation.
-    focus_item: Option<DockItemId>,
+    /// Pre-close merge-back plan that was committed before the platform close finished.
+    merge_back: Option<DockViewportMergeBackClosePlan>,
 }
 
 impl DockViewportCloseOutcome {
@@ -44,17 +44,21 @@ impl DockViewportCloseOutcome {
             space,
             window_id,
             status,
-            focus_item: None,
+            merge_back: None,
         }
     }
 
     pub(crate) fn with_status(mut self, status: DockViewportCloseStatus) -> Self {
         self.status = status;
+        if status != DockViewportCloseStatus::MergedBack {
+            self.merge_back = None;
+        }
         self
     }
 
-    pub(crate) fn with_focus_item(mut self, focus_item: Option<DockItemId>) -> Self {
-        self.focus_item = focus_item;
+    pub(crate) fn with_merge_back(mut self, plan: DockViewportMergeBackClosePlan) -> Self {
+        self.status = DockViewportCloseStatus::MergedBack;
+        self.merge_back = Some(plan);
         self
     }
 
@@ -71,6 +75,47 @@ impl DockViewportCloseOutcome {
     /// How the close request resolved.
     pub fn status(&self) -> DockViewportCloseStatus {
         self.status
+    }
+
+    pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
+        self.merge_back
+            .as_ref()
+            .and_then(DockViewportMergeBackClosePlan::focus_item)
+    }
+
+    pub(crate) fn merge_target_space(&self) -> Option<&DockSpaceId> {
+        self.merge_back
+            .as_ref()
+            .map(DockViewportMergeBackClosePlan::target_space)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DockViewportMergeBackClosePlan {
+    source_space: DockSpaceId,
+    target_space: DockSpaceId,
+    focus_item: Option<DockItemId>,
+}
+
+impl DockViewportMergeBackClosePlan {
+    pub(crate) fn new(
+        source_space: DockSpaceId,
+        target_space: DockSpaceId,
+        focus_item: Option<DockItemId>,
+    ) -> Self {
+        Self {
+            source_space,
+            target_space,
+            focus_item,
+        }
+    }
+
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        &self.source_space
+    }
+
+    pub(crate) fn target_space(&self) -> &DockSpaceId {
+        &self.target_space
     }
 
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {

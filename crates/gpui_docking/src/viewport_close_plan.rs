@@ -1,27 +1,26 @@
 use crate::{
     DockActionOutcome, DockController, DockItemId, DockSpaceId, DockViewportClosePolicy,
-    DockViewportCloseStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
+    DockViewportCloseStatus, DockViewportMergeBackClosePlan, DockViewportShouldCloseOutcome,
+    DockViewportShouldCloseStatus,
 };
 use open_gpui::{App, Entity, WindowId};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportCloseCoordinator {
-    pre_closed_merge_back_windows: HashMap<WindowId, Option<DockItemId>>,
+    precommitted_merge_back: HashMap<WindowId, DockViewportMergeBackClosePlan>,
 }
 
 impl DockViewportCloseCoordinator {
     pub(crate) fn discard_window(&mut self, window_id: WindowId) -> bool {
-        self.pre_closed_merge_back_windows
-            .remove(&window_id)
-            .is_some()
+        self.precommitted_merge_back.remove(&window_id).is_some()
     }
 
-    pub(crate) fn take_merge_back_precommitted(
+    pub(crate) fn take_precommitted_merge_back(
         &mut self,
         window_id: WindowId,
-    ) -> Option<Option<DockItemId>> {
-        self.pre_closed_merge_back_windows.remove(&window_id)
+    ) -> Option<DockViewportMergeBackClosePlan> {
+        self.precommitted_merge_back.remove(&window_id)
     }
 
     pub(crate) fn apply_should_close_plan(
@@ -45,8 +44,14 @@ impl DockViewportCloseCoordinator {
             let status = merge_space_back(controller, space, target_space, cx);
             match status {
                 DockViewportCloseStatus::MergedBack => {
-                    self.pre_closed_merge_back_windows
-                        .insert(outcome.window_id, focus_item);
+                    self.precommitted_merge_back.insert(
+                        outcome.window_id,
+                        DockViewportMergeBackClosePlan::new(
+                            space.clone(),
+                            target_space.clone(),
+                            focus_item,
+                        ),
+                    );
                 }
                 DockViewportCloseStatus::Closed => {}
                 DockViewportCloseStatus::MergeBackFailed

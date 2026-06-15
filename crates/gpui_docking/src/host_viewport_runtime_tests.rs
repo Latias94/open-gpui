@@ -1809,6 +1809,106 @@ fn viewport_runtime_merge_back_commits_during_should_close(cx: &mut TestAppConte
 }
 
 #[open_gpui::test]
+fn viewport_runtime_precommitted_merge_back_activation_uses_committed_target(
+    cx: &mut TestAppContext,
+) {
+    let main_space = DockSpaceId::from("main");
+    let inspector_space = DockSpaceId::from("inspector");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let inspector_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(inspector_space.clone(), inspector_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_descriptor(
+        item("a"),
+        crate::DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+    );
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    workspace
+        .policy_mut()
+        .allow_dock_class_in_space(main_space.clone(), "editor");
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller.clone(),
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+    let open_options = || WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+            0.0, 0.0, 360.0, 220.0,
+        ))),
+        focus: false,
+        ..Default::default()
+    };
+    let _main = cx
+        .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+        .expect("main viewport should open");
+    let _inspector = cx
+        .update(|app| runtime.open_viewport(inspector_space.clone(), open_options(), app))
+        .expect("inspector viewport should open");
+    let detached = cx
+        .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+        .expect("detached viewport should open");
+
+    let should_close = cx.update(|app| {
+        runtime.handle_window_should_close_with_app(detached.window().window_id(), app)
+    });
+    assert_eq!(should_close.status, DockViewportShouldCloseStatus::Allowed);
+
+    runtime.set_close_policy(DockViewportClosePolicy::MergeBack {
+        target_space: inspector_space.clone(),
+    });
+    let closed =
+        cx.update(|app| runtime.handle_window_closed_with_app(detached.window().window_id(), app));
+    let activation = cx.update(|app| {
+        runtime
+            .borrow_mut()
+            .activation_target_after_close(&closed, app)
+    });
+
+    assert_eq!(closed.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(closed.merge_target_space(), Some(&main_space));
+    assert_eq!(closed.focus_item().cloned(), Some(item("a")));
+    assert_eq!(
+        activation.as_ref().map(|target| target.space()),
+        Some(&main_space),
+        "activation must use the precommitted merge-back target, not a later close policy"
+    );
+    assert_eq!(
+        activation
+            .as_ref()
+            .and_then(|target| target.focus_item().cloned()),
+        Some(item("a"))
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("b"), item("a")]
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&inspector_space),
+            vec![item("c")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_merge_back_should_close_disables_pending_window_routing(
     cx: &mut TestAppContext,
 ) {
