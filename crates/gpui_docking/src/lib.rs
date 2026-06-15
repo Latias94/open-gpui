@@ -126,6 +126,7 @@ mod render_split;
 mod render_tabs;
 mod split_fraction;
 mod viewport;
+mod viewport_activation;
 mod viewport_close;
 mod viewport_close_gate;
 mod viewport_close_plan;

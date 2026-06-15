@@ -1,6 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockHost, DockViewportActivationTarget,
-    DockViewportDropRouteOutcome,
+    DockViewportDropRouteOutcome, viewport_activation::apply_viewport_activation,
 };
 use open_gpui::Context;
 
@@ -26,6 +26,7 @@ impl DockHostInteractionOutcome {
                         .action_result()
                         .map(DockActionOutcome::changed)
                         .unwrap_or(false)
+                    || outcome.activation_target().is_some()
             }
             Self::Idle | Self::Notify | Self::Rejected(_) => false,
         }
@@ -34,25 +35,8 @@ impl DockHostInteractionOutcome {
     pub(crate) fn finish(self, cx: &mut Context<DockHost>) -> bool {
         let changed = self.changed();
         let should_notify = self.should_notify();
-        if let Some(activation) = self.activation_target() {
-            let activation_space = activation.space().clone();
-            let _ = activation.window().update(cx, move |view, window, cx| {
-                window.activate_window();
-                if let Ok(host) = view.downcast::<DockHost>() {
-                    host.update(cx, |host, cx| {
-                        if host.space() == &activation_space {
-                            host.clear_viewport_focus_restore_pending();
-                            if let Some(focus_item) = activation.focus_item().cloned()
-                                && host.request_panel_focus(focus_item)
-                            {
-                                cx.notify();
-                            }
-                        }
-                    });
-                }
-            });
-        }
-        if should_notify {
+        let activation_changed = apply_viewport_activation(self.activation_target(), cx);
+        if should_notify && !activation_changed {
             cx.notify();
         }
         changed
@@ -156,5 +140,21 @@ mod tests {
                 .and_then(|target| target.focus_item().cloned()),
             Some(DockItemId::from("a"))
         );
+    }
+
+    #[test]
+    fn routed_drop_with_activation_counts_as_changed_even_when_graph_is_unchanged() {
+        let window = handle(2);
+        let routed = DockViewportDropRouteOutcome::Action(DockViewportDropActionOutcome::new(
+            DockActionOutcome::Unchanged,
+            Some(DockViewportActivationTarget::new(
+                space(),
+                window,
+                Some(DockItemId::from("a")),
+            )),
+        ));
+        let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed));
+
+        assert!(outcome.changed());
     }
 }

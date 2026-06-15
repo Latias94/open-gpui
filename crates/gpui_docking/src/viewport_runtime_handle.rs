@@ -1,8 +1,8 @@
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockSpaceId,
-    DockViewportActivationTarget, DockViewportCloseOutcome, DockViewportClosePolicy,
-    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportOpenOutcome,
-    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
+    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
+    DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
@@ -10,6 +10,7 @@ use crate::{
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_runtime::DockHostDropSceneFact,
     interaction::DockRuntimeDragSession,
+    viewport_activation::apply_viewport_activation,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
     viewport_runtime::{DockViewportReusableWindow, DockViewportTearOffCommitPreparation},
@@ -47,32 +48,6 @@ fn refresh_windows(windows: Vec<AnyWindowHandle>, cx: &mut App) {
     for window in windows {
         let _ = window.update(cx, |_, window, _| window.refresh());
     }
-}
-
-fn apply_viewport_activation(activation: Option<DockViewportActivationTarget>, cx: &mut App) {
-    let Some(activation) = activation else {
-        return;
-    };
-    let activation_space = activation.space().clone();
-    let focus_item = activation.focus_item().cloned();
-    let _ = activation.window().update(cx, move |view, window, cx| {
-        window.activate_window();
-        if let Ok(host) = view.downcast::<DockHost>() {
-            host.update(cx, |host, cx| {
-                if host.space() == &activation_space {
-                    if let Some(focus_item) = focus_item.clone() {
-                        host.clear_viewport_focus_restore_pending();
-                        if host.request_panel_focus(focus_item) {
-                            cx.notify();
-                        }
-                    } else {
-                        host.set_viewport_focus_restore_pending(true);
-                        cx.notify();
-                    }
-                }
-            });
-        }
-    });
 }
 
 fn install_should_close_hook(
@@ -642,7 +617,7 @@ impl DockViewportRuntimeHandle {
             .runtime
             .borrow_mut()
             .activation_target_after_close(&outcome, cx);
-        apply_viewport_activation(activation, cx);
+        let _ = apply_viewport_activation(activation, cx);
         outcome
     }
 
@@ -700,7 +675,7 @@ impl DockViewportRuntimeHandle {
             let activation = runtime
                 .borrow_mut()
                 .activation_target_after_close(&outcome, cx);
-            apply_viewport_activation(activation, cx);
+            let _ = apply_viewport_activation(activation, cx);
         })
         .detach();
     }
