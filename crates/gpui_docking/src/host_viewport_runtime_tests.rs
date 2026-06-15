@@ -2799,7 +2799,9 @@ fn viewport_runtime_rejects_resolved_target_snapshot_after_window_facts_go_stale
 }
 
 #[open_gpui::test]
-fn viewport_runtime_rejects_single_hit_route_without_platform_authority(cx: &mut TestAppContext) {
+fn viewport_runtime_rejects_local_geometry_route_without_platform_authority(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let mut graph = DockGraph::new();
     let source_tabs = graph.insert_node(DockNode::Tabs {

@@ -53,7 +53,7 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockViewportWindowFacts,
+        DockViewportRouteAuthority, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{WindowBounds, point, px};
@@ -134,15 +134,21 @@ mod tests {
             .resolve_viewport_route_target(position, &DockViewportTargetContext::new())
             .expect("overlapping live viewports should still expose a diagnostic fallback");
         assert_eq!(ambiguous.target().space(), &alpha);
-        assert!(!ambiguous.is_trusted());
+        assert_eq!(
+            ambiguous.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
 
-        let trusted = adapter
+        let stacked = adapter
             .resolve_viewport_route_target(
                 position,
                 &DockViewportTargetContext::new().with_window_stack([zeta_window, alpha_window]),
             )
             .expect("window stack should still expose a diagnostic target");
-        assert_eq!(trusted.target().space(), &zeta);
-        assert!(!trusted.is_trusted());
+        assert_eq!(stacked.target().space(), &zeta);
+        assert_eq!(
+            stacked.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
     }
 }
