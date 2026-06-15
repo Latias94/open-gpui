@@ -1,12 +1,8 @@
-use crate::{
-    DockViewportPlatformSignals, DockViewportTargetContext,
-    interaction::DockPayloadDropReleaseOrigin,
-};
+use crate::{DockViewportPlatformSignals, DockViewportTargetContext};
 
 /// Pointer authority available for one viewport drop route request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockViewportPointerAuthority {
-    origin: DockPayloadDropReleaseOrigin,
     coordinate_space: DockViewportPointerCoordinateSpace,
     target_context: DockViewportTargetContext,
 }
@@ -22,25 +18,30 @@ pub(crate) enum DockViewportPointerCoordinateSpace {
     SourceLocalOnly,
 }
 
+impl DockViewportPointerCoordinateSpace {
+    pub(crate) fn for_hovered_host(has_global_window_bounds: bool) -> Self {
+        if has_global_window_bounds {
+            Self::GlobalScreen
+        } else {
+            Self::ReceiverLocal
+        }
+    }
+
+    pub(crate) fn for_source_only(has_global_window_bounds: bool) -> Self {
+        if has_global_window_bounds {
+            Self::GlobalScreen
+        } else {
+            Self::SourceLocalOnly
+        }
+    }
+}
+
 impl DockViewportPointerAuthority {
     pub(crate) fn from_platform_signals(
-        origin: DockPayloadDropReleaseOrigin,
+        coordinate_space: DockViewportPointerCoordinateSpace,
         platform_signals: DockViewportPlatformSignals,
     ) -> Self {
-        let coordinate_space = if platform_signals.has_global_window_bounds() {
-            DockViewportPointerCoordinateSpace::GlobalScreen
-        } else {
-            match origin {
-                DockPayloadDropReleaseOrigin::HoveredHost => {
-                    DockViewportPointerCoordinateSpace::ReceiverLocal
-                }
-                DockPayloadDropReleaseOrigin::SourceOnly => {
-                    DockViewportPointerCoordinateSpace::SourceLocalOnly
-                }
-            }
-        };
         Self {
-            origin,
             coordinate_space,
             target_context: platform_signals.into(),
         }
@@ -49,15 +50,9 @@ impl DockViewportPointerAuthority {
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
         Self {
-            origin: DockPayloadDropReleaseOrigin::HoveredHost,
             coordinate_space: DockViewportPointerCoordinateSpace::GlobalScreen,
             target_context,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn origin(&self) -> DockPayloadDropReleaseOrigin {
-        self.origin
     }
 
     pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {
@@ -81,7 +76,7 @@ mod tests {
             .with_global_window_bounds(true);
 
         let authority = DockViewportPointerAuthority::from_platform_signals(
-            DockPayloadDropReleaseOrigin::SourceOnly,
+            DockViewportPointerCoordinateSpace::GlobalScreen,
             signals,
         );
 
@@ -89,10 +84,29 @@ mod tests {
             authority.coordinate_space(),
             DockViewportPointerCoordinateSpace::GlobalScreen
         );
-        assert_eq!(authority.origin(), DockPayloadDropReleaseOrigin::SourceOnly);
         assert_eq!(
             authority.target_context().hovered_window(),
             Some(handle(7).window_id())
+        );
+    }
+
+    #[test]
+    fn coordinate_space_helpers_preserve_release_origin_without_storing_it() {
+        assert_eq!(
+            DockViewportPointerCoordinateSpace::for_hovered_host(true),
+            DockViewportPointerCoordinateSpace::GlobalScreen
+        );
+        assert_eq!(
+            DockViewportPointerCoordinateSpace::for_source_only(true),
+            DockViewportPointerCoordinateSpace::GlobalScreen
+        );
+        assert_eq!(
+            DockViewportPointerCoordinateSpace::for_hovered_host(false),
+            DockViewportPointerCoordinateSpace::ReceiverLocal
+        );
+        assert_eq!(
+            DockViewportPointerCoordinateSpace::for_source_only(false),
+            DockViewportPointerCoordinateSpace::SourceLocalOnly
         );
     }
 
@@ -108,7 +122,7 @@ mod tests {
         .with_global_window_bounds(false);
 
         let receiver_authority = DockViewportPointerAuthority::from_platform_signals(
-            DockPayloadDropReleaseOrigin::HoveredHost,
+            DockViewportPointerCoordinateSpace::ReceiverLocal,
             signals.clone(),
         );
         assert_eq!(
@@ -121,7 +135,7 @@ mod tests {
         );
 
         let source_authority = DockViewportPointerAuthority::from_platform_signals(
-            DockPayloadDropReleaseOrigin::SourceOnly,
+            DockViewportPointerCoordinateSpace::SourceLocalOnly,
             signals,
         );
         assert_eq!(

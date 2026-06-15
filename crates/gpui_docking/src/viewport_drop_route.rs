@@ -442,28 +442,29 @@ impl DockViewportDropRouteRequest {
         suggested_window_bounds: Option<WindowBounds>,
         platform_signals: DockViewportPlatformSignals,
     ) -> Self {
-        Self::from_platform_signals_with_origin(
+        let has_global_window_bounds = platform_signals.has_global_window_bounds();
+        Self::from_platform_signals_with_coordinate_space(
             source_space,
             source_node,
             payload,
             release_position,
             suggested_window_bounds,
             platform_signals,
-            DockPayloadDropReleaseOrigin::HoveredHost,
+            DockViewportPointerCoordinateSpace::for_hovered_host(has_global_window_bounds),
         )
     }
 
-    pub(crate) fn from_platform_signals_with_origin(
+    pub(crate) fn from_platform_signals_with_coordinate_space(
         source_space: impl Into<DockSpaceId>,
         source_node: DockNodeId,
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
         platform_signals: DockViewportPlatformSignals,
-        origin: DockPayloadDropReleaseOrigin,
+        coordinate_space: DockViewportPointerCoordinateSpace,
     ) -> Self {
         let pointer_authority =
-            DockViewportPointerAuthority::from_platform_signals(origin, platform_signals);
+            DockViewportPointerAuthority::from_platform_signals(coordinate_space, platform_signals);
         Self::new(
             source_space,
             source_node,

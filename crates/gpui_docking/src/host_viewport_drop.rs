@@ -1,6 +1,7 @@
 use crate::{
     DockActionApplyError, DockDropDelivery, DockHost, DockViewportDropPayload,
-    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportPointerCoordinateSpace,
+    DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -152,17 +153,36 @@ fn viewport_drop_route_request_from_host(
     };
     let release_position =
         route_release_position(window.bounds(), host_position, &platform_signals);
-    DockViewportDropRouteRequest::from_platform_signals_with_origin(
+    let coordinate_space = route_coordinate_space(origin, &platform_signals);
+    DockViewportDropRouteRequest::from_platform_signals_with_coordinate_space(
         payload.source_space.clone(),
         payload.source_node,
         DockViewportDropPayload::from_drag_payload(payload),
         release_position,
         None,
         platform_signals,
-        origin,
+        coordinate_space,
     )
     .with_drag_session(drag_session)
     .with_tear_off_geometry(tear_off_geometry)
+}
+
+fn route_coordinate_space(
+    origin: DockPayloadDropReleaseOrigin,
+    platform_signals: &DockViewportPlatformSignals,
+) -> DockViewportPointerCoordinateSpace {
+    if platform_signals.has_global_window_bounds() {
+        return DockViewportPointerCoordinateSpace::GlobalScreen;
+    }
+
+    match origin {
+        DockPayloadDropReleaseOrigin::HoveredHost => {
+            DockViewportPointerCoordinateSpace::for_hovered_host(false)
+        }
+        DockPayloadDropReleaseOrigin::SourceOnly => {
+            DockViewportPointerCoordinateSpace::for_source_only(false)
+        }
+    }
 }
 
 fn route_release_position(
@@ -229,6 +249,30 @@ mod tests {
         assert_eq!(
             route_release_position(window_bounds, window_position, &signals),
             window_position
+        );
+    }
+
+    #[test]
+    fn route_coordinate_space_is_selected_from_platform_bounds_and_release_origin() {
+        let global =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new())
+                .with_global_window_bounds(true);
+        assert_eq!(
+            route_coordinate_space(DockPayloadDropReleaseOrigin::SourceOnly, &global),
+            DockViewportPointerCoordinateSpace::GlobalScreen,
+            "global bounds make release positions screen-space regardless of release origin"
+        );
+
+        let local =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new())
+                .with_global_window_bounds(false);
+        assert_eq!(
+            route_coordinate_space(DockPayloadDropReleaseOrigin::HoveredHost, &local),
+            DockViewportPointerCoordinateSpace::ReceiverLocal
+        );
+        assert_eq!(
+            route_coordinate_space(DockPayloadDropReleaseOrigin::SourceOnly, &local),
+            DockViewportPointerCoordinateSpace::SourceLocalOnly
         );
     }
 }
