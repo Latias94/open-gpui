@@ -144,7 +144,7 @@ fn overlay_page_geometry_prefers_visual_bounds_and_insets_window() {
 }
 
 #[test]
-fn components_page_samples_expose_button_and_switch_metadata() {
+fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
     let buttons = pages::components::button_samples(tokens);
     let switches = pages::components::switch_samples(tokens);

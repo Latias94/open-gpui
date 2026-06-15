@@ -34,9 +34,10 @@ status: "active"
 - Done: Recorded subagent research showing full editable text input must use GPUI's
   `EntityInputHandler` / `ElementInputHandler` path, so this slice intentionally remains a
   display/semantic contract slice.
+- Done: Committed the TextInput/Field slice as `33842c4 feat(ui): add text field component slice`.
 - Blocked: None.
-- Next action: Commit the TextInput/Field slice, then plan the theme resolver and no-layout-shift
-  focus ring follow-ups from ADR 0005.
+- Next action: Plan the theme resolver and no-layout-shift focus ring follow-ups from ADR 0005,
+  then decide when to start the real `EntityInputHandler` text editing controller.
 
 # Citations
 
