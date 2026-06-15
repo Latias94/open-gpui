@@ -119,10 +119,6 @@ impl DockViewportTargetContext {
         self.event_receiver_window
     }
 
-    pub(crate) fn event_receiver_window_matches(&self, window_id: WindowId) -> bool {
-        self.event_receiver_window == Some(window_id)
-    }
-
     #[cfg(test)]
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
@@ -133,9 +129,12 @@ impl DockViewportTargetContext {
     }
 
     #[cfg(test)]
-    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Option<WindowId>, Vec<WindowId>) {
+    pub(crate) fn into_window_signals(
+        self,
+    ) -> (Option<WindowId>, bool, Option<WindowId>, Vec<WindowId>) {
         (
             self.platform_hovered_window,
+            self.platform_hovered_window_known,
             self.event_receiver_window,
             self.window_stack,
         )

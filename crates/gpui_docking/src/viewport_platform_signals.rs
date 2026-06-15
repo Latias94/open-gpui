@@ -93,8 +93,12 @@ impl DockViewportPlatformSignals {
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
-        let (platform_hovered_window, event_receiver_window, window_stack) =
-            target_context.into_window_signals();
+        let (
+            platform_hovered_window,
+            platform_hovered_window_known,
+            event_receiver_window,
+            window_stack,
+        ) = target_context.into_window_signals();
         Self {
             platform_hovered_window,
             event_receiver_window,
@@ -102,7 +106,7 @@ impl DockViewportPlatformSignals {
             window_stack,
             capabilities: PlatformViewportCapabilities {
                 global_window_bounds: true,
-                mouse_hovered_window: platform_hovered_window.is_some(),
+                mouse_hovered_window: platform_hovered_window_known,
                 active_window: true,
                 window_stack: true,
                 ..Default::default()

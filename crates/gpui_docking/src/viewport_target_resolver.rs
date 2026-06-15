@@ -237,7 +237,8 @@ impl<'a> DockViewportHoverArbiter<'a> {
         if hit_count == 1 {
             if self
                 .context
-                .event_receiver_window_matches(target.window_id())
+                .event_receiver_window()
+                .is_some_and(|window_id| window_id == target.window_id())
                 && !self
                     .context
                     .has_conflicting_hovered_window(target.window_id())
@@ -483,6 +484,26 @@ mod tests {
                 .with_event_receiver_window(window),
         )
         .expect("event receiver should resolve its single hit");
+
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::TrustedEventReceiver
+        );
+        assert_eq!(
+            resolved.route_authority(),
+            DockViewportRouteAuthority::TrustedPlatform
+        );
+    }
+
+    #[test]
+    fn event_receiver_window_alone_keeps_single_hit_authority() {
+        let window = handle(1);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", window)],
+            &DockViewportTargetContext::new().with_event_receiver_window(window),
+        )
+        .expect("single geometry hit should still resolve");
 
         assert_eq!(
             resolved.confidence(),

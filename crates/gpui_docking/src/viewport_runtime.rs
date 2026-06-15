@@ -910,11 +910,16 @@ impl DockViewportRuntime {
             DockViewportWorkspaceRouteTarget::NotWorkspaceRoute => None,
         };
         self.status.record_route(request, &route);
-        let delivery = DockDropDelivery::from_route_request_with_resolved_target(
-            request,
-            route.clone(),
-            resolved_target,
-        );
+        let delivery = route
+            .clone()
+            .into_authorized_drop_route()
+            .and_then(|authorized| {
+                DockDropDelivery::from_authorized_route_request_with_resolved_target(
+                    request,
+                    authorized,
+                    resolved_target,
+                )
+            });
         DockViewportResolvedDropRoute::new(route, delivery)
     }
 
