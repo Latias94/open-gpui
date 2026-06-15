@@ -69,21 +69,23 @@ impl DockHost {
                         }
                         this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
                     }
-                    let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
-                    this.update_drop_scene_fact_from_render(
-                        &payload,
-                        fact,
-                        event.event.position,
-                        window,
-                        cx,
-                    );
+                    if let Some(drop_root) = drop_root {
+                        let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
+                        this.update_drop_scene_fact_from_render(
+                            &payload,
+                            fact,
+                            event.event.position,
+                            window,
+                            cx,
+                        );
+                    }
                 },
             ));
-        if let Some(probe) = self
-            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+        if let Some(probe) = drop_root.and_then(|drop_root| {
+            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
                 drop_scene_fact::leaf(drop_root, node, bounds, is_central)
             })
-        {
+        }) {
             tabs = tabs.child(probe);
         }
 

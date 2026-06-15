@@ -220,20 +220,17 @@ impl DockHostRenderSession {
             .is_some_and(|central| self.subtree_contains(central, node_id))
     }
 
-    pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> DockNodeId {
+    pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> Option<DockNodeId> {
         if let Some(root) = self.root
             && self.subtree_contains(root, tabs)
         {
-            return root;
+            return Some(root);
         }
 
-        self.floating_containers
-            .iter()
-            .find_map(|container| {
-                self.subtree_contains(container.node, tabs)
-                    .then_some(container.node)
-            })
-            .unwrap_or(tabs)
+        self.floating_containers.iter().find_map(|container| {
+            self.subtree_contains(container.node, tabs)
+                .then_some(container.node)
+        })
     }
 
     pub(crate) fn central_child_index(&self, children: &[DockNodeId]) -> Option<usize> {
@@ -423,6 +420,10 @@ mod tests {
             items: vec![item("root")],
             selected: Some(item("root")),
         });
+        let orphan = graph.insert_node(DockNode::Tabs {
+            items: vec![item("orphan")],
+            selected: Some(item("orphan")),
+        });
         graph.set_root(space(), root);
         let left = graph.insert_node(DockNode::Tabs {
             items: vec![item("left")],
@@ -455,9 +456,10 @@ mod tests {
             session.floating_chrome_target(floating),
             Some(DockFloatingChromeTarget::AmbiguousSplit)
         );
-        assert_eq!(session.drop_root_for_tabs(left), floating);
-        assert_eq!(session.drop_root_for_tabs(right), floating);
-        assert_eq!(session.drop_root_for_tabs(root), root);
+        assert_eq!(session.drop_root_for_tabs(left), Some(floating));
+        assert_eq!(session.drop_root_for_tabs(right), Some(floating));
+        assert_eq!(session.drop_root_for_tabs(root), Some(root));
+        assert_eq!(session.drop_root_for_tabs(orphan), None);
     }
 
     #[test]
