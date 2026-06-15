@@ -49,6 +49,10 @@ That slice is now complete: `open-gpui-ui-components` exists, Button and Switch 
 state/metrics/color helpers, and the Components gallery page renders real samples backed by those
 components.
 
+ADR 0005 now captures the next architectural move: keep the official component layer adapter-first
+and headless-ready, then defer a dedicated `open-gpui-ui-headless` crate until multiple components
+prove a shared behavior model.
+
 # Verified State
 
 - Git head is `6d1caf947e1116419a7e55a1d3636712947541d0` on `main`.
@@ -62,6 +66,7 @@ components.
 - `cargo nextest run -p open-gpui-ui-components` passed with 10/10 tests green.
 - `cargo nextest run -p open-gpui-ui-foundation-gallery` passed with 11/11 tests green.
 - Commit `f626464` records the foundation crate, gallery, ADR, verification docs, and memory bundle; the current working tree continues the next components slice.
+- ADR 0005 defines the official component architecture direction: adapter-first, headless-ready, and future-proofed for a later headless extraction.
 - The new crate exports component sizing, color intents, Button/Switch state, and a prelude for consumers.
 - The gallery manifest depends on `open_gpui`, `open_gpui_platform`, `open_gpui_ui_core`, and `open_gpui_ui_components`; tests guard against accidental `open_gpui_canvas`, `open_gpui_docking`, or styled `open_gpui_ui` dependencies.
 - Gallery page tests now cover semantic token order, sizing/density metrics, adaptive samples, focus/a11y roles, overlay geometry, and the Components page metadata contract.
@@ -73,7 +78,8 @@ components.
 
 # Next Action
 
-Commit the components slice, then choose the next component family to add after Button and Switch.
+Use ADR 0005 to guide the next proof-point component slice, starting with `TextInput` and `Field`
+and the supporting theme/focus primitives.
 
 # Citations
 

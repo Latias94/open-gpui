@@ -21,8 +21,9 @@ status: "active"
 - Done: Committed the foundation slice as `f626464 feat(ui): add UI foundation core gallery`.
 - Done: Wrote the next plan for `open-gpui-ui-components` at `docs/plans/2026-06-15-002-feat-ui-components-first-slice-plan.md`, scoped to Button, Switch, gallery dogfood, and verification.
 - Done: Completed the first components slice by scaffolding `crates/ui_components` as `open-gpui-ui-components`, implementing Button and Switch, wiring the Components gallery page, and updating the engineering memory bundle.
+- Done: Drafted ADR 0005 for the official component architecture, choosing an adapter-first, headless-ready model and a future extraction path for `open-gpui-ui-headless`.
 - Blocked: None.
-- Next action: Commit the components slice, then decide the next component to add after Button and Switch.
+- Next action: Implement `TextInput` and `Field` under ADR 0005, then add the theme resolver and focus ring follow-ups that the ADR calls out.
 
 # Citations
 
@@ -33,3 +34,4 @@ status: "active"
 [5] [Plan](../../plans/2026-06-15-001-feat-ui-foundation-gallery-plan.md)
 [6] [Manual verification guide](../../verification.md)
 [7] [Components first slice plan](../../plans/2026-06-15-002-feat-ui-components-first-slice-plan.md)
+[8] [Official component architecture](../../adr/0005-open-gpui-official-component-architecture.md)
