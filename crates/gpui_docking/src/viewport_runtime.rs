@@ -1115,15 +1115,7 @@ impl DockViewportRuntime {
         {
             return Some(item.clone());
         }
-        graph
-            .root(space)
-            .and_then(|root| graph.selected_item_in_subtree(root))
-            .or_else(|| {
-                graph
-                    .floating_containers(space)
-                    .iter()
-                    .find_map(|floating| graph.selected_item_in_subtree(floating.node))
-            })
+        graph.unique_selected_item_in_space(space)
     }
 
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.

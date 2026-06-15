@@ -1389,6 +1389,69 @@ fn viewport_runtime_merge_back_close_uses_recorded_source_focus_before_tree_orde
 }
 
 #[open_gpui::test]
+fn viewport_runtime_merge_back_close_does_not_guess_between_multiple_selected_items(
+    cx: &mut TestAppContext,
+) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let detached_floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    let detached_floating = graph.insert_node(DockNode::Floating {
+        child: detached_floating_tabs,
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(detached_space.clone(), detached_root);
+    graph
+        .floating_containers_mut(detached_space.clone())
+        .push(DockFloatingContainer {
+            node: detached_floating,
+            bounds: floating_bounds(10.0, 20.0, 220.0, 140.0),
+        });
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(48);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let outcome = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
+
+    assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(
+        outcome.focus_item().cloned(),
+        None,
+        "merge-back close should not infer focus from root tree order when multiple selected panels are visible"
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("b"), item("a"), item("c")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_merge_back_should_close_is_idempotent_after_precommit(cx: &mut TestAppContext) {
     let main_space = DockSpaceId::from("main");
     let detached_space = DockSpaceId::from("detached");

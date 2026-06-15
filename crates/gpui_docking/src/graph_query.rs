@@ -106,6 +106,13 @@ impl DockGraph {
         selected_item(items, selected)
     }
 
+    /// Returns the only selected item reachable in a dock space.
+    pub(crate) fn unique_selected_item_in_space(&self, space: &DockSpaceId) -> Option<DockItemId> {
+        let mut selected = self.selected_items_in_space(space).into_iter();
+        let first = selected.next()?;
+        selected.next().is_none().then_some(first)
+    }
+
     /// Returns the selected item of a reachable subtree in stable depth-first order.
     pub(crate) fn selected_item_in_subtree(&self, root: DockNodeId) -> Option<DockItemId> {
         match self.nodes.get(root)? {
@@ -116,6 +123,21 @@ impl DockGraph {
                 .copied()
                 .find_map(|child| self.selected_item_in_subtree(child)),
         }
+    }
+
+    fn selected_items_in_space(&self, space: &DockSpaceId) -> Vec<DockItemId> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root(space)
+            && let Some(item) = self.selected_item_in_subtree(root)
+        {
+            out.push(item);
+        }
+        for floating in self.floating_containers(space) {
+            if let Some(item) = self.selected_item_in_subtree(floating.node) {
+                out.push(item);
+            }
+        }
+        out
     }
 
     pub(crate) fn selected_tabs_in_subtree(&self, root: DockNodeId) -> Option<DockNodeId> {
