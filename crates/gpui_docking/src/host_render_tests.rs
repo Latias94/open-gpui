@@ -239,6 +239,11 @@ fn viewport_activation_keeps_pending_panel_focus_when_request_fails(cx: &mut Tes
             host.pending_focus_request().cloned(),
             Some(DockViewportFocusRequest::panel(item("a")))
         );
+        assert!(!host.request_viewport_focus_restore_if_idle());
+        assert_eq!(
+            host.pending_focus_request().cloned(),
+            Some(DockViewportFocusRequest::panel(item("a")))
+        );
     });
 }
 

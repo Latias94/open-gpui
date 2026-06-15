@@ -163,7 +163,7 @@ impl DockHost {
             move |host, window, cx| {
                 if window.is_window_active() {
                     activation_runtime.record_window_focus(window.window_handle().window_id());
-                    let _ = host.request_viewport_focus_restore();
+                    let _ = host.request_viewport_focus_restore_if_idle();
                     cx.notify();
                 }
             },
@@ -222,6 +222,13 @@ impl DockHost {
 
     pub(crate) fn request_viewport_focus_restore(&mut self) -> bool {
         self.request_viewport_focus(DockViewportFocusRequest::restore_last_focused())
+    }
+
+    pub(crate) fn request_viewport_focus_restore_if_idle(&mut self) -> bool {
+        if self.pending_focus_request.is_some() {
+            return false;
+        }
+        self.request_viewport_focus_restore()
     }
 
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
