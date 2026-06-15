@@ -1,6 +1,7 @@
 use crate::{
-    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId, DockWorkspace,
-    SplitAxis, debug::DockDebugRegion, host_test_support::*,
+    DockCentralRegion, DockFloatingContainer, DockGraph, DockNode, DockNodeId,
+    DockViewportFocusRequest, DockWorkspace, SplitAxis, debug::DockDebugRegion,
+    host_test_support::*,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size,
@@ -206,7 +207,7 @@ fn viewport_activation_restores_last_focused_panel(cx: &mut TestAppContext) {
     });
 
     host.update(cx, |host, cx| {
-        host.set_viewport_focus_restore_pending(true);
+        assert!(host.request_viewport_focus_restore());
         cx.notify();
     });
     cx.run_until_parked();
@@ -216,6 +217,29 @@ fn viewport_activation_restores_last_focused_panel(cx: &mut TestAppContext) {
     });
 
     assert_ne!(focus_a, focus_b);
+}
+
+#[open_gpui::test]
+fn viewport_activation_keeps_pending_panel_focus_when_request_fails(cx: &mut TestAppContext) {
+    let (graph, _root) = tabs_graph(&["a"]);
+    let mut workspace = DockWorkspace::new(space(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let (_window, host, visual) = open_workspace(cx, workspace, size(px(400.0), px(240.0)));
+
+    host.update(cx, |host, cx| {
+        assert!(host.request_panel_focus(item("a")));
+        cx.notify();
+    });
+    visual.run_until_parked();
+
+    host.update(cx, |host, _| {
+        assert!(host.has_pending_panel_focus());
+        assert_eq!(host.pending_panel_focus().cloned(), Some(item("a")));
+        assert_eq!(
+            host.pending_focus_request().cloned(),
+            Some(DockViewportFocusRequest::panel(item("a")))
+        );
+    });
 }
 
 #[open_gpui::test]
@@ -241,13 +265,16 @@ fn viewport_activation_without_history_does_not_pick_first_panel(cx: &mut TestAp
     cx.run_until_parked();
 
     host.update(cx, |host, cx| {
-        host.set_viewport_focus_restore_pending(true);
+        assert!(host.request_viewport_focus_restore());
         cx.notify();
     });
     cx.run_until_parked();
 
     visual.update(|window, cx| {
         assert_eq!(window.focused(cx), Some(stealer.clone()));
+    });
+    host.update(cx, |host, _| {
+        assert_eq!(host.pending_focus_request(), None);
     });
     assert_ne!(focus_a, focus_b);
 }

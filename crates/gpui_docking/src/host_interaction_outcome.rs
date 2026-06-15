@@ -111,8 +111,8 @@ impl DockHostInteractionOutcome {
 mod tests {
     use super::*;
     use crate::{
-        DockItemId, DockViewportDropActionOutcome, host_test_support::space,
-        viewport_test_support::handle,
+        DockItemId, DockViewportDropActionOutcome, DockViewportFocusRequest,
+        host_test_support::space, viewport_test_support::handle,
     };
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
             Some(DockViewportActivationTarget::new(
                 space(),
                 window,
-                Some(DockItemId::from("a")),
+                DockViewportFocusRequest::panel(DockItemId::from("a")),
             )),
         ));
         let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed.clone()));
@@ -137,8 +137,8 @@ mod tests {
         assert_eq!(
             outcome
                 .activation_target()
-                .and_then(|target| target.focus_item().cloned()),
-            Some(DockItemId::from("a"))
+                .map(|target| target.focus_request().clone()),
+            Some(DockViewportFocusRequest::panel(DockItemId::from("a")))
         );
     }
 
@@ -150,7 +150,7 @@ mod tests {
             Some(DockViewportActivationTarget::new(
                 space(),
                 window,
-                Some(DockItemId::from("a")),
+                DockViewportFocusRequest::panel(DockItemId::from("a")),
             )),
         ));
         let outcome = DockHostInteractionOutcome::from_routed_drop_result(Ok(routed));

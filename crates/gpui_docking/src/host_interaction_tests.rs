@@ -1,7 +1,6 @@
 use crate::{
     DockCentralRegion, DockController, DockGraph, DockNode, DockNodeId, DockPanel,
-    DockPanelDescriptor, DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace,
-    DropZone, SplitAxis,
+    DockPanelDescriptor, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_scene_fact,
@@ -916,12 +915,12 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         .adapter()
         .window_for_space(&detached_space)
         .expect("detached space should have a runtime window");
-    let after_drop_context = opened
+    let active_window = opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| app.active_window())
         .expect("source viewport should still be live");
     assert_eq!(
-        after_drop_context.active_window(),
+        active_window.map(|window| window.window_id()),
         Some(detached_window.window_id()),
         "rendered tear-off should activate the new detached viewport"
     );

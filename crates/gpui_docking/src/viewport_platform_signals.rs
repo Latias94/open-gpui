@@ -8,8 +8,6 @@ pub(crate) struct DockViewportPlatformSignals {
     platform_hovered_window: Option<WindowId>,
     /// Window that delivered the GPUI drag/drop event.
     event_receiver_window: Option<WindowId>,
-    /// Platform-active window, when known.
-    active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
     /// Platform capabilities used to decide which signals are reliable.
@@ -26,10 +24,6 @@ impl DockViewportPlatformSignals {
                 .then(|| cx.hovered_window().map(|window| window.window_id()))
                 .flatten(),
             event_receiver_window: None,
-            active_window: capabilities
-                .active_window
-                .then(|| cx.active_window().map(|window| window.window_id()))
-                .flatten(),
             window_stack: if capabilities.window_stack {
                 cx.window_stack()
                     .unwrap_or_default()
@@ -102,21 +96,14 @@ impl DockViewportPlatformSignals {
         Self {
             platform_hovered_window,
             event_receiver_window,
-            active_window: None,
             window_stack,
             capabilities: PlatformViewportCapabilities {
                 global_window_bounds: true,
                 mouse_hovered_window: platform_hovered_window_known,
-                active_window: true,
                 window_stack: true,
                 ..Default::default()
             },
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn active_window(&self) -> Option<WindowId> {
-        self.active_window
     }
 
     #[cfg(test)]

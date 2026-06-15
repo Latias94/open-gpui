@@ -2,7 +2,8 @@
 use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
-    DockViewportRuntimeHandle, interaction::DockInteractionRuntime, workspace::DockWorkspace,
+    DockViewportFocusRequest, DockViewportRuntimeHandle, interaction::DockInteractionRuntime,
+    workspace::DockWorkspace,
 };
 use open_gpui::{AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, px};
 use std::collections::HashMap;
@@ -50,10 +51,9 @@ pub struct DockHost {
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
     viewport_release_subscription: Option<Subscription>,
-    pending_panel_focus: Option<DockItemId>,
+    pending_focus_request: Option<DockViewportFocusRequest>,
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
     last_focused_panel: Option<DockItemId>,
-    viewport_focus_restore_pending: bool,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
@@ -74,10 +74,9 @@ impl DockHost {
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
             viewport_release_subscription: None,
-            pending_panel_focus: None,
+            pending_focus_request: None,
             panel_focus_trackers: HashMap::new(),
             last_focused_panel: None,
-            viewport_focus_restore_pending: false,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
@@ -164,7 +163,7 @@ impl DockHost {
             move |host, window, cx| {
                 if window.is_window_active() {
                     activation_runtime.record_window_focus(window.window_handle().window_id());
-                    host.viewport_focus_restore_pending = true;
+                    let _ = host.request_viewport_focus_restore();
                     cx.notify();
                 }
             },
@@ -209,12 +208,20 @@ impl DockHost {
             }));
     }
 
-    pub(crate) fn request_panel_focus(&mut self, item: DockItemId) -> bool {
-        if self.pending_panel_focus.as_ref() == Some(&item) {
+    pub(crate) fn request_viewport_focus(&mut self, request: DockViewportFocusRequest) -> bool {
+        if self.pending_focus_request.as_ref() == Some(&request) {
             return false;
         }
-        self.pending_panel_focus = Some(item);
+        self.pending_focus_request = Some(request);
         true
+    }
+
+    pub(crate) fn request_panel_focus(&mut self, item: DockItemId) -> bool {
+        self.request_viewport_focus(DockViewportFocusRequest::panel(item))
+    }
+
+    pub(crate) fn request_viewport_focus_restore(&mut self) -> bool {
+        self.request_viewport_focus(DockViewportFocusRequest::restore_last_focused())
     }
 
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
@@ -236,20 +243,27 @@ impl DockHost {
         }
     }
 
-    pub(crate) fn clear_viewport_focus_restore_pending(&mut self) {
-        self.viewport_focus_restore_pending = false;
+    pub(crate) fn pending_focus_request(&self) -> Option<&DockViewportFocusRequest> {
+        self.pending_focus_request.as_ref()
     }
 
-    pub(crate) fn set_viewport_focus_restore_pending(&mut self, pending: bool) {
-        self.viewport_focus_restore_pending = pending;
-    }
-
-    pub(crate) fn viewport_focus_restore_pending(&self) -> bool {
-        self.viewport_focus_restore_pending
-    }
-
+    #[cfg(test)]
     pub(crate) fn has_pending_panel_focus(&self) -> bool {
-        self.pending_panel_focus.is_some()
+        matches!(
+            self.pending_focus_request,
+            Some(DockViewportFocusRequest::Panel(_))
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_panel_focus(&self) -> Option<&DockItemId> {
+        self.pending_focus_request
+            .as_ref()
+            .and_then(DockViewportFocusRequest::panel_item)
+    }
+
+    pub(crate) fn clear_pending_focus_request(&mut self) {
+        self.pending_focus_request = None;
     }
 
     pub(crate) fn ensure_panel_focus_tracker(
@@ -266,7 +280,7 @@ impl DockHost {
         let focus_item = item.clone();
         let subscription = cx.on_focus_in(&focus_handle, window, move |host, _window, cx| {
             host.remember_panel_focus(focus_item.clone(), cx);
-            host.clear_viewport_focus_restore_pending();
+            host.clear_pending_focus_request();
             cx.notify();
         });
         self.panel_focus_trackers.insert(
@@ -317,10 +331,6 @@ impl DockHost {
         for item in visible_items {
             self.ensure_panel_focus_tracker(item, window, cx);
         }
-    }
-
-    pub(crate) fn take_pending_panel_focus(&mut self) -> Option<DockItemId> {
-        self.pending_panel_focus.take()
     }
 
     #[cfg(test)]

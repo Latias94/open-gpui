@@ -3,8 +3,8 @@ use crate::{
     DockFloatingContainer, DockGraph, DockGraphDropTarget, DockGraphMutationError, DockHost,
     DockItemId, DockNode, DockPanel, DockPolicyError, DockSpaceId, DockViewportAdapter,
     DockViewportClosePolicy, DockViewportCloseStatus, DockViewportDropPayload,
-    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportOpenStatus,
-    DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
+    DockViewportDropRoute, DockViewportDropRouteRequest, DockViewportFocusRequest,
+    DockViewportOpenStatus, DockViewportPlatformSyncAction, DockViewportPlatformSyncRequest,
     DockViewportPlatformSyncUnsupportedReason, DockViewportResolvedDropRoute,
     DockViewportRouteStatus, DockViewportRouteTarget, DockViewportRuntime,
     DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
@@ -477,8 +477,8 @@ fn viewport_runtime_refreshes_focus_stamp_for_close_activation_before_render(
         assert_eq!(
             activation
                 .as_ref()
-                .and_then(|target| target.focus_item().cloned()),
-            Some(item("c")),
+                .map(|target| target.focus_request().clone()),
+            Some(DockViewportFocusRequest::panel(item("c"))),
             "close activation should restore focus to the source viewport's recorded focus item"
         );
         assert!(apply_viewport_activation(activation, app));
@@ -1897,8 +1897,8 @@ fn viewport_runtime_precommitted_merge_back_activation_uses_committed_target(
     assert_eq!(
         activation
             .as_ref()
-            .and_then(|target| target.focus_item().cloned()),
-        Some(item("a"))
+            .map(|target| target.focus_request().clone()),
+        Some(DockViewportFocusRequest::panel(item("a")))
     );
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(

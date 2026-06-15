@@ -1,5 +1,6 @@
 use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockSpaceId,
+    DockViewportFocusRequest,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragTearOffGeometry},
     interaction::DockRuntimeDragSession,
     workspace_transaction::DockWorkspaceDropPayload,
@@ -410,20 +411,20 @@ pub(crate) struct DockViewportActivationTarget {
     space: DockSpaceId,
     /// GPUI window rendering the logical dock space.
     window: AnyWindowHandle,
-    /// Active panel item that should receive focus after the window is active.
-    focus_item: Option<DockItemId>,
+    /// Explicit focus request to apply after the window is active.
+    focus_request: DockViewportFocusRequest,
 }
 
 impl DockViewportActivationTarget {
     pub(crate) fn new(
         space: impl Into<DockSpaceId>,
         window: impl Into<AnyWindowHandle>,
-        focus_item: Option<DockItemId>,
+        focus_request: DockViewportFocusRequest,
     ) -> Self {
         Self {
             space: space.into(),
             window: window.into(),
-            focus_item,
+            focus_request,
         }
     }
 
@@ -435,8 +436,12 @@ impl DockViewportActivationTarget {
         self.window
     }
 
+    pub(crate) fn focus_request(&self) -> &DockViewportFocusRequest {
+        &self.focus_request
+    }
+
     pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
-        self.focus_item.as_ref()
+        self.focus_request.panel_item()
     }
 }
 
@@ -454,7 +459,9 @@ impl DockViewportDropRouteOutcome {
                     Some(DockViewportActivationTarget::new(
                         completed.pending().target_space().clone(),
                         completed.registration().window(),
-                        completed.pending().focus_item().cloned(),
+                        DockViewportFocusRequest::panel_or_restore_last_focused(
+                            completed.pending().focus_item().cloned(),
+                        ),
                     ))
                 }
                 DockViewportTearOffOpenOutcome::Duplicate(_)

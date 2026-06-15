@@ -702,6 +702,7 @@ impl DockViewportTearOffRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DockViewportFocusRequest;
     use crate::{
         DockViewportWindowFacts,
         drag::DockDragPayload,
@@ -840,7 +841,7 @@ mod tests {
                 Some(DockViewportActivationTarget::new(
                     target_space.clone(),
                     target_window,
-                    Some(focus_item.clone()),
+                    DockViewportFocusRequest::panel(focus_item.clone()),
                 )),
             ),
         )));
@@ -900,7 +901,7 @@ mod tests {
                 Some(DockViewportActivationTarget::new(
                     target.clone(),
                     target_window,
-                    Some(focus_item),
+                    DockViewportFocusRequest::panel(focus_item),
                 )),
             ),
         )));

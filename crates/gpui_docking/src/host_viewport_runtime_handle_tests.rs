@@ -2,10 +2,10 @@ use crate::{
     DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockPanel,
     DockSpaceId, DockViewportClosePolicy, DockViewportDropOutcomeKind, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportOpenStatus, DockViewportPlatformSignals, DockViewportRouteStatus,
-    DockViewportRuntimeHandle, DockViewportShouldCloseStatus, DockViewportStaleStatusReason,
-    DockViewportTargetContext, DockViewportTearOffOpenOutcome, DockViewportTearOffRequest,
-    DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
+    DockViewportFocusRequest, DockViewportOpenStatus, DockViewportPlatformSignals,
+    DockViewportRouteStatus, DockViewportRuntimeHandle, DockViewportShouldCloseStatus,
+    DockViewportStaleStatusReason, DockViewportTargetContext, DockViewportTearOffOpenOutcome,
+    DockViewportTearOffRequest, DockViewportWindowFacts, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::DockDropRoutePreviewKind,
@@ -521,11 +521,12 @@ fn viewport_runtime_handle_merge_back_close_focuses_recorded_source_item(cx: &mu
 
     let active_window = main_opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).active_window()
-        })
+        .update(cx, |_, _, app| app.active_window())
         .expect("main viewport should remain live");
-    assert_eq!(active_window, Some(main_opened.window().window_id()));
+    assert_eq!(
+        active_window.map(|window| window.window_id()),
+        Some(main_opened.window().window_id())
+    );
     main_opened
         .window()
         .update(cx, |_, window, cx| {
@@ -1378,12 +1379,12 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         .window()
         .update(cx, |_, window, _| window.activate_window())
         .expect("source viewport should be activatable before drop");
-    let before_drop_context = opened
+    let active_window_before_drop = opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| app.active_window())
         .expect("target window should be live");
     assert_eq!(
-        before_drop_context.active_window(),
+        active_window_before_drop.map(|window| window.window_id()),
         Some(source_opened.window().window_id()),
         "source viewport should be active before the routed drop commits"
     );
@@ -1440,8 +1441,8 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
     assert_eq!(
         action
             .activation()
-            .and_then(|activation| activation.focus_item().cloned()),
-        Some(item("a")),
+            .map(|activation| activation.focus_request().clone()),
+        Some(DockViewportFocusRequest::panel(item("a"))),
         "known viewport drop should request focus for the moved item"
     );
     let status = runtime.runtime_status();
@@ -1473,12 +1474,12 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         );
     });
     cx.run_until_parked();
-    let after_drop_context = source_opened
+    let active_window_after_drop = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| app.active_window())
         .expect("source window should be live");
     assert_eq!(
-        after_drop_context.active_window(),
+        active_window_after_drop.map(|window| window.window_id()),
         Some(opened.window().window_id()),
         "successful routed drop should activate the destination viewport"
     );
@@ -1615,12 +1616,12 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     assert!(changed, "host render drop should report a graph change");
     cx.run_until_parked();
 
-    let after_drop_context = source_opened
+    let active_window_after_drop = source_opened
         .window()
-        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
+        .update(cx, |_, _, app| app.active_window())
         .expect("source window should be live");
     assert_eq!(
-        after_drop_context.active_window(),
+        active_window_after_drop.map(|window| window.window_id()),
         Some(target_opened.window().window_id()),
         "host interaction should consume the routed activation target"
     );

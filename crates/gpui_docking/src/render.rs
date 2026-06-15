@@ -1,5 +1,5 @@
 use crate::{
-    DockHost, DockNode, DockNodeId, DockViewportWindowFacts, DropZone,
+    DockHost, DockNode, DockNodeId, DockViewportFocusRequest, DockViewportWindowFacts, DropZone,
     debug::DockDebugRegion,
     drag::DockDragPayload,
     drop_preview::{DockDropPreview, DockDropRoutePreview},
@@ -32,7 +32,6 @@ impl Render for DockHost {
         self.record_rendered_selected_tabs(&session, cx);
         self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
         self.focus_pending_panel_from_render(&session, window, cx);
-        self.restore_viewport_panel_focus_from_render(&session, window, cx);
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame =
@@ -193,44 +192,37 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(item) = self.take_pending_panel_focus() else {
+        let Some(request) = self.pending_focus_request().cloned() else {
             return;
         };
-        if session.request_panel_focus(&item, window, cx) {
-            self.clear_viewport_focus_restore_pending();
-            self.remember_panel_focus(item, cx);
-        } else {
-            self.set_viewport_focus_restore_pending(true);
-        }
-    }
+        match request {
+            DockViewportFocusRequest::Panel(item) => {
+                if session.request_panel_focus(&item, window, cx) {
+                    self.clear_pending_focus_request();
+                    self.remember_panel_focus(item, cx);
+                }
+            }
+            DockViewportFocusRequest::RestoreLastFocused => {
+                let visible_items = session.visible_panel_items();
+                let visible_focused_panel =
+                    self.visible_focused_panel_item(&visible_items, window, cx);
+                if let Some(item) = visible_focused_panel {
+                    self.remember_panel_focus(item, cx);
+                    self.clear_pending_focus_request();
+                    return;
+                }
 
-    fn restore_viewport_panel_focus_from_render(
-        &mut self,
-        session: &DockHostRenderSession,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let visible_items = session.visible_panel_items();
-        let visible_focused_panel = self.visible_focused_panel_item(&visible_items, window, cx);
-        if let Some(item) = visible_focused_panel {
-            self.remember_panel_focus(item, cx);
-            self.clear_viewport_focus_restore_pending();
-            return;
-        }
+                let Some(item) = self.restore_panel_focus_target(&visible_items) else {
+                    self.clear_pending_focus_request();
+                    return;
+                };
 
-        if !self.viewport_focus_restore_pending() || self.has_pending_panel_focus() {
-            return;
+                if session.request_panel_focus(&item, window, cx) {
+                    self.remember_panel_focus(item, cx);
+                    self.clear_pending_focus_request();
+                }
+            }
         }
-
-        let Some(item) = self.restore_panel_focus_target(&visible_items) else {
-            self.clear_viewport_focus_restore_pending();
-            return;
-        };
-
-        if session.request_panel_focus(&item, window, cx) {
-            self.remember_panel_focus(item, cx);
-        }
-        self.clear_viewport_focus_restore_pending();
     }
 
     pub(crate) fn render_node(

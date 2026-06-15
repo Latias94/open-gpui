@@ -14,7 +14,7 @@ pub(crate) fn apply_viewport_activation<C: AppContext>(
     };
 
     let activation_space = activation.space().clone();
-    let focus_item = activation.focus_item().cloned();
+    let focus_request = activation.focus_request().clone();
     let host_changed = Rc::new(Cell::new(false));
     let host_changed_flag = host_changed.clone();
     let _ = activation.window().update(cx, move |view, window, cx| {
@@ -22,13 +22,8 @@ pub(crate) fn apply_viewport_activation<C: AppContext>(
         if let Ok(host) = view.downcast::<DockHost>() {
             host.update(cx, |host, cx| {
                 if host.space() == &activation_space {
-                    host_changed_flag.set(true);
-                    if let Some(focus_item) = focus_item.clone() {
-                        host.clear_viewport_focus_restore_pending();
-                        let _ = host.request_panel_focus(focus_item);
-                    } else {
-                        host.set_viewport_focus_restore_pending(true);
-                    }
+                    let changed = host.request_viewport_focus(focus_request.clone());
+                    host_changed_flag.set(changed);
                     if host_changed_flag.get() {
                         cx.notify();
                     }
@@ -43,11 +38,14 @@ pub(crate) fn apply_viewport_activation<C: AppContext>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_test_support::{open_host, space, tabs_graph};
+    use crate::{
+        DockViewportFocusRequest,
+        host_test_support::{open_host, space, tabs_graph},
+    };
     use open_gpui::{TestAppContext, px, size};
 
     #[open_gpui::test]
-    fn activation_without_focus_item_sets_restore_pending(cx: &mut TestAppContext) {
+    fn activation_without_focus_item_requests_last_focused_restore(cx: &mut TestAppContext) {
         let (graph, _) = tabs_graph(&["a"]);
         let (window, host, _visual) = open_host(
             cx,
@@ -55,16 +53,23 @@ mod tests {
             &[("a", "Panel A", "A")],
             size(px(320.0), px(240.0)),
         );
-        let activation = DockViewportActivationTarget::new(space(), window, None);
+        let activation = DockViewportActivationTarget::new(
+            space(),
+            window,
+            DockViewportFocusRequest::restore_last_focused(),
+        );
 
-        let (changed, restore_pending) = cx.update(|app| {
+        let (changed, pending_request) = cx.update(|app| {
             let changed = apply_viewport_activation(Some(activation), app);
-            let restore_pending =
-                app.read_entity(&host, |host, _| host.viewport_focus_restore_pending());
-            (changed, restore_pending)
+            let pending_request =
+                app.read_entity(&host, |host, _| host.pending_focus_request().cloned());
+            (changed, pending_request)
         });
 
         assert!(changed);
-        assert!(restore_pending);
+        assert_eq!(
+            pending_request,
+            Some(DockViewportFocusRequest::restore_last_focused())
+        );
     }
 }

@@ -5,8 +5,8 @@ use crate::{
     DockSpaceId, DockViewportActivationTarget, DockViewportAdapter, DockViewportCloseCoordinator,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportCloseStatus,
     DockViewportDropActionOutcome, DockViewportDropPayload, DockViewportDropRoute,
-    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportIdentity,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportDropRouteOutcome, DockViewportDropRouteRequest, DockViewportFocusRequest,
+    DockViewportIdentity, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportPlatformSyncRecord, DockViewportResolvedDropRoute, DockViewportRestoreReadiness,
     DockViewportRoutedDropPreview, DockViewportRoutedDropPreviewStore, DockViewportRuntimeHandle,
     DockViewportRuntimeStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
@@ -746,7 +746,9 @@ impl DockViewportRuntime {
         };
 
         let target_space = target.target_space().clone();
-        let focus_item = self.focus_item_for_payload(&payload, source_node, cx);
+        let focus_request = DockViewportFocusRequest::panel_or_restore_last_focused(
+            self.focus_item_for_payload(&payload, source_node, cx),
+        );
         let action = self.controller.update(cx, |controller, cx| {
             let outcome = controller.workspace_mut().commit_resolved_payload_drop(
                 DockWorkspacePayloadDropRequest {
@@ -764,7 +766,7 @@ impl DockViewportRuntime {
             }
             outcome
         })?;
-        let activation = self.activate_viewport_for_space(&target_space, focus_item, cx);
+        let activation = self.activate_viewport_for_space(&target_space, focus_request, cx);
         Ok(DockViewportDropRouteOutcome::Action(
             DockViewportDropActionOutcome::new(action, activation),
         ))
@@ -1071,7 +1073,7 @@ impl DockViewportRuntime {
     fn activate_viewport_for_space(
         &mut self,
         target_space: &DockSpaceId,
-        focus_item: Option<DockItemId>,
+        focus_request: DockViewportFocusRequest,
         cx: &mut App,
     ) -> Option<DockViewportActivationTarget> {
         match self.reusable_window_for_space(target_space, cx) {
@@ -1080,7 +1082,7 @@ impl DockViewportRuntime {
                 Some(DockViewportActivationTarget::new(
                     target_space.clone(),
                     window,
-                    focus_item,
+                    focus_request,
                 ))
             }
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
@@ -1205,8 +1207,9 @@ impl DockViewportRuntime {
             return None;
         }
         let target_space = outcome.merge_target_space()?.clone();
-        let focus_item = outcome.focus_item().cloned();
-        self.activate_viewport_for_space(&target_space, focus_item, cx)
+        let focus_request =
+            DockViewportFocusRequest::panel_or_restore_last_focused(outcome.focus_item().cloned());
+        self.activate_viewport_for_space(&target_space, focus_request, cx)
     }
 
     pub(crate) fn handle_window_should_close_with_app_and_refresh(
