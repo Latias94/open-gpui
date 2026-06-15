@@ -557,12 +557,17 @@ impl DockViewportAdapter {
         if let Some(resolution) =
             self.resolve_viewport_route_target(request.release_position(), target_context)
         {
-            if !resolution.is_trusted() {
+            let is_trusted = resolution.is_trusted();
+            let is_single_hit_fallback = resolution.is_single_hit_fallback();
+            if !is_trusted && !is_single_hit_fallback {
                 return DockViewportDropRoute::Unavailable;
             }
 
             let target = resolution.into_target();
             if target.space() == request.source_space() {
+                if !is_trusted {
+                    return DockViewportDropRoute::Unavailable;
+                }
                 return DockViewportDropRoute::Local {
                     host_position: target.host_position(),
                 };

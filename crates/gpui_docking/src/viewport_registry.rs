@@ -324,8 +324,15 @@ impl DockViewportRegistry {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return;
         };
+        self.record_space_focus(&space);
+    }
+
+    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
+        if !self.viewports.contains_key(space) {
+            return;
+        }
         self.next_focus_stamp = self.next_focus_stamp.wrapping_add(1);
-        if let Some(snapshot) = self.viewports.get_mut(&space) {
+        if let Some(snapshot) = self.viewports.get_mut(space) {
             snapshot.record_focus(self.next_focus_stamp);
         }
     }

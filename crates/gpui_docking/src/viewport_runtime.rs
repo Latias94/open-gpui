@@ -370,6 +370,10 @@ impl DockViewportRuntime {
         self.adapter.record_window_focus(window_id);
     }
 
+    fn record_space_focus(&mut self, space: &DockSpaceId) {
+        self.adapter.record_space_focus(space);
+    }
+
     fn discard_owned_window(&mut self, window_id: WindowId) -> bool {
         self.owned_windows.remove(&window_id)
     }
@@ -1053,11 +1057,14 @@ impl DockViewportRuntime {
         cx: &mut App,
     ) -> Option<DockViewportActivationTarget> {
         match self.reusable_window_for_space(target_space, cx) {
-            DockViewportReusableWindow::Reused(window) => Some(DockViewportActivationTarget::new(
-                target_space.clone(),
-                window,
-                focus_item,
-            )),
+            DockViewportReusableWindow::Reused(window) => {
+                self.record_space_focus(target_space);
+                Some(DockViewportActivationTarget::new(
+                    target_space.clone(),
+                    window,
+                    focus_item,
+                ))
+            }
             DockViewportReusableWindow::Missing | DockViewportReusableWindow::Stale => None,
         }
     }
@@ -1091,6 +1098,20 @@ impl DockViewportRuntime {
         }
     }
 
+    fn focus_item_for_space(&self, space: &DockSpaceId, cx: &App) -> Option<DockItemId> {
+        let controller = self.controller.read(cx);
+        let graph = controller.graph();
+        graph
+            .root(space)
+            .and_then(|root| graph.selected_item_in_subtree(root))
+            .or_else(|| {
+                graph
+                    .floating_containers(space)
+                    .iter()
+                    .find_map(|floating| graph.selected_item_in_subtree(floating.node))
+            })
+    }
+
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.
     ///
     /// Close policy is applied by [`Self::handle_window_should_close`] before GPUI accepts a close.
@@ -1100,17 +1121,21 @@ impl DockViewportRuntime {
         self.discard_owned_window(window_id);
         let merge_back_prepared = self
             .close_coordinator
-            .was_merge_back_precommitted(window_id);
+            .take_merge_back_precommitted(window_id);
         let outcome = self.adapter.handle_window_closed(window_id);
         if let Some(space) = outcome.space().cloned() {
             let _ = self.clear_runtime_window_state(&space, window_id);
         } else {
+            self.host_scenes.unregister_window(window_id);
             let _ = self.clear_routed_drop_preview_if_window_matches(window_id);
         }
         self.close_gate.sync_adapter(&self.adapter);
-        let outcome = if merge_back_prepared && outcome.status() == DockViewportCloseStatus::Closed
+        let outcome = if let Some(focus_item) = merge_back_prepared
+            && outcome.status() == DockViewportCloseStatus::Closed
         {
-            outcome.with_status(DockViewportCloseStatus::MergedBack)
+            outcome
+                .with_status(DockViewportCloseStatus::MergedBack)
+                .with_focus_item(focus_item)
         } else {
             outcome
         };
@@ -1135,13 +1160,16 @@ impl DockViewportRuntime {
         if outcome.status() == DockViewportCloseStatus::MergedBack {
             return outcome;
         }
+        let focus_item = self.focus_item_for_space(&source_space, cx);
 
-        let outcome = outcome.with_status(crate::merge_space_back(
-            &self.controller,
-            &source_space,
-            &target_space,
-            cx,
-        ));
+        let outcome = outcome
+            .with_status(crate::merge_space_back(
+                &self.controller,
+                &source_space,
+                &target_space,
+                cx,
+            ))
+            .with_focus_item(focus_item);
         self.status.record_close(&outcome);
         outcome
     }
@@ -1157,13 +1185,7 @@ impl DockViewportRuntime {
         let DockViewportClosePolicy::MergeBack { target_space } = self.close_policy() else {
             return None;
         };
-        let focus_item = {
-            let controller = self.controller.read(cx);
-            let graph = controller.graph();
-            graph
-                .first_tabs_in_space(&target_space)
-                .and_then(|tabs| graph.selected_item_in_tabs(tabs))
-        };
+        let focus_item = outcome.focus_item().cloned();
         self.activate_viewport_for_space(&target_space, focus_item, cx)
     }
 
@@ -1198,9 +1220,14 @@ impl DockViewportRuntime {
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
+        let focus_item = outcome
+            .space
+            .as_ref()
+            .and_then(|space| self.focus_item_for_space(space, cx));
         let outcome = self.close_coordinator.apply_should_close_plan(
             outcome,
             self.close_policy(),
+            focus_item,
             &self.controller,
             cx,
         );
@@ -1222,9 +1249,14 @@ impl DockViewportRuntime {
         let outcome = self
             .adapter
             .should_close_viewport(window_id, self.close_policy());
+        let focus_item = outcome
+            .space
+            .as_ref()
+            .and_then(|space| self.focus_item_for_space(space, cx));
         let outcome = self.close_coordinator.apply_should_close_plan(
             outcome,
             self.close_policy(),
+            focus_item,
             &self.controller,
             cx,
         );

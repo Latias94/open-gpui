@@ -1,21 +1,26 @@
 use crate::{
-    DockActionOutcome, DockController, DockSpaceId, DockViewportClosePolicy,
+    DockActionOutcome, DockController, DockItemId, DockSpaceId, DockViewportClosePolicy,
     DockViewportCloseStatus, DockViewportShouldCloseOutcome, DockViewportShouldCloseStatus,
 };
 use open_gpui::{App, Entity, WindowId};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub(crate) struct DockViewportCloseCoordinator {
-    pre_closed_merge_back_windows: HashSet<WindowId>,
+    pre_closed_merge_back_windows: HashMap<WindowId, Option<DockItemId>>,
 }
 
 impl DockViewportCloseCoordinator {
     pub(crate) fn discard_window(&mut self, window_id: WindowId) -> bool {
-        self.pre_closed_merge_back_windows.remove(&window_id)
+        self.pre_closed_merge_back_windows
+            .remove(&window_id)
+            .is_some()
     }
 
-    pub(crate) fn was_merge_back_precommitted(&mut self, window_id: WindowId) -> bool {
+    pub(crate) fn take_merge_back_precommitted(
+        &mut self,
+        window_id: WindowId,
+    ) -> Option<Option<DockItemId>> {
         self.pre_closed_merge_back_windows.remove(&window_id)
     }
 
@@ -23,6 +28,7 @@ impl DockViewportCloseCoordinator {
         &mut self,
         mut outcome: DockViewportShouldCloseOutcome,
         close_policy: DockViewportClosePolicy,
+        focus_item: Option<DockItemId>,
         controller: &Entity<DockController>,
         cx: &mut App,
     ) -> DockViewportShouldCloseOutcome {
@@ -39,7 +45,8 @@ impl DockViewportCloseCoordinator {
             let status = merge_space_back(controller, space, target_space, cx);
             match status {
                 DockViewportCloseStatus::MergedBack => {
-                    self.pre_closed_merge_back_windows.insert(outcome.window_id);
+                    self.pre_closed_merge_back_windows
+                        .insert(outcome.window_id, focus_item);
                 }
                 DockViewportCloseStatus::Closed => {}
                 DockViewportCloseStatus::MergeBackFailed

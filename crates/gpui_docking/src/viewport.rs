@@ -87,6 +87,10 @@ impl DockViewportAdapter {
         self.registry.record_window_focus(window_id);
     }
 
+    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
+        self.registry.record_space_focus(space);
+    }
+
     /// Returns the logical dock space rendered by a window id.
     pub(crate) fn space_for_window_id(&self, window_id: WindowId) -> Option<&DockSpaceId> {
         self.registry.space_for_window_id(window_id)

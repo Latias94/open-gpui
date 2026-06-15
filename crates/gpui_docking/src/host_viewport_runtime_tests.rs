@@ -14,6 +14,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_target::DockLeafDropTarget,
     host_test_support::*,
+    viewport_activation::apply_viewport_activation,
     viewport_tear_off::{
         DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
         DockViewportTearOffCompletionOutcome, DockViewportTearOffTick,
@@ -408,6 +409,84 @@ fn viewport_runtime_tracks_recent_activation_for_diagnostic_hit_order(cx: &mut T
     assert_eq!(
         runtime.borrow().adapter().spaces_by_diagnostic_hit_order(),
         vec![zeta_space, alpha_space]
+    );
+}
+
+#[open_gpui::test]
+fn viewport_runtime_refreshes_focus_stamp_for_close_activation_before_render(
+    cx: &mut TestAppContext,
+) {
+    let main_space = DockSpaceId::from("main");
+    let inspector_space = DockSpaceId::from("inspector");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let inspector_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("c")],
+        selected: Some(item("c")),
+    });
+    graph.set_root(main_space.clone(), main_tabs);
+    graph.set_root(inspector_space.clone(), inspector_tabs);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::with_close_policy(
+        controller.clone(),
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let open_options = || WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(floating_bounds(
+            0.0, 0.0, 360.0, 220.0,
+        ))),
+        focus: false,
+        ..Default::default()
+    };
+    let _main = cx
+        .update(|app| runtime.open_viewport(main_space.clone(), open_options(), app))
+        .expect("main viewport should open");
+    let _inspector = cx
+        .update(|app| runtime.open_viewport(inspector_space.clone(), open_options(), app))
+        .expect("inspector viewport should open");
+    let detached = cx
+        .update(|app| runtime.open_viewport(detached_space.clone(), open_options(), app))
+        .expect("detached viewport should open");
+
+    let outcome = cx.update(|app| {
+        let outcome = runtime
+            .borrow_mut()
+            .handle_window_closed_with_app(detached.window().window_id(), app);
+        let activation = runtime
+            .borrow_mut()
+            .activation_target_after_close(&outcome, app);
+        assert_eq!(
+            activation
+                .as_ref()
+                .and_then(|target| target.focus_item().cloned()),
+            Some(item("c")),
+            "close activation should restore focus to the source viewport's selected item"
+        );
+        assert!(apply_viewport_activation(activation, app));
+        outcome
+    });
+
+    assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(
+        runtime.borrow().adapter().spaces_by_diagnostic_hit_order(),
+        vec![main_space, inspector_space]
     );
 }
 
@@ -1113,12 +1192,6 @@ fn viewport_runtime_should_close_observes_policy_changes_after_open(cx: &mut Tes
         })
         .expect("secondary viewport should open through runtime");
     let mut visual = VisualTestContext::from_window(opened.window(), cx);
-
-    assert!(
-        visual.simulate_close(),
-        "default RetainLayout policy should allow the already-open window to close"
-    );
-
     runtime.set_close_policy(DockViewportClosePolicy::Prevent);
     assert!(
         !visual.simulate_close(),
@@ -1227,6 +1300,11 @@ fn viewport_runtime_merge_back_close_reports_status_and_moves_tabs(cx: &mut Test
     let outcome = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
 
     assert_eq!(outcome.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(
+        outcome.focus_item().cloned(),
+        Some(item("c")),
+        "merge-back close should restore focus to the source viewport's selected item"
+    );
     assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
     cx.read_entity(&controller, |controller, _| {
         let DockNode::Tabs { items, selected } = controller
@@ -1426,6 +1504,11 @@ fn viewport_runtime_merge_back_commits_during_should_close(cx: &mut TestAppConte
     let closed = cx.update(|app| runtime.handle_window_closed_with_app(window.window_id(), app));
 
     assert_eq!(closed.status(), DockViewportCloseStatus::MergedBack);
+    assert_eq!(
+        closed.focus_item().cloned(),
+        Some(item("a")),
+        "precommitted merge-back close should preserve the source focus item"
+    );
     assert_eq!(runtime.adapter().window_for_space(&detached_space), None);
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(

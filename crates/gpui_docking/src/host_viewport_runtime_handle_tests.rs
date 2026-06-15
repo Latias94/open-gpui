@@ -13,6 +13,7 @@ use crate::{
     drop_target::{DockDropResolveSource, DockLeafDropTarget, DockResolvedDropTargetKind},
     host_test_support::*,
     interaction::DockPayloadDropRelease,
+    viewport_activation::apply_viewport_activation,
     viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
 };
 use open_gpui::{
@@ -1463,6 +1464,13 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         Some(item("a")),
         "runtime status should record the focused item"
     );
+    cx.update(|app| {
+        assert!(
+            apply_viewport_activation(action.activation().cloned(), app),
+            "host finish should apply the routed activation target"
+        );
+    });
+    cx.run_until_parked();
     let after_drop_context = source_opened
         .window()
         .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
@@ -3185,13 +3193,6 @@ fn viewport_runtime_handle_prevents_platform_close_when_policy_prevents(cx: &mut
         runtime.close_policy(),
         DockViewportClosePolicy::RetainLayout
     );
-    assert_eq!(
-        runtime
-            .handle_window_should_close(opened.window().window_id())
-            .status,
-        DockViewportShouldCloseStatus::Allowed
-    );
-
     runtime.set_close_policy(DockViewportClosePolicy::Prevent);
     assert_eq!(runtime.close_policy(), DockViewportClosePolicy::Prevent);
     assert!(

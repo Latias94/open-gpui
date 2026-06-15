@@ -155,6 +155,13 @@ impl DockViewportTargetResolution {
                 | DockViewportTargetConfidence::TrustedEventReceiver
         )
     }
+
+    pub(crate) fn is_single_hit_fallback(&self) -> bool {
+        matches!(
+            self.confidence,
+            DockViewportTargetConfidence::SingleHitFallback
+        )
+    }
 }
 
 impl DockViewportHoverArbitration {

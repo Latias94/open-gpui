@@ -1,4 +1,4 @@
-use crate::{DockSpaceId, DockViewportAdapter};
+use crate::{DockItemId, DockSpaceId, DockViewportAdapter};
 use open_gpui::{AnyWindowHandle, WindowId};
 
 /// Default behavior for a platform viewport close request.
@@ -30,6 +30,8 @@ pub struct DockViewportCloseOutcome {
     window_id: WindowId,
     /// How the close request resolved.
     status: DockViewportCloseStatus,
+    /// Panel item that should regain focus after a successful merge-back activation.
+    focus_item: Option<DockItemId>,
 }
 
 impl DockViewportCloseOutcome {
@@ -42,11 +44,17 @@ impl DockViewportCloseOutcome {
             space,
             window_id,
             status,
+            focus_item: None,
         }
     }
 
     pub(crate) fn with_status(mut self, status: DockViewportCloseStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    pub(crate) fn with_focus_item(mut self, focus_item: Option<DockItemId>) -> Self {
+        self.focus_item = focus_item;
         self
     }
 
@@ -63,6 +71,10 @@ impl DockViewportCloseOutcome {
     /// How the close request resolved.
     pub fn status(&self) -> DockViewportCloseStatus {
         self.status
+    }
+
+    pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
+        self.focus_item.as_ref()
     }
 }
 
