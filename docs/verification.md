@@ -31,6 +31,38 @@ cargo bench -p open-gpui-canvas --bench large_canvas
 Use the benchmark to compare spatial-index, visible-query, and paint-frame culling changes. It is
 not part of the default CI gate because benchmark timing is runner-dependent.
 
+For focused `open-gpui-ui-core` or UI foundation gallery work, run:
+
+```sh
+cargo fmt -p open-gpui-ui-core -p open-gpui-ui-foundation-gallery
+cargo check -p open-gpui-ui-core
+cargo check -p open-gpui-ui-foundation-gallery
+cargo nextest run -p open-gpui-ui-core
+cargo nextest run -p open-gpui-ui-foundation-gallery
+```
+
+Manual UI foundation dogfood should use the dedicated gallery after the automated checks pass:
+
+```sh
+cargo run -p open-gpui-ui-foundation-gallery
+```
+
+1. Open `Tokens` and confirm the semantic token registry shows surface, text, accent, focus ring,
+   destructive, overlay, and modal overlay keys without introducing a styled component layer.
+2. Open `Sizing & Density`, switch between compact and desktop from the summary panel, and confirm
+   the highlighted density and default size change with the foundation policies.
+3. Open `Adaptive`, use the same compact/desktop switch, and confirm device samples show mobile /
+   desktop shell mode, compact / regular / expanded class, and panel samples show compact / medium /
+   wide classes.
+4. Open `Focus & A11y`, tab through the focusable controls, confirm the focus-visible outline is
+   visible, click the counter and reset controls, and toggle the switch. The visible counter and
+   switch state should match the accessible role/state vocabulary shown by the page.
+5. Open `Overlay`, click `open overlay`, confirm the anchored popover appears from the trigger, then
+   close it from the popover or press Escape. The geometry readout should keep anchor, layout,
+   visual, preferred, and safe-window rectangles visible.
+6. Re-run `cargo nextest run -p open-gpui-ui-foundation-gallery` if a manual check exposes a gallery
+   or foundation API regression.
+
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:
 
