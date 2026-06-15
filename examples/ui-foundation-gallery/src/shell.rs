@@ -61,6 +61,7 @@ pub fn foundation_snapshot(width: Pixels, selected_page: GalleryPage) -> Gallery
 pub struct GalleryShell {
     selected_page: GalleryPage,
     width: Pixels,
+    navigation_scroll: ScrollHandle,
     page_scroll: ScrollHandle,
     root_focus: FocusHandle,
     focus_controls: [FocusHandle; 3],
@@ -75,6 +76,7 @@ impl GalleryShell {
         Self {
             selected_page: GalleryPage::Tokens,
             width: DEFAULT_GALLERY_WIDTH,
+            navigation_scroll: ScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             focus_controls: [
@@ -190,12 +192,14 @@ impl GalleryShell {
             .flex()
             .flex_col()
             .gap_3()
+            .overflow_hidden()
             .border_r_1()
             .border_color(rgb(0xd6d8ce))
             .bg(rgb(0xffffff))
             .p_4()
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -215,9 +219,14 @@ impl GalleryShell {
             )
             .child(
                 div()
+                    .id("gallery-navigation-scroll")
+                    .flex_1()
+                    .min_h(px(0.0))
                     .flex()
                     .flex_col()
                     .gap_2()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.navigation_scroll)
                     .children(GALLERY_SECTIONS.into_iter().map(|section| {
                         let selected = section.page == selected_page;
                         div()
