@@ -1509,6 +1509,72 @@ fn viewport_runtime_merge_back_close_does_not_guess_between_multiple_selected_it
 }
 
 #[open_gpui::test]
+fn viewport_runtime_merge_back_should_close_rejects_non_unique_target_tabs(
+    cx: &mut TestAppContext,
+) {
+    let main_space = DockSpaceId::from("main");
+    let detached_space = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let main_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("left")],
+        selected: Some(item("left")),
+    });
+    let main_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("right")],
+        selected: Some(item("right")),
+    });
+    let main_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![main_left, main_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let detached_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(main_space.clone(), main_root);
+    graph.set_root(detached_space.clone(), detached_tabs);
+
+    let mut workspace = DockWorkspace::new(main_space.clone(), graph);
+    workspace.register_panel_view(item("left"), "Left", test_view(cx, "Left"));
+    workspace.register_panel_view(item("right"), "Right", test_view(cx, "Right"));
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let window = handle(148);
+    let mut adapter = DockViewportAdapter::new();
+    adapter.register_viewport(detached_space.clone(), window);
+    let mut runtime = DockViewportRuntime::from_adapter(
+        controller.clone(),
+        adapter,
+        DockViewportClosePolicy::MergeBack {
+            target_space: main_space.clone(),
+        },
+    );
+
+    let should_close = cx.update(|app| {
+        runtime
+            .handle_window_should_close_with_app_and_refresh(window.window_id(), app)
+            .0
+    });
+
+    assert_eq!(should_close.status, DockViewportShouldCloseStatus::Vetoed);
+    assert_eq!(
+        runtime.adapter().window_for_space(&detached_space),
+        Some(window)
+    );
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().root(&detached_space),
+            Some(detached_tabs)
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&main_space),
+            vec![item("left"), item("right")]
+        );
+    });
+}
+
+#[open_gpui::test]
 fn viewport_runtime_merge_back_should_close_is_idempotent_after_precommit(cx: &mut TestAppContext) {
     let main_space = DockSpaceId::from("main");
     let detached_space = DockSpaceId::from("detached");

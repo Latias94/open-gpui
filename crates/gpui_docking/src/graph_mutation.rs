@@ -350,6 +350,7 @@ impl DockGraph {
         &mut self,
         source_space: &DockSpaceId,
         target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
     ) -> bool {
         if source_space == target_space {
             return false;
@@ -358,16 +359,16 @@ impl DockGraph {
         let Some(source_root) = self.root(source_space) else {
             return false;
         };
-        let Some(target_root) = self.root(target_space) else {
+        if self.root(target_space).is_none() {
             return false;
-        };
+        }
 
         match self.nodes.get(source_root).cloned() {
             Some(DockNode::Tabs { .. }) => self.move_root_tabs_to_non_empty_space(
                 source_space,
                 source_root,
                 target_space,
-                target_root,
+                target_tabs,
             ),
             Some(DockNode::Split { .. }) => false,
             Some(DockNode::Floating { .. }) => false,
@@ -380,15 +381,21 @@ impl DockGraph {
         source_space: &DockSpaceId,
         source_root: DockNodeId,
         target_space: &DockSpaceId,
-        target_root: DockNodeId,
+        target_tabs: DockNodeId,
     ) -> bool {
+        if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
+            return false;
+        }
+        if self
+            .root_for_node_in_space(target_space, target_tabs)
+            .is_none()
+        {
+            return false;
+        }
         let Some(detached) = self.take_tabs_from_space_without_simplify(source_space, source_root)
         else {
             return false;
         };
-        let target_tabs = self
-            .selected_tabs_in_subtree(target_root)
-            .unwrap_or(target_root);
         if !self.insert_items_into_tabs_at(
             target_tabs,
             &detached.items,

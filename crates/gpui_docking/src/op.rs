@@ -333,6 +333,15 @@ pub enum DockGraphMutationError {
         target: DockNodeId,
     },
 
+    /// A whole-space merge needs exactly one concrete target tab stack.
+    #[error("dock space {space} has {tabs_len} root tab stacks; merge target is not unique")]
+    MergeTargetTabsNotUnique {
+        /// The target dock space.
+        space: DockSpaceId,
+        /// Number of target tab stacks reachable from the root.
+        tabs_len: usize,
+    },
+
     /// A split fraction update has the wrong number of fractions.
     #[error(
         "split node {split:?} has {children_len} children but received {fractions_len} fractions"

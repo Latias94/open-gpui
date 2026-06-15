@@ -637,6 +637,138 @@ fn workspace_merge_space_preserves_floating_forest(cx: &mut TestAppContext) {
 }
 
 #[open_gpui::test]
+fn workspace_merge_space_rejects_non_unique_target_tabs(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-left")],
+        selected: Some(item("target-left")),
+    });
+    let target_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-right")],
+        selected: Some(item("target-right")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![target_left, target_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    graph.set_root(target.clone(), target_root);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target-left", "Target Left", "Target Left"),
+            ("target-right", "Target Right", "Target Right"),
+            ("a", "A", "A"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let err = workspace
+        .commit_merge_space_into(&detached, &target)
+        .expect_err("merge-back must not pick a target tabs stack by tree order");
+
+    assert_eq!(
+        err,
+        DockActionApplyError::Graph(DockGraphMutationError::MergeTargetTabsNotUnique {
+            space: target.clone(),
+            tabs_len: 2,
+        })
+    );
+    assert_eq!(workspace.graph().root(&detached), Some(detached_root));
+    assert_eq!(workspace.graph().root(&target), Some(target_root));
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&target),
+        vec![item("target-left"), item("target-right")]
+    );
+    assert_eq!(
+        workspace.graph().collect_items_in_space(&detached),
+        vec![item("a")]
+    );
+}
+
+#[open_gpui::test]
+fn workspace_merge_space_uses_explicit_target_tabs_in_split_target(cx: &mut TestAppContext) {
+    let target = DockSpaceId::from("target");
+    let detached = DockSpaceId::from("detached");
+    let mut graph = DockGraph::new();
+    let target_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-left")],
+        selected: Some(item("target-left")),
+    });
+    let target_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("target-right")],
+        selected: Some(item("target-right")),
+    });
+    let target_root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![target_left, target_right],
+        fractions: vec![0.5, 0.5],
+    });
+    let detached_root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(target.clone(), target_root);
+    graph.set_root(detached.clone(), detached_root);
+
+    let mut workspace = workspace_with_panels(
+        cx,
+        graph,
+        &[
+            ("target-left", "Target Left", "Target Left"),
+            ("target-right", "Target Right", "Target Right"),
+            ("a", "A", "A"),
+            ("b", "B", "B"),
+        ],
+    );
+    workspace.policy_mut().set_allow_platform_viewports(true);
+
+    let outcome = workspace
+        .commit_merge_space_into_tabs(&detached, &target, target_right)
+        .expect("explicit merge target should commit into requested tabs");
+
+    assert_eq!(outcome, DockActionOutcome::Changed);
+    assert_eq!(workspace.graph().root(&detached), None);
+    let DockNode::Tabs {
+        items: left_items,
+        selected: left_selected,
+    } = workspace
+        .graph()
+        .node(target_left)
+        .expect("left target tabs should remain")
+    else {
+        panic!("left target should be tabs");
+    };
+    assert_eq!(left_items, &vec![item("target-left")]);
+    assert_eq!(left_selected.as_ref(), left_items.first());
+
+    let DockNode::Tabs {
+        items: right_items,
+        selected: right_selected,
+    } = workspace
+        .graph()
+        .node(target_right)
+        .expect("right target tabs should receive the source root")
+    else {
+        panic!("right target should be tabs");
+    };
+    assert_eq!(
+        right_items,
+        &vec![item("target-right"), item("a"), item("b")]
+    );
+    assert_eq!(right_selected.as_ref(), right_items.get(2));
+}
+
+#[open_gpui::test]
 fn workspace_merge_space_preserves_root_split_tree_on_empty_target(cx: &mut TestAppContext) {
     let detached = DockSpaceId::from("detached");
     let target = DockSpaceId::from("target");

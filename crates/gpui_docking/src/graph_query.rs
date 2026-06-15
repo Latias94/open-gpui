@@ -47,11 +47,6 @@ impl DockGraph {
         out
     }
 
-    /// Returns the first tabs node reachable from a dock space.
-    pub fn first_tabs_in_space(&self, space: &DockSpaceId) -> Option<DockNodeId> {
-        self.root_tabs_in_space(space).into_iter().next()
-    }
-
     /// Returns true when an item is reachable from any dock space.
     pub fn contains_item(&self, item: &DockItemId) -> bool {
         self.spaces()
@@ -143,12 +138,6 @@ impl DockGraph {
             self.collect_selected_items_in_subtree_into(floating.node, &mut out);
         }
         out
-    }
-
-    pub(crate) fn selected_tabs_in_subtree(&self, root: DockNodeId) -> Option<DockNodeId> {
-        let selected = self.selected_item_in_subtree(root)?;
-        self.find_item_in_subtree(root, &selected)
-            .map(|(tabs, _)| tabs)
     }
 
     pub(crate) fn is_visible_split_payload(&self, root: DockNodeId) -> bool {
