@@ -9,9 +9,13 @@ status: "active"
 
 # Current State
 
-- Goal: Build the first concrete Open GPUI UI components crate on top of the committed foundation slice.
+- Goal: Grow the official Open GPUI component system under the adapter-first, headless-ready
+  architecture from ADR 0005.
 - Branch: `feat/open-gpui-ui-core`
-- Last verified: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery` all passed for the new components slice.
+- Last verified: `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
+  `cargo check -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` passed for the TextInput/Field slice.
 - Done: Added the `open-gpui-ui-core` crate with sizing, density, adaptive, token, overlay, a11y, and focus foundation vocabulary; ADR 0004 and memory bundle now point at the foundation-first direction and explicitly record the reference repositories (`fret`, `fret-ui-kit`, `fret-ui-shadcn`, `gpui-component`, plus broader open source UI references).
 - Done: Wrote the first follow-up plan for a dedicated pure-foundation gallery example at `docs/plans/2026-06-15-001-feat-ui-foundation-gallery-plan.md`.
 - Done: Completed U1 of the gallery plan by adding `examples/ui-foundation-gallery` as a workspace package with a small library, thin binary entrypoint, pure foundation dependency surface, empty shell, section registry, and targeted tests.
@@ -22,8 +26,17 @@ status: "active"
 - Done: Wrote the next plan for `open-gpui-ui-components` at `docs/plans/2026-06-15-002-feat-ui-components-first-slice-plan.md`, scoped to Button, Switch, gallery dogfood, and verification.
 - Done: Completed the first components slice by scaffolding `crates/ui_components` as `open-gpui-ui-components`, implementing Button and Switch, wiring the Components gallery page, and updating the engineering memory bundle.
 - Done: Drafted ADR 0005 for the official component architecture, choosing an adapter-first, headless-ready model and a future extraction path for `open-gpui-ui-headless`.
+- Done: Wrote the TextInput/Field implementation plan at
+  `docs/plans/2026-06-15-003-feat-ui-text-field-slice-plan.md` and the component contract guide at
+  `docs/ui/component-contract.md`.
+- Done: Implemented `TextInput` and `Field` in `open-gpui-ui-components` with resolved state,
+  metrics, token intents, role/message metadata, tests, explicit exports, and gallery dogfood.
+- Done: Recorded subagent research showing full editable text input must use GPUI's
+  `EntityInputHandler` / `ElementInputHandler` path, so this slice intentionally remains a
+  display/semantic contract slice.
 - Blocked: None.
-- Next action: Implement `TextInput` and `Field` under ADR 0005, then add the theme resolver and focus ring follow-ups that the ADR calls out.
+- Next action: Commit the TextInput/Field slice, then plan the theme resolver and no-layout-shift
+  focus ring follow-ups from ADR 0005.
 
 # Citations
 
@@ -35,3 +48,6 @@ status: "active"
 [6] [Manual verification guide](../../verification.md)
 [7] [Components first slice plan](../../plans/2026-06-15-002-feat-ui-components-first-slice-plan.md)
 [8] [Official component architecture](../../adr/0005-open-gpui-official-component-architecture.md)
+[9] [TextInput/Field plan](../../plans/2026-06-15-003-feat-ui-text-field-slice-plan.md)
+[10] [Component contract guide](../../ui/component-contract.md)
+[11] [Text input subagent finding](subagents/text-input-patterns.md)

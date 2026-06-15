@@ -148,6 +148,8 @@ fn components_page_samples_expose_button_and_switch_metadata() {
     let tokens = ThemeTokens::default();
     let buttons = pages::components::button_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
+    let text_inputs = pages::components::text_input_samples(tokens);
+    let fields = pages::components::field_samples(tokens);
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -163,4 +165,29 @@ fn components_page_samples_expose_button_and_switch_metadata() {
     assert_eq!(switches[0].state.toggled(), Toggled::False);
     assert_eq!(switches[1].state.toggled(), Toggled::True);
     assert!(!switches[3].state.activation_enabled());
+
+    assert_eq!(text_inputs.len(), 5);
+    assert_eq!(text_inputs[0].state.role(), Role::TextInput);
+    assert!(text_inputs[0].state.displaying_placeholder());
+    assert!(text_inputs[1].state.has_value());
+    assert_eq!(
+        text_inputs[2].state.colors().border().token(),
+        semantic::DESTRUCTIVE
+    );
+    assert!(!text_inputs[3].state.editable());
+    assert!(!text_inputs[4].state.editable());
+
+    assert_eq!(fields.len(), 3);
+    assert!(fields[0].state.required());
+    assert_eq!(
+        fields[0].state.support_text().unwrap(),
+        "Use a work address."
+    );
+    assert!(fields[1].state.support_is_error());
+    assert_eq!(
+        fields[1].state.support_text().unwrap(),
+        "Enter a valid email."
+    );
+    assert!(fields[2].state.disabled());
+    assert!(!fields[2].input_state.editable());
 }

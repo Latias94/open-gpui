@@ -1,6 +1,12 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Implemented the TextInput/Field component slice from ADR 0005: added
+  `TextInputState`, `FieldState`, `FieldMessage`, component exports, gallery samples, tests, and
+  `docs/ui/component-contract.md`; focused component and gallery checks pass.
+* **Update**: Recorded text input research showing that full editable text input must use GPUI's
+  `EntityInputHandler` / `ElementInputHandler` path, so this slice intentionally keeps platform
+  text editing as a follow-up rather than faking input with key events.
 * **Update**: Drafted ADR 0005 for the official component architecture. It records the adapter-first, headless-ready direction, the GPUI adapter boundary, the future `open-gpui-ui-headless` extraction trigger, and the next follow-up work on `TextInput` / `Field`, theme resolution, and focus rings.
 * **Update**: Completed the first `open-gpui-ui-components` slice: the workspace now has Button and Switch components backed by `ui_core` sizing, tokens, role/toggled state, and a Components gallery page; `cargo check` and `cargo nextest` pass for `open-gpui-ui-core`, `open-gpui-ui-components`, and `open-gpui-ui-foundation-gallery`.
 * **Update**: Committed the first UI foundation slice as `f626464 feat(ui): add UI foundation core gallery`, then created the next plan at `docs/plans/2026-06-15-002-feat-ui-components-first-slice-plan.md` for `open-gpui-ui-components` with Button, Switch, gallery dogfood, and verification.

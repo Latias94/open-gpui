@@ -7,7 +7,9 @@ use open_gpui::{
     StatefulInteractiveElement, Styled, Toggled, Window, WindowBounds, WindowOptions, anchored,
     deferred, div, point, px, rgb, size,
 };
-use open_gpui_ui_components::{Button, ButtonState, Switch, SwitchState};
+use open_gpui_ui_components::{
+    Button, ButtonState, Field, FieldState, Switch, SwitchState, TextInput, TextInputState,
+};
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
     PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens,
@@ -497,6 +499,100 @@ impl GalleryShell {
                                                 .tokens(snapshot.tokens),
                                         )
                                         .child(component_switch_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("TextInput"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::text_input_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state.clone();
+                                    div()
+                                        .id(format!("component-text-input-sample:{}", sample.id))
+                                        .min_w(px(240.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .text_color(rgb(0x3f4a57))
+                                                .child(sample.label),
+                                        )
+                                        .child(component_text_input(
+                                            format!("component-text-input:{}", sample.id),
+                                            sample.label,
+                                            &state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_text_input_state_row(&state))
+                                }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Field"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::field_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let field_state = sample.state.clone();
+                                    let input_state = sample.input_state.clone();
+                                    div()
+                                        .id(format!("component-field-sample:{}", sample.id))
+                                        .min_w(px(280.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(component_field(
+                                            format!("component-field:{}", sample.id),
+                                            &field_state,
+                                            component_text_input(
+                                                format!("component-field-input:{}", sample.id),
+                                                field_state.label(),
+                                                &input_state,
+                                                snapshot.tokens,
+                                            ),
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_field_state_row(
+                                            &field_state,
+                                            &input_state,
+                                        ))
                                 }),
                         ),
                     ),
@@ -1315,6 +1411,117 @@ fn component_switch_state_row(state: SwitchState) -> impl IntoElement {
             format_px(state.metrics().track_height()),
             format_px(state.metrics().thumb_size())
         ))
+}
+
+fn component_text_input(
+    id: String,
+    label: impl Into<open_gpui::SharedString>,
+    state: &TextInputState,
+    tokens: ThemeTokens,
+) -> TextInput {
+    let input = TextInput::new(id, label)
+        .value(state.value())
+        .with_size(state.size())
+        .disabled(state.disabled())
+        .read_only(state.read_only())
+        .required(state.required())
+        .invalid(state.invalid())
+        .tokens(tokens);
+
+    if let Some(placeholder) = state.placeholder() {
+        input.placeholder(placeholder)
+    } else {
+        input
+    }
+}
+
+fn component_field(
+    id: String,
+    state: &FieldState,
+    control: impl IntoElement,
+    tokens: ThemeTokens,
+) -> Field {
+    let field = Field::new(id, state.control_id(), state.label())
+        .with_size(state.size())
+        .required(state.required())
+        .disabled(state.disabled())
+        .invalid(state.invalid())
+        .tokens(tokens)
+        .control(control);
+    let field = if let Some(help) = state.help() {
+        field.help(help)
+    } else {
+        field
+    };
+
+    if let Some(error) = state.error() {
+        field.error(error)
+    } else {
+        field
+    }
+}
+
+fn component_text_input_state_row(state: &TextInputState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            size_label(state.size()),
+            if state.editable() {
+                "editable"
+            } else {
+                "locked"
+            },
+            if state.invalid() { "invalid" } else { "valid" }
+        ))
+        .child(format!(
+            "{} / {}",
+            if state.has_value() { "value" } else { "empty" },
+            if state.displaying_placeholder() {
+                "placeholder"
+            } else {
+                "display value"
+            }
+        ))
+}
+
+fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl IntoElement {
+    let support = field.support_text().unwrap_or("no support text");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            size_label(field.size()),
+            if field.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if field.invalid() { "invalid" } else { "valid" }
+        ))
+        .child(format!(
+            "{} / {}",
+            if field.support_is_error() {
+                "error"
+            } else {
+                "help"
+            },
+            support
+        ))
+        .child(if input.editable() {
+            "control editable"
+        } else {
+            "control locked"
+        })
 }
 
 fn toggled_label_text(toggled: Toggled) -> &'static str {

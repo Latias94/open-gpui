@@ -6,6 +6,7 @@
 * [Update Log](log.md) - Chronological history of meaningful memory updates.
 * [Open GPUI UI foundation first](decisions/open-gpui-ui-foundation-first.md) - Decision to prioritize accessibility, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout.
 * [Open GPUI component library planning handoff](sessions/open-gpui-component-library-handoff.md) - Session handoff for the ADR and UI foundation sequencing.
+* [Text input patterns research](subagents/text-input-patterns.md) - Subagent finding on GPUI text input primitives and the TextInput/Field boundary.
 
 ## Concepts
 
