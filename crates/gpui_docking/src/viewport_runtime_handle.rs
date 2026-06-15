@@ -1,5 +1,5 @@
 use crate::{
-    DockActionApplyError, DockController, DockDropDelivery, DockHost, DockSpaceId,
+    DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
     DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
     DockViewportPlacementLayout, DockViewportPlacementValidationError,
@@ -119,6 +119,10 @@ impl DockViewportRuntimeHandle {
 
     pub(crate) fn record_window_focus(&self, window_id: WindowId) {
         self.runtime.borrow_mut().record_window_focus(window_id);
+    }
+
+    pub(crate) fn record_panel_focus(&self, space: DockSpaceId, item: DockItemId) {
+        self.runtime.borrow_mut().record_panel_focus(space, item);
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

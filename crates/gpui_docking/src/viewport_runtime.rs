@@ -30,7 +30,7 @@ use open_gpui::{
     AnyWindowHandle, App, Bounds, Entity, Pixels, Point, WindowBounds, WindowId, WindowOptions,
     point, px, size,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const DEFAULT_TEAR_OFF_WINDOW_SIZE: open_gpui::Size<Pixels> = size(px(360.0), px(240.0));
 const DEFAULT_TEAR_OFF_CURSOR_OFFSET: Point<Pixels> = point(px(24.0), px(18.0));
@@ -53,6 +53,7 @@ pub(crate) struct DockViewportRuntime {
     drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
+    focused_items: HashMap<DockSpaceId, DockItemId>,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewStore,
     status: DockViewportRuntimeStatus,
@@ -209,6 +210,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
+            focused_items: HashMap::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -235,6 +237,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
+            focused_items: HashMap::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -368,6 +371,10 @@ impl DockViewportRuntime {
 
     pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
         self.adapter.record_window_focus(window_id);
+    }
+
+    pub(crate) fn record_panel_focus(&mut self, space: DockSpaceId, item: DockItemId) {
+        self.focused_items.insert(space, item);
     }
 
     fn record_space_focus(&mut self, space: &DockSpaceId) {
@@ -1101,6 +1108,13 @@ impl DockViewportRuntime {
     fn focus_item_for_space(&self, space: &DockSpaceId, cx: &App) -> Option<DockItemId> {
         let controller = self.controller.read(cx);
         let graph = controller.graph();
+        if let Some(item) = self
+            .focused_items
+            .get(space)
+            .filter(|item| graph.find_item_in_space(space, item).is_some())
+        {
+            return Some(item.clone());
+        }
         graph
             .root(space)
             .and_then(|root| graph.selected_item_in_subtree(root))

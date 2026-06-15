@@ -214,6 +214,10 @@ impl DockHost {
     }
 
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId) {
+        let space = self.space().clone();
+        if let Some(runtime) = self.viewport_runtime().cloned() {
+            runtime.record_panel_focus(space, item.clone());
+        }
         if self.last_focused_panel.as_ref() != Some(&item) {
             self.last_focused_panel = Some(item);
         }
