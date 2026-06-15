@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Wrote the official UI component roadmap at
+  `docs/plans/2026-06-15-004-feat-ui-component-roadmap-plan.md`. The next-series order is runtime
+  theme table, editable TextInput controller, Checkbox/Label, roving focus/Tabs,
+  RadioGroup/Toggle, Badge/IconButton, shared overlay behavior, Tooltip/Popover, Dialog,
+  Menu/ContextMenu, ScrollArea/Splitter, Toolbar/Sidebar, gallery conformance, and then headless
+  extraction readiness review.
+* **Decision**: Keep `open-gpui-ui-headless` deferred. The project should first prove repeated
+  renderer-neutral contracts across Button, Switch, TextInput/Field, Checkbox/Radio, Tabs, and at
+  least one overlay family; `gpui-component`, `fret-ui-kit`, and `fret-ui-shadcn` remain references
+  rather than runtime dependencies.
+* **Subagent Finding**: Recorded roadmap reference research at
+  `docs/knowledge/engineering/subagents/ui-component-roadmap-reference-research.md`: use
+  `gpui-component` for GPUI-native implementation patterns, `fret-ui-kit` for policy-layer
+  references, and avoid wholesale copying from either repository.
 * **Update**: Added the shared `FocusRing` primitive to `open-gpui-ui-components` and migrated
   Button, Switch, TextInput, and the focus/a11y gallery demo from border-width focus styling to a
   box-shadow focus-visible adapter that does not change layout.

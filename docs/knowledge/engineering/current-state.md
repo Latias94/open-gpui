@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-15T08:19:48Z
+timestamp: 2026-06-15T15:47:00Z
 status: "active"
 ---
 
@@ -15,7 +15,8 @@ status: "active"
 - Last verified: `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
   `cargo check -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`,
   `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
-  open-gpui-ui-foundation-gallery` passed for the TextInput/Field slice.
+  open-gpui-ui-foundation-gallery` passed for the recent component slices; the roadmap planning
+  update validates only documentation and engineering memory.
 - Done: Added the `open-gpui-ui-core` crate with sizing, density, adaptive, token, overlay, a11y, and focus foundation vocabulary; ADR 0004 and memory bundle now point at the foundation-first direction and explicitly record the reference repositories (`fret`, `fret-ui-kit`, `fret-ui-shadcn`, `gpui-component`, plus broader open source UI references).
 - Done: Wrote the first follow-up plan for a dedicated pure-foundation gallery example at `docs/plans/2026-06-15-001-feat-ui-foundation-gallery-plan.md`.
 - Done: Completed U1 of the gallery plan by adding `examples/ui-foundation-gallery` as a workspace package with a small library, thin binary entrypoint, pure foundation dependency surface, empty shell, section registry, and targeted tests.
@@ -41,10 +42,23 @@ status: "active"
 - Done: Added `FocusRing` to `open-gpui-ui-components`, migrated Button/Switch/TextInput and the
   focus/a11y gallery demo to paint focus-visible state with GPUI box-shadow instead of changing
   border width, and covered the token intent plus no-layout-shift contract in tests.
+- Done: Wrote the next-series roadmap at
+  `docs/plans/2026-06-15-004-feat-ui-component-roadmap-plan.md`. The planned order is runtime
+  theme table, real editable TextInput controller, Checkbox/Label, roving focus/Tabs,
+  RadioGroup/Toggle, Badge/IconButton, shared overlay behavior, Tooltip/Popover, Dialog,
+  Menu/ContextMenu, ScrollArea/Splitter, Toolbar/Sidebar, gallery conformance, then a headless
+  extraction readiness review.
+- Done: Recorded the planning decision that `open-gpui-ui-headless` remains deferred until repeated
+  contracts exist across Button/Switch/TextInput/Field, Checkbox/Radio, Tabs, and at least one
+  overlay family. Reference repositories remain inputs, not runtime dependencies.
+- Done: Recorded reference repository findings at
+  `docs/knowledge/engineering/subagents/ui-component-roadmap-reference-research.md`: use
+  `gpui-component` for GPUI-native implementation patterns, `fret-ui-kit` for policy-layer
+  references, and do not copy Fret runtime or `gpui-component` editor-grade input code wholesale.
 - Blocked: None.
-- Next action: Plan the real editable TextInput controller around GPUI's
-  `EntityInputHandler`/`ElementInputHandler` path, or deepen theme resolution into a runtime theme
-  table before adding more visual components.
+- Next action: Execute the runtime theme table slice first to reduce color/state-token debt, unless
+  the next session intentionally swaps in the editable TextInput controller first to stress the
+  self-drawn input boundary.
 
 # Citations
 
@@ -59,3 +73,5 @@ status: "active"
 [9] [TextInput/Field plan](../../plans/2026-06-15-003-feat-ui-text-field-slice-plan.md)
 [10] [Component contract guide](../../ui/component-contract.md)
 [11] [Text input subagent finding](subagents/text-input-patterns.md)
+[12] [Official UI component roadmap](../../plans/2026-06-15-004-feat-ui-component-roadmap-plan.md)
+[13] [Roadmap reference research](subagents/ui-component-roadmap-reference-research.md)
