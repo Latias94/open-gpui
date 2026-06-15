@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Added the shared `FocusRing` primitive to `open-gpui-ui-components` and migrated
+  Button, Switch, TextInput, and the focus/a11y gallery demo from border-width focus styling to a
+  box-shadow focus-visible adapter that does not change layout.
 * **Update**: Added `ThemeResolver` to `open-gpui-ui-components` and migrated Button, Switch,
   TextInput, and Field render paths to resolve `ColorIntent` values centrally while keeping token
   intent visible in component state.

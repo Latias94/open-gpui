@@ -8,6 +8,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
+use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
 
 /// Resolved text input color intents.
@@ -107,6 +108,7 @@ pub struct TextInputState {
     required: bool,
     metrics: TextInputMetrics,
     colors: TextInputColors,
+    focus_ring: FocusRing,
 }
 
 impl TextInputState {
@@ -121,6 +123,8 @@ impl TextInputState {
         required: bool,
         tokens: ThemeTokens,
     ) -> Self {
+        let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
+
         Self {
             value: value.into(),
             placeholder: placeholder.map(Into::into),
@@ -130,7 +134,8 @@ impl TextInputState {
             invalid,
             required,
             metrics: TextInputMetrics::from_size(size),
-            colors: ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid),
+            colors,
+            focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
     }
 
@@ -231,6 +236,11 @@ impl TextInputState {
     /// Returns resolved color intents.
     pub const fn colors(&self) -> TextInputColors {
         self.colors
+    }
+
+    /// Returns resolved focus ring metadata.
+    pub const fn focus_ring(&self) -> FocusRing {
+        self.focus_ring
     }
 }
 
@@ -335,6 +345,7 @@ impl RenderOnce for TextInput {
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
+        let focus_ring = state.focus_ring();
         let show_placeholder = state.placeholder_visible();
         let display_text = if show_placeholder {
             self.placeholder.unwrap_or_default()
@@ -367,11 +378,7 @@ impl RenderOnce for TextInput {
             .tab_stop(state.tab_stop_enabled())
             .role(state.role())
             .aria_label(self.label)
-            .focus_visible(|style| {
-                style
-                    .border_2()
-                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
-            })
+            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(state.disabled(), |this| {
                 this.opacity(0.56).cursor_not_allowed()
             })

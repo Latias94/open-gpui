@@ -8,6 +8,7 @@
 pub mod button;
 pub mod color;
 pub mod field;
+pub mod focus;
 pub mod prelude;
 pub mod switch;
 pub mod text_input;
@@ -16,6 +17,7 @@ pub mod theme;
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use color::ColorIntent;
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
+pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
 pub use theme::ThemeResolver;

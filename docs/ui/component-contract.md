@@ -35,6 +35,16 @@ The concrete component owns the GPUI adapter. This layer may use:
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
 
+## Focus Rings
+
+Interactive component state should expose `FocusRing` metadata instead of rendering focus by
+changing border width. `FocusRing` keeps the focus color as a `ColorIntent`, records the paint
+width, and documents that it does not change layout.
+
+The GPUI adapter should apply the ring inside `focus_visible` using
+`open_gpui_ui_components::focus_ring_shadow`. This paints an outer box shadow, so keyboard focus
+visibility does not resize or move the focused component.
+
 ## Public API
 
 Prefer Rust builder-style APIs with explicit enums and semantic event names. Use names such as
@@ -57,7 +67,7 @@ theme table.
 ## Current Known Gaps
 
 The first component slices still rely on fallback RGB values inside `ThemeResolver` because a
-runtime theme table is not implemented yet. Focus rings use the current GPUI focus-visible style path
-and may need replacement when a no-layout-shift focus primitive lands. Rich text input editing must
-use GPUI's `EntityInputHandler`/`ElementInputHandler` path and is intentionally separate from
-display-level field composition.
+runtime theme table is not implemented yet. Rich text input editing must use GPUI's
+`EntityInputHandler`/`ElementInputHandler` path and is intentionally separate from display-level
+field composition. `focus_ring_shadow` is GPUI-adapter code and should stay out of a future headless
+crate if `FocusRing` is extracted.

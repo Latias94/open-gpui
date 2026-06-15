@@ -243,7 +243,7 @@ Decision: chosen.
 | Concrete GPUI code leaks into state APIs | High | Medium | Review state types for `Window`, `App`, `Context`, `RenderOnce`, and callback types |
 | Token intents never become a real theme system | High | Medium | Prioritize theme resolver before broad visual component expansion |
 | Accessibility remains visual-only | High | Medium | Add a11y contract tests and GPUI API gaps as explicit follow-up work |
-| Focus styles cause layout shift | Medium | Medium | Define a no-layout-shift focus ring primitive before stabilizing component style |
+| Focus styles cause layout shift | Medium | Low | Use the shared `FocusRing` primitive plus `focus_ring_shadow`, which paints focus-visible state as an outer GPUI box shadow instead of changing border width |
 | Recipes become the de facto component API | Medium | Low | Keep recipes optional; official components stay semver-managed crates |
 
 ## Implementation Plan
@@ -254,7 +254,8 @@ Decision: chosen.
    - `on_change(next_checked, ...)` for Switch.
 3. Add a theme resolver layer so `ColorIntent` can resolve through a theme snapshot instead of
    always rendering fallback RGB values.
-4. Add a focus ring primitive that does not change layout when focus-visible state changes.
+4. Add a focus ring primitive that does not change layout when focus-visible state changes. Done in
+   `open-gpui-ui-components::FocusRing`; GPUI adapters apply it through `focus_ring_shadow`.
 5. Implement `TextInput` and `Field` as the next proof point because they force label, help text,
    invalid, required, disabled, focus, and value-state decisions.
 6. Add render-level smoke tests or gallery checks for disabled interaction, tab stops, aria state,

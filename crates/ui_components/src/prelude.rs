@@ -3,6 +3,7 @@
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::color::ColorIntent;
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
+pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
 pub use crate::theme::ThemeResolver;

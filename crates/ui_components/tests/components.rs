@@ -1,5 +1,8 @@
 use open_gpui::px;
-use open_gpui_ui_components::{Button, ButtonVariant, Field, Switch, TextInput, ThemeResolver};
+use open_gpui_ui_components::{
+    Button, ButtonVariant, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Switch, TextInput,
+    ThemeResolver, focus_ring_shadow,
+};
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic};
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
@@ -35,6 +38,9 @@ fn default_button_state_uses_button_role_and_medium_metrics() {
     assert_eq!(state.metrics().height(), Size::Medium.button_h());
     assert_eq!(state.metrics().padding_x(), Size::Medium.button_px());
     assert_eq!(state.colors().background().token(), semantic::ACCENT);
+    assert_eq!(state.focus_ring().color().token(), semantic::FOCUS_RING);
+    assert_eq!(state.focus_ring().width(), DEFAULT_FOCUS_RING_WIDTH);
+    assert!(!state.focus_ring().changes_layout());
     assert!(state.activation_enabled());
 }
 
@@ -78,6 +84,7 @@ fn button_accepts_custom_token_bundle() {
 
     assert_eq!(state.colors().border().token(), tokens.border);
     assert_eq!(state.colors().focus_ring().token(), tokens.focus_ring);
+    assert_eq!(state.focus_ring().color().token(), tokens.focus_ring);
 }
 
 #[test]
@@ -107,6 +114,8 @@ fn checked_switch_maps_to_true_toggled_state() {
     assert_eq!(state.role(), Role::Switch);
     assert_eq!(state.toggled(), Toggled::True);
     assert_eq!(state.colors().track().token(), semantic::ACCENT);
+    assert_eq!(state.focus_ring().color().token(), semantic::FOCUS_RING);
+    assert!(!state.focus_ring().changes_layout());
     assert!(state.activation_enabled());
 }
 
@@ -205,7 +214,22 @@ fn invalid_text_input_uses_destructive_border_token() {
     assert!(state.invalid());
     assert_eq!(state.colors().border().token(), tokens.destructive);
     assert_eq!(state.colors().focus_ring().token(), tokens.focus_ring);
+    assert_eq!(state.focus_ring().color().token(), tokens.focus_ring);
+    assert!(!state.focus_ring().changes_layout());
     assert_eq!(state.colors().placeholder().token(), tokens.text_muted);
+}
+
+#[test]
+fn focus_ring_preserves_token_intent_without_layout_shift() {
+    let ring = FocusRing::from_color(Button::new("save", "Save").state().colors().focus_ring());
+    let shadow = focus_ring_shadow(ring);
+
+    assert_eq!(ring.color().token(), semantic::FOCUS_RING);
+    assert_eq!(ring.width(), DEFAULT_FOCUS_RING_WIDTH);
+    assert!(!ring.changes_layout());
+    assert_eq!(shadow[0].spread_radius, DEFAULT_FOCUS_RING_WIDTH);
+    assert_eq!(shadow[0].blur_radius, px(0.0));
+    assert!(!shadow[0].inset);
 }
 
 #[test]

@@ -10,6 +10,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
+use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
 
 /// Visual intent for a [`Button`].
@@ -135,6 +136,7 @@ pub struct ButtonState {
     selected: bool,
     metrics: ButtonMetrics,
     colors: ButtonColors,
+    focus_ring: FocusRing,
 }
 
 impl ButtonState {
@@ -155,6 +157,7 @@ impl ButtonState {
             selected,
             metrics: ButtonMetrics::from_size(size),
             colors,
+            focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
     }
 
@@ -196,6 +199,11 @@ impl ButtonState {
     /// Returns resolved color intents.
     pub const fn colors(self) -> ButtonColors {
         self.colors
+    }
+
+    /// Returns resolved focus ring metadata.
+    pub const fn focus_ring(self) -> FocusRing {
+        self.focus_ring
     }
 }
 
@@ -285,6 +293,7 @@ impl RenderOnce for Button {
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
+        let focus_ring = state.focus_ring();
         let disabled = state.disabled();
 
         div()
@@ -308,11 +317,7 @@ impl RenderOnce for Button {
             .role(state.role())
             .aria_label(label.clone())
             .aria_selected(state.selected())
-            .focus_visible(|style| {
-                style
-                    .border_2()
-                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
-            })
+            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {
                 this.cursor_pointer()

@@ -38,8 +38,13 @@ status: "active"
 - Done: Added `ThemeResolver` to `open-gpui-ui-components`, moved Button/Switch/TextInput/Field
   render-time color conversion through it, and kept `ColorIntent` as the resolved state contract for
   token-aware tests and future headless extraction.
+- Done: Added `FocusRing` to `open-gpui-ui-components`, migrated Button/Switch/TextInput and the
+  focus/a11y gallery demo to paint focus-visible state with GPUI box-shadow instead of changing
+  border width, and covered the token intent plus no-layout-shift contract in tests.
 - Blocked: None.
-- Next action: Plan and implement the no-layout-shift focus ring primitive from ADR 0005.
+- Next action: Plan the real editable TextInput controller around GPUI's
+  `EntityInputHandler`/`ElementInputHandler` path, or deepen theme resolution into a runtime theme
+  table before adding more visual components.
 
 # Citations
 

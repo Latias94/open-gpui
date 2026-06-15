@@ -76,8 +76,13 @@ follow-up.
 - Add a real `TextInputController` / `TextInputState` entity that implements `EntityInputHandler`.
 - Expose missing GPUI accessibility setters for value, placeholder, disabled, required, invalid,
   and read-only state.
-- Add a no-layout-shift focus ring primitive shared by Button, Switch, and TextInput.
 - Add the theme resolver layer described by ADR 0005.
+
+### Completed Follow-Up Work
+
+- Added a no-layout-shift `FocusRing` primitive shared by Button, Switch, TextInput, and the
+  focus/a11y gallery demo. GPUI adapters now paint focus-visible state with box-shadow instead of
+  changing border width.
 
 ## High-Level Technical Design
 

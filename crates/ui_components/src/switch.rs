@@ -10,6 +10,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
 
 use crate::color::ColorIntent;
+use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
 
 /// Resolved switch metrics.
@@ -117,17 +118,21 @@ pub struct SwitchState {
     size: Size,
     metrics: SwitchMetrics,
     colors: SwitchColors,
+    focus_ring: FocusRing,
 }
 
 impl SwitchState {
     /// Resolves the public state for a switch.
     pub fn resolve(checked: bool, disabled: bool, size: Size, tokens: ThemeTokens) -> Self {
+        let colors = ThemeResolver::switch_colors(tokens, checked);
+
         Self {
             checked,
             disabled,
             size,
             metrics: SwitchMetrics::from_size(size),
-            colors: ThemeResolver::switch_colors(tokens, checked),
+            colors,
+            focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
     }
 
@@ -173,6 +178,11 @@ impl SwitchState {
     /// Returns resolved color intents.
     pub const fn colors(self) -> SwitchColors {
         self.colors
+    }
+
+    /// Returns resolved focus ring metadata.
+    pub const fn focus_ring(self) -> FocusRing {
+        self.focus_ring
     }
 }
 
@@ -253,6 +263,7 @@ impl RenderOnce for Switch {
         let state = self.state();
         let metrics = state.metrics();
         let colors = state.colors();
+        let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let next_checked = !state.checked();
         let label = self.label.clone();
@@ -271,11 +282,7 @@ impl RenderOnce for Switch {
                     .unwrap_or_else(|| SharedString::from("Switch")),
             )
             .aria_toggled(state.toggled())
-            .focus_visible(|style| {
-                style
-                    .border_2()
-                    .border_color(ThemeResolver::resolve(colors.focus_ring()))
-            })
+            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())
             .when_some(

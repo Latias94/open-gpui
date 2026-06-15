@@ -8,7 +8,8 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Button, ButtonState, Field, FieldState, Switch, SwitchState, TextInput, TextInputState,
+    Button, ButtonState, ColorIntent, Field, FieldState, FocusRing, Switch, SwitchState, TextInput,
+    TextInputState, focus_ring_shadow,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -940,6 +941,10 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let handle = &self.focus_controls[index];
+        let focus_ring = FocusRing::from_color(ColorIntent::new(
+            ThemeTokens::default().focus_ring,
+            0x2f80ed,
+        ));
 
         div()
             .id(spec.id)
@@ -952,7 +957,7 @@ impl GalleryShell {
             .border_color(rgb(0xd6d8ce))
             .bg(rgb(0xffffff))
             .p_3()
-            .focus_visible(|style| style.border_2().border_color(rgb(0x2f80ed)))
+            .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .track_focus(handle)
             .focusable()
             .tab_stop(true)
