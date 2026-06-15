@@ -12,7 +12,7 @@ use crate::{
     drop_runtime::DockHostDropSceneFact,
     drop_target::{DockDropResolveSource, DockLeafDropTarget, DockResolvedDropTargetKind},
     host_test_support::*,
-    interaction::DockPayloadDropRelease,
+    interaction::{DockPayloadDropRelease, DockRuntimeDragSession},
     viewport_activation::apply_viewport_activation,
     viewport_registry::{DockViewportRouteUnavailableReason, DockViewportStaleReason},
 };
@@ -57,6 +57,7 @@ fn cache_known_viewport_preview(
     payload: DockViewportDropPayload,
     release_position: open_gpui::Point<open_gpui::Pixels>,
     hovered_window: impl Into<open_gpui::AnyWindowHandle>,
+    drag_session: Option<DockRuntimeDragSession>,
     payload_title: &str,
 ) -> crate::DockViewportResolvedDropRoute {
     let request = DockViewportDropRouteRequest::from_target_context(
@@ -66,7 +67,8 @@ fn cache_known_viewport_preview(
         release_position,
         None,
         DockViewportTargetContext::new().with_hovered_window(hovered_window),
-    );
+    )
+    .with_drag_session(drag_session);
     let resolution = cx.update(|app| runtime.resolve_payload_drop_delivery(&request, app));
     assert!(
         matches!(
@@ -1079,6 +1081,13 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
     let release_position = point(px(900.0), px(900.0));
     let suggested_window_bounds =
         WindowBounds::Windowed(floating_bounds(880.0, 880.0, 360.0, 240.0));
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
 
     let outcome = cx
         .update(|app| {
@@ -1089,7 +1098,8 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
                 release_position,
                 Some(suggested_window_bounds),
                 DockViewportTargetContext::new(),
-            );
+            )
+            .with_drag_session(Some(session.clone()));
             let resolution = runtime.resolve_payload_drop_delivery(&request, app);
             runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
         })
@@ -1136,9 +1146,11 @@ fn viewport_runtime_handle_commits_tear_off_drop_route(cx: &mut TestAppContext) 
         .root(cx)
         .expect("tear-off viewport should expose DockHost root");
     cx.read_entity(&opened_host, |host, _| {
-        assert!(
-            host.viewport_runtime().is_some(),
-            "tear-off viewport should keep the runtime-aware host path for dock-back"
+        assert_eq!(
+            host.viewport_runtime()
+                .window_id_for_space(completed.pending().target_space()),
+            Some(completed.registration().window().window_id()),
+            "tear-off viewport should keep the runtime-backed host path for dock-back"
         );
     });
     cx.read_entity(&controller, |controller, _| {
@@ -1174,6 +1186,8 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
     let release_position = point(px(900.0), px(900.0));
     let suggested_window_bounds =
         WindowBounds::Windowed(floating_bounds(880.0, 880.0, 360.0, 240.0));
+    let payload = DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
+    let session = runtime.begin_payload_drag(&payload);
 
     let outcome = cx
         .update(|app| {
@@ -1184,7 +1198,8 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
                 release_position,
                 Some(suggested_window_bounds),
                 DockViewportTargetContext::new(),
-            );
+            )
+            .with_drag_session(Some(session.clone()));
             let resolution = runtime.resolve_payload_drop_delivery(&request, app);
             runtime.deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
         })
@@ -1216,9 +1231,11 @@ fn viewport_runtime_handle_commits_stack_tear_off_drop_route(cx: &mut TestAppCon
         .root(cx)
         .expect("stack tear-off viewport should expose DockHost root");
     cx.read_entity(&opened_host, |host, _| {
-        assert!(
-            host.viewport_runtime().is_some(),
-            "stack tear-off viewport should keep the runtime-aware host path for dock-back"
+        assert_eq!(
+            host.viewport_runtime()
+                .window_id_for_space(completed.pending().target_space()),
+            Some(completed.registration().window().window_id()),
+            "stack tear-off viewport should keep the runtime-backed host path for dock-back"
         );
     });
     cx.read_entity(&controller, |controller, _| {
@@ -1405,20 +1422,28 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
             is_central: false,
         }),
     ));
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
 
     let result = cx.update(|app| {
         let release_position = runtime
             .last_host_scene_screen_position(&target_space)
             .expect("target scene should expose a screen position");
-        let result = runtime.commit_payload_drop_from_screen_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_position,
             None,
             DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
-            app,
-        );
+        )
+        .with_drag_session(Some(session.clone()));
+        let result = runtime.commit_payload_drop_from_screen(&request, app);
         let status = runtime.runtime_status();
         let target = &status
             .last_route
@@ -1463,9 +1488,9 @@ fn viewport_runtime_handle_commits_known_viewport_drop_through_host_scene(cx: &m
         status
             .last_activation
             .as_ref()
-            .and_then(|activation| activation.focus_item.clone()),
-        Some(item("a")),
-        "runtime status should record the focused item"
+            .map(|activation| activation.focus_request.clone()),
+        Some(DockViewportFocusRequest::panel(item("a"))),
+        "runtime status should record the destination focus request"
     );
     cx.update(|app| {
         assert!(
@@ -1588,6 +1613,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         item("a"),
         "Panel A".to_string(),
     );
+    let session = runtime.begin_payload_drag(&payload);
     cache_known_viewport_preview(
         cx,
         &runtime,
@@ -1596,6 +1622,7 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
         DockViewportDropPayload::Item(item("a")),
         release_screen_position,
         target_opened.window(),
+        Some(session.clone()),
         "Panel A",
     );
 
@@ -1603,10 +1630,11 @@ fn host_render_drop_consumes_routed_viewport_activation(cx: &mut TestAppContext)
     let changed = source_window
         .update(cx, |host, window, cx| {
             host.drop_payload_release_from_render(
-                DockPayloadDropRelease::source_only(
+                DockPayloadDropRelease::source_only_with_session(
                     payload.clone(),
                     source_space.clone(),
                     release_in_source_window,
+                    Some(session.clone()),
                 ),
                 window,
                 cx,
@@ -1735,6 +1763,7 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
         item("a"),
         "Panel A".to_string(),
     );
+    let session = runtime.begin_payload_drag(&payload);
     let target_screen_position =
         screen_position_for_host_position(target_bounds, target_center_host_position());
     let resolution = cache_known_viewport_preview(
@@ -1745,6 +1774,7 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        Some(session.clone()),
         "Panel A",
     );
 
@@ -1753,10 +1783,11 @@ fn hovered_host_release_does_not_consume_cached_delivery_for_another_window(
             host.interaction_mut()
                 .update_drop_route_preview(&resolution, target_center_host_position());
             host.drop_payload_release_from_render(
-                DockPayloadDropRelease::hovered_host(
+                DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
                     source_space.clone(),
                     target_center_host_position(),
+                    Some(session.clone()),
                 ),
                 window,
                 cx,
@@ -1873,6 +1904,7 @@ fn hovered_host_release_rejects_cached_delivery_when_release_point_misses_target
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        Some(session.clone()),
         "Panel A",
     );
     target_window
@@ -1934,7 +1966,116 @@ fn hovered_host_release_rejects_cached_delivery_when_release_point_misses_target
 }
 
 #[open_gpui::test]
-fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut TestAppContext) {
+fn hovered_host_release_rejects_without_cached_delivery_even_when_screen_route_matches(
+    cx: &mut TestAppContext,
+) {
+    let source_space = DockSpaceId::from("source");
+    let target_space = DockSpaceId::from("target");
+    let mut graph = DockGraph::new();
+    let source_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let target_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    graph.set_root(source_space.clone(), source_tabs);
+    graph.set_root(target_space.clone(), target_tabs);
+
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_bounds = WindowBounds::Windowed(floating_bounds(100.0, 100.0, 360.0, 220.0));
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                WindowOptions {
+                    window_bounds: Some(target_bounds),
+                    ..Default::default()
+                },
+                app,
+            )
+        })
+        .expect("target viewport should open");
+    let target_window = target_opened
+        .window()
+        .downcast::<crate::DockHost>()
+        .expect("target viewport should render DockHost");
+    assert!(runtime.begin_viewport_host_scene(
+        target_space.clone(),
+        target_opened.window().window_id(),
+        DockViewportWindowFacts::from_window_bounds(target_bounds),
+        floating_bounds(0.0, 0.0, 360.0, 220.0),
+        target_center_host_position(),
+    ));
+    assert!(runtime.push_viewport_host_scene_fact(
+        &target_space,
+        target_opened.window().window_id(),
+        leaf_host_scene_fact(target_tabs, target_tabs),
+    ));
+
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
+
+    target_window
+        .update(cx, |host, window, cx| {
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::hovered_host_with_session(
+                    payload.clone(),
+                    target_space.clone(),
+                    target_center_host_position(),
+                    Some(session.clone()),
+                ),
+                window,
+                cx,
+            )
+        })
+        .expect("target host should handle uncached hovered release");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(&source_space),
+            vec![item("a")],
+            "hovered-host release cannot commit without target-side cached delivery"
+        );
+        assert_eq!(
+            controller.graph().collect_items_in_space(&target_space),
+            vec![item("b")]
+        );
+    });
+    let status = runtime.runtime_status();
+    assert_eq!(
+        status.last_drop_outcome.as_ref().map(|record| record.kind),
+        Some(DockViewportDropOutcomeKind::Error)
+    );
+    assert_eq!(
+        status
+            .last_drop_outcome
+            .as_ref()
+            .and_then(|record| record.error.as_ref()),
+        Some(&DockActionApplyError::DropTargetUnavailable)
+    );
+    assert!(
+        runtime.active_payload_drag_session(&payload).is_none(),
+        "uncached hovered-host release should still finish the drag session"
+    );
+}
+
+#[open_gpui::test]
+fn hovered_host_release_rejects_stale_cached_delivery_instead_of_rerouting(
+    cx: &mut TestAppContext,
+) {
     let source_space = DockSpaceId::from("source");
     let target_space = DockSpaceId::from("target");
     let mut graph = DockGraph::new();
@@ -1992,6 +2133,7 @@ fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut Te
         item("a"),
         "Panel A".to_string(),
     );
+    let session = runtime.begin_payload_drag(&payload);
     let target_screen_position =
         screen_position_for_host_position(target_bounds, target_center_host_position());
     let resolution = cache_known_viewport_preview(
@@ -2002,6 +2144,7 @@ fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut Te
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        Some(session.clone()),
         "Panel A",
     );
 
@@ -2030,22 +2173,23 @@ fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut Te
     target_window
         .update(cx, |host, window, cx| {
             host.drop_payload_release_from_render(
-                DockPayloadDropRelease::hovered_host(
+                DockPayloadDropRelease::hovered_host_with_session(
                     payload.clone(),
                     target_space.clone(),
                     target_center_host_position(),
+                    Some(session.clone()),
                 ),
                 window,
                 cx,
             )
         })
-        .expect("target host should reroute stale cached delivery from current release facts");
+        .expect("target host should reject stale cached delivery");
     cx.run_until_parked();
 
     cx.read_entity(&controller, |controller, _| {
         assert_eq!(
             controller.graph().collect_items_in_space(&source_space),
-            Vec::<DockItemId>::new()
+            vec![item("a")]
         );
         let DockNode::Tabs { items, selected } = controller
             .graph()
@@ -2054,14 +2198,25 @@ fn hovered_host_release_reroutes_when_cached_delivery_scene_is_stale(cx: &mut Te
         else {
             panic!("target should remain tabs");
         };
-        assert_eq!(items, &vec![item("b"), item("a")]);
-        assert_eq!(selected.as_ref(), items.get(1));
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
     });
     let status = runtime.runtime_status();
     assert_eq!(
         status.last_drop_outcome.as_ref().map(|record| record.kind),
-        Some(DockViewportDropOutcomeKind::Action),
-        "fallback reroute should record the successful release outcome, not the stale cached attempt"
+        Some(DockViewportDropOutcomeKind::Error),
+        "stale target-side cached delivery should be rejected instead of rerouted from screen geometry"
+    );
+    assert_eq!(
+        status
+            .last_drop_outcome
+            .as_ref()
+            .and_then(|record| record.error.as_ref()),
+        Some(&DockActionApplyError::DropTargetUnavailable)
+    );
+    assert!(
+        runtime.active_payload_drag_session(&payload).is_none(),
+        "rejected hovered-host release should still finish the drag session"
     );
 }
 
@@ -2143,6 +2298,7 @@ fn host_render_route_preview_uses_route_debug_selector(cx: &mut TestAppContext) 
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        None,
         "Panel A",
     );
 
@@ -2248,6 +2404,7 @@ fn source_hover_over_known_viewport_renders_target_drop_preview(cx: &mut TestApp
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        None,
         "Panel A",
     );
 
@@ -2386,6 +2543,7 @@ fn source_release_prefers_local_target_over_cached_route_delivery(cx: &mut TestA
         DockViewportDropPayload::Item(item("a")),
         target_screen_position,
         target_opened.window(),
+        None,
         "Panel A",
     );
 
@@ -2839,17 +2997,25 @@ fn runtime_opened_viewports_dock_back_from_source_only_release(cx: &mut TestAppC
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
     ));
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
             source_release_signals,
-            app,
         )
+        .with_drag_session(Some(session.clone()));
+        runtime.commit_payload_drop_from_screen(&request, app)
     });
 
     let DockViewportDropRouteOutcome::Action(action) = result.expect("dock-back should commit")
@@ -3325,6 +3491,8 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
             is_central: false,
         }),
     ));
+    let payload = DockDragPayload::new_tabs(source_space.clone(), source_tabs, "Stack".to_string());
+    let session = runtime.begin_payload_drag(&payload);
 
     let result = cx.update(|app| {
         let request = DockViewportDropRouteRequest::from_platform_signals(
@@ -3336,7 +3504,8 @@ fn viewport_runtime_handle_commits_known_viewport_stack_drop_through_host_scene(
                 .expect("target scene should expose a screen position"),
             None,
             DockViewportPlatformSignals::from_app(app).with_hovered_window(opened.window()),
-        );
+        )
+        .with_drag_session(Some(session.clone()));
         let resolution = runtime.resolve_payload_drop_delivery(&request, app);
         runtime
             .deliver_payload_drop_with_outcome(resolution.expect_delivery().clone(), app)
@@ -3471,17 +3640,25 @@ fn viewport_runtime_handle_resolves_rendered_root_edge_scene(cx: &mut TestAppCon
         floating_bounds(0.0, 0.0, 360.0, 220.0),
         point(px(0.0), px(0.0)),
     ));
+    let payload = DockDragPayload::new_item(
+        source_space.clone(),
+        source_tabs,
+        item("a"),
+        "Panel A".to_string(),
+    );
+    let session = runtime.begin_payload_drag(&payload);
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_platform_signals(
+        let request = DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             source_tabs,
             DockViewportDropPayload::Item(item("a")),
             release_screen_position,
             None,
             source_release_signals,
-            app,
         )
+        .with_drag_session(Some(session.clone()));
+        runtime.commit_payload_drop_from_screen(&request, app)
     });
 
     let DockViewportDropRouteOutcome::Action(action) =

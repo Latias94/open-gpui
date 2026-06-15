@@ -18,7 +18,7 @@ impl DockHost {
         items: Vec<DockItemId>,
         selected: usize,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -81,12 +81,12 @@ impl DockHost {
                     }
                 },
             ));
-        if let Some(probe) = drop_root.and_then(|drop_root| {
-            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                drop_scene_fact::leaf(drop_root, node, bounds, is_central)
-            })
-        }) {
-            tabs = tabs.child(probe);
+        if let Some(drop_root) = drop_root {
+            tabs =
+                tabs.child(self.render_viewport_drop_scene_fact_probe(
+                    viewport_host_scene_frame,
+                    move |bounds| drop_scene_fact::leaf(drop_root, node, bounds, is_central),
+                ));
         }
 
         let stack_drag_entity = entity.clone();
@@ -120,13 +120,11 @@ impl DockHost {
                 });
                 cx.new(|_| DockDragPreview::new(payload.title()))
             });
-        if let Some(probe) = self
-            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+        tab_bar = tab_bar.child(
+            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
                 drop_scene_fact::tab_bar(node, tab_count, bounds, is_central)
-            })
-        {
-            tab_bar = tab_bar.child(probe);
-        }
+            }),
+        );
 
         for (index, item) in items.into_iter().enumerate() {
             let title = session.panel_title(&item);
@@ -221,13 +219,13 @@ impl DockHost {
                     });
                     cx.new(|_| DockDragPreview::new(payload.title()))
                 });
-            if let Some(probe) = self
-                .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
-                    drop_scene_fact::tab_label(node, target_index, bounds, is_central)
-                })
-            {
-                tab = tab.child(probe);
-            }
+            tab =
+                tab.child(self.render_viewport_drop_scene_fact_probe(
+                    viewport_host_scene_frame,
+                    move |bounds| {
+                        drop_scene_fact::tab_label(node, target_index, bounds, is_central)
+                    },
+                ));
             tab = tab.child(title);
             if session.panel_is_closable(&item) {
                 let close_selector = self.record_debug_selector(

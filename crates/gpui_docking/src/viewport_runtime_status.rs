@@ -2,7 +2,7 @@ use crate::{
     DockActionApplyError, DockActionOutcome, DockItemId, DockNodeId, DockPolicyError, DockSpaceId,
     DockViewportActivationTarget, DockViewportCloseOutcome, DockViewportDropPayload,
     DockViewportDropRoute, DockViewportDropRouteOutcome, DockViewportDropRouteRequest,
-    DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
+    DockViewportFocusRequest, DockViewportShouldCloseOutcome, DockViewportTearOffCancelReason,
     DockViewportTearOffOpenOutcome,
     viewport_registry::{
         DockViewportRouteUnavailableReason, DockViewportSnapshot, DockViewportStaleReason,
@@ -173,8 +173,8 @@ pub struct DockViewportActivationRecord {
     pub space: DockSpaceId,
     /// GPUI window id that should become active.
     pub window_id: WindowId,
-    /// Panel item that should receive focus after activation, when known.
-    pub focus_item: Option<DockItemId>,
+    /// Focus request that should be applied after activation.
+    pub focus_request: DockViewportFocusRequest,
 }
 
 /// Live platform-window sync attempted for a reused viewport.
@@ -634,7 +634,7 @@ impl From<&DockViewportActivationTarget> for DockViewportActivationRecord {
         Self {
             space: target.space().clone(),
             window_id: target.window().window_id(),
-            focus_item: target.focus_item().cloned(),
+            focus_request: target.focus_request().clone(),
         }
     }
 }
@@ -850,7 +850,7 @@ mod tests {
             Some(DockViewportActivationRecord {
                 space: target_space,
                 window_id: target_window.window_id(),
-                focus_item: Some(focus_item),
+                focus_request: DockViewportFocusRequest::panel(focus_item),
             })
         );
 
@@ -864,6 +864,33 @@ mod tests {
             Some(DockViewportDropOutcomeKind::Error)
         );
         assert_eq!(status.last_activation, None);
+    }
+
+    #[test]
+    fn activation_record_preserves_no_panel_focus_request() {
+        let mut status = DockViewportRuntimeStatus::default();
+        let target_space = DockSpaceId::from("target");
+        let target_window = handle(44);
+
+        status.record_drop_result(&Ok(DockViewportDropRouteOutcome::Action(
+            crate::DockViewportDropActionOutcome::new(
+                DockActionOutcome::Changed,
+                Some(DockViewportActivationTarget::new(
+                    target_space.clone(),
+                    target_window,
+                    DockViewportFocusRequest::no_panel_focus(),
+                )),
+            ),
+        )));
+
+        assert_eq!(
+            status.last_activation,
+            Some(DockViewportActivationRecord {
+                space: target_space,
+                window_id: target_window.window_id(),
+                focus_request: DockViewportFocusRequest::no_panel_focus(),
+            })
+        );
     }
 
     #[test]

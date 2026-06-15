@@ -36,7 +36,7 @@ impl DockHost {
         &mut self,
         input: DockRenderSplitInput,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {

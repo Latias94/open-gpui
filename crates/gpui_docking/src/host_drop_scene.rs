@@ -99,12 +99,12 @@ impl DockHost {
         policy: &DockPolicy,
         target_validator: Option<&crate::drop_target::DockDropTargetValidator<'_>>,
     ) -> bool {
-        let viewport_runtime = self.viewport_runtime().cloned();
+        let viewport_runtime = self.viewport_runtime().clone();
         let frame = self.interaction().viewport_host_scene_frame().cloned();
-        if let (Some(runtime), Some(frame)) = (viewport_runtime, frame)
+        if let Some(frame) = frame
             && frame.matches_viewport(self.space(), window.window_handle().window_id())
             && let Some(next_frame) =
-                runtime.push_viewport_host_scene_frame_fact(&frame, fact.clone())
+                viewport_runtime.push_viewport_host_scene_frame_fact(&frame, fact.clone())
         {
             self.interaction_mut()
                 .set_viewport_host_scene_frame(Some(next_frame));

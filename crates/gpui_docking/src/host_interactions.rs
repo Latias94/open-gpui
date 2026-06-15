@@ -129,10 +129,7 @@ impl DockHost {
     ) -> DockHostInteractionOutcome {
         let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let runtime_preview_cleared = self
-            .viewport_runtime()
-            .cloned()
-            .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
+        let runtime_preview_cleared = self.viewport_runtime().clear_routed_drop_preview(cx);
         let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
             (
                 workspace.policy().clone(),

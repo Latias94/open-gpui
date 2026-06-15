@@ -1,8 +1,8 @@
 use crate::{
     DockActionApplyError, DockController, DockDropDelivery, DockHost, DockItemId, DockSpaceId,
     DockViewportCloseOutcome, DockViewportClosePolicy, DockViewportDropRouteOutcome,
-    DockViewportDropRouteRequest, DockViewportOpenOutcome, DockViewportOpenStatus,
-    DockViewportPlacementLayout, DockViewportPlacementValidationError,
+    DockViewportDropRouteRequest, DockViewportFocusRequest, DockViewportOpenOutcome,
+    DockViewportOpenStatus, DockViewportPlacementLayout, DockViewportPlacementValidationError,
     DockViewportResolvedDropRoute, DockViewportRestoreReadiness, DockViewportRoutedDropPreview,
     DockViewportRuntime, DockViewportRuntimeStatus, DockViewportShouldCloseOutcome,
     DockViewportTearOffBeginOutcome, DockViewportTearOffCancelReason,
@@ -13,7 +13,10 @@ use crate::{
     viewport_activation::apply_viewport_activation,
     viewport_drop_scene::{DockViewportHostSceneFrame, DockViewportHostSceneRegistration},
     viewport_platform_sync::sync_reused_viewport_window,
-    viewport_runtime::{DockViewportReusableWindow, DockViewportTearOffCommitPreparation},
+    viewport_runtime::{
+        DockViewportPanelFocusState, DockViewportReusableWindow,
+        DockViewportTearOffCommitPreparation,
+    },
 };
 #[cfg(test)]
 use crate::{
@@ -117,12 +120,33 @@ impl DockViewportRuntimeHandle {
         self.runtime.borrow().runtime_status()
     }
 
-    pub(crate) fn record_window_focus(&self, window_id: WindowId) {
-        self.runtime.borrow_mut().record_window_focus(window_id);
+    pub(crate) fn focus_request_for_platform_activation(
+        &self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+        mouse_down: bool,
+    ) -> Option<DockViewportFocusRequest> {
+        self.runtime
+            .borrow_mut()
+            .focus_request_for_platform_activation(space, window_id, mouse_down)
     }
 
     pub(crate) fn record_panel_focus(&self, space: DockSpaceId, item: DockItemId) {
         self.runtime.borrow_mut().record_panel_focus(space, item);
+    }
+
+    pub(crate) fn record_no_panel_focus(&self, space: DockSpaceId) {
+        self.runtime.borrow_mut().record_no_panel_focus(space);
+    }
+
+    pub(crate) fn recorded_panel_focus_state(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<DockViewportPanelFocusState> {
+        self.runtime
+            .borrow()
+            .recorded_panel_focus_state(space)
+            .cloned()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -260,7 +284,7 @@ impl DockViewportRuntimeHandle {
         let window = cx
             .open_window(options, move |_, cx| {
                 cx.new(move |cx| {
-                    DockHost::with_viewport_runtime(controller, host_space, host_runtime, cx)
+                    DockHost::from_controller(controller, host_space, host_runtime, cx)
                 })
             })?
             .into();
@@ -292,9 +316,7 @@ impl DockViewportRuntimeHandle {
         let host_runtime = self.clone();
         let window = cx
             .open_window(options, move |_, cx| {
-                cx.new(move |cx| {
-                    DockHost::with_viewport_runtime(controller, space, host_runtime, cx)
-                })
+                cx.new(move |cx| DockHost::from_controller(controller, space, host_runtime, cx))
             })?
             .into();
 
@@ -473,6 +495,13 @@ impl DockViewportRuntimeHandle {
         self.runtime
             .borrow()
             .validate_payload_drop_delivery(delivery, cx)
+    }
+
+    pub(crate) fn record_drop_route_result(
+        &self,
+        result: &Result<DockViewportDropRouteOutcome, DockActionApplyError>,
+    ) {
+        self.runtime.borrow_mut().record_drop_route_result(result);
     }
 
     fn commit_tear_off_drop_route(

@@ -265,7 +265,7 @@ pub(crate) enum DockOutsideReleasePollDecision {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockRenderedOutsideReleaseRequest {
-    viewport_runtime_available: bool,
+    platform_viewports_allowed: bool,
     payload: Option<DockDragPayload>,
     drag_session: Option<DockRuntimeDragSession>,
     left_button_pressed: Option<bool>,
@@ -276,14 +276,14 @@ pub(crate) struct DockRenderedOutsideReleaseRequest {
 
 impl DockRenderedOutsideReleaseRequest {
     pub(crate) fn new(
-        viewport_runtime_available: bool,
+        platform_viewports_allowed: bool,
         payload: Option<DockDragPayload>,
         left_button_pressed: Option<bool>,
         host_space: DockSpaceId,
         release_position: Point<Pixels>,
     ) -> Self {
         Self {
-            viewport_runtime_available,
+            platform_viewports_allowed,
             payload,
             drag_session: None,
             left_button_pressed,
@@ -619,7 +619,7 @@ impl DockInteractionRuntime {
         &mut self,
         request: DockRenderedOutsideReleaseRequest,
     ) -> DockRenderedOutsideReleaseDecision {
-        if !request.viewport_runtime_available {
+        if !request.platform_viewports_allowed {
             return match self.cancel_outside_release_poll_session() {
                 Some(session) => DockRenderedOutsideReleaseDecision::StopDragSession(
                     session.drag_session().clone(),
@@ -648,7 +648,7 @@ impl DockInteractionRuntime {
             }
             Some(drag_session)
         } else {
-            None
+            return DockRenderedOutsideReleaseDecision::Inactive;
         };
 
         if request.left_button_pressed == Some(true) {
@@ -748,19 +748,19 @@ mod tests {
     }
 
     fn rendered_request(
-        viewport_runtime_available: bool,
+        platform_viewports_allowed: bool,
         payload: Option<DockDragPayload>,
     ) -> DockRenderedOutsideReleaseRequest {
-        rendered_request_with_button_state(viewport_runtime_available, payload, None)
+        rendered_request_with_button_state(platform_viewports_allowed, payload, None)
     }
 
     fn rendered_request_with_button_state(
-        viewport_runtime_available: bool,
+        platform_viewports_allowed: bool,
         payload: Option<DockDragPayload>,
         left_button_pressed: Option<bool>,
     ) -> DockRenderedOutsideReleaseRequest {
         DockRenderedOutsideReleaseRequest::new(
-            viewport_runtime_available,
+            platform_viewports_allowed,
             payload,
             left_button_pressed,
             DockSpaceId::from("host"),
@@ -858,8 +858,6 @@ mod tests {
     fn rendered_outside_release_requires_viewport_runtime_and_payload() {
         let mut runtime = DockInteractionRuntime::default();
         let payload = item_payload("a", "Panel A");
-        let host_space = DockSpaceId::from("host");
-        let release_position = point(px(120.0), px(80.0));
 
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(false, Some(payload.clone()))),
@@ -871,11 +869,7 @@ mod tests {
         );
         assert_eq!(
             runtime.rendered_outside_release(rendered_request(true, Some(payload.clone()))),
-            DockRenderedOutsideReleaseDecision::CommitRelease(DockPayloadDropRelease::source_only(
-                payload,
-                host_space,
-                release_position,
-            ))
+            DockRenderedOutsideReleaseDecision::Inactive
         );
     }
 

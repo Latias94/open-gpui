@@ -964,7 +964,11 @@ mod tests {
         else {
             panic!("node should be tabs");
         };
-        (items.clone(), *selected)
+        let selected_index = selected
+            .as_ref()
+            .and_then(|selected| items.iter().position(|item| item == selected))
+            .expect("tabs node should select one of its items");
+        (items.clone(), selected_index)
     }
 
     fn tab_selector(space: &str, tabs: DockNodeId, item: &str) -> String {

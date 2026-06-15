@@ -2,10 +2,13 @@
 use crate::debug::DockDebugInstrumentation;
 use crate::{
     DockActionApplyError, DockActionOutcome, DockController, DockItemId, DockSpaceId,
-    DockViewportFocusRequest, DockViewportRuntimeHandle, interaction::DockInteractionRuntime,
-    workspace::DockWorkspace,
+    DockViewportFocusRequest, DockViewportPanelFocusState, DockViewportRuntimeHandle,
+    interaction::DockInteractionRuntime, workspace::DockWorkspace,
 };
-use open_gpui::{AppContext as _, Context, Entity, FocusHandle, Pixels, Subscription, Window, px};
+use open_gpui::{
+    App, AppContext as _, Context, Entity, FocusHandle, MouseButton, Pixels, Subscription, Window,
+    px,
+};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -47,58 +50,46 @@ impl Default for DockHostOptions {
 pub struct DockHost {
     controller: Entity<DockController>,
     space: DockSpaceId,
-    viewport_runtime: Option<DockViewportRuntimeHandle>,
+    viewport_runtime: DockViewportRuntimeHandle,
     viewport_activation_subscription: Option<Subscription>,
     viewport_bounds_subscription: Option<Subscription>,
     viewport_release_subscription: Option<Subscription>,
     pending_focus_request: Option<DockViewportFocusRequest>,
     panel_focus_trackers: HashMap<DockItemId, DockPanelFocusTracker>,
-    last_focused_panel: Option<DockItemId>,
     #[cfg(test)]
     debug: DockDebugInstrumentation,
     interaction: DockInteractionRuntime,
 }
 
 impl DockHost {
-    /// Creates a host that renders one dock space from a shared controller.
+    /// Creates a host that renders one dock space from a shared controller and viewport runtime.
     pub fn from_controller(
         controller: Entity<DockController>,
         space: impl Into<DockSpaceId>,
+        viewport_runtime: DockViewportRuntimeHandle,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&controller, |_, _, cx| cx.notify()).detach();
         Self {
             controller,
             space: space.into(),
-            viewport_runtime: None,
+            viewport_runtime,
             viewport_activation_subscription: None,
             viewport_bounds_subscription: None,
             viewport_release_subscription: None,
             pending_focus_request: None,
             panel_focus_trackers: HashMap::new(),
-            last_focused_panel: None,
             #[cfg(test)]
             debug: DockDebugInstrumentation::default(),
             interaction: DockInteractionRuntime::default(),
         }
     }
 
-    pub(crate) fn with_viewport_runtime(
-        controller: Entity<DockController>,
-        space: impl Into<DockSpaceId>,
-        viewport_runtime: DockViewportRuntimeHandle,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let space = space.into();
-        let mut host = Self::from_controller(controller, space, cx);
-        host.viewport_runtime = Some(viewport_runtime);
-        host
-    }
-
     pub(crate) fn space(&self) -> &DockSpaceId {
         &self.space
     }
 
+    #[cfg(test)]
     pub(crate) fn controller(&self) -> &Entity<DockController> {
         &self.controller
     }
@@ -140,8 +131,8 @@ impl DockHost {
         &mut self.interaction
     }
 
-    pub(crate) fn viewport_runtime(&self) -> Option<&DockViewportRuntimeHandle> {
-        self.viewport_runtime.as_ref()
+    pub(crate) fn viewport_runtime(&self) -> &DockViewportRuntimeHandle {
+        &self.viewport_runtime
     }
 
     pub(crate) fn ensure_viewport_activation_subscription(
@@ -153,18 +144,23 @@ impl DockHost {
             return;
         }
 
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return;
-        };
+        let runtime = self.viewport_runtime().clone();
 
         let activation_runtime = runtime.clone();
         self.viewport_activation_subscription = Some(cx.observe_window_activation(
             window,
             move |host, window, cx| {
                 if window.is_window_active() {
-                    activation_runtime.record_window_focus(window.window_handle().window_id());
-                    let _ = host.request_viewport_focus_restore_if_idle();
-                    cx.notify();
+                    let window_id = window.window_handle().window_id();
+                    let mouse_down = any_mouse_button_pressed(cx);
+                    if let Some(request) = activation_runtime.focus_request_for_platform_activation(
+                        host.space(),
+                        window_id,
+                        mouse_down,
+                    ) && host.request_viewport_focus(request)
+                    {
+                        cx.notify();
+                    }
                 }
             },
         ));
@@ -179,9 +175,7 @@ impl DockHost {
             return;
         }
 
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return;
-        };
+        let runtime = self.viewport_runtime().clone();
 
         self.viewport_bounds_subscription =
             Some(cx.observe_window_bounds(window, move |_, window, cx| {
@@ -198,9 +192,7 @@ impl DockHost {
             return;
         }
 
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return;
-        };
+        let runtime = self.viewport_runtime().clone();
 
         self.viewport_release_subscription =
             Some(cx.on_release_in(window, move |host, window, _| {
@@ -220,22 +212,15 @@ impl DockHost {
         self.request_viewport_focus(DockViewportFocusRequest::panel(item))
     }
 
-    pub(crate) fn request_viewport_focus_restore(&mut self) -> bool {
-        self.request_viewport_focus(DockViewportFocusRequest::restore_last_focused())
-    }
-
-    pub(crate) fn request_viewport_focus_restore_if_idle(&mut self) -> bool {
-        if self.pending_focus_request.is_some() || self.last_focused_panel.is_none() {
-            return false;
-        }
-        self.request_viewport_focus_restore()
+    #[cfg(test)]
+    pub(crate) fn request_no_panel_focus(&mut self) -> bool {
+        self.request_viewport_focus(DockViewportFocusRequest::no_panel_focus())
     }
 
     pub(crate) fn remember_panel_focus(&mut self, item: DockItemId, cx: &mut Context<Self>) {
         let space = self.space().clone();
-        if let Some(runtime) = self.viewport_runtime().cloned() {
-            runtime.record_panel_focus(space, item.clone());
-        }
+        self.viewport_runtime()
+            .record_panel_focus(space, item.clone());
         let controller = self.controller.clone();
         let space = self.space().clone();
         cx.update_entity(&controller, |controller, _| {
@@ -245,32 +230,35 @@ impl DockHost {
                     .refresh_tab_selected_stamp(tabs, &item);
             }
         });
-        if self.last_focused_panel.as_ref() != Some(&item) {
-            self.last_focused_panel = Some(item);
-        }
+    }
+
+    pub(crate) fn remember_no_panel_focus(&mut self) {
+        let space = self.space().clone();
+        self.viewport_runtime().record_no_panel_focus(space);
     }
 
     pub(crate) fn pending_focus_request(&self) -> Option<&DockViewportFocusRequest> {
         self.pending_focus_request.as_ref()
     }
 
-    #[cfg(test)]
-    pub(crate) fn has_pending_panel_focus(&self) -> bool {
-        matches!(
-            self.pending_focus_request,
-            Some(DockViewportFocusRequest::Panel(_))
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pending_panel_focus(&self) -> Option<&DockItemId> {
-        self.pending_focus_request
-            .as_ref()
-            .and_then(DockViewportFocusRequest::panel_item)
-    }
-
     pub(crate) fn clear_pending_focus_request(&mut self) {
         self.pending_focus_request = None;
+    }
+
+    pub(crate) fn restore_panel_focus_target(
+        &self,
+        visible_items: &[DockItemId],
+    ) -> Option<DockItemId> {
+        match self
+            .viewport_runtime()
+            .recorded_panel_focus_state(self.space())
+        {
+            Some(DockViewportPanelFocusState::Panel(item)) if visible_items.contains(&item) => {
+                Some(item)
+            }
+            Some(DockViewportPanelFocusState::Panel(_)) => None,
+            Some(DockViewportPanelFocusState::NoPanelFocus) | None => None,
+        }
     }
 
     pub(crate) fn ensure_panel_focus_tracker(
@@ -300,32 +288,6 @@ impl DockHost {
         focus_handle
     }
 
-    pub(crate) fn restore_panel_focus_target(
-        &self,
-        visible_items: &[DockItemId],
-    ) -> Option<DockItemId> {
-        self.last_focused_panel
-            .as_ref()
-            .filter(|item| visible_items.contains(item))
-            .cloned()
-    }
-
-    pub(crate) fn visible_focused_panel_item(
-        &self,
-        visible_items: &[DockItemId],
-        window: &Window,
-        cx: &open_gpui::App,
-    ) -> Option<DockItemId> {
-        visible_items.iter().find_map(|item| {
-            self.panel_focus_trackers.get(item).and_then(|tracker| {
-                tracker
-                    .focus_handle
-                    .contains_focused(window, cx)
-                    .then(|| item.clone())
-            })
-        })
-    }
-
     pub(crate) fn sync_panel_focus_trackers(
         &mut self,
         visible_items: &[DockItemId],
@@ -349,4 +311,10 @@ impl DockHost {
     pub(crate) fn debug_instrumentation_mut(&mut self) -> &mut DockDebugInstrumentation {
         &mut self.debug
     }
+}
+
+fn any_mouse_button_pressed(cx: &App) -> bool {
+    MouseButton::all()
+        .into_iter()
+        .any(|button| cx.mouse_button_is_pressed(button) == Some(true))
 }

@@ -30,7 +30,6 @@ pub(crate) struct DockHostRenderSession {
     panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
     panel_closable: HashMap<DockItemId, bool>,
-    selected_tabs: Vec<(DockNodeId, DockItemId)>,
     central_node: Option<DockNodeId>,
     central_keep_alive_when_empty: bool,
     central_passthrough_when_empty: bool,
@@ -50,7 +49,6 @@ impl DockHostRenderSession {
             panels: HashMap::new(),
             panel_titles: HashMap::new(),
             panel_closable: HashMap::new(),
-            selected_tabs: Vec::new(),
             central_node: central.and_then(|central| central.node),
             central_keep_alive_when_empty: central
                 .is_some_and(|central| central.keep_alive_when_empty),
@@ -84,7 +82,7 @@ impl DockHostRenderSession {
                 }
             }
             DockNode::Tabs { items, selected } => {
-                self.collect_tab_stack(workspace, node_id, items, selected);
+                self.collect_tab_stack(workspace, items, selected)
             }
             DockNode::Floating { child } => {
                 self.collect_subtree(workspace, *child);
@@ -97,7 +95,6 @@ impl DockHostRenderSession {
     fn collect_tab_stack(
         &mut self,
         workspace: &DockWorkspace,
-        tabs: DockNodeId,
         items: &[DockItemId],
         selected: &Option<DockItemId>,
     ) {
@@ -106,7 +103,6 @@ impl DockHostRenderSession {
         }
 
         if let Some(selected_item) = selected_tab_item(items, selected) {
-            self.selected_tabs.push((tabs, selected_item.clone()));
             self.collect_panel_registration(workspace, selected_item);
         }
     }
@@ -145,10 +141,6 @@ impl DockHostRenderSession {
 
     pub(crate) fn root(&self) -> Option<DockNodeId> {
         self.root
-    }
-
-    pub(crate) fn selected_tabs(&self) -> &[(DockNodeId, DockItemId)] {
-        &self.selected_tabs
     }
 
     pub(crate) fn node(&self, node_id: DockNodeId) -> Option<&DockNode> {
@@ -389,7 +381,6 @@ mod tests {
 
         let session = DockHostRenderSession::new(space(), &workspace);
 
-        assert_eq!(session.selected_tabs(), &[]);
         assert!(!session.panels.contains_key(&item("a")));
         assert!(!session.panels.contains_key(&item("b")));
     }

@@ -11,7 +11,7 @@ impl DockHost {
         &mut self,
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
-        Some(self.viewport_runtime()?.begin_payload_drag(payload))
+        Some(self.viewport_runtime().begin_payload_drag(payload))
     }
 
     pub(crate) fn update_payload_drag_tear_off_geometry_from_render(
@@ -19,9 +19,7 @@ impl DockHost {
         payload: &DockDragPayload,
         geometry: DockDragTearOffGeometry,
     ) -> bool {
-        let Some(runtime) = self.viewport_runtime() else {
-            return false;
-        };
+        let runtime = self.viewport_runtime();
         let Some(session) = runtime.active_payload_drag_session(payload) else {
             return false;
         };
@@ -32,15 +30,14 @@ impl DockHost {
         &self,
         payload: &DockDragPayload,
     ) -> Option<DockRuntimeDragSession> {
-        self.viewport_runtime()?
-            .active_payload_drag_session(payload)
+        self.viewport_runtime().active_payload_drag_session(payload)
     }
 
     pub(crate) fn active_payload_drag_tear_off_geometry(
         &self,
         session: Option<&DockRuntimeDragSession>,
     ) -> Option<DockDragTearOffGeometry> {
-        self.viewport_runtime()?
+        self.viewport_runtime()
             .active_payload_drag_tear_off_geometry(session)
     }
 
@@ -50,7 +47,7 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> bool {
         self.viewport_runtime()
-            .is_some_and(|runtime| runtime.finish_payload_drag_with_app(session, cx))
+            .finish_payload_drag_with_app(session, cx)
     }
 
     pub(crate) fn select_tab_from_render(

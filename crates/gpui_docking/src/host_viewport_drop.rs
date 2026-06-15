@@ -16,10 +16,7 @@ impl DockHost {
         window: &Window,
         cx: &Context<Self>,
     ) {
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            self.interaction_mut().set_viewport_host_scene_frame(None);
-            return;
-        };
+        let runtime = self.viewport_runtime().clone();
         let space = self.space().clone();
         let window_id = window.window_handle().window_id();
         if runtime.window_id_for_space(&space) != Some(window_id) {
@@ -45,11 +42,7 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let Some(runtime) = self.viewport_runtime().cloned() else {
-            return DockHostInteractionOutcome::from_session_changed(
-                self.interaction_mut().clear_drop_route_preview(),
-            );
-        };
+        let runtime = self.viewport_runtime().clone();
 
         let drag_session = self.active_payload_drag_session(payload);
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
@@ -79,41 +72,54 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
-        let runtime = self.viewport_runtime()?.clone();
+        let runtime = self.viewport_runtime().clone();
         let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
-        if let Some(delivery) = delivery {
-            let authority = delivery.release_authority_for_cached_preview(
-                release.origin(),
-                release.host_space(),
-                window.window_handle().window_id(),
-                release.payload(),
+
+        if release.origin() == DockPayloadDropReleaseOrigin::HoveredHost {
+            let result = self.commit_hovered_host_routed_payload_drop(
+                delivery,
+                &release_request,
+                release,
+                window,
+                cx,
             );
-            match authority {
-                Ok(true) => {
-                    let fresh = runtime.resolve_payload_drop_delivery(&release_request, cx);
-                    if fresh.delivery() == Some(&delivery) {
-                        let result = match runtime.validate_payload_drop_delivery(&delivery, cx) {
-                            Ok(()) => runtime.deliver_payload_drop_with_outcome(delivery, cx),
-                            Err(error) => Err(error),
-                        };
-                        if !matches!(result, Err(DockActionApplyError::DropTargetUnavailable)) {
-                            return Some(DockHostInteractionOutcome::from_routed_drop_result(
-                                result,
-                            ));
-                        }
-                    }
-                }
-                Err(error) => {
-                    return Some(DockHostInteractionOutcome::from_routed_drop_result(Err(
-                        error,
-                    )));
-                }
-                Ok(false) => {}
-            }
+            runtime.record_drop_route_result(&result);
+            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
         }
 
         let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
         Some(DockHostInteractionOutcome::from_routed_drop_result(result))
+    }
+
+    fn commit_hovered_host_routed_payload_drop(
+        &self,
+        delivery: Option<DockDropDelivery>,
+        release_request: &DockViewportDropRouteRequest,
+        release: &DockPayloadDropRelease,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Result<crate::DockViewportDropRouteOutcome, DockActionApplyError> {
+        let Some(delivery) = delivery else {
+            return Err(DockActionApplyError::DropTargetUnavailable);
+        };
+
+        if !delivery.release_authority_for_cached_preview(
+            release.origin(),
+            release.host_space(),
+            window.window_handle().window_id(),
+            release.payload(),
+        )? {
+            return Err(DockActionApplyError::DropTargetUnavailable);
+        }
+
+        let runtime = self.viewport_runtime().clone();
+        let fresh = runtime.resolve_payload_drop_delivery(release_request, cx);
+        if fresh.delivery() != Some(&delivery) {
+            return Err(DockActionApplyError::DropTargetUnavailable);
+        }
+
+        runtime.validate_payload_drop_delivery(&delivery, cx)?;
+        runtime.deliver_payload_drop_with_outcome(delivery, cx)
     }
 
     fn viewport_drop_route_request_from_release(

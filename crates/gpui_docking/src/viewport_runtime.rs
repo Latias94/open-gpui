@@ -53,7 +53,7 @@ pub(crate) struct DockViewportRuntime {
     drag_tear_off_geometry: Option<DockRuntimeDragTearOffGeometry>,
     next_drag_session_id: u64,
     owned_windows: HashSet<WindowId>,
-    focused_items: HashMap<DockSpaceId, DockItemId>,
+    focus_by_space: HashMap<DockSpaceId, DockViewportPanelFocusState>,
     close_coordinator: DockViewportCloseCoordinator,
     routed_drop_preview: DockViewportRoutedDropPreviewStore,
     status: DockViewportRuntimeStatus,
@@ -63,6 +63,12 @@ pub(crate) struct DockViewportRuntime {
 struct DockRuntimeDragTearOffGeometry {
     drag_session_id: u64,
     geometry: DockDragTearOffGeometry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DockViewportPanelFocusState {
+    Panel(DockItemId),
+    NoPanelFocus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +216,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
-            focused_items: HashMap::new(),
+            focus_by_space: HashMap::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -237,7 +243,7 @@ impl DockViewportRuntime {
             drag_tear_off_geometry: None,
             next_drag_session_id: 0,
             owned_windows: HashSet::new(),
-            focused_items: HashMap::new(),
+            focus_by_space: HashMap::new(),
             close_coordinator: DockViewportCloseCoordinator::default(),
             routed_drop_preview: DockViewportRoutedDropPreviewStore::default(),
             status: DockViewportRuntimeStatus::default(),
@@ -359,7 +365,7 @@ impl DockViewportRuntime {
         session: Option<&DockRuntimeDragSession>,
     ) -> Result<(), DockActionApplyError> {
         let Some(session) = session else {
-            return Ok(());
+            return Err(DockActionApplyError::DropDragSessionMissing);
         };
         if self.drag_session.as_ref() == Some(session) {
             return Ok(());
@@ -373,13 +379,50 @@ impl DockViewportRuntime {
         self.adapter.record_window_focus(window_id);
     }
 
+    pub(crate) fn focus_request_for_platform_activation(
+        &mut self,
+        space: &DockSpaceId,
+        window_id: WindowId,
+        mouse_down: bool,
+    ) -> Option<DockViewportFocusRequest> {
+        self.record_window_focus(window_id);
+        if mouse_down {
+            return None;
+        }
+        match self.focus_by_space.get(space) {
+            Some(DockViewportPanelFocusState::Panel(_)) => {
+                Some(DockViewportFocusRequest::restore_last_focused())
+            }
+            Some(DockViewportPanelFocusState::NoPanelFocus) => {
+                Some(DockViewportFocusRequest::no_panel_focus())
+            }
+            None => None,
+        }
+    }
+
     pub(crate) fn record_panel_focus(&mut self, space: DockSpaceId, item: DockItemId) {
-        self.focused_items.insert(space, item);
+        self.focus_by_space
+            .insert(space, DockViewportPanelFocusState::Panel(item));
+    }
+
+    pub(crate) fn record_no_panel_focus(&mut self, space: DockSpaceId) {
+        self.focus_by_space
+            .insert(space, DockViewportPanelFocusState::NoPanelFocus);
+    }
+
+    pub(crate) fn recorded_panel_focus_state(
+        &self,
+        space: &DockSpaceId,
+    ) -> Option<&DockViewportPanelFocusState> {
+        self.focus_by_space.get(space)
     }
 
     #[cfg(test)]
     pub(crate) fn recorded_panel_focus(&self, space: &DockSpaceId) -> Option<&DockItemId> {
-        self.focused_items.get(space)
+        match self.recorded_panel_focus_state(space) {
+            Some(DockViewportPanelFocusState::Panel(item)) => Some(item),
+            Some(DockViewportPanelFocusState::NoPanelFocus) | None => None,
+        }
     }
 
     fn record_space_focus(&mut self, space: &DockSpaceId) {
@@ -573,7 +616,7 @@ impl DockViewportRuntime {
         self.close_coordinator.discard_window(window_id);
         self.host_scenes.unregister_space(space);
         self.status.clear_window_references(space, window_id);
-        self.focused_items.remove(space);
+        self.focus_by_space.remove(space);
         let (_, drag_windows) = self.finish_payload_drag_for_source_space(space);
         extend_unique_windows(&mut windows, drag_windows);
         windows
@@ -746,7 +789,7 @@ impl DockViewportRuntime {
         };
 
         let target_space = target.target_space().clone();
-        let focus_request = DockViewportFocusRequest::panel_or_restore_last_focused(
+        let focus_request = DockViewportFocusRequest::panel_or_no_panel_focus(
             self.focus_item_for_payload(&payload, source_node, cx),
         );
         let action = self.controller.update(cx, |controller, cx| {
@@ -1121,10 +1164,16 @@ impl DockViewportRuntime {
     fn focus_item_for_space(&self, space: &DockSpaceId, cx: &App) -> Option<DockItemId> {
         let controller = self.controller.read(cx);
         let graph = controller.graph();
-        self.focused_items
-            .get(space)
-            .filter(|item| graph.find_item_in_space(space, item).is_some())
-            .cloned()
+        match self.focus_by_space.get(space) {
+            Some(DockViewportPanelFocusState::Panel(item))
+                if graph.find_item_in_space(space, item).is_some() =>
+            {
+                Some(item.clone())
+            }
+            Some(DockViewportPanelFocusState::Panel(_))
+            | Some(DockViewportPanelFocusState::NoPanelFocus)
+            | None => None,
+        }
     }
 
     /// Handles a GPUI window-closed notification by removing stale runtime mapping.
@@ -1208,7 +1257,7 @@ impl DockViewportRuntime {
         }
         let target_space = outcome.merge_target_space()?.clone();
         let focus_request =
-            DockViewportFocusRequest::panel_or_restore_last_focused(outcome.focus_item().cloned());
+            DockViewportFocusRequest::panel_or_no_panel_focus(outcome.focus_item().cloned());
         self.activate_viewport_for_space(&target_space, focus_request, cx)
     }
 

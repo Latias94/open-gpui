@@ -18,7 +18,7 @@ impl DockHost {
         node: DockNodeId,
         child: DockNodeId,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -41,7 +41,7 @@ impl DockHost {
         &mut self,
         container: DockFloatingContainer,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -102,7 +102,7 @@ impl DockHost {
         container: DockFloatingContainer,
         title: String,
         session: &DockHostRenderSession,
-        viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        viewport_host_scene_frame: &DockViewportHostSceneFrameSlot,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -138,14 +138,12 @@ impl DockHost {
             .cursor_pointer();
 
         if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
-            if let Some(probe) = self.render_viewport_drop_scene_fact_probe(
+            handle = handle.child(self.render_viewport_drop_scene_fact_probe(
                 viewport_host_scene_frame,
                 move |title_bounds| {
                     drop_scene_fact::floating_title_bar(floating, target_tabs, title_bounds, bounds)
                 },
-            ) {
-                handle = handle.child(probe);
-            }
+            ));
             let payload = DockDragPayload::new_floating(space.clone(), floating, title.clone());
             let drag_entity = entity.clone();
             let drag_space = space.clone();

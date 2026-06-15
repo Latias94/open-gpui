@@ -16,9 +16,10 @@ impl DockHost {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.viewport_runtime().is_none()
-            || cx.mouse_button_is_pressed(MouseButton::Left).is_none()
-        {
+        let platform_viewports_allowed = self.with_workspace(cx, |workspace| {
+            workspace.policy().allows_platform_viewports()
+        });
+        if !platform_viewports_allowed || cx.mouse_button_is_pressed(MouseButton::Left).is_none() {
             return false;
         }
         let drag_session = self.active_payload_drag_session(payload);
@@ -74,9 +75,7 @@ impl DockHost {
             DockOutsideReleasePollDecision::Stop(drag_session) => {
                 self.finish_payload_drag_session(&drag_session, cx);
                 self.clear_drop_preview_interaction();
-                if let Some(runtime) = self.viewport_runtime().cloned() {
-                    runtime.clear_routed_drop_preview(cx);
-                }
+                self.viewport_runtime().clear_routed_drop_preview(cx);
                 window.refresh();
                 false
             }

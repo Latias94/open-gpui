@@ -154,6 +154,9 @@ pub enum DockActionApplyError {
         /// Runtime drag session id recorded by the routed drop.
         session: u64,
     },
+    /// The routed drop did not come from an active runtime drag session.
+    #[error("dock drop is missing an active runtime drag session")]
+    DropDragSessionMissing,
     /// The viewport runtime could not open a platform window for a tear-off request.
     #[error("tear-off viewport open failed: {message}")]
     TearOffViewportOpenFailed {

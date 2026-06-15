@@ -1,6 +1,6 @@
 use crate::{
     DockController, DockFloatingContainer, DockGraph, DockHost, DockItemId, DockNode, DockNodeId,
-    DockSpaceId, DockWorkspace, DropZone, SplitAxis,
+    DockSpaceId, DockViewportRuntimeHandle, DockWorkspace, DropZone, SplitAxis,
     debug::DockDebugRegion,
     geometry::{self, DockDropBoxKind, DockDropBoxSet},
 };
@@ -183,8 +183,9 @@ pub(crate) fn open_controller_space(
     dock_space: DockSpaceId,
     window_size: open_gpui::Size<Pixels>,
 ) -> (WindowHandle<DockHost>, Entity<DockHost>, VisualTestContext) {
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
     let window = cx.open_window(window_size, move |_, cx| {
-        DockHost::from_controller(controller.clone(), dock_space, cx)
+        DockHost::from_controller(controller.clone(), dock_space, runtime.clone(), cx)
     });
     let host = window.root(cx).expect("window should expose DockHost root");
     cx.run_until_parked();

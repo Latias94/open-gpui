@@ -218,7 +218,7 @@ pub use viewport_close::*;
 pub(crate) use viewport_close_plan::*;
 pub(crate) use viewport_drop_authority::*;
 pub(crate) use viewport_drop_route::*;
-pub(crate) use viewport_focus::*;
+pub use viewport_focus::*;
 pub(crate) use viewport_identity::*;
 pub use viewport_open::*;
 pub use viewport_placement::*;

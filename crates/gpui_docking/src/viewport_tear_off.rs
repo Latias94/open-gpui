@@ -439,10 +439,6 @@ impl DockViewportActivationTarget {
     pub(crate) fn focus_request(&self) -> &DockViewportFocusRequest {
         &self.focus_request
     }
-
-    pub(crate) fn focus_item(&self) -> Option<&DockItemId> {
-        self.focus_request.panel_item()
-    }
 }
 
 impl DockViewportDropRouteOutcome {
@@ -459,7 +455,7 @@ impl DockViewportDropRouteOutcome {
                     Some(DockViewportActivationTarget::new(
                         completed.pending().target_space().clone(),
                         completed.registration().window(),
-                        DockViewportFocusRequest::panel_or_restore_last_focused(
+                        DockViewportFocusRequest::panel_or_no_panel_focus(
                             completed.pending().focus_item().cloned(),
                         ),
                     ))

@@ -4,6 +4,7 @@ use crate::{
     DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
     DropZone, SplitAxis,
     debug::DockDebugRegion,
+    drag::DockDragPayload,
     drop_runtime::DockHostDropSceneFact,
     drop_target::{
         DockDropResolveSource, DockEmptySpaceDropTarget, DockLeafDropTarget,
@@ -62,6 +63,15 @@ impl MatrixPayload {
         match self {
             Self::Item => DockViewportDropPayload::Item(item("a")),
             Self::Tabs => DockViewportDropPayload::Tabs,
+        }
+    }
+
+    fn drag_payload(self, source_space: DockSpaceId, source_tabs: DockNodeId) -> DockDragPayload {
+        match self {
+            Self::Item => {
+                DockDragPayload::new_item(source_space, source_tabs, item("a"), "Panel A".into())
+            }
+            Self::Tabs => DockDragPayload::new_tabs(source_space, source_tabs, "Stack".into()),
         }
     }
 
@@ -350,17 +360,22 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
             DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
+    let drag_payload = case
+        .payload
+        .drag_payload(source_space.clone(), nodes.source_tabs);
+    let drag_session = runtime.begin_payload_drag(&drag_payload);
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_platform_signals(
+        let request = crate::DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             nodes.source_tabs,
             case.payload.drop_payload(),
             release_screen_position,
             None,
             source_release_signals,
-            app,
         )
+        .with_drag_session(Some(drag_session.clone()));
+        runtime.commit_payload_drop_from_screen(&request, app)
     });
 
     let outcome = result.unwrap_or_else(|error| {
@@ -465,17 +480,22 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
             DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
+    let drag_payload = case
+        .payload
+        .drag_payload(source_space.clone(), nodes.source_tabs);
+    let drag_session = runtime.begin_payload_drag(&drag_payload);
 
     let result = cx.update(|app| {
-        runtime.commit_payload_drop_from_screen_with_platform_signals(
+        let request = crate::DockViewportDropRouteRequest::from_platform_signals(
             source_space.clone(),
             nodes.source_tabs,
             case.payload.drop_payload(),
             release_screen_position,
             None,
             source_release_signals,
-            app,
         )
+        .with_drag_session(Some(drag_session.clone()));
+        runtime.commit_payload_drop_from_screen(&request, app)
     });
 
     let outcome = result.unwrap_or_else(|error| {
