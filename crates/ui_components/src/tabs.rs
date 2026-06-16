@@ -766,7 +766,7 @@ impl RenderOnce for Tabs {
                 .border_color(ThemeResolver::resolve(colors.shell_border()))
                 .bg(ThemeResolver::resolve(colors.shell_background()))
                 .overflow_hidden()
-                .when(is_vertical, |this| this.flex_row())
+                .when(is_vertical, |this| this.flex_row().h_full())
                 .when(!is_vertical, |this| this.flex_col())
                 .child(
                     div()
@@ -778,7 +778,9 @@ impl RenderOnce for Tabs {
                         .gap(metrics.tab_gap())
                         .p_1()
                         .border_color(ThemeResolver::resolve(colors.shell_border()))
-                        .when(is_vertical, |this| this.flex_col().border_r_1().h_full())
+                        .when(is_vertical, |this| {
+                            this.flex_col().border_r_1().h_full().overflow_y_scroll()
+                        })
                         .when(!is_vertical, |this| {
                             this.flex_row().flex_wrap().border_b_1()
                         })

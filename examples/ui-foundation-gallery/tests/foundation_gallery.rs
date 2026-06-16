@@ -249,6 +249,7 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[1].id, "workspace-tabs");
     assert_eq!(tabs[1].orientation, Orientation::Vertical);
     assert_eq!(tabs[1].activation_mode, TabsActivationMode::Manual);
+    assert_eq!(tabs[1].items.len(), 7);
     assert_eq!(tabs[1].state.selected_value(), Some("profile"));
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
     assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));

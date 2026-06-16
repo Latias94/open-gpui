@@ -14,11 +14,13 @@ status: "active"
 - Done: Completed U4 of the official component roadmap by adding `Tabs` to
   `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
   helpers, gallery dogfood, and targeted tests.
+- Done: Fixed the vertical Tabs dogfood so the left tab rail scrolls inside a constrained gallery
+  card, matching the user-reported overflow issue.
 - Done: Updated the Components gallery and verification docs to cover horizontal automatic
   activation and vertical manual activation, plus keyboard roving-focus verification.
 - Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
-  nextest run -p open-gpui-ui-foundation-gallery` passed for the Tabs slice.
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the Tabs scroll fix.
 - Done: Committed the Tabs slice as `f0dbf96 feat(ui): add Tabs roving focus slice`.
 - Next action: Start the next roadmap item (`RadioGroup` / `Toggle`).
 

@@ -4,6 +4,8 @@
 * **Update**: Completed U4 of the official component roadmap by adding `Tabs` to
   `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
   helpers, gallery dogfood, and targeted tests.
+* **Update**: Fixed the vertical Tabs dogfood so the left tab rail scrolls inside a constrained
+  gallery card, matching the user-reported overflow issue.
 * **Update**: Updated `docs/ui/component-contract.md`, `docs/verification.md`, and the foundation
   gallery samples to cover Tabs roving-focus behavior, horizontal automatic activation, and
   vertical manual activation.

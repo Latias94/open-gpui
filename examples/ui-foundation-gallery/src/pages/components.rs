@@ -566,6 +566,24 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             panel: "Connected apps and webhooks.",
             disabled: true,
         },
+        TabsItemSample {
+            value: "notifications",
+            label: "Notifications",
+            panel: "Email and product alerts.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "appearance",
+            label: "Appearance",
+            panel: "Theme and density preferences.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "advanced",
+            label: "Advanced",
+            panel: "Migration and power-user settings.",
+            disabled: false,
+        },
     ];
 
     [

@@ -67,6 +67,7 @@ cargo run -p open-gpui-ui-foundation-gallery
    read-only, placeholder, value, help, error, control-association, and roving-focus states. The
    Tabs samples should cover horizontal automatic activation and vertical manual activation; use
    arrow keys, Home/End, Enter, and Space to confirm focus movement and activation behavior. The
+   vertical sample should keep its tab rail scrollable inside the constrained gallery card. The
    default TextInput sample should accept real text editing through the controller-backed path,
    while the gallery remains scrollable and keeps focus visible when the page overflows.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p

@@ -826,7 +826,13 @@ impl GalleryShell {
                                         .text_color(rgb(0x5a6472))
                                         .child(sample.summary),
                                 )
-                                .child(tabs)
+                                .child(
+                                    div()
+                                        .when(sample.orientation == Orientation::Vertical, |this| {
+                                            this.h(px(240.0))
+                                        })
+                                        .child(tabs),
+                                )
                                 .child(component_tabs_state_row(
                                     sample.orientation,
                                     sample.activation_mode,
