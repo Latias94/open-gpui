@@ -92,6 +92,28 @@ fn package_manifest_stays_foundation_scoped() {
 }
 
 #[test]
+fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
+    let workspace_manifest = include_str!("../../../Cargo.toml");
+    let adr = include_str!("../../../docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md");
+    let component_contract = include_str!("../../../docs/ui/component-contract.md");
+
+    assert!(!workspace_manifest.contains("open-gpui-ui-headless"));
+    assert!(!workspace_manifest.contains("open_gpui_ui_headless"));
+    assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
+    assert!(adr.contains("shell, layout, and choice/search series"));
+    assert!(adr.contains("ListboxState"));
+    assert!(adr.contains("ComboboxState"));
+    assert!(adr.contains("CommandState"));
+    assert!(adr.contains("GpuiOverlayState"));
+    assert!(adr.contains("TextInputController"));
+    assert!(adr.contains("geometry/focus/a11y facades"));
+    assert!(component_contract.contains(
+        "ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint."
+    ));
+    assert!(component_contract.contains("TextInputController` is GPUI adapter code"));
+}
+
+#[test]
 fn token_page_samples_follow_theme_token_order() {
     let tokens = ThemeTokens::default();
     let samples = pages::tokens::token_samples(tokens);

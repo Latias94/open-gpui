@@ -1,6 +1,17 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR
+  0006. `open-gpui-ui-headless` remains deferred: the codebase now has real cross-family behavior
+  reuse, but extraction still needs neutral geometry/focus/a11y facades, an overlay-state split,
+  and a clear stance on GPUI-backed text editing.
+* **Update**: Added the component contract guard
+  `public_resolved_state_contracts_avoid_gpui_runtime_types`, which scans public resolved-state
+  structs for GPUI runtime/rendering/callback leaks (`Window`, `App`, `Context`, `RenderOnce`,
+  `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and `Rc<dyn` callback
+  storage). Geometry aliases remain a documented extraction blocker, not a failing gate yet.
+* **Update**: Updated `docs/ui/component-contract.md` and `docs/verification.md` with the
+  headless-readiness checkpoint, the new public-state guard, and the next extraction-prep blockers.
 * **Update**: Completed the main U7 Combobox/Command implementation for the UI shell, choice, and
   headless-readiness series. `ComboboxState` now models editable query text, grouped and
   standalone options, selected value/label metadata that survives filtering, active option

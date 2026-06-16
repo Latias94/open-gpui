@@ -11,6 +11,25 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR 0006
+  after Toolbar/Sidebar, ScrollArea/Splitter, Listbox/Select, Combobox, and Command landed. The
+  decision remains to defer `open-gpui-ui-headless`: reusable behavior is now proven across
+  overlay policy, roving focus, listbox navigation, scroll viewport intent, and splitter
+  constraints, but extraction still needs neutral geometry/focus/a11y facades, an overlay-state
+  split, and a decision on GPUI-backed text editing.
+- Done: Added a component contract guard,
+  `public_resolved_state_contracts_avoid_gpui_runtime_types`, that scans public resolved-state
+  structs for GPUI runtime/rendering/callback leaks (`Window`, `App`, `Context`, `RenderOnce`,
+  `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and `Rc<dyn` callback
+  storage). `Pixels`/geometry aliases remain a documented blocker rather than a failing gate.
+- Last verified: U8 reused the U7 final checks plus the new contract guard:
+  `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check`.
+- Next action: Commit U8, then plan extraction-prep work rather than creating
+  `open-gpui-ui-headless` immediately. The obvious next plan should split neutral geometry/a11y/
+  focus vocabulary, rename/split `GpuiOverlayState`, and classify `TextInputController` as
+  adapter-only or factor out a smaller neutral editing model.
 - Done: Continued the UI shell, choice, and headless-readiness series with U7 Combobox and
   Command. Added `Combobox`, `ComboboxState`, grouped/standalone option descriptors, editable
   query metadata, selected value/label metadata that survives filtering, active option metadata,

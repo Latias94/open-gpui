@@ -49,6 +49,13 @@ initial focus intent, and placement input without opening a GPUI window.
 The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter mapping for
 deferred priority, snap margin, anchor conversion, outside-press open-change, and Escape
 open-change without introducing a global overlay runtime.
+The `open-gpui-ui-components` public contract tests should also keep
+`public_resolved_state_contracts_avoid_gpui_runtime_types` passing. That test is the current
+headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,
+`Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and
+callback storage from entering state contracts. It intentionally does not fail on `Pixels` or
+geometry aliases yet; ADR 0006 tracks those as extraction blockers rather than a completed
+migration.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:
@@ -156,6 +163,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    metadata on icon-only and label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
+
+For headless-readiness checkpoint work, additionally review `docs/adr/0006-open-gpui-ui-headless-
+extraction-checkpoint.md` after the automated component tests pass. The checkpoint should continue
+to identify which behavior is neutral, which behavior remains GPUI adapter-owned, and why a
+standalone `open-gpui-ui-headless` crate is or is not ready.
 
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:

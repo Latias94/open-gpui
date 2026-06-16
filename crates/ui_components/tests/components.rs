@@ -1388,6 +1388,128 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 }
 
 #[test]
+fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
+    const FORBIDDEN: &[&str] = &[
+        "Window",
+        "App",
+        "Context<",
+        "RenderOnce",
+        "IntoElement",
+        "ElementId",
+        "Entity<",
+        "FocusHandle",
+        "ScrollHandle",
+        "Rc<dyn",
+    ];
+    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+        .expect("ui_components src directory should be readable")
+        .map(|entry| {
+            entry
+                .expect("source directory entry should be readable")
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect::<Vec<_>>();
+    source_files.sort();
+
+    let mut checked = 0;
+    for source_file in source_files {
+        let source = std::fs::read_to_string(&source_file)
+            .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
+        let file_name = source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+        for state in public_state_structs(&source) {
+            checked += 1;
+            let fields = uncommented_lines(state.fields);
+            for forbidden in FORBIDDEN {
+                assert!(
+                    !fields.contains(forbidden),
+                    "{file_name}::{} leaks forbidden runtime/render type `{forbidden}`",
+                    state.name
+                );
+            }
+        }
+    }
+
+    assert!(
+        checked >= 40,
+        "expected to scan all public resolved-state structs, scanned {checked}"
+    );
+}
+
+struct PublicStateStruct<'a> {
+    name: &'a str,
+    fields: &'a str,
+}
+
+fn public_state_structs(source: &str) -> Vec<PublicStateStruct<'_>> {
+    let mut states = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(relative_start) = source[search_from..].find("pub struct ") {
+        let start = search_from + relative_start;
+        let name_start = start + "pub struct ".len();
+        let name_end = source[name_start..]
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .map(|offset| name_start + offset)
+            .unwrap_or(source.len());
+        let name = &source[name_start..name_end];
+
+        search_from = name_end;
+        if !name.ends_with("State") {
+            continue;
+        }
+
+        let Some(open_brace) = source[name_end..].find('{').map(|offset| name_end + offset) else {
+            continue;
+        };
+        let Some(close_brace) = matching_brace(source, open_brace) else {
+            continue;
+        };
+
+        states.push(PublicStateStruct {
+            name,
+            fields: &source[open_brace + 1..close_brace],
+        });
+        search_from = close_brace + 1;
+    }
+
+    states
+}
+
+fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0usize;
+
+    for (offset, ch) in source[open_brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(open_brace + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn uncommented_lines(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("//") && !trimmed.starts_with("///")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
 fn sidebar_state_exposes_shell_navigation_contract() {
     let state = SidebarState::resolve(
         SidebarSide::Left,
