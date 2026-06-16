@@ -5,6 +5,7 @@
 //! This crate sits above `open-gpui-ui-core`: it renders styled GPUI elements while consuming the
 //! foundation vocabulary for sizing, tokens, accessibility, and focus.
 
+pub mod alert_dialog;
 pub mod badge;
 pub mod button;
 pub mod checkbox;
@@ -22,6 +23,7 @@ pub mod prelude;
 pub mod radio;
 pub mod roving_focus;
 pub mod scroll_area;
+pub mod sheet;
 pub mod sidebar;
 pub mod splitter;
 pub mod switch;
@@ -32,6 +34,10 @@ pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
 
+pub use alert_dialog::{
+    AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
+    AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
+};
 pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
@@ -59,6 +65,10 @@ pub use radio::{
 pub use roving_focus::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled};
 pub use scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
+};
+pub use sheet::{
+    Sheet, SheetCloseAffordance, SheetColors, SheetMetrics, SheetModalMode, SheetOpenMode,
+    SheetSide, SheetState,
 };
 pub use sidebar::{
     Sidebar, SidebarCollapseMode, SidebarColors, SidebarItem, SidebarItemDescriptor,

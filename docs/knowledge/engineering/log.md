@@ -1,6 +1,32 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed U4 of the UI shell, choice, and headless-readiness series by adding
+  `AlertDialog` and `Sheet` to `open_gpui_ui_components`.
+* **Update**: `AlertDialogState` now records required title/description text, cancel and primary
+  action metadata, destructive intent, cancel-first focus metadata, outside-press consume policy,
+  Escape policy, focus restoration, token intents, and modal layer state. The concrete adapter owns
+  GPUI focus handles, callbacks, barrier rendering, and deferred layer wiring.
+* **Update**: `SheetState` now records side, modal/non-modal mode, close affordance visibility,
+  title/description metadata, Escape/outside policy, focus restoration, token intents, and edge
+  placement metrics. Modal sheets default to dismiss-and-consume outside press; non-modal sheets
+  default to dismiss-and-pass-through.
+* **Update**: Added Overlay gallery samples for destructive/safe AlertDialog cases and left modal,
+  right non-modal, and bottom sticky Sheet cases. Gallery tests now cover the new critical-action
+  and edge-attached overlay contracts.
+* **Fix**: Fixed the modal barrier color intent to use `ColorState::ModalOverlay` instead of
+  generic overlay state so the default theme table covers Dialog, AlertDialog, and Sheet barriers.
+* **Review**: U4 subagent review found three medium-severity contract issues: render paths were
+  reporting uncontrolled overlays as controlled after runtime open changed, controlled gallery
+  samples diverged from source metadata, and initial-focus resolution could target hidden or
+  disabled affordances. The fixes split effective open from ownership mode, aligned controlled
+  sample metadata, skipped unavailable focus targets, and deferred initial focus until the overlay
+  layer is scheduled.
+* **Verification**: `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest
+  run -p open-gpui-ui-foundation-gallery` passed during the U4 implementation pass. After review
+  fixes, `cargo fmt --all`, the same two `cargo check` commands, and both focused `cargo nextest`
+  runs passed again.
 * **Update**: Added U3 Sidebar to `open_gpui_ui_components` with `SidebarState`,
   section/item descriptors, `SidebarSelection`, side/variant/collapse enums, metrics, colors, and a
   concrete GPUI adapter. The resolved state owns selection, focus, tab-stop, collapse, disabled,

@@ -3,21 +3,22 @@ use open_gpui::{
     ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px, size,
 };
 use open_gpui_ui_components::{
-    Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
+    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
+    BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
     FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
     MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Sidebar,
-    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
-    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
-    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
-    sidebar_navigation_target, toolbar_navigation_target,
+    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
+    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
+    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
+    last_enabled, menu_navigation_target, next_enabled, outside_press_open_change,
+    point_anchor_placement, sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -343,6 +344,144 @@ fn dialog_state_models_disabled_default_open_and_policy_overrides() {
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn alert_dialog_state_records_required_actions_and_destructive_intent() {
+    let state = AlertDialog::new(
+        "delete-project",
+        "Delete project",
+        "Delete this project?",
+        "This action permanently removes project data.",
+        "Delete",
+    )
+    .cancel_label("Keep project")
+    .intent(AlertDialogIntent::Destructive)
+    .open(true)
+    .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), AlertDialogOpenMode::Controlled);
+    assert_eq!(state.title(), "Delete this project?");
+    assert_eq!(
+        state.description(),
+        "This action permanently removes project data."
+    );
+    assert_eq!(state.content_role(), Role::AlertDialog);
+    assert_eq!(state.intent(), AlertDialogIntent::Destructive);
+    assert_eq!(state.cancel().kind(), AlertDialogActionKind::Cancel);
+    assert_eq!(state.cancel().label(), "Keep project");
+    assert!(state.cancel().default_focus());
+    assert_eq!(state.action().kind(), AlertDialogActionKind::Action);
+    assert_eq!(state.action().label(), "Delete");
+    assert_eq!(state.action().variant(), ButtonVariant::Destructive);
+    assert!(!state.action().default_focus());
+    assert_eq!(
+        state.colors().action_background().token(),
+        semantic::DESTRUCTIVE
+    );
+}
+
+#[test]
+fn alert_dialog_state_blocks_underlay_and_restores_focus_to_trigger() {
+    let state = AlertDialog::new(
+        "confirm",
+        "Open",
+        "Archive item?",
+        "It can be restored.",
+        "Archive",
+    )
+    .default_open(true)
+    .state();
+
+    assert_eq!(state.open_mode(), AlertDialogOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.open());
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert!(state.trigger_selected());
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Modal);
+    assert!(state.overlay().layer_state().blocks_underlay_input());
+    assert_eq!(state.outside_press_policy(), OutsidePressPolicy::Consume);
+    assert!(!state.outside_press_policy().resolve().dismisses());
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Dismiss);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
+    assert_eq!(state.colors().barrier().token(), semantic::MODAL_OVERLAY);
+}
+
+#[test]
+fn sheet_state_records_side_modal_mode_size_and_close_affordance() {
+    let state = Sheet::new(
+        "settings-sheet",
+        "Open settings",
+        "Settings",
+        "Configure workspace",
+    )
+    .description("Workspace preferences")
+    .default_open(true)
+    .side(SheetSide::Left)
+    .state();
+
+    assert_eq!(state.open_mode(), SheetOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.open());
+    assert_eq!(state.side(), SheetSide::Left);
+    assert!(state.side().is_horizontal());
+    assert_eq!(state.modal_mode(), SheetModalMode::Modal);
+    assert_eq!(state.close_affordance(), SheetCloseAffordance::Visible);
+    assert!(state.close_affordance().visible());
+    assert_eq!(state.title(), "Settings");
+    assert_eq!(state.description(), Some("Workspace preferences"));
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Dialog);
+    assert!(state.trigger_selected());
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Modal);
+    assert!(state.overlay().layer_state().blocks_underlay_input());
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert!(state.outside_press_policy().resolve().dismisses());
+    assert_eq!(state.colors().surface().token(), semantic::SURFACE);
+    assert!(state.metrics().surface_size() > px(0.0));
+}
+
+#[test]
+fn sheet_state_models_non_modal_and_explicit_dismiss_policy() {
+    let state = Sheet::new(
+        "bottom-sheet",
+        "Open details",
+        "Details",
+        "Non-modal information",
+    )
+    .open(true)
+    .side(SheetSide::Bottom)
+    .modal_mode(SheetModalMode::NonModal)
+    .close_affordance(SheetCloseAffordance::Hidden)
+    .outside_press_policy(OutsidePressPolicy::Ignore)
+    .escape_key_policy(EscapeKeyPolicy::Ignore)
+    .initial_focus_intent(InitialFocusIntent::None)
+    .focus_restore_intent(FocusRestoreIntent::None)
+    .small()
+    .state();
+
+    assert_eq!(state.open_mode(), SheetOpenMode::Controlled);
+    assert!(state.open());
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.side(), SheetSide::Bottom);
+    assert!(!state.side().is_horizontal());
+    assert_eq!(state.modal_mode(), SheetModalMode::NonModal);
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert!(!state.overlay().layer_state().blocks_underlay_input());
+    assert_eq!(state.close_affordance(), SheetCloseAffordance::Hidden);
+    assert!(!state.close_affordance().visible());
+    assert_eq!(state.outside_press_policy(), OutsidePressPolicy::Ignore);
+    assert!(!state.overlay().wants_outside_press_handler());
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Ignore);
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
 }
 
 #[test]
@@ -1090,12 +1229,28 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
 
     let root_button = root::Button::new("save", "Save");
+    let root_alert_dialog = root::AlertDialog::new(
+        "delete",
+        "Delete",
+        "Delete item?",
+        "This removes it.",
+        "Delete",
+    );
+    let root_sheet = root::Sheet::new("sheet", "Open sheet", "Sheet", "Sheet content");
     let root_sidebar = root::Sidebar::new("sidebar", "Primary navigation");
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_alert_dialog = prelude::AlertDialog::new(
+        "delete",
+        "Delete",
+        "Delete item?",
+        "This removes it.",
+        "Delete",
+    );
+    let prelude_sheet = prelude::Sheet::new("sheet", "Open sheet", "Sheet", "Sheet content");
     let prelude_sidebar = prelude::Sidebar::new("sidebar", "Primary navigation");
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
@@ -1104,12 +1259,16 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 
     let _ = (
         root_button.state(),
+        root_alert_dialog.state(),
+        root_sheet.state(),
         root_sidebar.state(),
         root_toolbar.state(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
         prelude_button.state(),
+        prelude_alert_dialog.state(),
+        prelude_sheet.state(),
         prelude_sidebar.state(),
         prelude_toolbar.state(),
         prelude_scroll.state(),
@@ -1527,6 +1686,33 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .item(MenuItem::action("open", "Open"))
             .state(),
     ];
+    let alert_dialogs = [
+        AlertDialog::new(
+            "alert",
+            "Open",
+            "Confirm",
+            "Continue with changes.",
+            "Continue",
+        )
+        .open(true)
+        .state(),
+        AlertDialog::new(
+            "danger-alert",
+            "Delete",
+            "Delete item?",
+            "This removes it.",
+            "Delete",
+        )
+        .intent(AlertDialogIntent::Destructive)
+        .open(true)
+        .state(),
+    ];
+    let sheets = [
+        Sheet::new("sheet", "Open sheet", "Sheet", "Sheet content")
+            .open(true)
+            .state(),
+        Sheet::new("closed-sheet", "Closed sheet", "Closed", "Closed content").state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -1660,6 +1846,54 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.trigger_hover_background(),
             colors.trigger_foreground(),
             colors.trigger_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in alert_dialogs {
+        let colors = state.colors();
+        for intent in [
+            colors.barrier(),
+            colors.surface(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.trigger_background(),
+            colors.trigger_hover_background(),
+            colors.trigger_foreground(),
+            colors.trigger_border(),
+            colors.action_background(),
+            colors.action_hover_background(),
+            colors.action_foreground(),
+            colors.action_border(),
+            colors.cancel_background(),
+            colors.cancel_hover_background(),
+            colors.cancel_foreground(),
+            colors.cancel_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in sheets {
+        let colors = state.colors();
+        for intent in [
+            colors.barrier(),
+            colors.surface(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.trigger_background(),
+            colors.trigger_hover_background(),
+            colors.trigger_foreground(),
+            colors.trigger_border(),
+            colors.close_background(),
+            colors.close_hover_background(),
+            colors.close_foreground(),
+            colors.close_border(),
             colors.focus_ring(),
         ] {
             assert_theme_has_exact_color(theme, intent);

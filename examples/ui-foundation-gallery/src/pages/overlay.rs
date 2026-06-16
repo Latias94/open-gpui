@@ -4,9 +4,10 @@ use open_gpui::{Pixels, point, px, size};
 use std::time::Duration;
 
 use open_gpui_ui_components::{
-    ContextMenu, ContextMenuState, Dialog, DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState,
-    Menu, MenuItem, MenuOpenMode, MenuState, Popover, PopoverState, Tooltip, TooltipDelayPolicy,
-    TooltipOpenIntent, TooltipState,
+    AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
+    DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, Menu, MenuItem, MenuOpenMode,
+    MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance, SheetModalMode, SheetSide,
+    SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -32,6 +33,8 @@ pub const SIGNALS: &[&str] = &[
     "TooltipState",
     "PopoverState",
     "DialogState",
+    "AlertDialogState",
+    "SheetState",
     "MenuState",
     "ContextMenuState",
     "OverlayEdges",
@@ -370,6 +373,140 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             )
             .default_open(true)
             .disabled(true)
+            .tokens(tokens)
+            .state(),
+        },
+    ]
+}
+
+/// Alert dialog sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlertDialogSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Alert dialog title.
+    pub title: &'static str,
+    /// Alert dialog description.
+    pub description: &'static str,
+    /// Primary action label.
+    pub action_label: &'static str,
+    /// Resolved alert dialog state.
+    pub state: AlertDialogState,
+}
+
+/// Returns deterministic alert dialog samples for gallery dogfood.
+pub fn alert_dialog_samples(tokens: ThemeTokens) -> [AlertDialogSample; 2] {
+    [
+        AlertDialogSample {
+            id: "destructive-confirm",
+            label: "Delete project",
+            title: "Delete this project?",
+            description: "This permanently removes project data and cannot be undone.",
+            action_label: "Delete",
+            state: AlertDialog::new(
+                "overlay-alert-dialog:destructive-confirm",
+                "Delete project",
+                "Delete this project?",
+                "This permanently removes project data and cannot be undone.",
+                "Delete",
+            )
+            .cancel_label("Keep project")
+            .intent(AlertDialogIntent::Destructive)
+            .open(false)
+            .tokens(tokens)
+            .state(),
+        },
+        AlertDialogSample {
+            id: "safe-cancel",
+            label: "Archive item",
+            title: "Archive this item?",
+            description: "The item moves out of the active list and can be restored later.",
+            action_label: "Archive",
+            state: AlertDialog::new(
+                "overlay-alert-dialog:safe-cancel",
+                "Archive item",
+                "Archive this item?",
+                "The item moves out of the active list and can be restored later.",
+                "Archive",
+            )
+            .cancel_label("Cancel")
+            .default_open(true)
+            .tokens(tokens)
+            .state(),
+        },
+    ]
+}
+
+/// Sheet sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SheetSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Sheet title.
+    pub title: &'static str,
+    /// Text shown by the sheet body.
+    pub content_text: &'static str,
+    /// Resolved sheet state.
+    pub state: SheetState,
+}
+
+/// Returns deterministic sheet samples for gallery dogfood.
+pub fn sheet_samples(tokens: ThemeTokens) -> [SheetSample; 3] {
+    [
+        SheetSample {
+            id: "left-modal",
+            label: "Left sheet",
+            title: "Workspace filters",
+            content_text: "Modal left sheet with an explicit close affordance.",
+            state: Sheet::new(
+                "overlay-sheet:left-modal",
+                "Left sheet",
+                "Workspace filters",
+                "Modal left sheet with an explicit close affordance.",
+            )
+            .description("Filter active work without leaving the page.")
+            .default_open(true)
+            .side(SheetSide::Left)
+            .tokens(tokens)
+            .state(),
+        },
+        SheetSample {
+            id: "right-non-modal",
+            label: "Right sheet",
+            title: "Inspector",
+            content_text: "Non-modal right sheet keeps underlay dispatch explicit.",
+            state: Sheet::new(
+                "overlay-sheet:right-non-modal",
+                "Right sheet",
+                "Inspector",
+                "Non-modal right sheet keeps underlay dispatch explicit.",
+            )
+            .description("Outside press dismisses while allowing underlay dispatch.")
+            .open(false)
+            .side(SheetSide::Right)
+            .modal_mode(SheetModalMode::NonModal)
+            .tokens(tokens)
+            .state(),
+        },
+        SheetSample {
+            id: "bottom-sticky",
+            label: "Bottom sheet",
+            title: "Queue details",
+            content_text: "Bottom sheet ignores outside press and hides the close control.",
+            state: Sheet::new(
+                "overlay-sheet:bottom-sticky",
+                "Bottom sheet",
+                "Queue details",
+                "Bottom sheet ignores outside press and hides the close control.",
+            )
+            .default_open(true)
+            .side(SheetSide::Bottom)
+            .close_affordance(SheetCloseAffordance::Hidden)
+            .outside_press_policy(OutsidePressPolicy::Ignore)
             .tokens(tokens)
             .state(),
         },

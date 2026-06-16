@@ -1,5 +1,9 @@
 //! Convenient re-exports for Open GPUI UI components.
 
+pub use crate::alert_dialog::{
+    AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
+    AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
+};
 pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
@@ -29,6 +33,10 @@ pub use crate::roving_focus::{
 };
 pub use crate::scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
+};
+pub use crate::sheet::{
+    Sheet, SheetCloseAffordance, SheetColors, SheetMetrics, SheetModalMode, SheetOpenMode,
+    SheetSide, SheetState,
 };
 pub use crate::sidebar::{
     Sidebar, SidebarCollapseMode, SidebarColors, SidebarItem, SidebarItemDescriptor,

@@ -89,7 +89,15 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    closed. In the Dialog samples, open and close `Controlled modal`, confirm Escape and the modal
    barrier can close it without activating underlay controls, confirm `Default open` reports a
    blocking modal layer, confirm `Outside ignored` remains open on outside press, and confirm
-   `Disabled` stays closed. In the Menu samples, confirm arrow keys move roving focus over enabled
+   `Disabled` stays closed. In the AlertDialog samples, open `Delete project`, confirm the
+   destructive action is explicit, cancel receives the default focus, outside press is consumed
+   without dismissing, Escape closes it, and focus returns to the trigger; confirm the safe cancel
+   sample starts open and keeps the underlay blocked until an explicit action closes it. In the
+   Sheet samples, confirm the left modal sheet blocks underlay input and closes by Escape/outside
+   press/close control, the right non-modal sheet reports pass-through outside behavior without a
+   blocking modal barrier, and the
+   bottom sticky sheet is attached to the bottom edge, hides the close affordance, and ignores
+   outside press. In the Menu samples, confirm arrow keys move roving focus over enabled
    action items while skipping separators and disabled items, Enter/Space activates the focused
    action and closes the menu, Escape closes the controlled menu, and `Outside ignored` keeps its
    explicit outside policy. In the ContextMenu samples, right-click the hotspot and confirm the

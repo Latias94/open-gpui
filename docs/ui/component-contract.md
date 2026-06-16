@@ -79,7 +79,27 @@ mode, default-open state, title and description metadata, Escape policy, outside
 initial focus intent, focus restore intent, resolved metrics, token intents, and modal layer state.
 The GPUI adapter owns the barrier, concrete dialog surface, close callbacks, keyboard events,
 deferred rendering, and focus handles. Alert dialogs, nested modal stacking, and full focus-trap
-coordination remain follow-up work.
+derivatives build on this contract; nested modal stacking and full focus-trap coordination remain
+follow-up work.
+
+`AlertDialogState` is the action-critical modal derivative. It records required title and
+description text, cancel and primary action metadata, destructive intent, action disabled state,
+initial focus preference, Escape policy, outside-press policy, focus restore intent, token intents,
+and modal layer state. Alert dialogs default to consuming outside press without dismissing so the
+underlay stays inert and critical decisions require an explicit action. The primary destructive
+action is represented as metadata, while the cancel action remains the default initial focus target.
+The GPUI adapter owns concrete button rendering, callbacks, keyboard handling, deferred rendering,
+and focus handles.
+
+`SheetState` is the edge-attached overlay contract. It records controlled versus uncontrolled open
+mode, default-open state, attached side, modal versus non-modal mode, close affordance visibility,
+title and optional description metadata, Escape policy, outside-press policy, initial focus intent,
+focus restore intent, resolved metrics, token intents, and layer state. Modal sheets block underlay
+input and default to dismissing while consuming outside press. Non-modal sheets use the same
+surface anatomy while mapping to the non-modal dismissible layer kind and defaulting to
+dismiss-and-pass-through outside behavior without installing a blocking barrier. The GPUI adapter
+owns the barrier for modal sheets, edge positioning, concrete close control, callbacks, keyboard
+handling, deferred rendering, and focus handles.
 
 `MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
 controlled versus uncontrolled open mode, action and separator items, disabled item state, roving

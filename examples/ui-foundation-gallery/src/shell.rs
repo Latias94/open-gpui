@@ -8,10 +8,11 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, ContextMenu,
-    Dialog, DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label,
-    LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
-    ScrollAreaAxis, ScrollAreaState, Sidebar, SidebarItem, SidebarSection, SidebarSide,
+    AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
+    Checkbox, CheckboxState, ColorIntent, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
+    FocusRing, IconButton, IconButtonState, Label, LabelState, Menu, MenuItem, Popover,
+    PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Sheet,
+    SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide,
     SidebarState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState, Tabs,
     TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
     Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
@@ -83,6 +84,8 @@ pub struct GalleryShell {
     hovered_tooltip_sample: Option<&'static str>,
     overlay_controlled_popover_open: bool,
     overlay_controlled_dialog_open: bool,
+    overlay_controlled_alert_dialog_open: bool,
+    overlay_controlled_sheet_open: bool,
     overlay_controlled_menu_open: bool,
     overlay_controlled_context_menu_open: bool,
 }
@@ -118,6 +121,8 @@ impl GalleryShell {
             hovered_tooltip_sample: None,
             overlay_controlled_popover_open: false,
             overlay_controlled_dialog_open: false,
+            overlay_controlled_alert_dialog_open: false,
+            overlay_controlled_sheet_open: false,
             overlay_controlled_menu_open: false,
             overlay_controlled_context_menu_open: false,
         }
@@ -152,6 +157,8 @@ impl GalleryShell {
             self.hovered_tooltip_sample = None;
             self.overlay_controlled_popover_open = false;
             self.overlay_controlled_dialog_open = false;
+            self.overlay_controlled_alert_dialog_open = false;
+            self.overlay_controlled_sheet_open = false;
             self.overlay_controlled_menu_open = false;
             self.overlay_controlled_context_menu_open = false;
             cx.notify();
@@ -218,6 +225,20 @@ impl GalleryShell {
         }
     }
 
+    fn set_controlled_alert_dialog_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_alert_dialog_open != open {
+            self.overlay_controlled_alert_dialog_open = open;
+            cx.notify();
+        }
+    }
+
+    fn set_controlled_sheet_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_sheet_open != open {
+            self.overlay_controlled_sheet_open = open;
+            cx.notify();
+        }
+    }
+
     fn set_controlled_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.overlay_controlled_menu_open != open {
             self.overlay_controlled_menu_open = open;
@@ -251,6 +272,8 @@ impl Render for GalleryShell {
                     this.set_hovered_tooltip_sample(None, cx);
                     this.set_controlled_popover_open(false, cx);
                     this.set_controlled_dialog_open(false, cx);
+                    this.set_controlled_alert_dialog_open(false, cx);
+                    this.set_controlled_sheet_open(false, cx);
                     this.set_controlled_menu_open(false, cx);
                     this.set_controlled_context_menu_open(false, cx);
                 }
@@ -1919,6 +1942,8 @@ impl GalleryShell {
         let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
         let popover_samples = pages::overlay::popover_samples(snapshot.tokens);
         let dialog_samples = pages::overlay::dialog_samples(snapshot.tokens);
+        let alert_dialog_samples = pages::overlay::alert_dialog_samples(snapshot.tokens);
+        let sheet_samples = pages::overlay::sheet_samples(snapshot.tokens);
         let menu_samples = pages::overlay::menu_samples(snapshot.tokens);
         let context_menu_samples = pages::overlay::context_menu_samples(snapshot.tokens);
 
@@ -2175,6 +2200,59 @@ impl GalleryShell {
                             .child(self.render_dialog_sample_card(&dialog_samples[1], false, cx))
                             .child(self.render_dialog_sample_card(&dialog_samples[2], false, cx))
                             .child(self.render_dialog_sample_card(&dialog_samples[3], false, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("AlertDialog samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(2)
+                            .gap_3()
+                            .child(self.render_alert_dialog_sample_card(
+                                &alert_dialog_samples[0],
+                                self.overlay_controlled_alert_dialog_open,
+                                cx,
+                            ))
+                            .child(self.render_alert_dialog_sample_card(
+                                &alert_dialog_samples[1],
+                                false,
+                                cx,
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Sheet samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(3)
+                            .gap_3()
+                            .child(self.render_sheet_sample_card(&sheet_samples[0], false, cx))
+                            .child(self.render_sheet_sample_card(
+                                &sheet_samples[1],
+                                self.overlay_controlled_sheet_open,
+                                cx,
+                            ))
+                            .child(self.render_sheet_sample_card(&sheet_samples[2], false, cx)),
                     ),
             )
             .child(
@@ -2488,6 +2566,190 @@ impl GalleryShell {
                 )
             })
             .child(dialog_state_row(&state))
+    }
+
+    fn render_alert_dialog_sample_card(
+        &self,
+        sample: &pages::overlay::AlertDialogSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "destructive-confirm" {
+            AlertDialog::new(
+                format!("overlay-alert-dialog-sample:{}", sample.id),
+                sample.label,
+                sample.title,
+                sample.description,
+                sample.action_label,
+            )
+            .cancel_label(sample.state.cancel().label().to_owned())
+            .intent(sample.state.intent())
+            .open(controlled_open)
+            .outside_press_policy(sample.state.outside_press_policy())
+            .escape_key_policy(sample.state.escape_key_policy())
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let shell = cx.entity().downgrade();
+        let alert_dialog = AlertDialog::new(
+            format!("overlay-alert-dialog-demo:{}", sample_id),
+            sample.label,
+            sample.title,
+            sample.description,
+            sample.action_label,
+        )
+        .cancel_label(state.cancel().label().to_owned())
+        .intent(state.intent())
+        .disabled(state.disabled())
+        .outside_press_policy(state.outside_press_policy())
+        .escape_key_policy(state.escape_key_policy());
+        let alert_dialog = match sample_id {
+            "destructive-confirm" => {
+                alert_dialog
+                    .open(state.open())
+                    .on_open_change(move |open, _, cx| {
+                        shell
+                            .update(cx, |this, cx| {
+                                this.set_controlled_alert_dialog_open(open, cx)
+                            })
+                            .ok();
+                    })
+            }
+            "safe-cancel" => alert_dialog.default_open(state.default_open()),
+            _ => alert_dialog.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-alert-dialog-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(alert_dialog)
+            .when(sample_id == "destructive-confirm", |card| {
+                card.child(
+                    div()
+                        .id("overlay-alert-dialog-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_alert_dialog_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close alert"
+                        } else {
+                            "open alert"
+                        }),
+                )
+            })
+            .child(alert_dialog_state_row(&state))
+    }
+
+    fn render_sheet_sample_card(
+        &self,
+        sample: &pages::overlay::SheetSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "right-non-modal" {
+            Sheet::new(
+                format!("overlay-sheet-sample:{}", sample.id),
+                sample.label,
+                sample.title,
+                sample.content_text,
+            )
+            .description(
+                sample
+                    .state
+                    .description()
+                    .unwrap_or("Outside press policy is explicit."),
+            )
+            .open(controlled_open)
+            .side(sample.state.side())
+            .modal_mode(sample.state.modal_mode())
+            .outside_press_policy(sample.state.outside_press_policy())
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let shell = cx.entity().downgrade();
+        let sheet = Sheet::new(
+            format!("overlay-sheet-demo:{}", sample_id),
+            sample.label,
+            sample.title,
+            sample.content_text,
+        )
+        .disabled(state.disabled())
+        .side(state.side())
+        .modal_mode(state.modal_mode())
+        .close_affordance(state.close_affordance())
+        .outside_press_policy(state.outside_press_policy())
+        .escape_key_policy(state.escape_key_policy());
+        let sheet = if let Some(description) = state.description() {
+            sheet.description(description.to_owned())
+        } else {
+            sheet
+        };
+        let sheet = match sample_id {
+            "right-non-modal" => sheet.open(state.open()).on_open_change(move |open, _, cx| {
+                shell
+                    .update(cx, |this, cx| this.set_controlled_sheet_open(open, cx))
+                    .ok();
+            }),
+            "left-modal" => sheet.default_open(state.default_open()),
+            "bottom-sticky" => sheet.default_open(state.default_open()),
+            _ => sheet.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-sheet-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(sheet)
+            .when(sample_id == "right-non-modal", |card| {
+                card.child(
+                    div()
+                        .id("overlay-sheet-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_sheet_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close sheet"
+                        } else {
+                            "open sheet"
+                        }),
+                )
+            })
+            .child(sheet_state_row(&state))
     }
 
     fn render_menu_sample_card(
@@ -3625,6 +3887,109 @@ fn dialog_open_mode_label(mode: DialogOpenMode) -> &'static str {
         DialogOpenMode::Uncontrolled => "uncontrolled",
         DialogOpenMode::Controlled => "controlled",
     }
+}
+
+fn alert_dialog_state_row(state: &open_gpui_ui_components::AlertDialogState) -> impl IntoElement {
+    let layer_state = state.overlay().layer_state();
+    let outside = state.outside_press_policy().resolve();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / intent {}",
+            bool_label(state.open()),
+            alert_dialog_open_mode_label(state.open_mode()),
+            alert_dialog_intent_label(state.intent())
+        ))
+        .child(format!(
+            "actions: cancel {} / action {} / cancel focus {}",
+            state.cancel().label(),
+            state.action().label(),
+            bool_label(state.cancel().default_focus())
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {} / underlay {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+        .child(format!(
+            "escape: {} / blocks underlay {} / role alert {}",
+            pages::overlay::escape_key_label(state.escape_key_policy()),
+            bool_label(layer_state.blocks_underlay_input()),
+            bool_label(state.content_role() == Role::AlertDialog)
+        ))
+}
+
+fn alert_dialog_open_mode_label(mode: AlertDialogOpenMode) -> &'static str {
+    match mode {
+        AlertDialogOpenMode::Uncontrolled => "uncontrolled",
+        AlertDialogOpenMode::Controlled => "controlled",
+    }
+}
+
+fn alert_dialog_intent_label(intent: AlertDialogIntent) -> &'static str {
+    match intent {
+        AlertDialogIntent::Default => "default",
+        AlertDialogIntent::Destructive => "destructive",
+    }
+}
+
+fn sheet_state_row(state: &open_gpui_ui_components::SheetState) -> impl IntoElement {
+    let layer_state = state.overlay().layer_state();
+    let outside = state.outside_press_policy().resolve();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / side {}",
+            bool_label(state.open()),
+            sheet_open_mode_label(state.open_mode()),
+            sheet_side_label(state.side())
+        ))
+        .child(format!(
+            "surface: {} / close {} / title {}",
+            sheet_modal_mode_label(state.modal_mode()),
+            bool_label(state.close_affordance().visible()),
+            state.title()
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {} / underlay {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+        .child(format!(
+            "escape: {} / blocks underlay {} / layer {}",
+            pages::overlay::escape_key_label(state.escape_key_policy()),
+            bool_label(layer_state.blocks_underlay_input()),
+            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+        ))
+}
+
+fn sheet_open_mode_label(mode: SheetOpenMode) -> &'static str {
+    match mode {
+        SheetOpenMode::Uncontrolled => "uncontrolled",
+        SheetOpenMode::Controlled => "controlled",
+    }
+}
+
+fn sheet_side_label(side: SheetSide) -> &'static str {
+    side.as_str()
+}
+
+fn sheet_modal_mode_label(mode: SheetModalMode) -> &'static str {
+    mode.as_str()
 }
 
 fn menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {

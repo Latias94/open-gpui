@@ -1,8 +1,10 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, MenuItemKind,
-    MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, TabsActivationMode,
-    ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
+    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant,
+    DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, MenuItemKind, MenuOpenMode, PopoverOpenMode,
+    ScrollAreaAxis, ScrollResetPolicy, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -399,6 +401,128 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
     assert!(!samples[3].state.activation_enabled());
+}
+
+#[test]
+fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
+    let samples = pages::overlay::alert_dialog_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 2);
+    assert_eq!(samples[0].id, "destructive-confirm");
+    assert_eq!(
+        samples[0].state.open_mode(),
+        AlertDialogOpenMode::Controlled
+    );
+    assert!(!samples[0].state.open());
+    assert_eq!(samples[0].state.intent(), AlertDialogIntent::Destructive);
+    assert_eq!(samples[0].state.content_role(), Role::AlertDialog);
+    assert_eq!(samples[0].state.action().label(), "Delete");
+    assert_eq!(samples[0].state.cancel().label(), "Keep project");
+    assert!(samples[0].state.cancel().default_focus());
+    assert_eq!(
+        samples[0].state.outside_press_policy(),
+        OutsidePressPolicy::Consume
+    );
+    assert!(
+        !samples[0]
+            .state
+            .outside_press_policy()
+            .resolve()
+            .dismisses()
+    );
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::Modal
+    );
+
+    assert_eq!(samples[1].id, "safe-cancel");
+    assert_eq!(
+        samples[1].state.open_mode(),
+        AlertDialogOpenMode::Uncontrolled
+    );
+    assert!(samples[1].state.default_open());
+    assert!(samples[1].state.open());
+    assert_eq!(samples[1].state.intent(), AlertDialogIntent::Default);
+    assert_eq!(samples[1].state.action().label(), "Archive");
+    assert!(
+        samples[1]
+            .state
+            .overlay()
+            .layer_state()
+            .blocks_underlay_input()
+    );
+    assert_eq!(
+        samples[1].state.focus_restore_intent(),
+        &FocusRestoreIntent::Trigger
+    );
+}
+
+#[test]
+fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
+    let samples = pages::overlay::sheet_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 3);
+    assert_eq!(samples[0].id, "left-modal");
+    assert_eq!(samples[0].state.open_mode(), SheetOpenMode::Uncontrolled);
+    assert!(samples[0].state.default_open());
+    assert!(samples[0].state.open());
+    assert_eq!(samples[0].state.side(), SheetSide::Left);
+    assert_eq!(samples[0].state.modal_mode(), SheetModalMode::Modal);
+    assert_eq!(
+        samples[0].state.close_affordance(),
+        SheetCloseAffordance::Visible
+    );
+    assert_eq!(
+        samples[0].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert!(
+        samples[0]
+            .state
+            .overlay()
+            .layer_state()
+            .blocks_underlay_input()
+    );
+
+    assert_eq!(samples[1].id, "right-non-modal");
+    assert_eq!(samples[1].state.open_mode(), SheetOpenMode::Controlled);
+    assert!(!samples[1].state.open());
+    assert_eq!(samples[1].state.side(), SheetSide::Right);
+    assert_eq!(samples[1].state.modal_mode(), SheetModalMode::NonModal);
+    assert_eq!(
+        samples[1].state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert!(
+        !samples[1]
+            .state
+            .overlay()
+            .layer_state()
+            .blocks_underlay_input()
+    );
+    assert_eq!(
+        samples[1].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert!(
+        samples[1]
+            .state
+            .outside_press_policy()
+            .resolve()
+            .allows_underlay_dispatch()
+    );
+
+    assert_eq!(samples[2].id, "bottom-sticky");
+    assert_eq!(samples[2].state.side(), SheetSide::Bottom);
+    assert_eq!(
+        samples[2].state.close_affordance(),
+        SheetCloseAffordance::Hidden
+    );
+    assert_eq!(
+        samples[2].state.outside_press_policy(),
+        OutsidePressPolicy::Ignore
+    );
+    assert!(!samples[2].state.overlay().wants_outside_press_handler());
 }
 
 #[test]

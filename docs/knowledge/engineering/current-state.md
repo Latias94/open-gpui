@@ -11,6 +11,28 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U4 AlertDialog and
+  Sheet. Added `AlertDialog`, `AlertDialogState`, action metadata, destructive intent, and `Sheet`,
+  `SheetState`, side/modal/close-affordance enums to `open_gpui_ui_components`, keeping
+  critical-action and edge-attached overlay semantics in resolved state while GPUI adapters own
+  focus handles, callbacks, deferred rendering, barriers, and placement.
+- Done: AlertDialog defaults to `Role::AlertDialog`, cancel-first initial focus metadata, trigger
+  focus restore, modal underlay blocking, and outside-press consume-without-dismiss. Sheet models
+  left/right/top/bottom attachment, modal versus non-modal overlay kind, close affordance
+  visibility, and explicit outside-press policy instead of inheriting Dialog defaults.
+- Done: Added Overlay gallery AlertDialog samples for destructive confirmation and safe cancel,
+  plus Sheet samples for left modal, right non-modal, and bottom sticky behavior. Gallery tests now
+  assert critical action contracts, sheet edge/policy contracts, and visible state metadata.
+- Done: U4 subagent review found render-time state ownership drift, gallery sample contract drift,
+  and hidden/disabled initial-focus target risks. The fixes preserve uncontrolled mode when runtime
+  open changes, align controlled gallery samples with metadata, skip unavailable initial-focus
+  targets, and defer overlay initial focus until after the layer is scheduled.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest
+  run -p open-gpui-ui-foundation-gallery` passed after the U4 review fixes.
+- Next action: Commit U4, then start U5 HoverCard. AlertDialog/Sheet full focus trap traversal,
+  labelled-by/described-by relationships, animation lifecycle, sheet resizing, and part-based
+  composition APIs remain deferred.
 - Done: Continued the UI shell, choice, and headless-readiness series with U3 Sidebar. Added
   `Sidebar`, `SidebarState`, `SidebarSection`, `SidebarItem`, descriptors, selection payloads,
   side/variant/collapse enums, metrics, colors, vertical roving-focus navigation, and explicit
