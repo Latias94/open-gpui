@@ -500,6 +500,7 @@ fn components_page_samples_expose_component_metadata() {
     let radio_groups = pages::components::radio_group_samples(tokens);
     let toggles = pages::components::toggle_samples(tokens);
     let toolbars = pages::components::toolbar_samples(tokens);
+    let sidebars = pages::components::sidebar_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
@@ -602,6 +603,24 @@ fn components_page_samples_expose_component_metadata() {
     assert!(toolbars[0].state.items()[3].pressed());
     assert_eq!(toolbars[1].state.orientation(), Orientation::Vertical);
 
+    assert_eq!(sidebars.len(), 3);
+    assert_eq!(sidebars[0].id, "workspace-sidebar");
+    assert_eq!(sidebars[0].state.role(), Role::Navigation);
+    assert_eq!(sidebars[0].state.side().as_str(), "left");
+    assert_eq!(sidebars[0].state.variant().as_str(), "docked");
+    assert_eq!(sidebars[0].state.collapse_mode().as_str(), "icon");
+    assert_eq!(sidebars[0].state.selected_value(), Some("projects"));
+    assert_eq!(sidebars[0].state.focused_value(), Some("projects"));
+    assert_eq!(sidebars[0].state.sections()[0].role(), Role::Section);
+    assert_eq!(sidebars[0].state.items()[1].badge_label(), Some("12"));
+    assert!(!sidebars[0].state.items()[3].activation_enabled());
+    assert!(sidebars[1].state.icon_collapsed());
+    assert!(!sidebars[1].state.items()[0].text_visible());
+    assert_eq!(sidebars[1].state.items()[0].label(), "Home");
+    assert_eq!(sidebars[2].state.side().as_str(), "right");
+    assert!(sidebars[2].state.scrollable());
+    assert!(sidebars[2].state.items().len() > 8);
+
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
     assert_eq!(labels[0].state.control_id(), Some("email-input"));
@@ -691,6 +710,45 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
     assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));
     assert!(tabs[1].items[3].disabled);
+}
+
+#[test]
+fn components_page_sidebar_samples_expose_navigation_contract() {
+    let samples = pages::components::sidebar_samples(ThemeTokens::default());
+    let workspace = &samples[0].state;
+    let icon = &samples[1].state;
+    let long = &samples[2].state;
+
+    assert_eq!(workspace.role(), Role::Navigation);
+    assert_eq!(workspace.selected_value(), Some("projects"));
+    assert_eq!(workspace.focused_value(), Some("projects"));
+    assert_eq!(
+        workspace.navigation_target("down").map(|item| item.value()),
+        Some("inbox")
+    );
+    assert_eq!(
+        workspace
+            .activation_for_key("enter")
+            .map(|selection| selection.value().to_owned()),
+        Some("projects".to_string())
+    );
+    assert!(workspace.items().iter().any(|item| item.disabled()));
+
+    assert!(icon.icon_collapsed());
+    assert_eq!(
+        icon.metrics().resolved_width(),
+        icon.metrics().collapsed_width()
+    );
+    assert!(icon.items().iter().all(|item| !item.text_visible()));
+    assert!(icon.items().iter().all(|item| !item.label().is_empty()));
+
+    assert_eq!(long.side().as_str(), "right");
+    assert_eq!(long.focused_value(), Some("quality"));
+    assert_eq!(
+        long.navigation_target("down").map(|item| item.value()),
+        Some("alerts")
+    );
+    assert!(long.scrollable());
 }
 
 #[test]

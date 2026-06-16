@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T16:43:21Z
+timestamp: 2026-06-16T17:08:48Z
 status: "active"
 ---
 
@@ -11,6 +11,23 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U3 Sidebar. Added
+  `Sidebar`, `SidebarState`, `SidebarSection`, `SidebarItem`, descriptors, selection payloads,
+  side/variant/collapse enums, metrics, colors, vertical roving-focus navigation, and explicit
+  crate-root/prelude exports to `open_gpui_ui_components`.
+- Done: Sidebar resolved state now models expanded, icon-collapsed, and offcanvas-collapsed
+  behavior without GPUI runtime types. Icon collapse hides visible text but keeps item labels and
+  focusability; offcanvas collapse removes items from roving focus; disabled items are skipped and
+  cannot produce activation payloads.
+- Done: Added Components gallery Sidebar samples for expanded workspace navigation, icon rail, and
+  a long scrollable reports navigation, plus gallery tests for navigation metadata, roles,
+  collapse behavior, disabled skip behavior, and scrollability.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U3 Sidebar slice.
+- Next action: Commit U3 after review, then start U4 AlertDialog and Sheet. Sidebar provider
+  contexts, mobile sheet routing, nested submenus, route integration, persisted layout preferences,
+  animation lifecycle, shortcuts, and command registry integration remain deferred.
 - Done: Continued the UI shell, choice, and headless-readiness series with U2 Toolbar. Added
   `Toolbar`, `ToolbarState`, `ToolbarItem`, `ToolbarItemDescriptor`, `ToolbarItemState`, and
   `ToolbarSelection` to `open_gpui_ui_components`, keeping command grouping, item kind, disabled

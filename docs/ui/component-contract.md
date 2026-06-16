@@ -154,6 +154,30 @@ menus, shortcut rendering, command enablement policies, persisted customization,
 resolution remain app/adapter responsibilities until the command and sidebar work proves a common
 contract.
 
+## Sidebar Contract
+
+`SidebarState` describes renderer-neutral shell navigation: side, variant, collapse mode,
+effective collapsed state, accessible label, sections, flattened navigation items, disabled state,
+selected item, focused item, tab stop, scrollability, metrics, colors, and focus-ring intent. It
+keeps selection app-owned; activating an item produces a `SidebarSelection` payload but does not
+own routing or persistent preferences.
+
+Icon collapse keeps navigation items visible and focusable while hiding visible text; item labels
+remain explicit accessibility labels. Offcanvas collapse removes items from roving focus by making
+them invisible and non-focusable. `SidebarCollapseMode::None` ignores collapsed input and keeps the
+expanded width. Disabled items are skipped by the shared vertical roving-focus helper and cannot
+produce activation payloads.
+
+The GPUI `Sidebar` adapter owns focus handles, click and keyboard dispatch, concrete rendering,
+scroll handles through `ScrollArea`, and AccessKit mapping. It should expose `Role::Navigation` on
+the container, `Role::Section` for groups, explicit item labels, selected and disabled metadata,
+and set-position metadata for focusable items.
+
+Sidebar v1 is a bounded navigation primitive, not a full application shell. Provider contexts,
+mobile sheet routing, nested submenus, route integration, keyboard shortcut toggles, persisted
+layout preferences, animated offcanvas unmounting, and command registry integration remain
+follow-up work.
+
 ## Scroll Viewports
 
 `ScrollAreaState` describes renderer-neutral viewport intent: stable viewport id, axis

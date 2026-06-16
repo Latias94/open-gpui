@@ -11,8 +11,9 @@ use open_gpui_ui_components::{
     Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, ContextMenu,
     Dialog, DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label,
     LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
-    ScrollAreaAxis, ScrollAreaState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState,
-    Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
+    ScrollAreaAxis, ScrollAreaState, Sidebar, SidebarItem, SidebarSection, SidebarSide,
+    SidebarState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState, Tabs,
+    TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
     Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
     TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
@@ -586,6 +587,7 @@ impl GalleryShell {
         let radio_samples = pages::components::radio_group_samples(snapshot.tokens);
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
         let toolbar_samples = pages::components::toolbar_samples(snapshot.tokens);
+        let sidebar_samples = pages::components::sidebar_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
@@ -614,6 +616,101 @@ impl GalleryShell {
                             .flex_wrap()
                             .children(conformance_gate_cards),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Sidebar"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        sidebar_samples.into_iter().map(|sample| {
+                            let state = sample.state.clone();
+                            let mut sidebar = Sidebar::new(
+                                format!("component-sidebar:{}", sample.id),
+                                sample.title,
+                            )
+                            .side(sample.side)
+                            .variant(sample.variant)
+                            .collapse_mode(sample.collapse_mode)
+                            .collapsed(sample.collapsed)
+                            .selected(sample.selected)
+                            .with_size(sample.size)
+                            .tokens(snapshot.tokens);
+                            if let Some(focused) = sample.focused {
+                                sidebar = sidebar.focused(focused);
+                            }
+                            for section in sample.sections.iter() {
+                                let mut sidebar_section =
+                                    SidebarSection::new(section.value, section.label);
+                                for item in section.items.iter() {
+                                    let mut sidebar_item =
+                                        SidebarItem::new(item.value, item.label).icon(item.icon);
+                                    if let Some(badge) = item.badge {
+                                        sidebar_item = sidebar_item.badge(badge);
+                                    }
+                                    if let Some(action_label) = item.action_label {
+                                        sidebar_item = sidebar_item.action_label(action_label);
+                                    }
+                                    sidebar_section =
+                                        sidebar_section.item(sidebar_item.disabled(item.disabled));
+                                }
+                                sidebar = sidebar.section(sidebar_section);
+                            }
+
+                            div()
+                                .id(format!("component-sidebar-sample:{}", sample.id))
+                                .w(px(360.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.title),
+                                        )
+                                        .child(label_pill(state.collapse_mode().as_str())),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.summary),
+                                )
+                                .child(
+                                    div()
+                                        .h(px(214.0))
+                                        .flex()
+                                        .overflow_hidden()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xe2e4dc))
+                                        .bg(rgb(0xfcfcf8))
+                                        .when(sample.side == SidebarSide::Right, |this| {
+                                            this.justify_end()
+                                        })
+                                        .child(sidebar),
+                                )
+                                .child(component_sidebar_state_row(&state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -3262,6 +3359,38 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
             "h {} px {}",
             format_px(state.metrics().height()),
             format_px(state.metrics().padding_x())
+        ))
+}
+
+fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let focused = state.focused_value().unwrap_or("none");
+    let tab_stop = state.tab_stop_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {} / {}",
+            state.role(),
+            state.side().as_str(),
+            state.variant().as_str(),
+            state.collapse_mode().as_str()
+        ))
+        .child(format!(
+            "selected {} / focus {} / tab stop {}",
+            selected, focused, tab_stop
+        ))
+        .child(format!(
+            "{} sections / {} items / {} disabled / width {}",
+            state.sections().len(),
+            state.items().len(),
+            disabled_count,
+            format_px(state.metrics().resolved_width())
         ))
 }
 

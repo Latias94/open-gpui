@@ -98,7 +98,7 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, ScrollArea, Splitter, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field,
-   and Tabs samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
+   Tabs, Toolbar, and Sidebar samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
    pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
    roving-focus, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
    remain display-only. The IconButton samples should be square controls with visible focus and
@@ -119,7 +119,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
    samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
    confirm roving focus skips disabled items and separators, and use Enter/Space to activate
-   action/toggle items. The default TextInput sample should accept real text editing through the
+   action/toggle items. The Sidebar samples should expose expanded, icon-collapsed, and long
+   scrollable navigation; icon collapse should hide visible labels while keeping item labels
+   explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
+   frame without making the full Components page unscrollable. The default TextInput sample should accept real text editing through the
    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
    page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`
    panic during that navigation is a

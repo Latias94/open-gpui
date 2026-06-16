@@ -30,6 +30,12 @@ pub use crate::roving_focus::{
 pub use crate::scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
 };
+pub use crate::sidebar::{
+    Sidebar, SidebarCollapseMode, SidebarColors, SidebarItem, SidebarItemDescriptor,
+    SidebarItemState, SidebarMetrics, SidebarSection, SidebarSectionDescriptor,
+    SidebarSectionState, SidebarSelection, SidebarSide, SidebarState, SidebarVariant,
+    sidebar_navigation_target,
+};
 pub use crate::splitter::{
     Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
     SplitterPanelState, SplitterState,

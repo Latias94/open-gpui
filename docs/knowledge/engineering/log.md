@@ -1,6 +1,24 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Added U3 Sidebar to `open_gpui_ui_components` with `SidebarState`,
+  section/item descriptors, `SidebarSelection`, side/variant/collapse enums, metrics, colors, and a
+  concrete GPUI adapter. The resolved state owns selection, focus, tab-stop, collapse, disabled,
+  scrollability, and set-position metadata while the adapter owns focus handles, scroll viewport,
+  rendering, and click/key dispatch.
+* **Review**: Sidebar reference research confirmed the v1 scope should stay bounded: borrow
+  `Icon`/`Offcanvas`/`None` collapse semantics and local roving-focus patterns, but avoid
+  provider contexts, cookies, global shortcuts, mobile Sheet routing, nested submenu behavior, and
+  route integration until shell requirements are clearer.
+* **Update**: Added Components gallery Sidebar samples for expanded workspace navigation,
+  icon-collapsed rail, and long scrollable reports navigation. Component and gallery tests now
+  assert `Role::Navigation`, section roles, selected/focused/tab-stop state, disabled skip
+  behavior, icon-collapse label preservation, offcanvas focus removal, and scrollable long-menu
+  metadata.
+* **Update**: Documented the Sidebar contract and manual dogfood checklist. Verified the U3 slice
+  with `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`.
 * **Update**: Added U2 Toolbar to `open_gpui_ui_components` with `ToolbarState`,
   `ToolbarItemDescriptor`, `ToolbarItemState`, `ToolbarSelection`, and a concrete GPUI `Toolbar`
   adapter. The resolved state owns item kind, disabled/pressed state, tab-stop selection, metrics,

@@ -7,15 +7,17 @@ use open_gpui_ui_components::{
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
     FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
     MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
-    SplitterPanel, SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
+    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Sidebar,
+    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
     ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind,
     TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
     escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
     menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
-    toolbar_navigation_target,
+    sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1088,11 +1090,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
 
     let root_button = root::Button::new("save", "Save");
+    let root_sidebar = root::Sidebar::new("sidebar", "Primary navigation");
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_sidebar = prelude::Sidebar::new("sidebar", "Primary navigation");
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
@@ -1100,11 +1104,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
 
     let _ = (
         root_button.state(),
+        root_sidebar.state(),
         root_toolbar.state(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
         prelude_button.state(),
+        prelude_sidebar.state(),
         prelude_toolbar.state(),
         prelude_scroll.state(),
         prelude_splitter.state(),
@@ -1116,6 +1122,142 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             OverlayPresence::open(),
         )),
     );
+}
+
+#[test]
+fn sidebar_state_exposes_shell_navigation_contract() {
+    let state = SidebarState::resolve(
+        SidebarSide::Left,
+        SidebarVariant::Docked,
+        SidebarCollapseMode::Icon,
+        false,
+        false,
+        "Primary navigation",
+        Some("projects"),
+        None,
+        [
+            SidebarSectionDescriptor::new("workspace", "Workspace").items([
+                SidebarItemDescriptor::new("home", "Home").icon("H"),
+                SidebarItemDescriptor::new("projects", "Projects")
+                    .icon("P")
+                    .badge("12"),
+                SidebarItemDescriptor::new("archive", "Archive")
+                    .icon("A")
+                    .disabled(true),
+            ]),
+            SidebarSectionDescriptor::new("account", "Account").items([
+                SidebarItemDescriptor::new("settings", "Settings").icon("S"),
+                SidebarItemDescriptor::new("billing", "Billing")
+                    .icon("B")
+                    .action_label("new"),
+            ]),
+        ],
+        Size::Medium,
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.role(), Role::Navigation);
+    assert_eq!(state.side(), SidebarSide::Left);
+    assert_eq!(state.variant(), SidebarVariant::Docked);
+    assert_eq!(state.collapse_mode(), SidebarCollapseMode::Icon);
+    assert!(!state.collapsed());
+    assert_eq!(state.sections().len(), 2);
+    assert_eq!(state.sections()[0].role(), Role::Section);
+    assert_eq!(state.items().len(), 5);
+    assert_eq!(state.selected_value(), Some("projects"));
+    assert_eq!(state.focused_value(), Some("projects"));
+    assert_eq!(state.tab_stop_value(), Some("projects"));
+    assert!(state.items()[1].selected());
+    assert_eq!(state.items()[1].badge_label(), Some("12"));
+    assert!(!state.items()[2].activation_enabled());
+    assert_eq!(state.items()[1].role(), Role::Button);
+    assert_eq!(state.items()[1].position_in_set(), Some(2));
+    assert_eq!(state.items()[1].size_of_set(), 4);
+    assert_eq!(
+        state.navigation_target("down").map(|item| item.value()),
+        Some("settings")
+    );
+    assert_eq!(
+        state
+            .activation_for_key("enter")
+            .map(|selection| selection.value().to_owned()),
+        Some("projects".to_string())
+    );
+}
+
+#[test]
+fn sidebar_icon_collapse_keeps_accessible_items_but_hides_text() {
+    let state = Sidebar::new("app-sidebar", "Application")
+        .collapse_mode(SidebarCollapseMode::Icon)
+        .collapsed(true)
+        .selected("dashboard")
+        .section(
+            SidebarSection::new("main", "Main")
+                .item(SidebarItem::new("dashboard", "Dashboard").icon("D"))
+                .item(SidebarItem::new("inbox", "Inbox").icon("I").badge("4")),
+        )
+        .state();
+
+    assert!(state.collapsed());
+    assert!(state.icon_collapsed());
+    assert!(!state.offcanvas_collapsed());
+    assert_eq!(
+        state.metrics().resolved_width(),
+        state.metrics().collapsed_width()
+    );
+    assert_eq!(state.selected_value(), Some("dashboard"));
+    assert_eq!(state.focused_value(), Some("dashboard"));
+    assert!(state.items()[0].visible());
+    assert!(!state.items()[0].text_visible());
+    assert_eq!(state.items()[0].label(), "Dashboard");
+    assert_eq!(state.items()[1].badge_label(), Some("4"));
+}
+
+#[test]
+fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
+    let state = SidebarState::resolve(
+        SidebarSide::Right,
+        SidebarVariant::Floating,
+        SidebarCollapseMode::Offcanvas,
+        true,
+        false,
+        "Secondary navigation",
+        Some("reports"),
+        None,
+        [SidebarSectionDescriptor::new("main", "Main").items([
+            SidebarItemDescriptor::new("overview", "Overview"),
+            SidebarItemDescriptor::new("reports", "Reports"),
+        ])],
+        Size::Small,
+        ThemeTokens::default(),
+    );
+
+    assert!(state.collapsed());
+    assert!(state.offcanvas_collapsed());
+    assert_eq!(state.metrics().resolved_width(), px(0.0));
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.focused_value(), None);
+    assert_eq!(state.tab_stop_value(), None);
+    assert!(!state.items()[0].visible());
+    assert!(!state.items()[0].focusable());
+    assert!(state.activation_for_key("space").is_none());
+}
+
+#[test]
+fn sidebar_navigation_helper_skips_disabled_items() {
+    assert_eq!(
+        sidebar_navigation_target("down", 0, &[false, true, false]),
+        Some(2)
+    );
+    assert_eq!(
+        sidebar_navigation_target("up", 0, &[false, true, false]),
+        Some(2)
+    );
+    assert_eq!(
+        sidebar_navigation_target("home", 2, &[false, true, false]),
+        Some(0)
+    );
+    assert_eq!(sidebar_navigation_target("right", 0, &[false, false]), None);
 }
 
 #[test]
