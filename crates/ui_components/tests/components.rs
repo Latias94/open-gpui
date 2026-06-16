@@ -720,6 +720,34 @@ fn splitter_resize_delta_clamps_to_adjacent_min_max() {
 }
 
 #[test]
+fn splitter_runtime_fraction_overrides_still_use_resize_constraints() {
+    let state = SplitterState::resolve(
+        "runtime-editor",
+        Orientation::Horizontal,
+        Size::Medium,
+        false,
+        [
+            SplitterPanelDescriptor::new("left", 0.3)
+                .min_fraction(0.15)
+                .max_fraction(0.75),
+            SplitterPanelDescriptor::new("right", 0.7)
+                .min_fraction(0.25)
+                .max_fraction(0.85),
+        ],
+    );
+
+    let overridden = state.with_panel_fractions(&[0.45, 0.55]);
+    let grown = overridden.resized_by(0, 0.5);
+    let invalid = overridden.with_panel_fractions(&[0.2]);
+
+    assert!((overridden.panels()[0].fraction() - 0.45).abs() < 0.001);
+    assert!((overridden.panels()[1].fraction() - 0.55).abs() < 0.001);
+    assert!((grown.panels()[0].fraction() - 0.75).abs() < 0.001);
+    assert!((grown.panels()[1].fraction() - 0.25).abs() < 0.001);
+    assert_eq!(invalid, overridden);
+}
+
+#[test]
 fn splitter_collapsed_panel_uses_collapsed_fraction() {
     let state = Splitter::new("collapsed-split")
         .vertical()

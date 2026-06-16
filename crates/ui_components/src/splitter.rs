@@ -2,8 +2,9 @@
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, CursorStyle, DefiniteLength, ElementId, IntoElement, ParentElement, RenderOnce,
-    Styled, div, px, relative, rgb,
+    AnyElement, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId, Empty, Entity,
+    IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
+    relative, rgb,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size};
 
@@ -325,6 +326,76 @@ impl SplitterState {
         next.handles = resolve_handles(&next.panels, next.disabled);
         next
     }
+
+    /// Returns a new state with panel fractions overridden by runtime layout state.
+    pub fn with_panel_fractions(&self, fractions: &[f32]) -> Self {
+        if fractions.len() != self.panels.len() {
+            return self.clone();
+        }
+
+        let mut next = self.clone();
+        for (panel, fraction) in next.panels.iter_mut().zip(fractions.iter().copied()) {
+            if panel.collapsed {
+                continue;
+            }
+            panel.fraction =
+                sanitize_fraction(fraction).clamp(panel.min_fraction, panel.max_fraction);
+        }
+        normalize_panel_fractions(&mut next.panels);
+        next.handles = resolve_handles(&next.panels, next.disabled);
+        next
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SplitterRuntime {
+    panel_ids: Vec<String>,
+    panel_fractions: Vec<f32>,
+    drag_start: Option<SplitterDragStart>,
+}
+
+impl SplitterRuntime {
+    fn sync(&mut self, state: &SplitterState) {
+        let panel_ids = state
+            .panels()
+            .iter()
+            .map(|panel| panel.id().to_owned())
+            .collect::<Vec<_>>();
+
+        if self.panel_ids == panel_ids && self.panel_fractions.len() == state.panels().len() {
+            return;
+        }
+
+        self.panel_ids = panel_ids;
+        self.panel_fractions = state
+            .panels()
+            .iter()
+            .map(SplitterPanelState::fraction)
+            .collect();
+        self.drag_start = None;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SplitterDragStart {
+    origin: Point<Pixels>,
+    origin_fractions: Vec<f32>,
+    axis_length: Pixels,
+}
+
+#[derive(Clone)]
+struct SplitterDrag {
+    group_id: String,
+    handle_index: usize,
+}
+
+#[derive(Clone)]
+struct SplitterDragPreview;
+
+impl Render for SplitterDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        Empty
+    }
 }
 
 /// A concrete GPUI splitter panel.
@@ -429,12 +500,19 @@ impl Sizable for Splitter {
 }
 
 impl RenderOnce for Splitter {
-    fn render(self, _: &mut open_gpui::Window, _: &mut open_gpui::App) -> impl IntoElement {
-        let state = self.state();
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let base_state = self.state();
+        let runtime =
+            window.use_keyed_state(self.id.clone(), cx, |_, _| SplitterRuntime::default());
+        runtime.update(cx, |runtime, _| runtime.sync(&base_state));
+        let runtime_snapshot = runtime.read(cx).clone();
+        let state = base_state.with_panel_fractions(&runtime_snapshot.panel_fractions);
         let is_vertical = matches!(state.orientation(), Orientation::Vertical);
         let metrics = state.metrics();
         let handles = state.handles().to_vec();
         let panels = self.panels;
+        let runtime_for_drag = runtime.clone();
+        let drag_state = state.clone();
 
         div()
             .id(self.id)
@@ -446,6 +524,56 @@ impl RenderOnce for Splitter {
             .rounded(metrics.radius())
             .when(is_vertical, |this| this.flex_col())
             .when(!is_vertical, |this| this.flex_row())
+            .on_drag_move(move |event: &DragMoveEvent<SplitterDrag>, window, cx| {
+                let drag = event.drag(cx).clone();
+                if drag.group_id != drag_state.group_id() {
+                    return;
+                }
+
+                runtime_for_drag.update(cx, |runtime, _| {
+                    runtime.sync(&drag_state);
+
+                    let axis_length = if is_vertical {
+                        event.bounds.size.height
+                    } else {
+                        event.bounds.size.width
+                    };
+                    if axis_length.as_f32() <= EPSILON {
+                        return;
+                    }
+
+                    if runtime.drag_start.is_none() {
+                        runtime.drag_start = Some(SplitterDragStart {
+                            origin: event.event.position,
+                            origin_fractions: runtime.panel_fractions.clone(),
+                            axis_length,
+                        });
+                    }
+
+                    let Some(start) = runtime.drag_start.clone() else {
+                        return;
+                    };
+
+                    if start.axis_length.as_f32() <= EPSILON {
+                        return;
+                    }
+
+                    let delta_px = if is_vertical {
+                        event.event.position.y - start.origin.y
+                    } else {
+                        event.event.position.x - start.origin.x
+                    };
+                    let delta_fraction = delta_px.as_f32() / start.axis_length.as_f32();
+                    let origin_state = drag_state.with_panel_fractions(&start.origin_fractions);
+                    let resized = origin_state.resized_by(drag.handle_index, delta_fraction);
+                    runtime.panel_fractions = resized
+                        .panels()
+                        .iter()
+                        .map(SplitterPanelState::fraction)
+                        .collect();
+                });
+                window.refresh();
+            })
             .children(
                 panels
                     .into_iter()
@@ -455,7 +583,13 @@ impl RenderOnce for Splitter {
                         let mut elements = Vec::with_capacity(2);
                         elements.push(render_panel(panel_state, panel, is_vertical));
                         if let Some(handle) = handles.get(index) {
-                            elements.push(render_handle(handle.clone(), metrics, is_vertical));
+                            elements.push(render_handle(
+                                state.clone(),
+                                handle.clone(),
+                                runtime.clone(),
+                                metrics,
+                                is_vertical,
+                            ));
                         }
                         elements
                     }),
@@ -482,7 +616,9 @@ fn render_panel(state: SplitterPanelState, panel: SplitterPanel, is_vertical: bo
 }
 
 fn render_handle(
+    splitter_state: SplitterState,
     state: SplitterHandleState,
+    runtime: Entity<SplitterRuntime>,
     metrics: SplitterMetrics,
     is_vertical: bool,
 ) -> AnyElement {
@@ -502,6 +638,27 @@ fn render_handle(
         .justify_center()
         .cursor(cursor)
         .when(state.disabled(), |this| this.opacity(0.48))
+        .when(!state.disabled(), |this| {
+            let drag_runtime = runtime.clone();
+            let drag_state = splitter_state.clone();
+            let group_id = splitter_state.group_id().to_owned();
+            let handle_index = state.index();
+
+            this.on_drag(
+                SplitterDrag {
+                    group_id,
+                    handle_index,
+                },
+                move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    drag_runtime.update(cx, |runtime, _| {
+                        runtime.sync(&drag_state);
+                        runtime.drag_start = None;
+                    });
+                    cx.new(|_| SplitterDragPreview)
+                },
+            )
+        })
         .when(is_vertical, |this| {
             this.w_full().h(metrics.handle_hit_size())
         })

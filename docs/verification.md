@@ -106,7 +106,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport
    while the state readout reports the expected axis and reset policy. The Splitter samples should
    show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
-   and collapsed-panel metadata without changing surrounding layout. The RadioGroup samples should
+   collapsed-panel metadata, and pointer-drag resizing without changing surrounding layout. The
+   RadioGroup samples should
    cover vertical required selection and horizontal navigation that skips disabled items. The Toggle
    samples should expose button-like pressed state without behaving like a checkbox. The Tabs
    samples should cover horizontal automatic activation and vertical manual activation; use arrow

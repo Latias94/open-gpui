@@ -17,13 +17,21 @@ status: "active"
   `resized_by` so min/max delta clamping is testable without a GPUI window.
 - Done: Added Components gallery Splitter samples for horizontal workspace panes and a vertical
   collapsed/details stack, plus gallery metadata tests for panel/handle state. The concrete adapter
-  renders resolved fractions and handle affordances; pointer dragging and keyboard resizing remain
-  deferred runtime work.
+  now renders resolved fractions and handle affordances and wires local pointer dragging through a
+  keyed runtime. Drag move events are handled on the root splitter so pixel deltas are measured
+  against the full splitter bounds, then fed through `SplitterState::resized_by`; drag payloads carry
+  the group id to avoid multi-splitter cross-talk.
+- Done: Added `SplitterState::with_panel_fractions` so live runtime fractions reuse the same
+  normalization and min/max constraint path as descriptor-based state. Keyboard resizing,
+  controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
+  remain deferred.
 - Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and
-  `cargo nextest run -p open-gpui-ui-foundation-gallery` passed after the Splitter slice.
-- Next action: Either wire Splitter pointer-drag runtime on top of `SplitterState::resized_by`, or
-  move to U12 Toolbar/Sidebar now that overflow and resize primitives have first-pass contracts.
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` passed after the first Splitter slice.
+  `cargo check -p open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components`
+  passed again after the pointer-drag runtime.
+- Next action: Commit the Splitter pointer-drag runtime, then move to U12 Toolbar/Sidebar or run a
+  manual Components-gallery dogfood pass first.
 - Done: Started the layout/shell-navigation component series by adding `ScrollArea` to
   `open_gpui_ui_components`. `ScrollAreaState` records stable viewport id, axis, reset policy/key,
   size, and scrollbar metrics without storing GPUI handles; the concrete adapter owns

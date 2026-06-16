@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Wired the Splitter pointer-drag runtime. Handles start a GPUI drag, root
+  `DragMoveEvent<SplitterDrag>` handlers measure movement against the full splitter bounds, and live
+  fractions flow through `SplitterState::with_panel_fractions` plus `SplitterState::resized_by` so
+  min/max constraints stay centralized. Drag payloads include the splitter group id to prevent
+  cross-talk between multiple Splitters.
+* **Update**: Updated the Splitter contract and manual verification docs: pointer dragging is now
+  covered, while keyboard resizing, controlled resize callbacks, persisted layouts, RTL behavior,
+  and nested splitter arbitration remain follow-up work. Verified with `cargo check -p
+  open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components`.
 * **Update**: Added `Splitter` to `open_gpui_ui_components` as the second U11 layout primitive.
   The resolved state owns panel fraction normalization, min/max constraints, collapsed-panel
   metadata, handle adjacency, and delta clamping through `SplitterState::resized_by`; the GPUI

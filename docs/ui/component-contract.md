@@ -156,11 +156,14 @@ fractions, per-panel min/max bounds, collapsible/collapsed metadata, handle adja
 state, and handle metrics. The state owns the constraint solver for normalizing fractions and
 clamping handle deltas; tests should exercise those rules without a GPUI window.
 
-The GPUI `Splitter` adapter currently renders resolved panel fractions and resize handles from that
-state. It may use GPUI layout primitives and cursor styles, but it should not invent sizing rules in
-the render body. Full pointer-drag persistence, keyboard splitter resizing, and application-level
-layout storage should build on `SplitterState::resized_by` instead of duplicating min/max/collapse
-logic in adapter code.
+The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
+wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
+translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
+The adapter may use GPUI layout primitives, cursor styles, drag callbacks, and `Entity` runtime
+state, but it should not invent sizing rules in the render body. Keyboard splitter resizing,
+controlled resize callbacks, application-level layout persistence, RTL behavior, and nested
+splitter arbitration should build on `SplitterState::resized_by` instead of duplicating
+min/max/collapse logic in adapter code.
 
 ## Current Known Gaps
 
@@ -198,6 +201,7 @@ coordination, modal popover barriers, and a full reusable focus-scope runtime re
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 wheel routing, nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
-`Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata, and
-stable handle anatomy. Pointer dragging, keyboard resizing, persisted layouts, RTL behavior, and
-nested splitter arbitration remain follow-up work.
+`Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
+stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
+controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
+remain follow-up work.
