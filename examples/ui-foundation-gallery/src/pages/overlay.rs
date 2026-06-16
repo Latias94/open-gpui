@@ -4,8 +4,8 @@ use open_gpui::{Pixels, point, px, size};
 use std::time::Duration;
 
 use open_gpui_ui_components::{
-    GpuiOverlayAdapterConfig, GpuiOverlayState, Popover, PopoverState, Tooltip, TooltipDelayPolicy,
-    TooltipOpenIntent, TooltipState,
+    Dialog, DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, Popover, PopoverState,
+    Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -30,6 +30,7 @@ pub const SIGNALS: &[&str] = &[
     "FocusRestoreIntent",
     "TooltipState",
     "PopoverState",
+    "DialogState",
     "OverlayEdges",
     "OverlaySize",
 ];
@@ -277,6 +278,91 @@ pub fn popover_samples(tokens: ThemeTokens) -> [PopoverSample; 4] {
             state: Popover::new(
                 "overlay-popover:disabled",
                 "Disabled",
+                "Disabled triggers stay closed and unfocusable.",
+            )
+            .default_open(true)
+            .disabled(true)
+            .tokens(tokens)
+            .state(),
+        },
+    ]
+}
+
+/// Dialog sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DialogSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Dialog title.
+    pub title: &'static str,
+    /// Text shown by the dialog surface.
+    pub content_text: &'static str,
+    /// Resolved dialog state.
+    pub state: DialogState,
+}
+
+/// Returns deterministic dialog samples for gallery dogfood.
+pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
+    [
+        DialogSample {
+            id: "controlled-modal",
+            label: "Controlled modal",
+            title: "Controlled dialog",
+            content_text: "The gallery shell owns this modal open state.",
+            state: Dialog::new(
+                "overlay-dialog:controlled-modal",
+                "Controlled modal",
+                "Controlled dialog",
+                "The gallery shell owns this modal open state.",
+            )
+            .description("Escape and the modal barrier can close it.")
+            .open(false)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .tokens(tokens)
+            .state(),
+        },
+        DialogSample {
+            id: "default-open",
+            label: "Default open",
+            title: "Default open dialog",
+            content_text: "Uncontrolled modal initialized open.",
+            state: Dialog::new(
+                "overlay-dialog:default-open",
+                "Default open",
+                "Default open dialog",
+                "Uncontrolled modal initialized open.",
+            )
+            .default_open(true)
+            .tokens(tokens)
+            .state(),
+        },
+        DialogSample {
+            id: "outside-ignore",
+            label: "Outside ignored",
+            title: "Sticky dialog",
+            content_text: "Outside press does not dismiss this dialog.",
+            state: Dialog::new(
+                "overlay-dialog:outside-ignore",
+                "Outside ignored",
+                "Sticky dialog",
+                "Outside press does not dismiss this dialog.",
+            )
+            .open(true)
+            .outside_press_policy(OutsidePressPolicy::Ignore)
+            .tokens(tokens)
+            .state(),
+        },
+        DialogSample {
+            id: "disabled",
+            label: "Disabled",
+            title: "Disabled dialog",
+            content_text: "Disabled triggers stay closed and unfocusable.",
+            state: Dialog::new(
+                "overlay-dialog:disabled",
+                "Disabled",
+                "Disabled dialog",
                 "Disabled triggers stay closed and unfocusable.",
             )
             .default_open(true)

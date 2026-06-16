@@ -4,6 +4,7 @@ pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVarian
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use crate::color::{ColorIntent, ColorState};
+pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};

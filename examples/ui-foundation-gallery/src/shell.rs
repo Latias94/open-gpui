@@ -8,9 +8,9 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field,
-    FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState, Popover,
-    PopoverOpenMode, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode,
+    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Dialog,
+    DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState,
+    Popover, PopoverOpenMode, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode,
     TabsItem, TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState,
     Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
@@ -79,6 +79,7 @@ pub struct GalleryShell {
     overlay_open: bool,
     hovered_tooltip_sample: Option<&'static str>,
     overlay_controlled_popover_open: bool,
+    overlay_controlled_dialog_open: bool,
 }
 
 impl GalleryShell {
@@ -111,6 +112,7 @@ impl GalleryShell {
             overlay_open: false,
             hovered_tooltip_sample: None,
             overlay_controlled_popover_open: false,
+            overlay_controlled_dialog_open: false,
         }
     }
 }
@@ -142,6 +144,7 @@ impl GalleryShell {
             self.page_scroll.set_offset(point(px(0.0), px(0.0)));
             self.hovered_tooltip_sample = None;
             self.overlay_controlled_popover_open = false;
+            self.overlay_controlled_dialog_open = false;
             cx.notify();
         }
     }
@@ -198,6 +201,13 @@ impl GalleryShell {
             cx.notify();
         }
     }
+
+    fn set_controlled_dialog_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_dialog_open != open {
+            self.overlay_controlled_dialog_open = open;
+            cx.notify();
+        }
+    }
 }
 
 impl Render for GalleryShell {
@@ -217,6 +227,7 @@ impl Render for GalleryShell {
                     this.set_overlay_open(false, cx);
                     this.set_hovered_tooltip_sample(None, cx);
                     this.set_controlled_popover_open(false, cx);
+                    this.set_controlled_dialog_open(false, cx);
                 }
             }))
             .child(self.render_navigation(page, cx))
@@ -1448,6 +1459,7 @@ impl GalleryShell {
         let behavior_samples = pages::overlay::behavior_samples();
         let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
         let popover_samples = pages::overlay::popover_samples(snapshot.tokens);
+        let dialog_samples = pages::overlay::dialog_samples(snapshot.tokens);
 
         div()
             .id("gallery-overlay-page")
@@ -1678,6 +1690,32 @@ impl GalleryShell {
                             .child(self.render_popover_sample_card(&popover_samples[3], false, cx)),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Dialog samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(4)
+                            .gap_3()
+                            .child(self.render_dialog_sample_card(
+                                &dialog_samples[0],
+                                self.overlay_controlled_dialog_open,
+                                cx,
+                            ))
+                            .child(self.render_dialog_sample_card(&dialog_samples[1], false, cx))
+                            .child(self.render_dialog_sample_card(&dialog_samples[2], false, cx))
+                            .child(self.render_dialog_sample_card(&dialog_samples[3], false, cx)),
+                    ),
+            )
             .child(self.render_signal_list(snapshot.selected_page))
     }
 
@@ -1845,6 +1883,91 @@ impl GalleryShell {
                 )
             })
             .child(popover_state_row(&state))
+    }
+
+    fn render_dialog_sample_card(
+        &self,
+        sample: &pages::overlay::DialogSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "controlled-modal" {
+            Dialog::new(
+                format!("overlay-dialog-sample:{}", sample.id),
+                sample.label,
+                sample.title,
+                sample.content_text,
+            )
+            .description("Escape and the modal barrier can close it.")
+            .open(controlled_open)
+            .outside_press_policy(sample.state.outside_press_policy())
+            .escape_key_policy(sample.state.escape_key_policy())
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let label = sample.label;
+        let title = sample.title;
+        let content_text = sample.content_text;
+        let shell = cx.entity().downgrade();
+        let dialog = Dialog::new(
+            format!("overlay-dialog-demo:{}", sample_id),
+            label,
+            title,
+            content_text,
+        )
+        .disabled(state.disabled())
+        .outside_press_policy(state.outside_press_policy())
+        .escape_key_policy(state.escape_key_policy());
+        let dialog = match sample_id {
+            "controlled-modal" => dialog
+                .open(state.open())
+                .description("Escape and the modal barrier can close it.")
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
+                        .ok();
+                }),
+            "default-open" => dialog.default_open(state.default_open()),
+            _ => dialog.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-dialog-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(dialog)
+            .when(sample_id == "controlled-modal", |card| {
+                card.child(
+                    div()
+                        .id("overlay-dialog-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_dialog_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close dialog"
+                        } else {
+                            "open dialog"
+                        }),
+                )
+            })
+            .child(dialog_state_row(&state))
     }
 
     fn render_overlay_bounds(&self, label: &'static str, bounds: Rect) -> impl IntoElement {
@@ -2653,6 +2776,50 @@ fn popover_alignment_label(
         open_gpui_ui_core::OverlayPlacementAlignment::Start => "start",
         open_gpui_ui_core::OverlayPlacementAlignment::Center => "center",
         open_gpui_ui_core::OverlayPlacementAlignment::End => "end",
+    }
+}
+
+fn dialog_state_row(state: &open_gpui_ui_components::DialogState) -> impl IntoElement {
+    let layer_state = state.overlay().layer_state();
+    let outside = state.outside_press_policy().resolve();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / disabled {}",
+            bool_label(state.open()),
+            dialog_open_mode_label(state.open_mode()),
+            bool_label(state.disabled())
+        ))
+        .child(format!(
+            "title: {} / description {} / trigger selected {}",
+            state.title(),
+            bool_label(state.description().is_some()),
+            bool_label(state.trigger_selected())
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {} / underlay {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+        .child(format!(
+            "escape: {} / blocks underlay {} / layer {}",
+            pages::overlay::escape_key_label(state.escape_key_policy()),
+            bool_label(layer_state.blocks_underlay_input()),
+            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+        ))
+}
+
+fn dialog_open_mode_label(mode: DialogOpenMode) -> &'static str {
+    match mode {
+        DialogOpenMode::Uncontrolled => "uncontrolled",
+        DialogOpenMode::Controlled => "controlled",
     }
 }
 

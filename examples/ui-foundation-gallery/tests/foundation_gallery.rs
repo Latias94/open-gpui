@@ -1,7 +1,7 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, PopoverOpenMode, TabsActivationMode,
-    ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
+    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, PopoverOpenMode,
+    TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -324,6 +324,73 @@ fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
             .outside_press_policy()
             .resolve()
             .allows_underlay_dispatch()
+    );
+
+    assert_eq!(samples[3].id, "disabled");
+    assert!(samples[3].state.disabled());
+    assert!(!samples[3].state.open());
+    assert!(!samples[3].state.activation_enabled());
+}
+
+#[test]
+fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
+    let samples = pages::overlay::dialog_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 4);
+    assert_eq!(samples[0].id, "controlled-modal");
+    assert_eq!(samples[0].state.open_mode(), DialogOpenMode::Controlled);
+    assert!(!samples[0].state.open());
+    assert_eq!(samples[0].state.title(), "Controlled dialog");
+    assert_eq!(
+        samples[0].state.description(),
+        Some("Escape and the modal barrier can close it.")
+    );
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::Modal
+    );
+    assert_eq!(
+        samples[0].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert!(
+        !samples[0]
+            .state
+            .overlay()
+            .policy()
+            .layer_state()
+            .blocks_underlay_input()
+    );
+
+    assert_eq!(samples[1].id, "default-open");
+    assert_eq!(samples[1].state.open_mode(), DialogOpenMode::Uncontrolled);
+    assert!(samples[1].state.default_open());
+    assert!(samples[1].state.open());
+    assert_eq!(
+        samples[1].state.escape_key_policy(),
+        EscapeKeyPolicy::Dismiss
+    );
+    assert!(
+        samples[1]
+            .state
+            .overlay()
+            .policy()
+            .layer_state()
+            .blocks_underlay_input()
+    );
+
+    assert_eq!(samples[2].id, "outside-ignore");
+    assert!(samples[2].state.open());
+    assert_eq!(
+        samples[2].state.outside_press_policy(),
+        OutsidePressPolicy::Ignore
+    );
+    assert!(
+        !samples[2]
+            .state
+            .outside_press_policy()
+            .resolve()
+            .dismisses()
     );
 
     assert_eq!(samples[3].id, "disabled");

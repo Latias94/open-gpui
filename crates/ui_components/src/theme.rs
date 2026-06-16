@@ -7,6 +7,7 @@ use crate::badge::{BadgeColors, BadgeVariant};
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
+use crate::dialog::DialogColors;
 use crate::field::FieldColors;
 use crate::label::LabelColors;
 use crate::popover::PopoverColors;
@@ -543,6 +544,38 @@ impl ThemeResolver {
 
         PopoverColors {
             background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+            foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            trigger_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                trigger_state,
+                DEFAULT_GHOST_SURFACE,
+            ),
+            trigger_hover_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::Hover,
+                0xf1f5ee,
+            ),
+            trigger_foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            trigger_border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
+        }
+    }
+
+    pub(crate) const fn dialog_colors(tokens: ThemeTokens, open: bool) -> DialogColors {
+        let trigger_state = if open {
+            ColorState::Selected
+        } else {
+            ColorState::Default
+        };
+
+        DialogColors {
+            barrier: ColorIntent::with_state(tokens.modal_overlay, ColorState::Overlay, 0x000000),
+            surface: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
             foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
             border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
             trigger_background: ColorIntent::with_state(

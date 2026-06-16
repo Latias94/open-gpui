@@ -1,14 +1,14 @@
 use open_gpui::{Anchor, AppContext, ParentElement, div, point, px, size};
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
-    DEFAULT_OVERLAY_SAFE_MARGIN, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
-    IconButton, Label, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
-    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
-    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
-    focus_ring_shadow, gpui_anchor, last_enabled, next_enabled, outside_press_open_change,
-    point_anchor_placement,
+    DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field, FocusRing,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Popover, PopoverOpenMode,
+    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
+    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled, next_enabled,
+    outside_press_open_change, point_anchor_placement,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -280,6 +280,57 @@ fn popover_state_models_default_open_disabled_and_policy_overrides() {
         state.outside_press_policy(),
         OutsidePressPolicy::DismissAndConsume
     );
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn dialog_state_records_modal_title_and_focus_policy() {
+    let state = Dialog::new("confirm-dialog", "Open", "Confirm changes", "Body")
+        .description("This cannot be undone.")
+        .open(true)
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), DialogOpenMode::Controlled);
+    assert_eq!(state.title(), "Confirm changes");
+    assert_eq!(state.description(), Some("This cannot be undone."));
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Window);
+    assert!(state.trigger_selected());
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Modal);
+    assert!(state.overlay().layer_state().blocks_underlay_input());
+    assert_eq!(state.outside_press_policy(), OutsidePressPolicy::Consume);
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Dismiss);
+    assert_eq!(
+        state.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
+    assert_eq!(state.colors().barrier().token(), semantic::MODAL_OVERLAY);
+}
+
+#[test]
+fn dialog_state_models_disabled_default_open_and_policy_overrides() {
+    let state = Dialog::element("modal", "Open", "Blocked dialog", div().child("Rich"))
+        .default_open(true)
+        .disabled(true)
+        .outside_press_policy(OutsidePressPolicy::Ignore)
+        .escape_key_policy(EscapeKeyPolicy::Ignore)
+        .initial_focus_intent(InitialFocusIntent::None)
+        .focus_restore_intent(FocusRestoreIntent::None)
+        .small()
+        .state();
+
+    assert_eq!(state.open_mode(), DialogOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert!(!state.activation_enabled());
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.outside_press_policy(), OutsidePressPolicy::Ignore);
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Ignore);
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());

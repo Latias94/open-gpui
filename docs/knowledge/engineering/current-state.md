@@ -11,6 +11,19 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U6 of the overlay component series by adding modal `Dialog` to
+  `open-gpui-ui-components` with `DialogState`, controlled/uncontrolled open mode, default-open
+  state, title/description metadata, Escape policy, outside-press policy, initial focus and
+  focus-restore intent, modal layer state, token/metric resolution, exports, and targeted tests.
+- Done: Added Overlay gallery Dialog samples for controlled modal, default-open modal,
+  outside-ignored modal, and disabled trigger. The controlled sample is owned by gallery shell state;
+  Escape and the modal barrier can close it, while open modal layers block underlay input.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U6 Dialog work.
+- Next action: Start U7 Menu/ContextMenu on top of the shared overlay policy and Dialog/Popover
+  precedent, covering item roles, selection/disabled state, keyboard/Escape behavior, and context
+  trigger positioning.
 - Done: Completed U5 of the overlay component series by adding interactive non-modal `Popover` to
   `open-gpui-ui-components` with `PopoverState`, controlled/uncontrolled open mode, default-open
   state, trigger expanded/selected intent, outside-press policy, placement metadata, initial focus

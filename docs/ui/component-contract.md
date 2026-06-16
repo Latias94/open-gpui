@@ -70,6 +70,13 @@ and non-modal dismissible layer state. The GPUI adapter owns the concrete trigge
 `deferred`/`anchored` rendering, outside-press subscription, and focus handles. Nested popovers,
 modal popover variants, and full focus-scope coordination remain follow-up work.
 
+`DialogState` is the first modal overlay contract. It records controlled versus uncontrolled open
+mode, default-open state, title and description metadata, Escape policy, outside-press policy,
+initial focus intent, focus restore intent, resolved metrics, token intents, and modal layer state.
+The GPUI adapter owns the barrier, concrete dialog surface, close callbacks, keyboard events,
+deferred rendering, and focus handles. Alert dialogs, nested modal stacking, and full focus-trap
+coordination remain follow-up work.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

@@ -86,7 +86,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    `Default open` starts visible, `Controlled` opens and closes from its gallery control, Escape
    closes the controlled popover, outside press closes the visible popovers, and the
    `Consume outside` sample reports a consuming outside-press policy while `Disabled` remains
-   closed.
+   closed. In the Dialog samples, open and close `Controlled modal`, confirm Escape and the modal
+   barrier can close it without activating underlay controls, confirm `Default open` reports a
+   blocking modal layer, confirm `Outside ignored` remains open on outside press, and confirm
+   `Disabled` stays closed.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs samples
