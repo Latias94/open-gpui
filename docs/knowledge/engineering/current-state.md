@@ -19,8 +19,11 @@ status: "active"
 - Done: Updated `docs/ui/component-contract.md`, `docs/verification.md`, and engineering memory so
   the overlay family documents which behavior is renderer-neutral, which remains GPUI adapter
   responsibility, and what gate must be met before a future headless crate.
-- Next action: Run the final overlay-series quality pass, update memory with final verification,
-  and commit the U8 checkpoint.
+- Last verified: Final overlay-series quality pass ran `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+- Next action: Start the next official component roadmap slice from ADR 0006 follow-ups: neutralize
+  shared roving-focus helpers and remove GPUI placement leaks before reconsidering a headless crate.
 - Done: Completed U7 of the overlay component series by adding `Menu` and `ContextMenu` to
   `open-gpui-ui-components` with shared menu item descriptors, action/separator items, disabled
   item state, roving-focus navigation, keyboard activation payloads, Escape/outside policies,
