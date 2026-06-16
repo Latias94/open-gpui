@@ -20,6 +20,7 @@ pub mod overlay;
 pub mod popover;
 pub mod prelude;
 pub mod radio;
+pub mod roving_focus;
 pub mod switch;
 pub mod tabs;
 pub mod text_input;
@@ -51,11 +52,11 @@ pub use radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
 };
+pub use roving_focus::{active_index_from_str_keys, first_enabled, last_enabled, next_enabled};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
-    TabsSelection, TabsState, active_index_from_str_keys, first_enabled, last_enabled,
-    next_enabled,
+    TabsSelection, TabsState,
 };
 pub use text_input::{
     TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,

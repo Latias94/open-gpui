@@ -13,7 +13,7 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::tabs::{
+use crate::roving_focus::{
     active_index_from_str_keys, roving_navigation_target, selection_index_from_str_keys,
 };
 use crate::theme::ThemeResolver;

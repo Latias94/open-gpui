@@ -141,15 +141,16 @@ multiline input, password masking, undo/redo, and completion remains out of scop
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
 ADR 0006 keeps `open-gpui-ui-headless` deferred after the overlay checkpoint because several
-resolved state types still expose GPUI geometry or adapter placement state. The next extraction
-review should first remove those leaks, neutralize shared roving-focus helpers, and add window-free
-focus-scope / dismissible-layer tests.
+resolved state types still expose GPUI geometry or adapter placement state. Shared roving-focus
+helpers now live in `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility
+re-exports. The next extraction review should first remove the remaining GPUI placement leaks and
+add window-free focus-scope / dismissible-layer tests.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus
 contract in resolved state, with orientation, activation mode, selected/focused/tab-stop metadata,
-while the GPUI adapter owns the focus handles and `aria` wiring. `RadioGroup` reuses the same
-roving-focus helpers as `Tabs`, exposes group required/disabled metadata plus per-item
+while the GPUI adapter owns the focus handles and `aria` wiring. `RadioGroup` reuses the shared
+roving-focus helpers, exposes group required/disabled metadata plus per-item
 selected/focused/tab-stop state, and maps items through `Role::RadioButton` with `aria_selected`
 because the current AccessKit surface exposed by GPUI does not provide a separate checked
 property. `Toggle` is button-like: it exposes `pressed`, maps to `Role::Button` with

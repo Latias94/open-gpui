@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Started ADR 0006 follow-up by moving generic roving-focus helpers from `tabs.rs` into
+  `open_gpui_ui_components::roving_focus`. `Tabs` keeps compatibility re-exports, and `Menu` plus
+  `RadioGroup` now depend on the neutral behavior module instead of borrowing behavior from Tabs.
 * **Decision**: Completed the U8 headless-readiness checkpoint and added ADR 0006. The decision is
   to keep `open-gpui-ui-headless` deferred for now: the overlay family proves reusable behavior
   contracts, but several state types still expose GPUI geometry or adapter placement state. Future

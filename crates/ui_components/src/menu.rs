@@ -20,7 +20,7 @@ use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
     outside_press_open_change,
 };
-use crate::tabs::{first_enabled, last_enabled, next_enabled};
+use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
 use crate::theme::ThemeResolver;
 
 /// Menu open-state ownership.

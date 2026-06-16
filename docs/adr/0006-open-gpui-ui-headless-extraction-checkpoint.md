@@ -95,8 +95,9 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
 
 ## Follow-Up Work
 
-- Move remaining generic roving-focus helpers out of `tabs.rs` into a neutral component behavior
-  module.
+- Completed 2026-06-16: generic roving-focus helpers moved out of `tabs.rs` into
+  `open_gpui_ui_components::roving_focus`; `Tabs` keeps compatibility re-exports while `Menu` and
+  `RadioGroup` depend on the neutral module.
 - Separate renderer-neutral menu placement input from `GpuiOverlayPlacement`.
 - Add focus-scope and dismissible-layer ordering tests before implementing nested popovers,
   submenus, command dialogs, or sheets.

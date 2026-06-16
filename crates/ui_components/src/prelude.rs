@@ -24,11 +24,13 @@ pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
 };
+pub use crate::roving_focus::{
+    active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
+};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
-    TabsSelection, TabsState, active_index_from_str_keys, first_enabled, last_enabled,
-    next_enabled,
+    TabsSelection, TabsState,
 };
 pub use crate::text_input::{
     TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,

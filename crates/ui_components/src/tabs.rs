@@ -13,6 +13,10 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
 
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
+pub use crate::roving_focus::{
+    active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
+};
+use crate::roving_focus::{roving_navigation_target, selection_index_from_str_keys};
 use crate::theme::ThemeResolver;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
@@ -495,96 +499,6 @@ impl TabsState {
     /// Returns whether the state has no tabs.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
-    }
-}
-
-/// Returns the first enabled item index.
-pub fn first_enabled(disabled: &[bool]) -> Option<usize> {
-    disabled.iter().position(|disabled| !*disabled)
-}
-
-/// Returns the last enabled item index.
-pub fn last_enabled(disabled: &[bool]) -> Option<usize> {
-    disabled.iter().rposition(|disabled| !*disabled)
-}
-
-/// Returns the next enabled index from the current item.
-pub fn next_enabled(disabled: &[bool], current: usize, forward: bool, wrap: bool) -> Option<usize> {
-    let len = disabled.len();
-    if len == 0 || current >= len {
-        return None;
-    }
-
-    let is_disabled = |idx: usize| disabled.get(idx).copied().unwrap_or(false);
-
-    if wrap {
-        for step in 1..=len {
-            let idx = if forward {
-                (current + step) % len
-            } else {
-                (current + len - (step % len)) % len
-            };
-            if !is_disabled(idx) {
-                return Some(idx);
-            }
-        }
-        None
-    } else if forward {
-        ((current + 1)..len).find(|&index| !is_disabled(index))
-    } else if current > 0 {
-        (0..current).rev().find(|&index| !is_disabled(index))
-    } else {
-        None
-    }
-}
-
-/// Resolves a selected index from stable string keys.
-pub fn active_index_from_str_keys(
-    keys: &[String],
-    selected: Option<&str>,
-    disabled: &[bool],
-) -> Option<usize> {
-    selection_index_from_str_keys(keys, disabled, selected, None)
-}
-
-/// Resolves an index from primary and secondary stable string keys.
-pub(crate) fn selection_index_from_str_keys(
-    keys: &[String],
-    disabled: &[bool],
-    primary: Option<&str>,
-    secondary: Option<&str>,
-) -> Option<usize> {
-    if keys.len() != disabled.len() {
-        return first_enabled(disabled);
-    }
-
-    let is_valid = |candidate: &str| {
-        keys.iter()
-            .position(|key| key.as_str() == candidate)
-            .filter(|index| !disabled.get(*index).copied().unwrap_or(true))
-    };
-
-    primary
-        .and_then(is_valid)
-        .or_else(|| secondary.and_then(is_valid))
-        .or_else(|| first_enabled(disabled))
-}
-
-/// Resolves a roving-focus navigation target from an APG-style key name.
-pub(crate) fn roving_navigation_target(
-    orientation: Orientation,
-    key: &str,
-    current: usize,
-    disabled: &[bool],
-) -> Option<usize> {
-    match (orientation, key) {
-        (_, "home") => first_enabled(disabled),
-        (_, "end") => last_enabled(disabled),
-        (Orientation::Horizontal, "left") => next_enabled(disabled, current, false, true),
-        (Orientation::Horizontal, "right") => next_enabled(disabled, current, true, true),
-        (Orientation::Vertical, "up") => next_enabled(disabled, current, false, true),
-        (Orientation::Vertical, "down") => next_enabled(disabled, current, true, true),
-        _ => None,
     }
 }
 

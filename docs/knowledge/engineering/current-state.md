@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T02:46:46Z
+timestamp: 2026-06-16T11:47:45Z
 status: "active"
 ---
 
@@ -11,6 +11,15 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Started ADR 0006 follow-up by moving shared roving-focus helpers out of `tabs.rs` into
+  `open_gpui_ui_components::roving_focus`. `Tabs` preserves compatibility re-exports for the old
+  helper paths, while `Menu` and `RadioGroup` now depend on the neutral behavior module.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo check -p
+  open-gpui-ui-foundation-gallery` passed for this roving-focus extraction slice.
+- Next action: Separate renderer-neutral menu/context-menu placement input from
+  `GpuiOverlayPlacement`, then add window-free focus-scope and dismissible-layer ordering tests
+  before reconsidering a headless crate.
 - Done: Completed U8 of the overlay component series by adding ADR 0006
   (`docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md`). The checkpoint keeps
   `open-gpui-ui-headless` deferred: overlay components now prove repeated behavior contracts, but
