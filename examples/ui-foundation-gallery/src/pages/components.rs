@@ -3,8 +3,9 @@
 use open_gpui_ui_components::{
     Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
     Field, FieldState, IconButton, IconButtonState, Label, LabelState, RadioGroupState,
-    RadioItemDescriptor, Switch, SwitchState, TabsActivationMode, TabsItemDescriptor, TabsState,
-    TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Switch, SwitchState,
+    TabsActivationMode, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
+    ToggleState, ToggleVariant,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -30,6 +31,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TabsItem",
     "open_gpui_ui_components::TabsActivationMode",
     "open_gpui_ui_components::TabsState",
+    "open_gpui_ui_components::ScrollArea",
+    "open_gpui_ui_components::ScrollAreaState",
+    "open_gpui_ui_components::ScrollAreaAxis",
+    "open_gpui_ui_components::ScrollResetPolicy",
     "ThemeTokens",
     "Size",
     "Role::Button",
@@ -168,6 +173,21 @@ pub struct TabsSample {
     pub items: Vec<TabsItemSample>,
     /// Resolved state.
     pub state: TabsState,
+}
+
+/// One scroll area sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScrollAreaSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Rows or cells rendered inside the sample viewport.
+    pub items: Vec<&'static str>,
+    /// Resolved state.
+    pub state: ScrollAreaState,
 }
 
 /// One radio item sample in the gallery.
@@ -776,6 +796,77 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
                 tokens,
             ),
             items: workspace_items,
+        },
+    ]
+}
+
+/// Returns scroll area samples backed by real component state.
+pub fn scroll_area_samples(_tokens: ThemeTokens) -> [ScrollAreaSample; 3] {
+    [
+        ScrollAreaSample {
+            id: "activity-log",
+            title: "Activity log",
+            summary: "Vertical viewport with stable metadata and preserved offset.",
+            items: vec![
+                "09:12  Indexed 128 records",
+                "09:13  Synced component tokens",
+                "09:15  Rebuilt preview cache",
+                "09:17  Published validation report",
+                "09:21  Accepted keyboard navigation update",
+                "09:24  Queued layout smoke test",
+                "09:28  Completed gallery startup path",
+                "09:34  Updated engineering memory",
+                "09:39  Prepared review notes",
+            ],
+            state: ScrollAreaState::resolve(
+                "activity-log",
+                ScrollAreaAxis::Vertical,
+                Size::Medium,
+                ScrollResetPolicy::Preserve,
+                None,
+            ),
+        },
+        ScrollAreaSample {
+            id: "release-queue",
+            title: "Release queue",
+            summary: "Horizontal overflow for fixed-width operational lanes.",
+            items: vec![
+                "Intake",
+                "Design",
+                "Implementation",
+                "Verification",
+                "Docs",
+                "Release",
+                "Follow-up",
+            ],
+            state: ScrollAreaState::resolve(
+                "release-queue",
+                ScrollAreaAxis::Horizontal,
+                Size::Small,
+                ScrollResetPolicy::Preserve,
+                None,
+            ),
+        },
+        ScrollAreaSample {
+            id: "data-grid",
+            title: "Data grid",
+            summary: "Two-axis viewport with explicit view-key reset semantics.",
+            items: vec![
+                "Component / Axis / Reset / Metrics",
+                "Tabs / horizontal / preserve / medium",
+                "ScrollArea / both / reset-on-key-change / small",
+                "Menu / vertical / preserve / medium",
+                "Dialog / none / preserve / medium",
+                "Popover / none / preserve / medium",
+                "ContextMenu / point / preserve / medium",
+            ],
+            state: ScrollAreaState::resolve(
+                "data-grid",
+                ScrollAreaAxis::Both,
+                Size::Small,
+                ScrollResetPolicy::ResetOnKeyChange,
+                Some("components".to_string()),
+            ),
         },
     ]
 }

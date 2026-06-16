@@ -136,6 +136,19 @@ other references target missing nodes.
 Component adapters should still prefer stable element IDs for both the referring node and referenced
 node. The repair layer is a crash barrier, not a substitute for correct IDs.
 
+## Scroll Viewports
+
+`ScrollAreaState` describes renderer-neutral viewport intent: stable viewport id, axis
+(`vertical`, `horizontal`, or `both`), reset policy, optional reset key, foundation size, and
+scrollbar metrics. It does not store `ScrollHandle`, current offset, child bounds, window bounds, or
+event callbacks.
+
+The GPUI `ScrollArea` adapter owns `ScrollHandle`, maps axis intent to GPUI overflow style, reserves
+scrollbar width from the resolved metrics, and performs reset-on-key-change by mutating the concrete
+scroll handle after the component has a keyed runtime. Layout shells should pass an externally owned
+handle when another view needs to inspect or manipulate scroll state; resolved state remains the
+testable contract for docs and future headless extraction.
+
 ## Current Known Gaps
 
 The runtime theme table currently covers semantic component colors for light, dark, and
@@ -169,3 +182,6 @@ is not a reliable accessible name. `Tooltip` is descriptive-only and currently m
 association and timed hover/focus execution stay in the adapter layer. `Popover` currently covers
 basic non-modal dismissible surfaces with default-open and controlled-open state; nested popover
 coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.
+`ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
+reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
+wheel routing, nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.

@@ -27,6 +27,9 @@ pub use crate::radio::{
 pub use crate::roving_focus::{
     active_index_from_str_keys, first_enabled, last_enabled, next_enabled,
 };
+pub use crate::scroll_area::{
+    ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
+};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

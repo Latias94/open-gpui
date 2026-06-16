@@ -1,13 +1,14 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
     BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, MenuItemKind,
-    MenuOpenMode, PopoverOpenMode, TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
-    default_deferred_priority,
+    MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, TabsActivationMode,
+    ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
-    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind, PanelAdaptiveClass,
-    Role, Size, ThemeTokens, Toggled, semantic,
+    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
+    OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size, ThemeTokens,
+    Toggled, semantic,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, density_label, device_class_label,
@@ -468,9 +469,14 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
         OverlayLayerKind::Menu
     );
     assert_eq!(
-        samples[0].state.placement().snap_margin(),
-        DEFAULT_OVERLAY_SAFE_MARGIN
+        samples[0].state.placement_input().side(),
+        OverlayPlacementSide::Bottom
     );
+    assert_eq!(
+        samples[0].state.placement_input().alignment(),
+        OverlayPlacementAlignment::Start
+    );
+    assert_eq!(samples[0].state.placement_input().safe_bounds(), None);
 
     assert_eq!(samples[1].id, "controlled");
     assert!(!samples[1].state.open());
@@ -495,6 +501,7 @@ fn components_page_samples_expose_component_metadata() {
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
+    let scroll_areas = pages::components::scroll_area_samples(tokens);
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -600,6 +607,23 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(fields[2].state.disabled());
     assert!(!fields[2].input_state.editable());
+
+    assert_eq!(scroll_areas.len(), 3);
+    assert_eq!(scroll_areas[0].id, "activity-log");
+    assert_eq!(scroll_areas[0].state.axis(), ScrollAreaAxis::Vertical);
+    assert_eq!(
+        scroll_areas[0].state.reset_policy(),
+        ScrollResetPolicy::Preserve
+    );
+    assert_eq!(scroll_areas[0].state.metrics().scrollbar_width(), px(10.0));
+    assert_eq!(scroll_areas[1].state.axis(), ScrollAreaAxis::Horizontal);
+    assert_eq!(scroll_areas[1].state.reset_key(), None);
+    assert_eq!(scroll_areas[2].state.axis(), ScrollAreaAxis::Both);
+    assert_eq!(
+        scroll_areas[2].state.reset_policy(),
+        ScrollResetPolicy::ResetOnKeyChange
+    );
+    assert_eq!(scroll_areas[2].state.reset_key(), Some("components"));
 }
 
 #[test]

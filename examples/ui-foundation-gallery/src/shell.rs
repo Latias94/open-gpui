@@ -10,10 +10,10 @@ use open_gpui::{
 use open_gpui_ui_components::{
     Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, ContextMenu,
     Dialog, DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label,
-    LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, Switch,
-    SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController,
-    TextInputState, Toggle, ToggleState, Tooltip, TooltipContentKind, TooltipOpenIntent,
-    focus_ring_shadow, init_text_input,
+    LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
+    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState, Tooltip,
+    TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -552,6 +552,7 @@ impl GalleryShell {
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
+        let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
 
         div()
             .id("gallery-components-page")
@@ -601,6 +602,111 @@ impl GalleryShell {
                                 }),
                         ),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("ScrollArea"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        scroll_area_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
+                            let title = sample.title;
+                            let summary = sample.summary;
+                            let items = sample.items;
+                            let state = sample.state.clone();
+                            let horizontal = state.axis() == ScrollAreaAxis::Horizontal;
+                            let two_axis = state.axis() == ScrollAreaAxis::Both;
+                            let content = div()
+                                .when(horizontal, |this| this.flex().gap_2().min_w(px(860.0)))
+                                .when(two_axis, |this| {
+                                    this.flex().flex_col().gap_1().min_w(px(620.0))
+                                })
+                                .when(!horizontal && !two_axis, |this| {
+                                    this.flex().flex_col().gap_1()
+                                })
+                                .children(items.into_iter().enumerate().map(
+                                    move |(index, item)| {
+                                        let vertical_only = !horizontal && !two_axis;
+                                        div()
+                                            .id(format!(
+                                                "component-scroll-area-item:{}:{}",
+                                                sample_id, index
+                                            ))
+                                            .when(horizontal, |this| {
+                                                this.w(px(132.0)).min_h(px(88.0))
+                                            })
+                                            .when(two_axis, |this| {
+                                                this.w(px(620.0)).min_h(px(34.0))
+                                            })
+                                            .when(vertical_only, |this| this.min_h(px(28.0)))
+                                            .rounded_sm()
+                                            .border_1()
+                                            .border_color(rgb(0xd6d8ce))
+                                            .bg(rgb(0xf8f9f3))
+                                            .px_3()
+                                            .py_2()
+                                            .text_xs()
+                                            .text_color(rgb(0x3f4a57))
+                                            .child(item)
+                                    },
+                                ));
+                            let scroll_area = ScrollArea::new(
+                                format!("component-scroll-area:{}", sample_id),
+                                content,
+                            )
+                            .axis(state.axis())
+                            .with_size(state.size());
+                            let scroll_area = if let Some(reset_key) = state.reset_key() {
+                                scroll_area.reset_on_key(reset_key)
+                            } else {
+                                scroll_area
+                            };
+
+                            div()
+                                .id(format!("component-scroll-area-sample:{}", sample_id))
+                                .w(px(360.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(title),
+                                        )
+                                        .child(label_pill(state.axis().as_str())),
+                                )
+                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(summary))
+                                .child(
+                                    div()
+                                        .h(px(154.0))
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xe2e4dc))
+                                        .bg(rgb(0xfcfcf8))
+                                        .child(scroll_area),
+                                )
+                                .child(component_scroll_area_state_row(&state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -2797,6 +2903,31 @@ fn component_tabs_state_row(
             "{} items / {} disabled",
             state.items().len(),
             disabled_count
+        ))
+}
+
+fn component_scroll_area_state_row(state: &ScrollAreaState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            state.axis().as_str(),
+            state.reset_policy().as_str(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "viewport {} / scrollbar {}",
+            state.viewport_id(),
+            format_px(state.metrics().scrollbar_width())
+        ))
+        .child(format!(
+            "x {} / y {}",
+            if state.scrolls_x() { "scroll" } else { "clip" },
+            if state.scrolls_y() { "scroll" } else { "clip" }
         ))
 }
 

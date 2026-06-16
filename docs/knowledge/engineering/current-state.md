@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T12:11:23Z
+timestamp: 2026-06-16T12:45:07Z
 status: "active"
 ---
 
@@ -11,6 +11,20 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Started the layout/shell-navigation component series by adding `ScrollArea` to
+  `open_gpui_ui_components`. `ScrollAreaState` records stable viewport id, axis, reset policy/key,
+  size, and scrollbar metrics without storing GPUI handles; the concrete adapter owns
+  `ScrollHandle`, GPUI overflow styles, scrollbar width, and reset-on-key-change offset mutation.
+- Done: Added Components gallery ScrollArea samples for vertical, horizontal, and two-axis overflow,
+  plus gallery metadata coverage for axis/reset/metrics. Also repaired the gallery ContextMenu test
+  to assert renderer-neutral `OverlayPlacementInput` fields after the prior placement extraction.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` passed after the ScrollArea slice.
+- Next action: Continue the layout/shell-navigation series with Splitter/ResizablePanel primitives
+  or Toolbar, using the same resolved-state plus GPUI-adapter boundary. For ScrollArea, custom
+  scrollbar anatomy, hover/auto visibility, nested scroll routing, and wheel arbitration remain
+  deferred until the base viewport is dogfooded.
 - Done: Finished the ADR 0006 stack-ordering follow-up by adding window-free overlay stack ordering
   primitives in `open_gpui_ui_core::overlay`: `resolve_outside_press` and
   `resolve_focus_restore`, plus tests for topmost dismissible-layer handling and focus restoration.

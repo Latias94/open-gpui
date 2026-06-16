@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Added `ScrollArea` to `open_gpui_ui_components` as the first layout/shell-navigation
+  component after the overlay checkpoint. The resolved state keeps viewport id, axis, reset
+  policy/key, size, and scrollbar metrics renderer-neutral while the GPUI adapter owns
+  `ScrollHandle`, overflow styling, and reset-on-key-change offset mutation.
+* **Update**: Added Components gallery ScrollArea samples for vertical, horizontal, and two-axis
+  overflow, documented the scroll viewport contract, and verified with focused component/gallery
+  checks and nextest runs.
 * **Update**: Finished the ADR 0006 stack-ordering follow-up by adding window-free overlay stack ordering
   primitives in `open_gpui_ui_core::overlay`: `resolve_outside_press` and `resolve_focus_restore`.
   Tests now cover topmost dismissible-layer outside-press handling and topmost present

@@ -4,8 +4,9 @@ use open_gpui_ui_components::{
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
     FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
     MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
-    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Switch,
+    Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
     ToggleVariant, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
     active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
     focus_ring_shadow, gpui_anchor, last_enabled, menu_navigation_target, next_enabled,
@@ -606,6 +607,56 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
+}
+
+#[test]
+fn scroll_area_state_exposes_axis_metrics_and_reset_policy() {
+    let state = ScrollAreaState::resolve(
+        "activity-log",
+        ScrollAreaAxis::Both,
+        Size::Small,
+        ScrollResetPolicy::ResetOnKeyChange,
+        Some("components".to_string()),
+    );
+
+    assert_eq!(state.viewport_id(), "activity-log");
+    assert_eq!(state.axis(), ScrollAreaAxis::Both);
+    assert_eq!(state.axis().as_str(), "both");
+    assert_eq!(state.size(), Size::Small);
+    assert!(state.scrolls_x());
+    assert!(state.scrolls_y());
+    assert_eq!(state.reset_policy(), ScrollResetPolicy::ResetOnKeyChange);
+    assert_eq!(state.reset_policy().as_str(), "reset-on-key-change");
+    assert_eq!(state.reset_key(), Some("components"));
+    assert_eq!(state.metrics().scrollbar_width(), px(8.0));
+    assert!(state.should_reset_for_key_change(Some("tokens")));
+    assert!(!state.should_reset_for_key_change(Some("components")));
+    assert!(!state.should_reset_for_key_change(None));
+}
+
+#[test]
+fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
+    let state = ScrollArea::new("component-scroll", div())
+        .horizontal()
+        .large()
+        .reset_on_key("settings")
+        .state();
+    let preserved = ScrollArea::new("preserved-scroll", div())
+        .both()
+        .preserve_scroll()
+        .state();
+
+    assert_eq!(state.viewport_id(), "component-scroll");
+    assert_eq!(state.axis(), ScrollAreaAxis::Horizontal);
+    assert!(state.scrolls_x());
+    assert!(!state.scrolls_y());
+    assert_eq!(state.size(), Size::Large);
+    assert_eq!(state.metrics().scrollbar_width(), px(12.0));
+    assert_eq!(state.reset_key(), Some("settings"));
+    assert!(state.should_reset_for_key_change(Some("overview")));
+    assert_eq!(preserved.reset_policy(), ScrollResetPolicy::Preserve);
+    assert_eq!(preserved.reset_key(), None);
+    assert!(!preserved.should_reset_for_key_change(Some("overview")));
 }
 
 #[test]
