@@ -11,7 +11,8 @@ unit for tests and documentation.
 
 Resolved state should contain:
 
-- semantic input state such as disabled, selected, checked, open, invalid, read-only, and required;
+- semantic input state such as disabled, selected, checked, indeterminate, open, invalid, read-only,
+  and required;
 - activation or editability rules;
 - accessibility intent such as role, label requirements, value presence, and required actions;
 - metrics derived from `open_gpui_ui_core::Size`;
@@ -80,3 +81,6 @@ JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler
 multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
+`Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
+the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
+resolved-state layer while keeping the visual adapter small.

@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-15T15:47:00Z
+timestamp: 2026-06-16T02:46:46Z
 status: "active"
 ---
 
@@ -12,10 +12,11 @@ status: "active"
 - Goal: Grow the official Open GPUI component system under the adapter-first, headless-ready
   architecture from ADR 0005.
 - Branch: `feat/open-gpui-ui-core`
-- Last verified: `cargo fmt -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-components`,
+- Last verified: `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
   `cargo check -p open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`,
-  and `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p
-  open-gpui-ui-foundation-gallery` passed after the editable TextInput controller slice.
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery` passed after
+  the Checkbox/Label slice.
 - Done: Added the `open-gpui-ui-core` crate with sizing, density, adaptive, token, overlay, a11y, and focus foundation vocabulary; ADR 0004 and memory bundle now point at the foundation-first direction and explicitly record the reference repositories (`fret`, `fret-ui-kit`, `fret-ui-shadcn`, `gpui-component`, plus broader open source UI references).
 - Done: Wrote the first follow-up plan for a dedicated pure-foundation gallery example at `docs/plans/2026-06-15-001-feat-ui-foundation-gallery-plan.md`.
 - Done: Completed U1 of the gallery plan by adding `examples/ui-foundation-gallery` as a workspace package with a small library, thin binary entrypoint, pure foundation dependency surface, empty shell, section registry, and targeted tests.
@@ -45,6 +46,11 @@ status: "active"
   `open-gpui-ui-components`, including GPUI `EntityInputHandler` / `ElementInputHandler`
   integration, UTF-16 selection and marked-range conversion, grapheme-aware deletion, clipboard
   actions, and gallery dogfood for the default components sample.
+- Done: Completed U3 of the official component roadmap by adding `Checkbox` and `Label` to
+  `open-gpui-ui-components` with resolved state, GPUI adapters, theme intents, tests, gallery
+  samples, and updated verification guidance.
+- Done: Updated `docs/verification.md` so the Components manual dogfood now includes Checkbox and
+  Label association checks in addition to Button, Switch, TextInput, and Field.
 - Done: Updated the component contract to record that `TextInputController` now owns the editable
   single-line path while `Field` remains composition-only, and that multiline/password/undo/redo/
   completion stay out of scope.
@@ -73,10 +79,10 @@ status: "active"
 - Done: Recorded editable TextInput controller reference guidance at
   `docs/knowledge/engineering/subagents/text-input-controller-research.md`: keep U2 to a
   single-line controller plus GPUI input handler adapter; defer multiline/password/editor features.
+- Done: Updated `docs/ui/component-contract.md` to include Checkbox indeterminate state and Label
+  association metadata in the resolved-state contract.
 - Blocked: None.
-- Next action: Decide whether to commit the editable TextInput controller slice now or keep
-  iterating on follow-up cleanup. The next architectural track is Checkbox/Label and broader
-  component parity work, with headless extraction still gated on repeated contracts.
+- Next action: Commit the Checkbox/Label slice, then start U4 on roving focus and Tabs.
 
 # Citations
 

@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Completed U3 of the official component roadmap by adding `Checkbox` and `Label` to
+  `open-gpui-ui-components` with resolved state, GPUI adapters, theme intents, tests, gallery
+  samples, and updated verification guidance.
+* **Update**: Updated `docs/ui/component-contract.md` so the resolved-state contract now includes
+  Checkbox indeterminate state and Label association metadata.
+* **Update**: Updated `docs/verification.md` so the Components manual dogfood now includes Checkbox
+  and Label association checks in addition to Button, Switch, TextInput, and Field.
 * **Update**: Implemented the real single-line editable `TextInputController` slice in
   `open-gpui-ui-components`, including GPUI `EntityInputHandler` / `ElementInputHandler`
   integration, UTF-16 selection and marked-range conversion, grapheme-aware deletion, clipboard

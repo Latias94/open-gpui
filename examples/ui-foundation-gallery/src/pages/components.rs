@@ -1,8 +1,8 @@
 //! Component consumer samples for the foundation gallery.
 
 use open_gpui_ui_components::{
-    Button, ButtonState, ButtonVariant, Field, FieldState, Switch, SwitchState, TextInput,
-    TextInputState,
+    Button, ButtonState, ButtonVariant, Checkbox, CheckboxState, Field, FieldState, Label,
+    LabelState, Switch, SwitchState, TextInput, TextInputState,
 };
 use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
 
@@ -14,6 +14,8 @@ pub const SUMMARY: &str = "First concrete component consumers built on the found
 pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::Switch",
+    "open_gpui_ui_components::Checkbox",
+    "open_gpui_ui_components::Label",
     "open_gpui_ui_components::TextInput",
     "open_gpui_ui_components::TextInputController",
     "open_gpui_ui_components::Field",
@@ -21,6 +23,8 @@ pub const SIGNALS: &[&str] = &[
     "Size",
     "Role::Button",
     "Role::Switch",
+    "Role::CheckBox",
+    "Role::Label",
     "Role::TextInput",
 ];
 
@@ -44,6 +48,26 @@ pub struct SwitchSample {
     pub label: &'static str,
     /// Resolved state.
     pub state: SwitchState,
+}
+
+/// One checkbox sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CheckboxSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+    /// Resolved state.
+    pub state: CheckboxState,
+}
+
+/// One label sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Resolved label state.
+    pub state: LabelState,
 }
 
 /// One text input sample in the gallery.
@@ -155,6 +179,136 @@ pub fn switch_samples(tokens: ThemeTokens) -> [SwitchSample; 4] {
             .with_size(size)
             .tokens(tokens)
             .state(),
+    })
+}
+
+/// Returns checkbox samples backed by real component state.
+pub fn checkbox_samples(tokens: ThemeTokens) -> [CheckboxSample; 6] {
+    [
+        (
+            "unchecked",
+            "Unchecked",
+            false,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+        ),
+        (
+            "checked",
+            "Checked",
+            true,
+            false,
+            false,
+            false,
+            false,
+            Size::Medium,
+        ),
+        (
+            "mixed",
+            "Indeterminate",
+            false,
+            true,
+            false,
+            false,
+            false,
+            Size::Medium,
+        ),
+        (
+            "required",
+            "Required",
+            true,
+            false,
+            false,
+            true,
+            false,
+            Size::Medium,
+        ),
+        (
+            "invalid",
+            "Invalid",
+            false,
+            false,
+            false,
+            true,
+            true,
+            Size::Medium,
+        ),
+        (
+            "disabled",
+            "Disabled",
+            false,
+            false,
+            true,
+            false,
+            false,
+            Size::Medium,
+        ),
+    ]
+    .map(
+        |(id, label, checked, indeterminate, disabled, required, invalid, size)| CheckboxSample {
+            id,
+            label,
+            state: Checkbox::new(id)
+                .label(label)
+                .checked(checked)
+                .indeterminate(indeterminate)
+                .disabled(disabled)
+                .required(required)
+                .invalid(invalid)
+                .with_size(size)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns label samples backed by real component state.
+pub fn label_samples(tokens: ThemeTokens) -> [LabelSample; 4] {
+    [
+        (
+            "email",
+            "Email",
+            Some("email-input"),
+            false,
+            false,
+            Size::Medium,
+        ),
+        (
+            "terms",
+            "Terms",
+            Some("terms-checkbox"),
+            true,
+            false,
+            Size::Medium,
+        ),
+        (
+            "disabled",
+            "Disabled",
+            Some("disabled-control"),
+            false,
+            true,
+            Size::Medium,
+        ),
+        ("standalone", "Standalone", None, false, false, Size::Small),
+    ]
+    .map(|(id, text, control_id, required, disabled, size)| {
+        let label = Label::new(id, text)
+            .required(required)
+            .disabled(disabled)
+            .with_size(size)
+            .tokens(tokens);
+        let label = if let Some(control_id) = control_id {
+            label.for_control(control_id)
+        } else {
+            label
+        };
+
+        LabelSample {
+            id,
+            state: label.state(),
+        }
     })
 }
 

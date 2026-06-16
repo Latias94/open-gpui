@@ -62,11 +62,11 @@ cargo run -p open-gpui-ui-foundation-gallery
 5. Open `Overlay`, click `open overlay`, confirm the anchored popover appears from the trigger, then
    close it from the popover or press Escape. The geometry readout should keep anchor, layout,
    visual, preferred, and safe-window rectangles visible.
-6. Open `Components`, confirm Button, Switch, TextInput, and Field samples render with enabled,
-   disabled, selected, checked, unchecked, invalid, required, read-only, placeholder, value, help,
-   and error states. The default TextInput sample should accept real text editing through the
-   controller-backed path, while the gallery remains scrollable and keeps focus visible when the
-   page overflows.
+6. Open `Components`, confirm Button, Switch, Checkbox, Label, TextInput, and Field samples render
+   with enabled, disabled, selected, checked, unchecked, indeterminate, invalid, required,
+   read-only, placeholder, value, help, error, and control-association states. The default
+   TextInput sample should accept real text editing through the controller-backed path, while the
+   gallery remains scrollable and keeps focus visible when the page overflows.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

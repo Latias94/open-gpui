@@ -1,7 +1,7 @@
 use open_gpui::{AppContext, px};
 use open_gpui_ui_components::{
-    Button, ButtonVariant, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Switch,
-    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Label,
+    Switch, TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
     focus_ring_shadow,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic};
@@ -171,6 +171,12 @@ fn default_theme_resolves_all_current_component_color_intents() {
         Switch::new("off").state(),
         Switch::new("on").checked(true).state(),
     ];
+    let checkboxes = [
+        Checkbox::new("unchecked").state(),
+        Checkbox::new("checked").checked(true).state(),
+        Checkbox::new("mixed").indeterminate(true).state(),
+        Checkbox::new("invalid").invalid(true).state(),
+    ];
     let text_inputs = [
         TextInput::new("default", "Default").state(),
         TextInput::new("disabled", "Disabled")
@@ -191,6 +197,15 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         Field::new("invalid", "control", "Invalid")
             .invalid(true)
+            .state(),
+    ];
+    let labels = [
+        Label::new("label", "Label").state(),
+        Label::new("required-label", "Required")
+            .required(true)
+            .state(),
+        Label::new("disabled-label", "Disabled")
+            .disabled(true)
             .state(),
     ];
 
@@ -220,6 +235,20 @@ fn default_theme_resolves_all_current_component_color_intents() {
         }
     }
 
+    for state in checkboxes {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.hover_background(),
+            colors.border(),
+            colors.indicator(),
+            colors.label(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
     for state in text_inputs {
         let colors = state.colors();
         for intent in [
@@ -236,6 +265,13 @@ fn default_theme_resolves_all_current_component_color_intents() {
     for state in fields {
         let colors = state.colors();
         for intent in [colors.label(), colors.message(), colors.required_marker()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in labels {
+        let colors = state.colors();
+        for intent in [colors.text(), colors.required_marker()] {
             assert_theme_has_exact_color(theme, intent);
         }
     }
@@ -262,6 +298,7 @@ fn theme_snapshots_resolve_state_specific_component_tokens() {
         .variant(ButtonVariant::Secondary)
         .state();
     let selected_switch = Switch::new("feature").checked(true).state();
+    let mixed_checkbox = Checkbox::new("permissions").indeterminate(true).state();
     let disabled_input = TextInput::new("disabled", "Disabled")
         .disabled(true)
         .state();
@@ -280,6 +317,10 @@ fn theme_snapshots_resolve_state_specific_component_tokens() {
         ColorState::Selected
     );
     assert_eq!(
+        mixed_checkbox.colors().background().state(),
+        ColorState::Selected
+    );
+    assert_eq!(
         disabled_input.colors().background().state(),
         ColorState::Disabled
     );
@@ -290,6 +331,15 @@ fn theme_snapshots_resolve_state_specific_component_tokens() {
     );
     assert_eq!(
         required_field.colors().required_marker().state(),
+        ColorState::Required
+    );
+    assert_eq!(
+        Label::new("required-label", "Required")
+            .required(true)
+            .state()
+            .colors()
+            .required_marker()
+            .state(),
         ColorState::Required
     );
 
@@ -365,6 +415,98 @@ fn switch_size_metrics_are_deterministic() {
     assert_eq!(metrics.track_height(), px(18.0));
     assert_eq!(metrics.thumb_size(), px(14.0));
     assert_eq!(metrics.checked_thumb_x(), px(16.0));
+}
+
+#[test]
+fn checkbox_states_map_to_checkbox_role_and_toggled_values() {
+    let unchecked = Checkbox::new("unchecked").state();
+    let checked = Checkbox::new("checked").checked(true).state();
+    let mixed = Checkbox::new("mixed").indeterminate(true).state();
+
+    assert_eq!(unchecked.role(), Role::CheckBox);
+    assert_eq!(unchecked.toggled(), Toggled::False);
+    assert!(!unchecked.checked());
+    assert!(!unchecked.indeterminate());
+
+    assert_eq!(checked.role(), Role::CheckBox);
+    assert_eq!(checked.toggled(), Toggled::True);
+    assert!(checked.checked());
+    assert!(!checked.indeterminate());
+
+    assert_eq!(mixed.role(), Role::CheckBox);
+    assert_eq!(mixed.toggled(), Toggled::Mixed);
+    assert!(!mixed.checked());
+    assert!(mixed.indeterminate());
+}
+
+#[test]
+fn disabled_checkbox_blocks_activation_metadata() {
+    let state = Checkbox::new("disabled").disabled(true).state();
+
+    assert_eq!(state.role(), Role::CheckBox);
+    assert!(state.disabled());
+    assert!(!state.activation_enabled());
+    assert!(!state.tab_stop_enabled());
+    assert_eq!(state.colors().background().state(), ColorState::Disabled);
+}
+
+#[test]
+fn invalid_and_required_checkbox_expose_state_and_token_intents() {
+    let tokens = custom_tokens();
+    let state = Checkbox::new("terms")
+        .checked(true)
+        .required(true)
+        .invalid(true)
+        .tokens(tokens)
+        .state();
+
+    assert!(state.required());
+    assert!(state.invalid());
+    assert_eq!(state.colors().border().token(), tokens.destructive);
+    assert_eq!(state.colors().border().state(), ColorState::Invalid);
+    assert_eq!(state.colors().background().token(), tokens.accent);
+    assert_eq!(state.colors().focus_ring().token(), tokens.focus_ring);
+    assert!(!state.focus_ring().changes_layout());
+}
+
+#[test]
+fn checkbox_checked_state_builder_accepts_mixed() {
+    let state = Checkbox::new("bulk").checked_state(Toggled::Mixed).state();
+
+    assert_eq!(state.toggled(), Toggled::Mixed);
+    assert!(state.indeterminate());
+    assert!(!state.checked());
+}
+
+#[test]
+fn label_state_records_control_association_and_required_marker() {
+    let tokens = custom_tokens();
+    let state = Label::new("email-label", "Email")
+        .for_control("email-input")
+        .required(true)
+        .tokens(tokens)
+        .state();
+
+    assert_eq!(state.role(), Role::Label);
+    assert_eq!(state.text(), "Email");
+    assert_eq!(state.control_id(), Some("email-input"));
+    assert!(state.associated());
+    assert!(state.required());
+    assert_eq!(state.colors().text().token(), tokens.text);
+    assert_eq!(state.colors().required_marker().token(), tokens.destructive);
+}
+
+#[test]
+fn disabled_label_uses_muted_text_intent() {
+    let tokens = custom_tokens();
+    let state = Label::new("disabled-label", "Disabled")
+        .disabled(true)
+        .tokens(tokens)
+        .state();
+
+    assert!(state.disabled());
+    assert_eq!(state.colors().text().token(), tokens.text_muted);
+    assert_eq!(state.colors().text().state(), ColorState::Disabled);
 }
 
 #[test]

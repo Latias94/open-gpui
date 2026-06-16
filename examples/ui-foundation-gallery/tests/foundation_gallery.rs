@@ -164,6 +164,8 @@ fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
     let buttons = pages::components::button_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
+    let checkboxes = pages::components::checkbox_samples(tokens);
+    let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
 
@@ -181,6 +183,22 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(switches[0].state.toggled(), Toggled::False);
     assert_eq!(switches[1].state.toggled(), Toggled::True);
     assert!(!switches[3].state.activation_enabled());
+
+    assert_eq!(checkboxes.len(), 6);
+    assert_eq!(checkboxes[0].state.role(), Role::CheckBox);
+    assert_eq!(checkboxes[0].state.toggled(), Toggled::False);
+    assert_eq!(checkboxes[1].state.toggled(), Toggled::True);
+    assert_eq!(checkboxes[2].state.toggled(), Toggled::Mixed);
+    assert!(checkboxes[3].state.required());
+    assert!(checkboxes[4].state.invalid());
+    assert!(!checkboxes[5].state.activation_enabled());
+
+    assert_eq!(labels.len(), 4);
+    assert_eq!(labels[0].state.role(), Role::Label);
+    assert_eq!(labels[0].state.control_id(), Some("email-input"));
+    assert!(labels[1].state.required());
+    assert!(labels[2].state.disabled());
+    assert!(!labels[3].state.associated());
 
     assert_eq!(text_inputs.len(), 5);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);

@@ -8,8 +8,9 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Button, ButtonState, ColorIntent, Field, FieldState, FocusRing, Switch, SwitchState, TextInput,
-    TextInputController, TextInputState, focus_ring_shadow, init_text_input,
+    Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field, FieldState, FocusRing, Label,
+    LabelState, Switch, SwitchState, TextInput, TextInputController, TextInputState,
+    focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -558,6 +559,83 @@ impl GalleryShell {
                                                 .tokens(snapshot.tokens),
                                         )
                                         .child(component_switch_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Checkbox"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::checkbox_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state;
+                                    div()
+                                        .id(format!("component-checkbox-sample:{}", sample.id))
+                                        .min_w(px(220.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(component_checkbox(
+                                            format!("component-checkbox:{}", sample.id),
+                                            sample.label,
+                                            state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_checkbox_state_row(state))
+                                }),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Label"),
+                    )
+                    .child(
+                        div().flex().gap_3().flex_wrap().children(
+                            pages::components::label_samples(snapshot.tokens)
+                                .into_iter()
+                                .map(|sample| {
+                                    let state = sample.state.clone();
+                                    div()
+                                        .id(format!("component-label-sample:{}", sample.id))
+                                        .min_w(px(220.0))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xd6d8ce))
+                                        .bg(rgb(0xffffff))
+                                        .p_3()
+                                        .child(component_label(
+                                            format!("component-label:{}", sample.id),
+                                            &state,
+                                            snapshot.tokens,
+                                        ))
+                                        .child(component_label_state_row(&state))
                                 }),
                         ),
                     ),
@@ -1483,6 +1561,97 @@ fn component_switch_state_row(state: SwitchState) -> impl IntoElement {
             format_px(state.metrics().track_width()),
             format_px(state.metrics().track_height()),
             format_px(state.metrics().thumb_size())
+        ))
+}
+
+fn component_checkbox(
+    id: String,
+    label: impl Into<open_gpui::SharedString>,
+    state: CheckboxState,
+    tokens: ThemeTokens,
+) -> Checkbox {
+    Checkbox::new(id)
+        .label(label)
+        .checked(state.checked())
+        .indeterminate(state.indeterminate())
+        .disabled(state.disabled())
+        .required(state.required())
+        .invalid(state.invalid())
+        .with_size(state.size())
+        .tokens(tokens)
+}
+
+fn component_checkbox_state_row(state: CheckboxState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            toggled_label_text(state.toggled()),
+            size_label(state.size()),
+            if state.activation_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ))
+        .child(format!(
+            "{} / {}",
+            if state.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if state.invalid() { "invalid" } else { "valid" }
+        ))
+        .child(format!(
+            "box {} indicator {}",
+            format_px(state.metrics().box_size()),
+            format_px(state.metrics().indicator_size())
+        ))
+}
+
+fn component_label(id: String, state: &LabelState, tokens: ThemeTokens) -> Label {
+    let label = Label::new(id, state.text())
+        .with_size(state.size())
+        .required(state.required())
+        .disabled(state.disabled())
+        .tokens(tokens);
+
+    if let Some(control_id) = state.control_id() {
+        label.for_control(control_id)
+    } else {
+        label
+    }
+}
+
+fn component_label_state_row(state: &LabelState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            size_label(state.size()),
+            if state.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if state.disabled() {
+                "disabled"
+            } else {
+                "enabled"
+            }
+        ))
+        .child(format!(
+            "{}",
+            state.control_id().unwrap_or("no control association")
         ))
 }
 

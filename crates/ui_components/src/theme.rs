@@ -4,8 +4,10 @@ use open_gpui::{Rgba, rgb};
 use open_gpui_ui_core::{ThemeTokens, TokenKey, semantic};
 
 use crate::button::{ButtonColors, ButtonVariant};
+use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
 use crate::field::FieldColors;
+use crate::label::LabelColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
 
@@ -376,6 +378,79 @@ impl ThemeResolver {
         FieldColors {
             label,
             message,
+            required_marker: ColorIntent::with_state(
+                tokens.destructive,
+                ColorState::Required,
+                DEFAULT_DESTRUCTIVE,
+            ),
+        }
+    }
+
+    pub(crate) const fn checkbox_colors(
+        tokens: ThemeTokens,
+        checked: bool,
+        indeterminate: bool,
+        disabled: bool,
+        invalid: bool,
+    ) -> CheckboxColors {
+        let selected = checked || indeterminate;
+        let background = if disabled {
+            ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::Disabled,
+                DEFAULT_READ_ONLY_SURFACE,
+            )
+        } else if selected {
+            ColorIntent::with_state(tokens.accent, ColorState::Selected, DEFAULT_ACCENT)
+        } else {
+            ColorIntent::new(tokens.surface, DEFAULT_SURFACE)
+        };
+        let hover_background = if disabled {
+            background
+        } else if selected {
+            ColorIntent::with_state(tokens.accent, ColorState::Hover, DEFAULT_ACCENT_HOVER)
+        } else {
+            ColorIntent::with_state(tokens.surface_muted, ColorState::Hover, 0xdfe6dc)
+        };
+        let border = if invalid {
+            ColorIntent::with_state(tokens.destructive, ColorState::Invalid, DEFAULT_DESTRUCTIVE)
+        } else if selected {
+            ColorIntent::with_state(tokens.accent, ColorState::Selected, DEFAULT_ACCENT)
+        } else {
+            ColorIntent::new(tokens.border, DEFAULT_BORDER)
+        };
+        let indicator = if disabled {
+            ColorIntent::with_state(tokens.text_muted, ColorState::Disabled, 0x7a8491)
+        } else {
+            ColorIntent::new(tokens.accent_foreground, DEFAULT_ACCENT_FOREGROUND)
+        };
+        let label = if disabled {
+            ColorIntent::with_state(tokens.text_muted, ColorState::Disabled, 0x7a8491)
+        } else {
+            ColorIntent::new(tokens.text, DEFAULT_TEXT)
+        };
+
+        CheckboxColors {
+            background,
+            hover_background,
+            border,
+            indicator,
+            label,
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
+        }
+    }
+
+    pub(crate) const fn label_colors(tokens: ThemeTokens, disabled: bool) -> LabelColors {
+        LabelColors {
+            text: if disabled {
+                ColorIntent::with_state(tokens.text_muted, ColorState::Disabled, 0x7a8491)
+            } else {
+                ColorIntent::new(tokens.text, DEFAULT_TEXT)
+            },
             required_marker: ColorIntent::with_state(
                 tokens.destructive,
                 ColorState::Required,
