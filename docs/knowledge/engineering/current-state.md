@@ -11,6 +11,16 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Committed the U6 Badge/IconButton slice as
+  `9206210 feat(ui): add badge and icon button components`.
+- Done: Wrote the next-series overlay component plan at
+  `docs/plans/2026-06-16-001-feat-ui-overlay-component-series-plan.md`.
+- Decision: The next execution series starts with an accessibility/gallery runtime gate, then
+  renderer-neutral overlay behavior contracts, GPUI overlay adapter helpers, `Tooltip`, `Popover`,
+  `Dialog`, `Menu`/`ContextMenu`, and finally a headless-readiness checkpoint. `ScrollArea`,
+  `Splitter`, `Toolbar`, and `Sidebar` move to the following layout/shell-navigation series.
+- Next action: Start U1 of the overlay component series: prove the AccessKit repair and gallery
+  runtime smoke path before adding new overlay-heavy components.
 - Done: Completed U6 of the official component roadmap by adding `Badge` and `IconButton` to
   `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, explicit exports,
   theme intents, gallery dogfood, and targeted tests.
@@ -29,9 +39,8 @@ status: "active"
   window::a11y::tests::repair_tree_update_strips_invalid_node_references` could not compile the
   `open-gpui` test harness because local font assets under `assets/fonts/ibm-plex-sans` and
   `assets/fonts/lilex` are missing. The regular `cargo check -p open-gpui` path passes.
-- Next action: Commit the U6 slice, then decide whether to start the shared overlay behavior /
-  Tooltip-Popover sequence or first add a tiny runtime smoke for accessibility tree repair that
-  avoids the missing-font test harness path.
+- Done: The next-series plan resolves the prior fork by doing the accessibility runtime smoke first
+  and then continuing into shared overlay behavior.
 - Done: Completed U5 of the official component roadmap by adding `RadioGroup` and `Toggle` to
   `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, exports, gallery
   dogfood, and targeted tests.

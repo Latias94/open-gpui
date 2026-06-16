@@ -1,6 +1,16 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Wrote the next-series overlay component plan at
+  `docs/plans/2026-06-16-001-feat-ui-overlay-component-series-plan.md`, scoped to the post-U6
+  sequence: accessibility/gallery runtime gate, shared overlay behavior contracts, GPUI overlay
+  adapter helpers, Tooltip, Popover, Dialog, Menu/ContextMenu, and a headless-readiness checkpoint.
+* **Decision**: Start the next series with the AccessKit repair smoke instead of jumping directly
+  to Tooltip/Popover. Overlay components will increase explicit accessibility relationships, so the
+  crash barrier needs a repeatable verification gate first.
+* **Decision**: Keep `open-gpui-ui-headless` deferred for now. The overlay series should produce
+  renderer-neutral behavior contracts inside the current crates, then reassess extraction after
+  multiple overlay components reuse them.
 * **Update**: Completed U6 of the official component roadmap by adding `Badge` and `IconButton`
   to `open-gpui-ui-components` with resolved state, GPUI adapters, theme intents, exports, gallery
   samples, component tests, and foundation gallery metadata tests.
