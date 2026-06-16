@@ -11,6 +11,19 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U5 of the official component roadmap by adding `RadioGroup` and `Toggle` to
+  `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, exports, gallery
+  dogfood, and targeted tests.
+- Done: `RadioGroup` now reuses the U4 roving-focus helpers, exposes group required/disabled
+  metadata plus per-item selected/focused/tab-stop state, and maps radio items with
+  `Role::RadioButton` + `aria_selected` on the current GPUI/AccessKit surface.
+- Done: `Toggle` now models button-like pressed state through `Role::Button` + `aria_toggled`
+  while staying separate from Checkbox tri-state semantics.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed during U5 implementation.
+- Next action: Finish U5 formatting/docs verification and commit, then start the next roadmap item
+  (`Badge` / `IconButton`).
 - Done: Completed U4 of the official component roadmap by adding `Tabs` to
   `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
   helpers, gallery dogfood, and targeted tests.

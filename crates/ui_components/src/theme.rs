@@ -8,6 +8,7 @@ use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
 use crate::field::FieldColors;
 use crate::label::LabelColors;
+use crate::radio::RadioGroupColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
 
@@ -26,6 +27,7 @@ const DEFAULT_DESTRUCTIVE_FOREGROUND: u32 = 0xffffff;
 const DEFAULT_READ_ONLY_SURFACE: u32 = 0xf8f9f5;
 const DEFAULT_PLACEHOLDER: u32 = 0x6d7785;
 const DEFAULT_MESSAGE: u32 = 0x5a6472;
+const DEFAULT_TEXT_MUTED: u32 = 0x5a6472;
 
 const LIGHT_THEME_REVISION: u64 = 1;
 const DARK_THEME_REVISION: u64 = 2;
@@ -436,6 +438,40 @@ impl ThemeResolver {
             border,
             indicator,
             label,
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
+        }
+    }
+
+    pub(crate) const fn radio_group_colors(tokens: ThemeTokens) -> RadioGroupColors {
+        RadioGroupColors {
+            control_background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+            control_background_selected: ColorIntent::with_state(
+                tokens.accent,
+                ColorState::Selected,
+                DEFAULT_ACCENT,
+            ),
+            control_border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            control_border_selected: ColorIntent::with_state(
+                tokens.accent,
+                ColorState::Selected,
+                DEFAULT_ACCENT,
+            ),
+            indicator: ColorIntent::new(tokens.accent_foreground, DEFAULT_ACCENT_FOREGROUND),
+            label: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            label_muted: ColorIntent::with_state(
+                tokens.text_muted,
+                ColorState::Disabled,
+                DEFAULT_TEXT_MUTED,
+            ),
+            hover_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::Hover,
+                0xf1f5ee,
+            ),
             focus_ring: ColorIntent::with_state(
                 tokens.focus_ring,
                 ColorState::FocusVisible,

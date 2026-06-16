@@ -9,8 +9,9 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field, FieldState, FocusRing, Label,
-    LabelState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
-    TextInputController, TextInputState, focus_ring_shadow, init_text_input,
+    LabelState, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
+    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState,
+    focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -474,6 +475,8 @@ impl GalleryShell {
 
     fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
         let tabs_samples = pages::components::tabs_samples(snapshot.tokens);
+        let radio_samples = pages::components::radio_group_samples(snapshot.tokens);
+        let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
 
         div()
             .id("gallery-components-page")
@@ -603,6 +606,91 @@ impl GalleryShell {
                                 }),
                         ),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("RadioGroup"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        radio_samples.into_iter().map(|sample| {
+                            let state = sample.state.clone();
+                            let mut radio =
+                                RadioGroup::new(format!("component-radio:{}", sample.id))
+                                    .label(sample.title)
+                                    .orientation(sample.orientation)
+                                    .selected(sample.selected)
+                                    .required(sample.required)
+                                    .disabled(sample.disabled)
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens);
+                            for item in sample.items.iter() {
+                                radio = radio.item(
+                                    RadioItem::new(item.value, item.label).disabled(item.disabled),
+                                );
+                            }
+
+                            div()
+                                .id(format!("component-radio-sample:{}", sample.id))
+                                .min_w(px(240.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(radio)
+                                .child(component_radio_state_row(&state))
+                        }),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Toggle"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        toggle_samples.into_iter().map(|sample| {
+                            let state = sample.state;
+                            div()
+                                .id(format!("component-toggle-sample:{}", sample.id))
+                                .min_w(px(180.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    Toggle::new(
+                                        format!("component-toggle:{}", sample.id),
+                                        sample.label,
+                                    )
+                                    .variant(sample.variant)
+                                    .pressed(state.pressed())
+                                    .disabled(state.disabled())
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens),
+                                )
+                                .child(component_toggle_state_row(&state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -1914,6 +2002,70 @@ fn component_tabs_state_row(
             "{} items / {} disabled",
             state.items().len(),
             disabled_count
+        ))
+}
+
+fn component_radio_state_row(state: &open_gpui_ui_components::RadioGroupState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let focused = state.focused_value().unwrap_or("none");
+    let tab_stop = state.tab_stop_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            if state.required() {
+                "required"
+            } else {
+                "optional"
+            },
+            if state.activation_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ))
+        .child(format!(
+            "selected {} / focus {} / tab stop {}",
+            selected, focused, tab_stop
+        ))
+        .child(format!(
+            "{} items / {} disabled",
+            state.items().len(),
+            disabled_count
+        ))
+}
+
+fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            if state.pressed() {
+                "pressed"
+            } else {
+                "released"
+            },
+            state.variant().as_str(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "h {} px {}",
+            format_px(state.metrics().height()),
+            format_px(state.metrics().padding_x())
         ))
 }
 

@@ -2,8 +2,8 @@
 
 use open_gpui_ui_components::{
     Button, ButtonState, ButtonVariant, Checkbox, CheckboxState, Field, FieldState, Label,
-    LabelState, Switch, SwitchState, TabsActivationMode, TabsItemDescriptor, TabsState, TextInput,
-    TextInputState,
+    LabelState, RadioGroupState, RadioItemDescriptor, Switch, SwitchState, TabsActivationMode,
+    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -16,6 +16,9 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::Switch",
     "open_gpui_ui_components::Checkbox",
+    "open_gpui_ui_components::RadioGroup",
+    "open_gpui_ui_components::RadioItem",
+    "open_gpui_ui_components::Toggle",
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::TextInput",
     "open_gpui_ui_components::TextInputController",
@@ -29,6 +32,8 @@ pub const SIGNALS: &[&str] = &[
     "Role::Button",
     "Role::Switch",
     "Role::CheckBox",
+    "Role::RadioGroup",
+    "Role::RadioButton",
     "Role::Label",
     "Role::TextInput",
     "Role::TabList",
@@ -136,6 +141,57 @@ pub struct TabsSample {
     pub items: Vec<TabsItemSample>,
     /// Resolved state.
     pub state: TabsState,
+}
+
+/// One radio item sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RadioItemSample {
+    /// Stable item value.
+    pub value: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+    /// Whether the item is disabled.
+    pub disabled: bool,
+}
+
+/// One radio group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RadioGroupSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Tab orientation.
+    pub orientation: Orientation,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Selected radio value.
+    pub selected: &'static str,
+    /// Whether the sample is disabled.
+    pub disabled: bool,
+    /// Whether the sample is required.
+    pub required: bool,
+    /// Radio items.
+    pub items: Vec<RadioItemSample>,
+    /// Resolved state.
+    pub state: RadioGroupState,
+}
+
+/// One toggle sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToggleSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+    /// Visual variant.
+    pub variant: ToggleVariant,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: ToggleState,
 }
 
 /// Returns button samples backed by real component state.
@@ -626,6 +682,140 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
     ]
 }
 
+/// Returns radio group samples backed by real component state.
+pub fn radio_group_samples(tokens: ThemeTokens) -> [RadioGroupSample; 2] {
+    let persona_items = vec![
+        RadioItemSample {
+            value: "personal",
+            label: "Personal",
+            disabled: false,
+        },
+        RadioItemSample {
+            value: "team",
+            label: "Team",
+            disabled: false,
+        },
+        RadioItemSample {
+            value: "enterprise",
+            label: "Enterprise",
+            disabled: true,
+        },
+    ];
+    let region_items = vec![
+        RadioItemSample {
+            value: "asia",
+            label: "Asia",
+            disabled: false,
+        },
+        RadioItemSample {
+            value: "europe",
+            label: "Europe",
+            disabled: false,
+        },
+        RadioItemSample {
+            value: "americas",
+            label: "Americas",
+            disabled: false,
+        },
+    ];
+
+    [
+        RadioGroupSample {
+            id: "persona-radios",
+            title: "Persona",
+            summary: "Vertical group with required metadata and one disabled item.",
+            orientation: Orientation::Vertical,
+            size: Size::Medium,
+            selected: "team",
+            disabled: false,
+            required: true,
+            state: radio_group_state(
+                Orientation::Vertical,
+                Size::Medium,
+                false,
+                true,
+                "team",
+                &persona_items,
+                tokens,
+            ),
+            items: persona_items,
+        },
+        RadioGroupSample {
+            id: "region-radios",
+            title: "Region",
+            summary: "Horizontal group with compact sizing.",
+            orientation: Orientation::Horizontal,
+            size: Size::Small,
+            selected: "europe",
+            disabled: false,
+            required: false,
+            state: radio_group_state(
+                Orientation::Horizontal,
+                Size::Small,
+                false,
+                false,
+                "europe",
+                &region_items,
+                tokens,
+            ),
+            items: region_items,
+        },
+    ]
+}
+
+/// Returns toggle samples backed by real component state.
+pub fn toggle_samples(tokens: ThemeTokens) -> [ToggleSample; 4] {
+    [
+        (
+            "ghost-off",
+            "Ghost off",
+            ToggleVariant::Ghost,
+            false,
+            false,
+            Size::Medium,
+        ),
+        (
+            "ghost-on",
+            "Ghost on",
+            ToggleVariant::Ghost,
+            true,
+            false,
+            Size::Medium,
+        ),
+        (
+            "outline-on",
+            "Outline on",
+            ToggleVariant::Outline,
+            true,
+            false,
+            Size::Small,
+        ),
+        (
+            "outline-disabled",
+            "Disabled",
+            ToggleVariant::Outline,
+            false,
+            true,
+            Size::Medium,
+        ),
+    ]
+    .map(
+        |(id, label, variant, pressed, disabled, size)| ToggleSample {
+            id,
+            label,
+            variant,
+            size,
+            state: Toggle::new(id, label)
+                .variant(variant)
+                .pressed(pressed)
+                .disabled(disabled)
+                .with_size(size)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
 fn tabs_state(
     orientation: Orientation,
     activation_mode: TabsActivationMode,
@@ -643,6 +833,29 @@ fn tabs_state(
         items
             .iter()
             .map(|item| TabsItemDescriptor::new(item.value, item.label).disabled(item.disabled)),
+        tokens,
+    )
+}
+
+fn radio_group_state(
+    orientation: Orientation,
+    size: Size,
+    disabled: bool,
+    required: bool,
+    selected: &str,
+    items: &[RadioItemSample],
+    tokens: ThemeTokens,
+) -> RadioGroupState {
+    RadioGroupState::resolve(
+        orientation,
+        size,
+        disabled,
+        required,
+        Some(selected),
+        None,
+        items
+            .iter()
+            .map(|item| RadioItemDescriptor::new(item.value, item.label).disabled(item.disabled)),
         tokens,
     )
 }

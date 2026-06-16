@@ -1,5 +1,5 @@
 use open_gpui::px;
-use open_gpui_ui_components::{TabsActivationMode, ThemeMode};
+use open_gpui_ui_components::{TabsActivationMode, ThemeMode, ToggleVariant};
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, Orientation, PanelAdaptiveClass, Role, Size,
     ThemeTokens, Toggled, semantic,
@@ -165,6 +165,8 @@ fn components_page_samples_expose_component_metadata() {
     let buttons = pages::components::button_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
     let checkboxes = pages::components::checkbox_samples(tokens);
+    let radio_groups = pages::components::radio_group_samples(tokens);
+    let toggles = pages::components::toggle_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
@@ -192,6 +194,24 @@ fn components_page_samples_expose_component_metadata() {
     assert!(checkboxes[3].state.required());
     assert!(checkboxes[4].state.invalid());
     assert!(!checkboxes[5].state.activation_enabled());
+
+    assert_eq!(radio_groups.len(), 2);
+    assert_eq!(radio_groups[0].state.role(), Role::RadioGroup);
+    assert!(radio_groups[0].state.required());
+    assert_eq!(radio_groups[0].state.selected_value(), Some("team"));
+    assert_eq!(radio_groups[0].state.focused_value(), Some("team"));
+    assert_eq!(radio_groups[0].state.tab_stop_value(), Some("team"));
+    assert!(radio_groups[0].state.items()[2].disabled());
+    assert_eq!(radio_groups[0].state.items()[0].role(), Role::RadioButton);
+    assert_eq!(radio_groups[1].state.orientation(), Orientation::Horizontal);
+    assert_eq!(radio_groups[1].state.selected_value(), Some("europe"));
+
+    assert_eq!(toggles.len(), 4);
+    assert_eq!(toggles[0].state.role(), Role::Button);
+    assert_eq!(toggles[0].state.toggled(), Toggled::False);
+    assert_eq!(toggles[1].state.toggled(), Toggled::True);
+    assert_eq!(toggles[2].state.variant(), ToggleVariant::Outline);
+    assert!(!toggles[3].state.activation_enabled());
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);

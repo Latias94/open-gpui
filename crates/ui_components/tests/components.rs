@@ -1,9 +1,10 @@
 use open_gpui::{AppContext, div, px};
 use open_gpui_ui_components::{
     Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Label,
-    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    active_index_from_str_keys, first_enabled, focus_ring_shadow, last_enabled, next_enabled,
+    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, active_index_from_str_keys, first_enabled,
+    focus_ring_shadow, last_enabled, next_enabled,
 };
 use open_gpui_ui_core::{
     Orientation, Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic,
@@ -155,6 +156,118 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
 }
 
 #[test]
+fn radio_group_state_exposes_selection_required_and_disabled_items() {
+    let state = RadioGroupState::resolve(
+        Orientation::Vertical,
+        Size::Medium,
+        false,
+        true,
+        Some("team"),
+        None,
+        [
+            RadioItemDescriptor::new("personal", "Personal"),
+            RadioItemDescriptor::new("team", "Team"),
+            RadioItemDescriptor::new("enterprise", "Enterprise").disabled(true),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.role(), Role::RadioGroup);
+    assert!(state.required());
+    assert_eq!(state.selected_value(), Some("team"));
+    assert_eq!(state.focused_value(), Some("team"));
+    assert_eq!(state.tab_stop_value(), Some("team"));
+    assert_eq!(state.items().len(), 3);
+    assert!(state.items()[1].selected());
+    assert!(state.items()[1].focused());
+    assert!(state.items()[1].tab_stop());
+    assert!(state.items()[2].disabled());
+    assert!(!state.items()[2].activation_enabled());
+    assert_eq!(state.items()[0].role(), Role::RadioButton);
+}
+
+#[test]
+fn radio_group_reuses_roving_focus_helpers_and_skips_disabled_items() {
+    let state = RadioGroupState::resolve(
+        Orientation::Horizontal,
+        Size::Small,
+        false,
+        false,
+        Some("missing"),
+        Some("enterprise"),
+        [
+            RadioItemDescriptor::new("starter", "Starter"),
+            RadioItemDescriptor::new("pro", "Pro").disabled(true),
+            RadioItemDescriptor::new("enterprise", "Enterprise"),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.orientation(), Orientation::Horizontal);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.selected_value(), Some("starter"));
+    assert_eq!(state.focused_value(), Some("enterprise"));
+    assert_eq!(state.tab_stop_value(), Some("enterprise"));
+    assert!(state.items()[1].disabled());
+    assert!(!state.items()[1].tab_stop());
+}
+
+#[test]
+fn radio_group_builder_state_falls_back_to_first_enabled_item() {
+    let state = RadioGroup::new("plan")
+        .label("Plan")
+        .orientation(Orientation::Horizontal)
+        .with_size(Size::Large)
+        .required(true)
+        .selected("enterprise")
+        .item(RadioItem::new("starter", "Starter"))
+        .item(RadioItem::new("pro", "Pro"))
+        .item(RadioItem::new("enterprise", "Enterprise").disabled(true))
+        .state();
+
+    assert_eq!(state.orientation(), Orientation::Horizontal);
+    assert_eq!(state.size(), Size::Large);
+    assert!(state.required());
+    assert_eq!(state.selected_value(), Some("starter"));
+    assert_eq!(state.focused_value(), Some("starter"));
+    assert_eq!(state.tab_stop_value(), Some("starter"));
+    assert!(state.items()[2].disabled());
+    assert!(!state.items()[2].selected());
+}
+
+#[test]
+fn toggle_pressed_state_maps_to_button_role_and_toggled_state() {
+    let state = Toggle::new("notifications", "Notifications")
+        .variant(ToggleVariant::Outline)
+        .pressed(true)
+        .small()
+        .state();
+
+    assert_eq!(state.role(), Role::Button);
+    assert_eq!(state.toggled(), Toggled::True);
+    assert!(state.pressed());
+    assert_eq!(state.variant(), ToggleVariant::Outline);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.colors().background().token(), semantic::ACCENT);
+    assert_eq!(state.focus_ring().color().token(), semantic::FOCUS_RING);
+    assert!(state.activation_enabled());
+}
+
+#[test]
+fn disabled_toggle_blocks_activation_without_checkbox_semantics() {
+    let state = Toggle::new("locked", "Locked")
+        .pressed(false)
+        .disabled(true)
+        .state();
+
+    assert_eq!(state.role(), Role::Button);
+    assert_eq!(state.toggled(), Toggled::False);
+    assert!(!state.pressed());
+    assert!(state.disabled());
+    assert!(!state.activation_enabled());
+}
+
+#[test]
 fn button_accepts_custom_token_bundle() {
     let tokens = custom_tokens();
     let state = Button::new("outline", "Outline")
@@ -256,6 +369,25 @@ fn default_theme_resolves_all_current_component_color_intents() {
         Checkbox::new("mixed").indeterminate(true).state(),
         Checkbox::new("invalid").invalid(true).state(),
     ];
+    let radio_groups = [
+        RadioGroup::new("plan")
+            .selected("team")
+            .item(RadioItem::new("personal", "Personal"))
+            .item(RadioItem::new("team", "Team"))
+            .state(),
+        RadioGroup::new("disabled-plan")
+            .disabled(true)
+            .item(RadioItem::new("personal", "Personal"))
+            .state(),
+    ];
+    let toggles = [
+        Toggle::new("ghost-off", "Ghost off").state(),
+        Toggle::new("ghost-on", "Ghost on").pressed(true).state(),
+        Toggle::new("outline-on", "Outline on")
+            .variant(ToggleVariant::Outline)
+            .pressed(true)
+            .state(),
+    ];
     let text_inputs = [
         TextInput::new("default", "Default").state(),
         TextInput::new("disabled", "Disabled")
@@ -322,6 +454,36 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.border(),
             colors.indicator(),
             colors.label(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in radio_groups {
+        let colors = state.colors();
+        for intent in [
+            colors.control_background(),
+            colors.control_background_selected(),
+            colors.control_border(),
+            colors.control_border_selected(),
+            colors.indicator(),
+            colors.label(),
+            colors.label_muted(),
+            colors.hover_background(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in toggles {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.border(),
+            colors.hover_background(),
             colors.focus_ring(),
         ] {
             assert_theme_has_exact_color(theme, intent);

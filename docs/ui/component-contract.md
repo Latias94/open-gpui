@@ -86,4 +86,9 @@ GPUI-adapter code and should stay out of a future headless crate if `FocusRing` 
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus
 contract in resolved state, with orientation, activation mode, selected/focused/tab-stop metadata,
-while the GPUI adapter owns the focus handles and `aria` wiring.
+while the GPUI adapter owns the focus handles and `aria` wiring. `RadioGroup` reuses the same
+roving-focus helpers as `Tabs`, exposes group required/disabled metadata plus per-item
+selected/focused/tab-stop state, and maps items through `Role::RadioButton` with `aria_selected`
+because the current AccessKit surface exposed by GPUI does not provide a separate checked
+property. `Toggle` is button-like: it exposes `pressed`, maps to `Role::Button` with
+`aria_toggled`, and intentionally stays separate from `Checkbox` tri-state semantics.
