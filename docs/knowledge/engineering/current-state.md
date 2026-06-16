@@ -42,8 +42,8 @@ status: "active"
   also passed after the collapsed-panel restore fix. `cargo fmt -p open-gpui-ui-components`,
   `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components`, and
   `cargo check -p open-gpui-ui-foundation-gallery` passed after the ScrollArea runtime-handle fix.
-- Next action: Commit the ScrollArea runtime-handle fix, then run a manual Components-gallery
-  dogfood pass before moving to U12 Toolbar/Sidebar or the next gallery conformance item.
+- Next action: Run a manual Components-gallery dogfood pass, then move to U12 Toolbar/Sidebar or
+  the next gallery conformance item.
 - Done: Started the layout/shell-navigation component series by adding `ScrollArea` to
   `open_gpui_ui_components`. `ScrollAreaState` records stable viewport id, axis, reset policy/key,
   size, and scrollbar metrics without storing GPUI handles; the concrete adapter owns

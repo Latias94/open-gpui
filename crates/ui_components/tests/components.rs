@@ -720,6 +720,81 @@ fn scroll_area_default_handle_survives_reconstructed_component_values(
     );
 }
 
+#[open_gpui::test]
+fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        reset_key: String,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows = (0..10).map(|index| {
+                div()
+                    .debug_selector(move || format!("reset-row-{index}"))
+                    .h(px(24.0))
+                    .w_full()
+                    .child(format!("Row {index}"))
+            });
+
+            div().size_full().child(
+                div().w(px(180.0)).h(px(60.0)).child(
+                    ScrollArea::new(
+                        "reset-runtime-scroll",
+                        div().flex().flex_col().children(rows),
+                    )
+                    .vertical()
+                    .reset_on_key(self.reset_key.clone()),
+                ),
+            )
+        }
+    }
+
+    let (view, cx) = cx.add_window_view(|_, _| TestView {
+        reset_key: "overview".to_string(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let initial = cx
+        .debug_bounds("reset-row-2")
+        .expect("row should be rendered before scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(10.0), px(10.0)),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-40.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let scrolled = cx
+        .debug_bounds("reset-row-2")
+        .expect("row should still be rendered after scrolling");
+    assert!(
+        scrolled.top() < initial.top(),
+        "expected row bounds to move upward after wheel scrolling; initial={initial:?} scrolled={scrolled:?}"
+    );
+
+    view.update(cx, |view, cx| {
+        view.reset_key = "details".to_string();
+        cx.notify();
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let reset = cx
+        .debug_bounds("reset-row-2")
+        .expect("row should still be rendered after reset");
+    assert_eq!(
+        reset.top(),
+        initial.top(),
+        "expected reset key change to restore the scroll origin; initial={initial:?} reset={reset:?}"
+    );
+}
+
 #[test]
 fn splitter_state_normalizes_panel_fractions_and_constraints() {
     let state = SplitterState::resolve(
