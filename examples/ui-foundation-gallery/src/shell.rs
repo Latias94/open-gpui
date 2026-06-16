@@ -9,10 +9,10 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field,
-    FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState, RadioGroup, RadioItem,
-    Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
-    TextInputController, TextInputState, Toggle, ToggleState, Tooltip, TooltipContentKind,
-    TooltipOpenIntent, focus_ring_shadow, init_text_input,
+    FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState, Popover,
+    PopoverOpenMode, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode,
+    TabsItem, TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState,
+    Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -78,6 +78,7 @@ pub struct GalleryShell {
     a11y_enabled: bool,
     overlay_open: bool,
     hovered_tooltip_sample: Option<&'static str>,
+    overlay_controlled_popover_open: bool,
 }
 
 impl GalleryShell {
@@ -109,6 +110,7 @@ impl GalleryShell {
             a11y_enabled: false,
             overlay_open: false,
             hovered_tooltip_sample: None,
+            overlay_controlled_popover_open: false,
         }
     }
 }
@@ -139,6 +141,7 @@ impl GalleryShell {
             self.selected_page = page;
             self.page_scroll.set_offset(point(px(0.0), px(0.0)));
             self.hovered_tooltip_sample = None;
+            self.overlay_controlled_popover_open = false;
             cx.notify();
         }
     }
@@ -188,6 +191,13 @@ impl GalleryShell {
             cx.notify();
         }
     }
+
+    fn set_controlled_popover_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_popover_open != open {
+            self.overlay_controlled_popover_open = open;
+            cx.notify();
+        }
+    }
 }
 
 impl Render for GalleryShell {
@@ -206,6 +216,7 @@ impl Render for GalleryShell {
                 if event.keystroke.key.as_str() == "escape" {
                     this.set_overlay_open(false, cx);
                     this.set_hovered_tooltip_sample(None, cx);
+                    this.set_controlled_popover_open(false, cx);
                 }
             }))
             .child(self.render_navigation(page, cx))
@@ -1436,6 +1447,7 @@ impl GalleryShell {
         let geometry = pages::overlay::demo_geometry();
         let behavior_samples = pages::overlay::behavior_samples();
         let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
+        let popover_samples = pages::overlay::popover_samples(snapshot.tokens);
 
         div()
             .id("gallery-overlay-page")
@@ -1640,6 +1652,32 @@ impl GalleryShell {
                             )),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Popover samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(4)
+                            .gap_3()
+                            .child(self.render_popover_sample_card(&popover_samples[0], false, cx))
+                            .child(self.render_popover_sample_card(
+                                &popover_samples[1],
+                                self.overlay_controlled_popover_open,
+                                cx,
+                            ))
+                            .child(self.render_popover_sample_card(&popover_samples[2], false, cx))
+                            .child(self.render_popover_sample_card(&popover_samples[3], false, cx)),
+                    ),
+            )
             .child(self.render_signal_list(snapshot.selected_page))
     }
 
@@ -1726,6 +1764,87 @@ impl GalleryShell {
                 )
             })
             .child(tooltip_state_row(&state, open))
+    }
+
+    fn render_popover_sample_card(
+        &self,
+        sample: &pages::overlay::PopoverSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "controlled" {
+            Popover::new(
+                format!("overlay-popover-sample:{}", sample.id),
+                sample.label,
+                sample.content_text,
+            )
+            .open(controlled_open)
+            .placement_side(sample.state.placement_side())
+            .placement_alignment(sample.state.placement_alignment())
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let label = sample.label;
+        let content_text = sample.content_text;
+        let shell = cx.entity().downgrade();
+        let popover = Popover::new(
+            format!("overlay-popover-demo:{}", sample_id),
+            label,
+            content_text,
+        )
+        .disabled(state.disabled())
+        .placement_side(state.placement_side())
+        .placement_alignment(state.placement_alignment())
+        .outside_press_policy(state.outside_press_policy());
+        let popover = match sample_id {
+            "controlled" => popover
+                .open(state.open())
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_popover_open(open, cx))
+                        .ok();
+                }),
+            "default-open" => popover.default_open(state.default_open()),
+            _ => popover.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-popover-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(popover)
+            .when(sample_id == "controlled", |card| {
+                card.child(
+                    div()
+                        .id("overlay-popover-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_popover_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close controlled"
+                        } else {
+                            "open controlled"
+                        }),
+                )
+            })
+            .child(popover_state_row(&state))
     }
 
     fn render_overlay_bounds(&self, label: &'static str, bounds: Rect) -> impl IntoElement {
@@ -2482,6 +2601,59 @@ fn tooltip_state_row(
             format_duration_ms(state.delay().close_delay()),
             format_duration_ms(state.delay().skip_delay())
         ))
+}
+
+fn popover_state_row(state: &open_gpui_ui_components::PopoverState) -> impl IntoElement {
+    let outside = state.outside_press_policy().resolve();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / disabled {}",
+            bool_label(state.open()),
+            popover_open_mode_label(state.open_mode()),
+            bool_label(state.disabled())
+        ))
+        .child(format!(
+            "placement: {} {} / trigger selected {}",
+            tooltip_placement_label(state.placement_side()),
+            popover_alignment_label(state.placement_alignment()),
+            bool_label(state.trigger_selected())
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {} / underlay {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+        .child(format!(
+            "focus: open {} / close {} / layer {}",
+            pages::overlay::initial_focus_label(state.initial_focus_intent()),
+            pages::overlay::focus_restore_label(state.focus_restore_intent()),
+            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+        ))
+}
+
+fn popover_open_mode_label(mode: PopoverOpenMode) -> &'static str {
+    match mode {
+        PopoverOpenMode::Uncontrolled => "uncontrolled",
+        PopoverOpenMode::Controlled => "controlled",
+    }
+}
+
+fn popover_alignment_label(
+    alignment: open_gpui_ui_core::OverlayPlacementAlignment,
+) -> &'static str {
+    match alignment {
+        open_gpui_ui_core::OverlayPlacementAlignment::Start => "start",
+        open_gpui_ui_core::OverlayPlacementAlignment::Center => "center",
+        open_gpui_ui_core::OverlayPlacementAlignment::End => "end",
+    }
 }
 
 fn tooltip_open_intent_label(intent: TooltipOpenIntent) -> &'static str {

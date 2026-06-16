@@ -82,7 +82,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    underlay blocking, and GPUI adapter fields such as deferred priority and snap margin. In the
    Tooltip samples, hover `Hover or focus`, tab to `Focus only`, and confirm each reveals
    descriptive tooltip content while `Disabled` remains unfocusable and closed; `Manual delayed`
-   should stay visible and report its custom delay policy.
+   should stay visible and report its custom delay policy. In the Popover samples, confirm
+   `Default open` starts visible, `Controlled` opens and closes from its gallery control, Escape
+   closes the controlled popover, outside press closes the visible popovers, and the
+   `Consume outside` sample reports a consuming outside-press policy while `Disabled` remains
+   closed.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs samples

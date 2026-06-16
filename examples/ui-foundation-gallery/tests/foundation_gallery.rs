@@ -1,7 +1,7 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, TabsActivationMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent, default_deferred_priority,
+    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, PopoverOpenMode, TabsActivationMode,
+    ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -284,6 +284,52 @@ fn overlay_page_tooltip_samples_expose_focus_hover_and_disabled_contracts() {
     assert!(!samples[3].state.open());
     assert!(samples[3].state.descriptive());
     assert!(!samples[3].state.interactive_content());
+}
+
+#[test]
+fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
+    let samples = pages::overlay::popover_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 4);
+    assert_eq!(samples[0].id, "default-open");
+    assert_eq!(samples[0].state.open_mode(), PopoverOpenMode::Uncontrolled);
+    assert!(samples[0].state.default_open());
+    assert!(samples[0].state.open());
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        samples[0].state.focus_restore_intent(),
+        &FocusRestoreIntent::Trigger
+    );
+
+    assert_eq!(samples[1].id, "controlled");
+    assert_eq!(samples[1].state.open_mode(), PopoverOpenMode::Controlled);
+    assert!(!samples[1].state.open());
+    assert_eq!(
+        samples[1].state.placement_side(),
+        open_gpui_ui_core::OverlayPlacementSide::Right
+    );
+
+    assert_eq!(samples[2].id, "consume-outside");
+    assert!(samples[2].state.open());
+    assert_eq!(
+        samples[2].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert!(
+        !samples[2]
+            .state
+            .outside_press_policy()
+            .resolve()
+            .allows_underlay_dispatch()
+    );
+
+    assert_eq!(samples[3].id, "disabled");
+    assert!(samples[3].state.disabled());
+    assert!(!samples[3].state.open());
+    assert!(!samples[3].state.activation_enabled());
 }
 
 #[test]

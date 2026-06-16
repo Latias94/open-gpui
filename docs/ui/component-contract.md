@@ -63,6 +63,13 @@ hover/focus subscriptions, focus handles, timing execution, and anchored/deferre
 GPUI adapter responsibilities. Rich hover cards and action-bearing tooltip content should not reuse
 the descriptive tooltip contract as-is.
 
+`PopoverState` is the first interactive non-modal overlay contract. It records controlled versus
+uncontrolled open mode, default-open state, trigger expanded/selected intent, placement preference,
+outside-press policy, initial focus intent, focus restore intent, resolved metrics, token intents,
+and non-modal dismissible layer state. The GPUI adapter owns the concrete trigger/content elements,
+`deferred`/`anchored` rendering, outside-press subscription, and focus handles. Nested popovers,
+modal popover variants, and full focus-scope coordination remain follow-up work.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by
@@ -133,4 +140,6 @@ display-only and exposes no role in resolved state. `IconButton` reuses Button v
 focus-ring color intents, but requires an explicit accessible label because the visible icon glyph
 is not a reliable accessible name. `Tooltip` is descriptive-only and currently maps its surface to
 `Role::Label` until the public GPUI/AccessKit role wrapper exposes a tooltip role; trigger
-association and timed hover/focus execution stay in the adapter layer.
+association and timed hover/focus execution stay in the adapter layer. `Popover` currently covers
+basic non-modal dismissible surfaces with default-open and controlled-open state; nested popover
+coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.

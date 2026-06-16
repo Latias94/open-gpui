@@ -2,18 +2,19 @@ use open_gpui::{Anchor, AppContext, ParentElement, div, point, px, size};
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
     DEFAULT_OVERLAY_SAFE_MARGIN, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
-    IconButton, Label, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
-    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
-    last_enabled, next_enabled, outside_press_open_change, point_anchor_placement,
+    IconButton, Label, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
+    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
+    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
+    focus_ring_shadow, gpui_anchor, last_enabled, next_enabled, outside_press_open_change,
+    point_anchor_placement,
 };
 use open_gpui_ui_core::{
-    DismissReason, EscapeKeyPolicy, InitialFocusIntent, Orientation, OutsidePressPolicy,
-    OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
-    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
-    Toggled, TokenKey, rect, semantic,
+    DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
+    OutsidePressPolicy, OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy,
+    OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
+    Sizable, Size, ThemeTokens, Toggled, TokenKey, rect, semantic,
 };
 use std::time::Duration;
 
@@ -217,6 +218,70 @@ fn tooltip_state_models_disabled_element_content_and_delay_overrides() {
     assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
     assert_eq!(state.delay(), delay);
     assert_eq!(state.size(), Size::Small);
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn popover_state_records_interactive_overlay_policy() {
+    let state = Popover::new("settings-popover", "Settings", "Panel")
+        .open(true)
+        .placement_side(OverlayPlacementSide::Right)
+        .placement_alignment(OverlayPlacementAlignment::End)
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), PopoverOpenMode::Controlled);
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Window);
+    assert!(state.trigger_selected());
+    assert!(state.activation_enabled());
+    assert_eq!(state.placement_side(), OverlayPlacementSide::Right);
+    assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
+    assert_eq!(
+        state.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert!(state.overlay().wants_outside_press_handler());
+    assert!(state.overlay().layer_state().hit_testable());
+    assert_eq!(state.colors().background().token(), semantic::SURFACE);
+    assert_eq!(
+        state.colors().trigger_background().state(),
+        ColorState::Selected
+    );
+}
+
+#[test]
+fn popover_state_models_default_open_disabled_and_policy_overrides() {
+    let state = Popover::element("help-popover", "Help", div().child("Rich"))
+        .default_open(true)
+        .disabled(true)
+        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+        .initial_focus_intent(InitialFocusIntent::None)
+        .focus_restore_intent(FocusRestoreIntent::None)
+        .small()
+        .state();
+
+    assert_eq!(state.open_mode(), PopoverOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert!(!state.activation_enabled());
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
 }
 

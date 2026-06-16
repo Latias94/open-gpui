@@ -13,6 +13,7 @@ pub use crate::overlay::{
     OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,
     outside_press_open_change, point_anchor_placement,
 };
+pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,

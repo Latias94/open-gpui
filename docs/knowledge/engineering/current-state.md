@@ -11,6 +11,18 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U5 of the overlay component series by adding interactive non-modal `Popover` to
+  `open-gpui-ui-components` with `PopoverState`, controlled/uncontrolled open mode, default-open
+  state, trigger expanded/selected intent, outside-press policy, placement metadata, initial focus
+  and focus-restore intent, token/metric resolution, exports, and targeted tests.
+- Done: Added Overlay gallery Popover samples for default-open, controlled, consuming outside
+  press, and disabled cases. The controlled sample is owned by gallery shell state and closes on
+  Escape via the shared shell handler.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U5 Popover work.
+- Next action: Start U6 Dialog on top of the shared overlay adapter and Popover precedent, covering
+  modal layer state, title/description metadata, Escape/outside policies, and focus restoration.
 - Done: Completed U4 of the overlay component series by adding descriptive `Tooltip` to
   `open-gpui-ui-components` with `TooltipState`, hover/focus/manual open intent, delay policy,
   placement metadata, token/metric resolution, explicit exports, component tests, and Overlay

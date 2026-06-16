@@ -9,6 +9,7 @@ use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
 use crate::field::FieldColors;
 use crate::label::LabelColors;
+use crate::popover::PopoverColors;
 use crate::radio::RadioGroupColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
@@ -530,6 +531,37 @@ impl ThemeResolver {
             background: ColorIntent::with_state(tokens.overlay, ColorState::Overlay, 0x263240),
             foreground: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
             border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+        }
+    }
+
+    pub(crate) const fn popover_colors(tokens: ThemeTokens, open: bool) -> PopoverColors {
+        let trigger_state = if open {
+            ColorState::Selected
+        } else {
+            ColorState::Default
+        };
+
+        PopoverColors {
+            background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+            foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            trigger_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                trigger_state,
+                DEFAULT_GHOST_SURFACE,
+            ),
+            trigger_hover_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::Hover,
+                0xf1f5ee,
+            ),
+            trigger_foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            trigger_border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
         }
     }
 

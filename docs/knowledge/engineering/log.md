@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed U5 of the overlay component series by adding the interactive non-modal
+  `Popover` component and `PopoverState` contract to `open-gpui-ui-components`. The first slice
+  models controlled versus uncontrolled open mode, default-open state, trigger expanded/selected
+  intent, outside-press policy, placement metadata, initial focus intent, focus restoration intent,
+  non-modal dismissible layer state, token intents, and metrics.
+* **Update**: Added Overlay gallery Popover samples for default-open, controlled, consuming
+  outside press, and disabled cases. The controlled sample is owned by gallery shell state and
+  closes through the shared Escape handler.
+* **Update**: Documented Popover in `docs/ui/component-contract.md` and `docs/verification.md`,
+  with nested popovers, modal popover barriers, and a reusable focus-scope runtime explicitly
+  deferred.
+* **Update**: Verified U5 with `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`.
 * **Update**: Completed U4 of the overlay component series by adding the descriptive `Tooltip`
   component and `TooltipState` contract to `open-gpui-ui-components`. The first slice models text
   or simple element content, hover/focus/manual open intent, delay policy, placement metadata,

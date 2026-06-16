@@ -4,8 +4,8 @@ use open_gpui::{Pixels, point, px, size};
 use std::time::Duration;
 
 use open_gpui_ui_components::{
-    GpuiOverlayAdapterConfig, GpuiOverlayState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent,
-    TooltipState,
+    GpuiOverlayAdapterConfig, GpuiOverlayState, Popover, PopoverState, Tooltip, TooltipDelayPolicy,
+    TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -29,6 +29,7 @@ pub const SIGNALS: &[&str] = &[
     "OutsidePressPolicy",
     "FocusRestoreIntent",
     "TooltipState",
+    "PopoverState",
     "OverlayEdges",
     "OverlaySize",
 ];
@@ -205,6 +206,81 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             .open(true)
             .disabled(true)
             .placement_side(OverlayPlacementSide::Left)
+            .tokens(tokens)
+            .state(),
+        },
+    ]
+}
+
+/// Popover sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PopoverSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Text shown by the popover surface.
+    pub content_text: &'static str,
+    /// Resolved popover state.
+    pub state: PopoverState,
+}
+
+/// Returns deterministic popover samples for gallery dogfood.
+pub fn popover_samples(tokens: ThemeTokens) -> [PopoverSample; 4] {
+    [
+        PopoverSample {
+            id: "default-open",
+            label: "Default open",
+            content_text: "Uncontrolled popover initialized open.",
+            state: Popover::new(
+                "overlay-popover:default-open",
+                "Default open",
+                "Uncontrolled popover initialized open.",
+            )
+            .default_open(true)
+            .tokens(tokens)
+            .state(),
+        },
+        PopoverSample {
+            id: "controlled",
+            label: "Controlled",
+            content_text: "The gallery shell owns this open state.",
+            state: Popover::new(
+                "overlay-popover:controlled",
+                "Controlled",
+                "The gallery shell owns this open state.",
+            )
+            .open(false)
+            .placement_side(OverlayPlacementSide::Right)
+            .tokens(tokens)
+            .state(),
+        },
+        PopoverSample {
+            id: "consume-outside",
+            label: "Consume outside",
+            content_text: "Outside press dismisses and consumes the event.",
+            state: Popover::new(
+                "overlay-popover:consume-outside",
+                "Consume outside",
+                "Outside press dismisses and consumes the event.",
+            )
+            .open(true)
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .placement_alignment(OverlayPlacementAlignment::End)
+            .tokens(tokens)
+            .state(),
+        },
+        PopoverSample {
+            id: "disabled",
+            label: "Disabled",
+            content_text: "Disabled triggers stay closed and unfocusable.",
+            state: Popover::new(
+                "overlay-popover:disabled",
+                "Disabled",
+                "Disabled triggers stay closed and unfocusable.",
+            )
+            .default_open(true)
+            .disabled(true)
             .tokens(tokens)
             .state(),
         },
