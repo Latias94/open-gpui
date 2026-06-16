@@ -54,9 +54,11 @@ The `open-gpui-ui-components` public contract tests should also keep
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,
 `Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and
 callback storage from entering state contracts. The companion extraction-blocker inventory tests in
-`open-gpui-ui-components` and `open-gpui-ui-core` pin the known GPUI geometry, `GpuiOverlayState`,
-direct focus/a11y re-export, sizing/adaptive `Pixels` usage, and adapter-metric blockers so later
-extraction-prep work can shrink that allowlist deliberately.
+`open-gpui-ui-components` and `open-gpui-ui-core` pin the remaining `GpuiOverlayState`, direct
+focus/a11y re-export, sizing/adaptive `Pixels` usage, and adapter-metric blockers so later
+extraction-prep work can shrink that allowlist deliberately. Overlay placement and context-menu
+point anchors now use neutral UI-core geometry, so adding public GPUI `Bounds`, `Point`, or `Size`
+aliases to overlay contracts should fail the guard inventory.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

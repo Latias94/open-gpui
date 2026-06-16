@@ -11,7 +11,7 @@ use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
     InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementSide, PanelAdaptiveClass, Role, Size, ThemeTokens,
-    Toggled, semantic,
+    Toggled, semantic, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, density_label, device_class_label,
@@ -186,13 +186,13 @@ fn focus_a11y_page_models_focus_order_and_roles() {
 fn overlay_page_geometry_prefers_visual_bounds_and_insets_window() {
     let geometry = pages::overlay::demo_geometry();
 
-    assert_eq!(geometry.anchor_rect.size.width, px(1.0));
-    assert_eq!(geometry.anchor_rect.size.height, px(1.0));
+    assert_eq!(geometry.anchor_rect.size.width, ui_px(1.0));
+    assert_eq!(geometry.anchor_rect.size.height, ui_px(1.0));
     assert_eq!(geometry.preferred_rect, geometry.visual_rect);
-    assert_eq!(geometry.safe_window_rect.origin.x, px(12.0));
-    assert_eq!(geometry.safe_window_rect.origin.y, px(12.0));
-    assert_eq!(geometry.safe_window_rect.size.width, px(616.0));
-    assert_eq!(geometry.safe_window_rect.size.height, px(336.0));
+    assert_eq!(geometry.safe_window_rect.origin.x, ui_px(12.0));
+    assert_eq!(geometry.safe_window_rect.origin.y, ui_px(12.0));
+    assert_eq!(geometry.safe_window_rect.size.width, ui_px(616.0));
+    assert_eq!(geometry.safe_window_rect.size.height, ui_px(336.0));
 }
 
 #[test]

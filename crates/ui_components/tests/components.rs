@@ -1,6 +1,6 @@
 use open_gpui::{
     Anchor, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px, size,
+    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
@@ -29,7 +29,7 @@ use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
     OutsidePressPolicy, OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens, Toggled, TokenKey, rect, semantic,
+    Sizable, Size, ThemeTokens, Toggled, TokenKey, rect, semantic, ui_point, ui_px, ui_size,
 };
 use std::time::Duration;
 
@@ -134,15 +134,24 @@ fn overlay_adapter_config_can_override_focus_and_dismiss_policy() {
 fn overlay_placement_maps_to_gpui_anchor_and_margin() {
     let input = OverlayPlacementInput::new(
         OverlayAnchorInput::from_visual_and_layout_bounds(
-            Some(rect(point(px(10.0), px(20.0)), size(px(100.0), px(40.0)))),
-            Some(rect(point(px(30.0), px(40.0)), size(px(120.0), px(60.0)))),
+            Some(rect(
+                ui_point(ui_px(10.0), ui_px(20.0)),
+                ui_size(ui_px(100.0), ui_px(40.0)),
+            )),
+            Some(rect(
+                ui_point(ui_px(30.0), ui_px(40.0)),
+                ui_size(ui_px(120.0), ui_px(60.0)),
+            )),
         ),
-        size(px(180.0), px(120.0)),
+        ui_size(ui_px(180.0), ui_px(120.0)),
     )
     .with_side(OverlayPlacementSide::Bottom)
     .with_alignment(OverlayPlacementAlignment::End)
-    .with_offset(px(6.0))
-    .with_safe_bounds(rect(point(px(0.0), px(0.0)), size(px(300.0), px(220.0))));
+    .with_offset(ui_px(6.0))
+    .with_safe_bounds(rect(
+        ui_point(ui_px(0.0), ui_px(0.0)),
+        ui_size(ui_px(300.0), ui_px(220.0)),
+    ));
 
     let placement = GpuiOverlayPlacement::resolve(input, DEFAULT_OVERLAY_SAFE_MARGIN);
 
@@ -177,7 +186,8 @@ fn overlay_open_change_helpers_match_core_policies() {
         gpui_anchor(OverlayPlacementSide::Top, OverlayPlacementAlignment::Start),
         Anchor::BottomLeft
     );
-    let point_placement = point_anchor_placement(point(px(5.0), px(6.0)), size(px(80.0), px(40.0)));
+    let point_placement =
+        point_anchor_placement(point(px(5.0), px(6.0)), ui_size(ui_px(80.0), ui_px(40.0)));
     assert_eq!(
         GpuiOverlayPlacement::resolve(point_placement, DEFAULT_OVERLAY_SAFE_MARGIN).anchor(),
         Anchor::TopLeft
@@ -683,7 +693,8 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
 
     assert!(state.open());
     assert_eq!(state.open_mode(), MenuOpenMode::Controlled);
-    assert_eq!(state.anchor_point(), anchor);
+    let neutral_anchor = ui_point(ui_px(280.0), ui_px(160.0));
+    assert_eq!(state.anchor_point(), neutral_anchor);
     assert_eq!(state.content_role(), Role::Menu);
     assert_eq!(state.menu().focused_value(), Some("duplicate"));
     assert_eq!(state.menu().items()[1].kind(), MenuItemKind::Separator);
@@ -696,24 +707,21 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
         placement_input.alignment(),
         OverlayPlacementAlignment::Start
     );
-    assert_eq!(placement_input.offset(), px(0.0));
+    assert_eq!(placement_input.offset(), ui_px(0.0));
     assert_eq!(
         placement_input.content_size(),
-        open_gpui_ui_core::OverlaySize::new(
-            state.metrics().min_width(),
-            state.metrics().item_height()
+        ui_size(
+            ui_px(state.metrics().min_width().as_f32()),
+            ui_px(state.metrics().item_height().as_f32())
         )
     );
     let placement = GpuiOverlayPlacement::resolve(placement_input, DEFAULT_OVERLAY_SAFE_MARGIN);
     assert_eq!(placement.anchor(), Anchor::TopLeft);
     assert_eq!(
         placement_input.preferred_anchor_bounds(),
-        Some(open_gpui_ui_core::anchor_rect_from_point(anchor))
+        Some(open_gpui_ui_core::anchor_rect_from_point(neutral_anchor))
     );
-    assert_eq!(
-        placement.position(),
-        Some(open_gpui_ui_core::anchor_rect_from_point(anchor).bottom_left())
-    );
+    assert_eq!(placement.position(), Some(point(px(280.0), px(161.0))));
     assert_eq!(placement.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
 }
 
@@ -1453,7 +1461,6 @@ fn public_contract_extraction_blockers_match_allowlist() {
         ("command.rs", "CommandDialogState", "GpuiOverlayState"),
         ("command.rs", "CommandMetrics", "open_gpui::Pixels"),
         ("command.rs", "CommandState", "GpuiOverlayState"),
-        ("context_menu.rs", "ContextMenuState", "Point<Pixels>"),
         ("dialog.rs", "DialogMetrics", "open_gpui::Pixels"),
         ("dialog.rs", "DialogState", "GpuiOverlayState"),
         ("field.rs", "FieldMetrics", "open_gpui::Pixels"),

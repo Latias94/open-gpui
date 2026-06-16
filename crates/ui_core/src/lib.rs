@@ -9,6 +9,7 @@
 pub mod a11y;
 pub mod adaptive;
 pub mod focus;
+pub mod geometry;
 pub mod overlay;
 pub mod prelude;
 pub mod sizing;
@@ -17,6 +18,7 @@ pub mod tokens;
 pub use a11y::*;
 pub use adaptive::*;
 pub use focus::*;
+pub use geometry::*;
 pub use overlay::*;
 pub use sizing::*;
 pub use tokens::*;

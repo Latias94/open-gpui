@@ -19,6 +19,15 @@
   open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `git diff --check`
   passed for U1.
+* **Update**: Completed U2 neutral geometry. Added `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and
+  `UiEdges` to `open-gpui-ui-core`; migrated overlay placement inputs, safe bounds, offsets, and
+  context-menu state point anchors to those neutral values; and kept GPUI conversion helpers inside
+  the component adapter boundary.
+* **Verification**: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` passed for U2.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

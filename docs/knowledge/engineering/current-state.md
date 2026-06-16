@@ -27,9 +27,18 @@ status: "active"
   open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `git diff --check`
   passed for U1.
-- Next action: Commit U1, then start U2 by adding neutral geometry value types in
-  `open-gpui-ui-core` and migrating overlay placement/context-menu contracts off public GPUI
-  geometry aliases.
+- Done: Implemented U2 neutral geometry. `open-gpui-ui-core` now owns `UiPx`, `UiPoint`,
+  `UiSize`, `UiRect`, and `UiEdges`; overlay `Rect`, `OverlaySize`, `OverlayEdges`, point anchors,
+  offsets, and safe bounds now use those neutral values. `open-gpui-ui-components` converts at the
+  GPUI adapter edge, and `ContextMenuState` exposes a neutral point anchor instead of
+  `Point<Pixels>`.
+- Last verified: U2 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
+- Next action: Commit U2, then start U3 by migrating public component metrics off GPUI `Pixels` or
+  classifying any remaining metrics as adapter-only.
 
 ## 2026-06-16
 

@@ -6,7 +6,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div, point, px, size,
+    deferred, div, point, px,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
@@ -22,7 +22,7 @@ use crate::listbox::{
 };
 use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    outside_press_open_change,
+    outside_press_open_change, ui_point_from_gpui, ui_px_from_gpui, ui_size_from_gpui,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::text_input::{TextInput, TextInputController, TextInputState};
@@ -919,17 +919,14 @@ impl RenderOnce for Combobox {
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
-                    point(px(0.0), px(0.0)),
-                    size(metrics.popup_min_width(), state.input().metrics().height()),
+                    ui_point_from_gpui(point(px(0.0), px(0.0))),
+                    ui_size_from_gpui(metrics.popup_min_width(), state.input().metrics().height()),
                 )),
-                open_gpui_ui_core::OverlaySize::new(
-                    metrics.popup_min_width(),
-                    state.input().metrics().height(),
-                ),
+                ui_size_from_gpui(metrics.popup_min_width(), state.input().metrics().height()),
             )
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
-            .with_offset(px(4.0)),
+            .with_offset(ui_px_from_gpui(px(4.0))),
             state.overlay().snap_margin(),
         );
 

@@ -4,11 +4,6 @@ fn ui_core_extraction_blockers_match_allowlist() {
         ("adaptive.rs", "Pixels as Px"),
         ("a11y.rs", "pub use open_gpui::{AccessibleAction"),
         ("focus.rs", "pub use open_gpui::{FocusHandle"),
-        ("overlay.rs", "Bounds<Px>"),
-        ("overlay.rs", "Edges<Px>"),
-        ("overlay.rs", "Pixels as Px"),
-        ("overlay.rs", "Point<Px>"),
-        ("overlay.rs", "Size<Px>"),
         ("prelude.rs", "focus::{FocusHandle"),
         ("sizing.rs", "Pixels as Px"),
     ];

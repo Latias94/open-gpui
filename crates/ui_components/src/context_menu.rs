@@ -11,7 +11,7 @@ use open_gpui::{
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    Role, Sizable, Size, ThemeTokens,
+    Role, Sizable, Size, ThemeTokens, UiPoint,
 };
 
 use crate::focus::focus_ring_shadow;
@@ -19,7 +19,10 @@ use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
     MenuSelection, MenuState,
 };
-use crate::overlay::{GpuiOverlayPlacement, GpuiOverlayState, outside_press_open_change};
+use crate::overlay::{
+    GpuiOverlayPlacement, GpuiOverlayState, gpui_point_from_ui, outside_press_open_change,
+    ui_point_from_gpui, ui_px_from_gpui, ui_size_from_gpui,
+};
 use crate::theme::ThemeResolver;
 
 /// Resolved context-menu state used by tests, demos, and rendering.
@@ -29,7 +32,7 @@ pub struct ContextMenuState {
     open: bool,
     default_open: bool,
     open_mode: MenuOpenMode,
-    anchor_point: Point<Pixels>,
+    anchor_point: UiPoint,
     menu: MenuState,
     placement_input: OverlayPlacementInput,
 }
@@ -41,7 +44,7 @@ impl ContextMenuState {
         size: Size,
         open: Option<bool>,
         default_open: bool,
-        anchor_point: Point<Pixels>,
+        anchor_point: UiPoint,
         focused_value: Option<&str>,
         items: impl IntoIterator<Item = MenuItemDescriptor>,
         outside_press_policy: OutsidePressPolicy,
@@ -73,14 +76,11 @@ impl ContextMenuState {
         );
         let placement_input = OverlayPlacementInput::new(
             OverlayAnchorInput::from_point(anchor_point),
-            open_gpui_ui_core::OverlaySize::new(
-                menu.metrics().min_width(),
-                menu.metrics().item_height(),
-            ),
+            ui_size_from_gpui(menu.metrics().min_width(), menu.metrics().item_height()),
         )
         .with_side(OverlayPlacementSide::Bottom)
         .with_alignment(OverlayPlacementAlignment::Start)
-        .with_offset(px(0.0));
+        .with_offset(ui_px_from_gpui(px(0.0)));
 
         Self {
             size,
@@ -114,7 +114,7 @@ impl ContextMenuState {
     }
 
     /// Returns the point anchor.
-    pub const fn anchor_point(&self) -> Point<Pixels> {
+    pub const fn anchor_point(&self) -> UiPoint {
         self.anchor_point
     }
 
@@ -292,7 +292,7 @@ impl ContextMenu {
             self.size,
             self.open,
             self.default_open,
-            self.anchor_point,
+            ui_point_from_gpui(self.anchor_point),
             self.focused_value.as_deref(),
             self.items.iter().map(MenuItem::descriptor),
             self.outside_press_policy,
@@ -341,7 +341,7 @@ impl RenderOnce for ContextMenu {
             self.size,
             Some(resolved_open),
             self.default_open,
-            resolved_anchor,
+            ui_point_from_gpui(resolved_anchor),
             focused_value,
             self.items.iter().map(MenuItem::descriptor),
             self.outside_press_policy,
@@ -404,7 +404,11 @@ impl RenderOnce for ContextMenu {
                 this.child(
                     deferred(
                         anchored()
-                            .position(placement.position().unwrap_or(state.anchor_point()))
+                            .position(
+                                placement
+                                    .position()
+                                    .unwrap_or(gpui_point_from_ui(state.anchor_point())),
+                            )
                             .snap_to_window_with_margin(placement.snap_margin())
                             .child(context_menu_surface(
                                 items,

@@ -1,12 +1,12 @@
 //! Overlay geometry helpers for the Open GPUI component ecosystem.
 
-use open_gpui::{Bounds, Edges, Pixels as Px, Point, Size, bounds, px, size};
+use crate::geometry::{UiEdges, UiPoint, UiPx, UiRect, UiSize, ui_px, ui_size};
 
-/// A rectangle in device pixels.
-pub type Rect = Bounds<Px>;
+/// A renderer-neutral overlay rectangle.
+pub type Rect = UiRect;
 
-/// A size in device pixels.
-pub type OverlaySize = Size<Px>;
+/// A renderer-neutral overlay size.
+pub type OverlaySize = UiSize;
 
 /// Stable renderer-neutral identity for an overlay layer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -608,14 +608,14 @@ fn focus_restore_requested(intent: &FocusRestoreIntent) -> bool {
 /// Anchor information used by overlay placement.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OverlayAnchorInput {
-    point: Option<Point<Px>>,
+    point: Option<UiPoint>,
     visual_bounds: Option<Rect>,
     layout_bounds: Option<Rect>,
 }
 
 impl OverlayAnchorInput {
     /// Creates an anchor input from a point.
-    pub const fn from_point(point: Point<Px>) -> Self {
+    pub const fn from_point(point: UiPoint) -> Self {
         Self {
             point: Some(point),
             visual_bounds: None,
@@ -682,7 +682,7 @@ pub struct OverlayPlacementInput {
     content_size: OverlaySize,
     side: OverlayPlacementSide,
     alignment: OverlayPlacementAlignment,
-    offset: Px,
+    offset: UiPx,
     safe_bounds: Option<Rect>,
 }
 
@@ -694,7 +694,7 @@ impl OverlayPlacementInput {
             content_size,
             side: OverlayPlacementSide::Bottom,
             alignment: OverlayPlacementAlignment::Start,
-            offset: px(0.0),
+            offset: ui_px(0.0),
             safe_bounds: None,
         }
     }
@@ -720,7 +720,7 @@ impl OverlayPlacementInput {
     }
 
     /// Returns the placement offset.
-    pub const fn offset(self) -> Px {
+    pub const fn offset(self) -> UiPx {
         self.offset
     }
 
@@ -742,7 +742,7 @@ impl OverlayPlacementInput {
     }
 
     /// Applies a placement offset.
-    pub const fn with_offset(mut self, offset: Px) -> Self {
+    pub const fn with_offset(mut self, offset: UiPx) -> Self {
         self.offset = offset;
         self
     }
@@ -765,38 +765,43 @@ pub fn prefer_visual_bounds(visual: Option<Rect>, layout: Option<Rect>) -> Optio
 }
 
 /// Returns a 1x1 rectangle anchor derived from a point.
-pub fn anchor_rect_from_point(point: Point<Px>) -> Rect {
-    bounds(point, size(px(1.0), px(1.0)))
+pub fn anchor_rect_from_point(point: UiPoint) -> Rect {
+    rect(point, ui_size(UiPx::ONE, UiPx::ONE))
 }
 
 /// Returns a rectangle inset by a uniform window margin.
-pub fn outer_bounds_with_window_margin(bounds: Rect, window_margin: Px) -> Rect {
+pub fn outer_bounds_with_window_margin(bounds: Rect, window_margin: UiPx) -> Rect {
     bounds.inset(window_margin)
 }
 
 /// Returns a rectangle from the given origin and size.
-pub fn rect(origin: Point<Px>, size: OverlaySize) -> Rect {
-    bounds(origin, size)
+pub const fn rect(origin: UiPoint, size: OverlaySize) -> Rect {
+    UiRect::new(origin, size)
 }
 
 /// Returns a rectangle inset by a uniform margin.
-pub fn inset_rect(bounds: Rect, margin: Px) -> Rect {
+pub fn inset_rect(bounds: Rect, margin: UiPx) -> Rect {
     outer_bounds_with_window_margin(bounds, margin)
 }
 
-/// Re-export the geometry edge type so overlay callers do not need to depend on `open_gpui`
-/// directly for the basic shape helpers.
-pub type OverlayEdges = Edges<Px>;
+/// Renderer-neutral overlay edge insets.
+pub type OverlayEdges = UiEdges;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use open_gpui::{point, px, size};
+    use crate::geometry::ui_point;
 
     #[test]
     fn prefer_visual_bounds_prefers_visual() {
-        let visual = rect(point(px(10.0), px(20.0)), size(px(100.0), px(60.0)));
-        let layout = rect(point(px(30.0), px(40.0)), size(px(120.0), px(80.0)));
+        let visual = rect(
+            ui_point(ui_px(10.0), ui_px(20.0)),
+            ui_size(ui_px(100.0), ui_px(60.0)),
+        );
+        let layout = rect(
+            ui_point(ui_px(30.0), ui_px(40.0)),
+            ui_size(ui_px(120.0), ui_px(80.0)),
+        );
 
         assert_eq!(
             prefer_visual_bounds(Some(visual), Some(layout)),
@@ -806,28 +811,37 @@ mod tests {
 
     #[test]
     fn prefer_visual_bounds_falls_back_to_layout() {
-        let layout = rect(point(px(30.0), px(40.0)), size(px(120.0), px(80.0)));
+        let layout = rect(
+            ui_point(ui_px(30.0), ui_px(40.0)),
+            ui_size(ui_px(120.0), ui_px(80.0)),
+        );
 
         assert_eq!(prefer_visual_bounds(None, Some(layout)), Some(layout));
     }
 
     #[test]
     fn anchor_rect_from_point_creates_one_pixel_anchor() {
-        let anchor = anchor_rect_from_point(point(px(12.0), px(34.0)));
+        let anchor = anchor_rect_from_point(ui_point(ui_px(12.0), ui_px(34.0)));
 
-        assert_eq!(anchor.origin.x, px(12.0));
-        assert_eq!(anchor.origin.y, px(34.0));
-        assert_eq!(anchor.size.width, px(1.0));
-        assert_eq!(anchor.size.height, px(1.0));
+        assert_eq!(anchor.origin.x, ui_px(12.0));
+        assert_eq!(anchor.origin.y, ui_px(34.0));
+        assert_eq!(anchor.size.width, ui_px(1.0));
+        assert_eq!(anchor.size.height, ui_px(1.0));
     }
 
     #[test]
     fn outer_bounds_with_window_margin_insets_uniformly() {
-        let input = rect(point(px(240.0), px(64.0)), size(px(220.0), px(190.0)));
+        let input = rect(
+            ui_point(ui_px(240.0), ui_px(64.0)),
+            ui_size(ui_px(220.0), ui_px(190.0)),
+        );
 
         assert_eq!(
-            outer_bounds_with_window_margin(input, px(10.0)),
-            rect(point(px(250.0), px(74.0)), size(px(200.0), px(170.0)))
+            outer_bounds_with_window_margin(input, ui_px(10.0)),
+            rect(
+                ui_point(ui_px(250.0), ui_px(74.0)),
+                ui_size(ui_px(200.0), ui_px(170.0))
+            )
         );
     }
 
@@ -1118,9 +1132,15 @@ mod tests {
 
     #[test]
     fn placement_input_prefers_visual_layout_then_point_anchor() {
-        let visual = rect(point(px(10.0), px(20.0)), size(px(100.0), px(40.0)));
-        let layout = rect(point(px(30.0), px(40.0)), size(px(120.0), px(60.0)));
-        let point_anchor = point(px(7.0), px(9.0));
+        let visual = rect(
+            ui_point(ui_px(10.0), ui_px(20.0)),
+            ui_size(ui_px(100.0), ui_px(40.0)),
+        );
+        let layout = rect(
+            ui_point(ui_px(30.0), ui_px(40.0)),
+            ui_size(ui_px(120.0), ui_px(60.0)),
+        );
+        let point_anchor = ui_point(ui_px(7.0), ui_px(9.0));
 
         let visual_input =
             OverlayAnchorInput::from_visual_and_layout_bounds(Some(visual), Some(layout));
@@ -1135,15 +1155,19 @@ mod tests {
             Some(anchor_rect_from_point(point_anchor))
         );
 
-        let placement = OverlayPlacementInput::new(point_input, size(px(180.0), px(120.0)))
-            .with_side(OverlayPlacementSide::Right)
-            .with_alignment(OverlayPlacementAlignment::End)
-            .with_offset(px(6.0))
-            .with_safe_bounds(rect(point(px(0.0), px(0.0)), size(px(300.0), px(220.0))));
+        let placement =
+            OverlayPlacementInput::new(point_input, ui_size(ui_px(180.0), ui_px(120.0)))
+                .with_side(OverlayPlacementSide::Right)
+                .with_alignment(OverlayPlacementAlignment::End)
+                .with_offset(ui_px(6.0))
+                .with_safe_bounds(rect(
+                    ui_point(ui_px(0.0), ui_px(0.0)),
+                    ui_size(ui_px(300.0), ui_px(220.0)),
+                ));
 
         assert_eq!(placement.side(), OverlayPlacementSide::Right);
         assert_eq!(placement.alignment(), OverlayPlacementAlignment::End);
-        assert_eq!(placement.offset(), px(6.0));
+        assert_eq!(placement.offset(), ui_px(6.0));
         assert!(placement.safe_bounds().is_some());
         assert_eq!(
             placement.preferred_anchor_bounds(),

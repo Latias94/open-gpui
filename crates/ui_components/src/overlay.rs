@@ -5,6 +5,7 @@ use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Rect,
+    UiPoint, UiPx, UiSize,
 };
 
 /// Default margin used when snapping an anchored overlay inside the window.
@@ -323,8 +324,8 @@ fn gpui_anchor_position(
     side: OverlayPlacementSide,
     alignment: OverlayPlacementAlignment,
 ) -> Point<Pixels> {
-    match (side, alignment) {
-        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Start) => bounds.origin,
+    let point = match (side, alignment) {
+        (OverlayPlacementSide::Top, OverlayPlacementAlignment::Start) => bounds.top_left(),
         (OverlayPlacementSide::Top, OverlayPlacementAlignment::Center) => bounds.top_center(),
         (OverlayPlacementSide::Top, OverlayPlacementAlignment::End) => bounds.top_right(),
         (OverlayPlacementSide::Right, _) => bounds.right_center(),
@@ -332,10 +333,12 @@ fn gpui_anchor_position(
         (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::Center) => bounds.bottom_center(),
         (OverlayPlacementSide::Bottom, OverlayPlacementAlignment::End) => bounds.bottom_right(),
         (OverlayPlacementSide::Left, _) => bounds.left_center(),
-    }
+    };
+    gpui_point_from_ui(point)
 }
 
-fn gpui_offset(side: OverlayPlacementSide, offset: Pixels) -> Point<Pixels> {
+fn gpui_offset(side: OverlayPlacementSide, offset: UiPx) -> Point<Pixels> {
+    let offset = gpui_px_from_ui(offset);
     match side {
         OverlayPlacementSide::Top => point(px(0.0), -offset),
         OverlayPlacementSide::Right => point(offset, px(0.0)),
@@ -344,10 +347,33 @@ fn gpui_offset(side: OverlayPlacementSide, offset: Pixels) -> Point<Pixels> {
     }
 }
 
+pub(crate) fn ui_px_from_gpui(value: Pixels) -> UiPx {
+    UiPx::new(value.as_f32())
+}
+
+pub(crate) fn ui_point_from_gpui(value: Point<Pixels>) -> UiPoint {
+    UiPoint::new(ui_px_from_gpui(value.x), ui_px_from_gpui(value.y))
+}
+
+pub(crate) fn ui_size_from_gpui(width: Pixels, height: Pixels) -> UiSize {
+    UiSize::new(ui_px_from_gpui(width), ui_px_from_gpui(height))
+}
+
+pub(crate) fn gpui_px_from_ui(value: UiPx) -> Pixels {
+    px(value.as_f32())
+}
+
+pub(crate) fn gpui_point_from_ui(value: UiPoint) -> Point<Pixels> {
+    point(gpui_px_from_ui(value.x), gpui_px_from_ui(value.y))
+}
+
 /// Creates a point anchor placement input for context-menu-like adapters.
 pub fn point_anchor_placement(
     point: Point<Pixels>,
     content_size: open_gpui_ui_core::OverlaySize,
 ) -> OverlayPlacementInput {
-    OverlayPlacementInput::new(OverlayAnchorInput::from_point(point), content_size)
+    OverlayPlacementInput::new(
+        OverlayAnchorInput::from_point(ui_point_from_gpui(point)),
+        content_size,
+    )
 }

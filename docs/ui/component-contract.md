@@ -47,8 +47,9 @@ reaching GPUI adapters. The shared contract distinguishes:
 - outside-press policy (`ignore`, `consume`, `dismiss + consume`, and `dismiss + pass-through`);
 - Escape-key policy and dismiss reason;
 - initial focus and focus restoration intent;
-- anchor and placement inputs that do not store `Window`, `Context`, `FocusHandle`, `ElementId`, or
-  callback types.
+- anchor and placement inputs that use `open_gpui_ui_core` neutral geometry (`UiPx`, `UiPoint`,
+  `UiSize`, `UiRect`, and `UiEdges`) and do not store `Window`, `Context`, `FocusHandle`,
+  `ElementId`, or callback types.
 
 GPUI adapters remain responsible for `deferred` and `anchored` rendering, event subscriptions,
 hitboxes, focus handles, concrete focus restoration, and AccessKit relationship wiring.
@@ -309,11 +310,12 @@ Before extraction, keep these blockers explicit:
 - public resolved-state structs must continue to avoid GPUI runtime/rendering types, concrete
   element ids, focus handles, scroll handles, and callbacks;
 - public contract guard tests now treat those runtime/rendering leaks as hard failures, while a
-  separate extraction-blocker inventory pins the currently known GPUI geometry, `GpuiOverlayState`,
-  direct focus/a11y re-export, sizing/adaptive `Pixels` usage, and adapter metric blockers until
-  the extraction-prep series removes or classifies them;
-- `open_gpui::Pixels`, `Point`, and `Bounds` usage should be normalized behind neutral geometry
-  vocabulary if another UI framework will consume the contracts;
+  separate extraction-blocker inventory pins the remaining `GpuiOverlayState`, direct focus/a11y
+  re-export, sizing/adaptive `Pixels` usage, and adapter metric blockers until the extraction-prep
+  series removes or classifies them;
+- overlay placement and `ContextMenuState` already use neutral geometry. Public component metrics
+  and UI-core sizing/adaptive policies still need the same treatment before another UI framework
+  can consume the contracts without GPUI geometry;
 - `GpuiOverlayState` should be split so neutral overlay policy/presence/focus data is not coupled
   to adapter-only deferred priority and snap margins;
 - `open_gpui_ui_core` should stop re-exporting GPUI focus/a11y types directly before it becomes a
@@ -333,13 +335,14 @@ GPUI-adapter code and should stay out of a future headless crate if `FocusRing` 
 ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
-against GPUI runtime/rendering type leaks. Extraction remains blocked by GPUI geometry aliases,
+against GPUI runtime/rendering type leaks. Extraction remains blocked by GPUI metric geometry,
 direct GPUI focus/a11y re-exports, adapter-facing `GpuiOverlayState`, and the GPUI-backed
 `TextInputController`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
-`ContextMenuState` stores renderer-neutral `OverlayPlacementInput`; GPUI placement is resolved only
-inside the adapter/render boundary. Overlay stack Escape, outside-press, and focus-restore ordering
-now have window-free tests in `open_gpui_ui_core`.
+`open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
+`ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.
+GPUI placement is resolved only inside the adapter/render boundary. Overlay stack Escape,
+outside-press, and focus-restore ordering now have window-free tests in `open_gpui_ui_core`.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus

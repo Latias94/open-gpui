@@ -6,7 +6,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Task, Window, anchored, deferred, div, point, px, size,
+    Task, Window, anchored, deferred, div, point, px,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -18,7 +18,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    escape_open_change, outside_press_open_change,
+    escape_open_change, outside_press_open_change, ui_point_from_gpui, ui_px_from_gpui,
+    ui_size_from_gpui,
 };
 use crate::theme::ThemeResolver;
 
@@ -778,14 +779,14 @@ impl RenderOnce for HoverCard {
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    point(px(0.0), px(0.0)),
-                    size(metrics.min_width(), metrics.trigger_height()),
+                    ui_point_from_gpui(point(px(0.0), px(0.0))),
+                    ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
                 )),
-                open_gpui_ui_core::OverlaySize::new(metrics.min_width(), metrics.trigger_height()),
+                ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
             )
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
-            .with_offset(metrics.offset()),
+            .with_offset(ui_px_from_gpui(metrics.offset())),
             state.overlay().snap_margin(),
         );
 

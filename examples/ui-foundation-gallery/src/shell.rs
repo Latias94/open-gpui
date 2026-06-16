@@ -23,7 +23,7 @@ use open_gpui_ui_components::{
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
-    Orientation, PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens,
+    Orientation, PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens, UiPoint, UiPx,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -2014,8 +2014,8 @@ impl GalleryShell {
                                 div()
                                     .id("gallery-overlay-trigger")
                                     .absolute()
-                                    .left(geometry.trigger_point.x)
-                                    .top(geometry.trigger_point.y)
+                                    .left(gpui_px_from_ui(geometry.trigger_point.x))
+                                    .top(gpui_px_from_ui(geometry.trigger_point.y))
                                     .w(px(176.0))
                                     .h(px(40.0))
                                     .flex()
@@ -2035,7 +2035,9 @@ impl GalleryShell {
                                             deferred(
                                                 anchored()
                                                     .anchor(Anchor::TopLeft)
-                                                    .position(geometry.anchor_rect.origin)
+                                                    .position(gpui_point_from_ui(
+                                                        geometry.anchor_rect.origin,
+                                                    ))
                                                     .snap_to_window_with_margin(px(12.0))
                                                     .child(
                                                         div()
@@ -2058,13 +2060,13 @@ impl GalleryShell {
                                                                     .text_color(rgb(0x5a6472))
                                                                     .child(format!(
                                                                         "anchor: {} x {}",
-                                                                        format_px(
+                                                                        format_ui_px(
                                                                             geometry
                                                                                 .anchor_rect
                                                                                 .size
                                                                                 .width
                                                                         ),
-                                                                        format_px(
+                                                                        format_ui_px(
                                                                             geometry
                                                                                 .anchor_rect
                                                                                 .size
@@ -2998,7 +3000,7 @@ impl GalleryShell {
                 sample.label,
             )
             .open(controlled_open)
-            .anchor_point(sample.state.anchor_point())
+            .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
             .focused_value(state_focused_value(sample.state.menu()).unwrap_or("inspect"))
             .items(context_menu_items_for_sample(sample.id))
             .state()
@@ -3011,7 +3013,7 @@ impl GalleryShell {
         let context_menu =
             ContextMenu::new(format!("overlay-context-menu-demo:{}", sample_id), label)
                 .items(context_menu_items_for_sample(sample_id))
-                .anchor_point(state.anchor_point())
+                .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
         let context_menu = match sample_id {
@@ -3069,10 +3071,10 @@ impl GalleryShell {
     fn render_overlay_bounds(&self, label: &'static str, bounds: Rect) -> impl IntoElement {
         div()
             .absolute()
-            .left(bounds.origin.x)
-            .top(bounds.origin.y)
-            .w(bounds.size.width)
-            .h(bounds.size.height)
+            .left(gpui_px_from_ui(bounds.origin.x))
+            .top(gpui_px_from_ui(bounds.origin.y))
+            .w(gpui_px_from_ui(bounds.size.width))
+            .h(gpui_px_from_ui(bounds.size.height))
             .border_1()
             .border_color(if label == "visual rect" {
                 rgb(0x2f80ed)
@@ -4779,8 +4781,8 @@ fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> 
         ))
         .child(format!(
             "anchor: {} x {} / snap {}",
-            format_px(state.anchor_point().x),
-            format_px(state.anchor_point().y),
+            format_ui_px(state.anchor_point().x),
+            format_ui_px(state.anchor_point().y),
             format_px(state.overlay().snap_margin())
         ))
         .child(format!(
@@ -4857,11 +4859,23 @@ fn geometry_row(label: &'static str, rect: Rect) -> impl IntoElement {
         .child(format!(
             "{}: {}, {} / {} x {}",
             label,
-            format_px(rect.origin.x),
-            format_px(rect.origin.y),
-            format_px(rect.size.width),
-            format_px(rect.size.height)
+            format_ui_px(rect.origin.x),
+            format_ui_px(rect.origin.y),
+            format_ui_px(rect.size.width),
+            format_ui_px(rect.size.height)
         ))
+}
+
+fn gpui_px_from_ui(value: UiPx) -> Pixels {
+    px(value.as_f32())
+}
+
+fn gpui_point_from_ui(value: UiPoint) -> open_gpui::Point<Pixels> {
+    point(gpui_px_from_ui(value.x), gpui_px_from_ui(value.y))
+}
+
+fn format_ui_px(value: UiPx) -> String {
+    format!("{:.0}px", value.as_f32())
 }
 
 fn format_px(value: Pixels) -> String {

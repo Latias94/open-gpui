@@ -1,6 +1,6 @@
 //! Overlay foundation page metadata.
 
-use open_gpui::{Pixels, point, px, size};
+use open_gpui::{point, px};
 use std::time::Duration;
 
 use open_gpui_ui_components::{
@@ -14,7 +14,7 @@ use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     OverlayLayerPolicy, OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Rect,
     Sizable, Size, ThemeTokens, anchor_rect_from_point, outer_bounds_with_window_margin,
-    prefer_visual_bounds, rect,
+    prefer_visual_bounds, rect, ui_point, ui_px, ui_size,
 };
 
 /// Page title.
@@ -47,7 +47,7 @@ pub const SIGNALS: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OverlayDemoGeometry {
     /// Point selected as the trigger anchor.
-    pub trigger_point: open_gpui::Point<Pixels>,
+    pub trigger_point: open_gpui_ui_core::UiPoint,
     /// 1x1 anchor rect produced from the trigger point.
     pub anchor_rect: Rect,
     /// Layout rect that approximates the trigger bounds.
@@ -63,14 +63,27 @@ pub struct OverlayDemoGeometry {
 /// Returns deterministic overlay geometry for the gallery.
 pub fn demo_geometry() -> OverlayDemoGeometry {
     let trigger_point = point(px(312.0), px(168.0));
+    let trigger_point = ui_point(
+        ui_px(trigger_point.x.as_f32()),
+        ui_px(trigger_point.y.as_f32()),
+    );
     let anchor_rect = anchor_rect_from_point(trigger_point);
-    let layout_rect = rect(point(px(288.0), px(144.0)), size(px(176.0), px(40.0)));
-    let visual_rect = rect(point(px(284.0), px(140.0)), size(px(184.0), px(48.0)));
+    let layout_rect = rect(
+        ui_point(ui_px(288.0), ui_px(144.0)),
+        ui_size(ui_px(176.0), ui_px(40.0)),
+    );
+    let visual_rect = rect(
+        ui_point(ui_px(284.0), ui_px(140.0)),
+        ui_size(ui_px(184.0), ui_px(48.0)),
+    );
     let preferred_rect = prefer_visual_bounds(Some(visual_rect), Some(layout_rect))
         .expect("visual or layout rect should be present");
     let safe_window_rect = outer_bounds_with_window_margin(
-        rect(point(px(0.0), px(0.0)), size(px(640.0), px(360.0))),
-        px(12.0),
+        rect(
+            ui_point(ui_px(0.0), ui_px(0.0)),
+            ui_size(ui_px(640.0), ui_px(360.0)),
+        ),
+        ui_px(12.0),
     );
 
     OverlayDemoGeometry {
