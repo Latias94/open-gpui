@@ -3,11 +3,27 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T17:08:48Z
+timestamp: 2026-06-16T22:53:21Z
 status: "active"
 ---
 
 # Current State
+
+## 2026-06-17
+
+- Done: Wrote the next extraction-prep plan at
+  `docs/plans/2026-06-17-001-refactor-ui-headless-extraction-prep-plan.md`. The plan keeps
+  `open-gpui-ui-headless` deferred and targets the blockers recorded by ADR 0006: public GPUI
+  geometry aliases, direct GPUI focus/a11y re-exports, adapter-facing `GpuiOverlayState`, and
+  ambiguous adapter-only APIs such as `TextInputController`, `ScrollHandle`, and `focus_ring_shadow`.
+- Decision: The next implementation series should first strengthen the extraction guard inventory,
+  then migrate neutral geometry/metrics, add focus and accessibility facades, split neutral overlay
+  state from GPUI adapter scheduling, classify adapter-only APIs, and finally update ADR 0006 with
+  the crate-extraction readiness decision.
+- Last verified: Planning-only change; no Rust tests are required yet. Run `git diff --check`
+  before committing the plan and memory update.
+- Next action: Start U1 of the extraction-prep plan by adding core/component boundary guards that
+  distinguish hard runtime leaks from known extraction blockers.
 
 ## 2026-06-16
 

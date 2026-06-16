@@ -1,5 +1,16 @@
 # Engineering Memory Update Log
 
+## 2026-06-17
+* **Update**: Wrote the extraction-prep plan at
+  `docs/plans/2026-06-17-001-refactor-ui-headless-extraction-prep-plan.md`. It keeps
+  `open-gpui-ui-headless` deferred and breaks the next series into guard inventory, neutral
+  geometry, neutral component metrics, focus/a11y facades, overlay-state splitting, adapter-only
+  API classification, and a final ADR 0006 checkpoint.
+* **Decision**: The next implementation should not create a headless crate yet. It should remove
+  or classify the remaining public-boundary blockers first: GPUI geometry aliases, direct GPUI
+  focus/a11y re-exports, adapter-facing `GpuiOverlayState`, and GPUI-owned APIs such as
+  `TextInputController`, `ScrollHandle`, and `focus_ring_shadow`.
+
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR
   0006. `open-gpui-ui-headless` remains deferred: the codebase now has real cross-family behavior
