@@ -773,6 +773,16 @@ fn splitter_collapsed_panel_uses_collapsed_fraction() {
     assert_eq!(state.panels()[0].collapsed_fraction(), 0.05);
     assert_eq!(state.handles().len(), 1);
     assert!(!state.handles()[0].disabled());
+
+    let unchanged = state.resized_by(0, 0.1);
+    let restored = state.resized_by(0, 0.16);
+    let runtime_restored = state.with_panel_fractions(&[0.22, 0.78]);
+
+    assert_eq!(unchanged, state);
+    assert!(!restored.panels()[0].collapsed());
+    assert!(restored.panels()[0].fraction() >= 0.2);
+    assert!(!runtime_restored.panels()[0].collapsed());
+    assert!((runtime_restored.panels()[0].fraction() - 0.22).abs() < 0.001);
 }
 
 #[test]

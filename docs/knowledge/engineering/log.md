@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Fix**: Fixed vertical Splitter dragging for samples that start with a collapsed panel. The state
+  layer now treats collapsed panels as restorable once a resize/runtime fraction reaches the
+  restore threshold; below that threshold the collapsed fraction remains stable. This preserves the
+  collapsed contract while making the gallery's vertical `details-split` sample draggable.
 * **Update**: Wired the Splitter pointer-drag runtime. Handles start a GPUI drag, root
   `DragMoveEvent<SplitterDrag>` handlers measure movement against the full splitter bounds, and live
   fractions flow through `SplitterState::with_panel_fractions` plus `SplitterState::resized_by` so

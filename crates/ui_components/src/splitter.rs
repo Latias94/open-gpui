@@ -320,8 +320,15 @@ impl SplitterState {
             return self.clone();
         }
 
-        next.panels[before].fraction += delta;
-        next.panels[after].fraction -= delta;
+        let before_target = next.panels[before].fraction + delta;
+        let after_target = next.panels[after].fraction - delta;
+        let (before_panels, after_panels) = next.panels.split_at_mut(after);
+        if !apply_resize_fraction(&mut before_panels[before], before_target)
+            || !apply_resize_fraction(&mut after_panels[0], after_target)
+        {
+            return self.clone();
+        }
+
         normalize_panel_fractions(&mut next.panels);
         next.handles = resolve_handles(&next.panels, next.disabled);
         next
@@ -336,8 +343,15 @@ impl SplitterState {
         let mut next = self.clone();
         for (panel, fraction) in next.panels.iter_mut().zip(fractions.iter().copied()) {
             if panel.collapsed {
-                continue;
+                let fraction = sanitize_fraction(fraction);
+                if fraction + EPSILON < collapsed_restore_threshold(panel) {
+                    panel.fraction = panel.collapsed_fraction;
+                    continue;
+                }
+
+                panel.collapsed = false;
             }
+
             panel.fraction =
                 sanitize_fraction(fraction).clamp(panel.min_fraction, panel.max_fraction);
         }
@@ -685,6 +699,25 @@ fn sanitize_fraction(fraction: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+fn collapsed_restore_threshold(panel: &SplitterPanelState) -> f32 {
+    panel.min_fraction.max(panel.collapsed_fraction)
+}
+
+fn apply_resize_fraction(panel: &mut SplitterPanelState, fraction: f32) -> bool {
+    let fraction = sanitize_fraction(fraction);
+    if panel.collapsed {
+        if fraction + EPSILON < collapsed_restore_threshold(panel) {
+            panel.fraction = panel.collapsed_fraction;
+            return false;
+        }
+
+        panel.collapsed = false;
+    }
+
+    panel.fraction = fraction.clamp(panel.min_fraction, panel.max_fraction);
+    true
 }
 
 fn normalize_panel_fractions(panels: &mut [SplitterPanelState]) {

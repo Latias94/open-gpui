@@ -25,13 +25,18 @@ status: "active"
   normalization and min/max constraint path as descriptor-based state. Keyboard resizing,
   controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration
   remain deferred.
+- Done: Fixed the vertical collapsed Splitter drag path: dragging a collapsed collapsible panel
+  below its restore threshold keeps the collapsed fraction stable; dragging far enough clears
+  `collapsed` and resumes normal min/max resizing. This fixes the gallery's vertical
+  `details-split` sample, whose top panel starts collapsed.
 - Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and
   `cargo nextest run -p open-gpui-ui-foundation-gallery` passed after the first Splitter slice.
   `cargo check -p open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components`
-  passed again after the pointer-drag runtime.
-- Next action: Commit the Splitter pointer-drag runtime, then move to U12 Toolbar/Sidebar or run a
-  manual Components-gallery dogfood pass first.
+  passed again after the pointer-drag runtime. `cargo check -p open-gpui-ui-foundation-gallery`
+  also passed after the collapsed-panel restore fix.
+- Next action: Commit the collapsed-panel Splitter drag fix, then run a manual Components-gallery
+  dogfood pass before moving to U12 Toolbar/Sidebar.
 - Done: Started the layout/shell-navigation component series by adding `ScrollArea` to
   `open_gpui_ui_components`. `ScrollAreaState` records stable viewport id, axis, reset policy/key,
   size, and scrollbar metrics without storing GPUI handles; the concrete adapter owns

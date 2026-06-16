@@ -159,6 +159,8 @@ clamping handle deltas; tests should exercise those rules without a GPUI window.
 The GPUI `Splitter` adapter renders resolved panel fractions and resize handles from that state and
 wires pointer dragging through keyed runtime state. Drag move events use the root splitter bounds to
 translate pixels into fraction deltas, then feed those deltas through `SplitterState::resized_by`.
+Dragging a collapsible panel past its restore threshold clears its collapsed state and resumes
+normal min/max resizing; dragging below that threshold keeps the collapsed fraction stable.
 The adapter may use GPUI layout primitives, cursor styles, drag callbacks, and `Entity` runtime
 state, but it should not invent sizing rules in the render body. Keyboard splitter resizing,
 controlled resize callbacks, application-level layout persistence, RTL behavior, and nested
