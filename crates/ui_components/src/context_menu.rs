@@ -10,7 +10,8 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayPlacementAlignment, OverlayPlacementSide, Role, Sizable, Size, ThemeTokens,
+    OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
+    Role, Sizable, Size, ThemeTokens,
 };
 
 use crate::focus::focus_ring_shadow;
@@ -18,9 +19,7 @@ use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
     MenuSelection, MenuState,
 };
-use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, outside_press_open_change, point_anchor_placement,
-};
+use crate::overlay::{GpuiOverlayPlacement, GpuiOverlayState, outside_press_open_change};
 use crate::theme::ThemeResolver;
 
 /// Resolved context-menu state used by tests, demos, and rendering.
@@ -32,7 +31,7 @@ pub struct ContextMenuState {
     open_mode: MenuOpenMode,
     anchor_point: Point<Pixels>,
     menu: MenuState,
-    placement: GpuiOverlayPlacement,
+    placement_input: OverlayPlacementInput,
 }
 
 impl ContextMenuState {
@@ -72,19 +71,16 @@ impl ContextMenuState {
             focus_restore_intent,
             tokens,
         );
-        let placement = GpuiOverlayPlacement::resolve(
-            point_anchor_placement(
-                anchor_point,
-                open_gpui_ui_core::OverlaySize::new(
-                    menu.metrics().min_width(),
-                    menu.metrics().item_height(),
-                ),
-            )
-            .with_side(OverlayPlacementSide::Bottom)
-            .with_alignment(OverlayPlacementAlignment::Start)
-            .with_offset(px(0.0)),
-            menu.overlay().snap_margin(),
-        );
+        let placement_input = OverlayPlacementInput::new(
+            OverlayAnchorInput::from_point(anchor_point),
+            open_gpui_ui_core::OverlaySize::new(
+                menu.metrics().min_width(),
+                menu.metrics().item_height(),
+            ),
+        )
+        .with_side(OverlayPlacementSide::Bottom)
+        .with_alignment(OverlayPlacementAlignment::Start)
+        .with_offset(px(0.0));
 
         Self {
             size,
@@ -93,7 +89,7 @@ impl ContextMenuState {
             open_mode,
             anchor_point,
             menu,
-            placement,
+            placement_input,
         }
     }
 
@@ -127,9 +123,9 @@ impl ContextMenuState {
         &self.menu
     }
 
-    /// Returns resolved GPUI placement.
-    pub const fn placement(&self) -> GpuiOverlayPlacement {
-        self.placement
+    /// Returns renderer-neutral placement input for the context-menu surface.
+    pub const fn placement_input(&self) -> OverlayPlacementInput {
+        self.placement_input
     }
 
     /// Returns resolved overlay adapter state.
@@ -362,7 +358,8 @@ impl RenderOnce for ContextMenu {
         let on_escape_close = self.on_escape_close;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
-        let placement = state.placement();
+        let placement =
+            GpuiOverlayPlacement::resolve(state.placement_input(), state.overlay().snap_margin());
         let first_focusable_value = first_focusable_value(state.menu());
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();

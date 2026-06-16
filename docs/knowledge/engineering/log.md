@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Continued ADR 0006 follow-up by changing `ContextMenuState` to store
+  renderer-neutral `OverlayPlacementInput` instead of resolved `GpuiOverlayPlacement`; GPUI
+  placement is now resolved only inside the context-menu adapter/render boundary.
 * **Update**: Started ADR 0006 follow-up by moving generic roving-focus helpers from `tabs.rs` into
   `open_gpui_ui_components::roving_focus`. `Tabs` keeps compatibility re-exports, and `Menu` plus
   `RadioGroup` now depend on the neutral behavior module instead of borrowing behavior from Tabs.

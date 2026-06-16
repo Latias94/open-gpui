@@ -459,19 +459,31 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
     assert!(!state.menu().items()[2].activation_enabled());
     assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Menu);
     assert!(state.overlay().wants_outside_press_handler());
-    let expected = GpuiOverlayPlacement::resolve(
-        point_anchor_placement(
-            anchor,
-            open_gpui_ui_core::OverlaySize::new(
-                state.metrics().min_width(),
-                state.metrics().item_height(),
-            ),
-        ),
-        DEFAULT_OVERLAY_SAFE_MARGIN,
+    let placement_input = state.placement_input();
+    assert_eq!(placement_input.side(), OverlayPlacementSide::Bottom);
+    assert_eq!(
+        placement_input.alignment(),
+        OverlayPlacementAlignment::Start
     );
-    assert_eq!(state.placement().anchor(), Anchor::TopLeft);
-    assert_eq!(state.placement().position(), expected.position());
-    assert_eq!(state.placement().snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
+    assert_eq!(placement_input.offset(), px(0.0));
+    assert_eq!(
+        placement_input.content_size(),
+        open_gpui_ui_core::OverlaySize::new(
+            state.metrics().min_width(),
+            state.metrics().item_height()
+        )
+    );
+    let placement = GpuiOverlayPlacement::resolve(placement_input, DEFAULT_OVERLAY_SAFE_MARGIN);
+    assert_eq!(placement.anchor(), Anchor::TopLeft);
+    assert_eq!(
+        placement_input.preferred_anchor_bounds(),
+        Some(open_gpui_ui_core::anchor_rect_from_point(anchor))
+    );
+    assert_eq!(
+        placement.position(),
+        Some(open_gpui_ui_core::anchor_rect_from_point(anchor).bottom_left())
+    );
+    assert_eq!(placement.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
 }
 
 #[test]

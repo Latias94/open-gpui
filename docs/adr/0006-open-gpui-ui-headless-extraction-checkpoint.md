@@ -54,10 +54,10 @@ Do not extract these yet:
 The overlay series proves real reuse, but the boundary is not clean enough for a stable headless
 crate:
 
-- Several state types still expose `open_gpui::Pixels`, `Point`, or component-specific GPUI adapter
-  state because sizing and placement currently depend on Open GPUI geometry.
-- `ContextMenuState` includes resolved GPUI placement. This is useful for gallery verification, but
-  it is not a framework-agnostic contract.
+- Several state types still expose `open_gpui::Pixels` or `Point` geometry aliases because sizing
+  and point anchors currently depend on Open GPUI geometry.
+- `ContextMenuState` now exposes renderer-neutral placement input, but a framework-agnostic
+  geometry package still needs a clearer boundary before extraction.
 - Concrete focus restoration is still intent-only in state and implemented by adapters.
 - Tooltip hover/focus timing and outside-press subscriptions remain adapter work.
 - Dialog focus trapping and menu typeahead/submenus are intentionally deferred, so extracting now
@@ -98,7 +98,8 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
 - Completed 2026-06-16: generic roving-focus helpers moved out of `tabs.rs` into
   `open_gpui_ui_components::roving_focus`; `Tabs` keeps compatibility re-exports while `Menu` and
   `RadioGroup` depend on the neutral module.
-- Separate renderer-neutral menu placement input from `GpuiOverlayPlacement`.
+- Completed 2026-06-16: `ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`;
+  GPUI placement is resolved only inside the adapter/render boundary.
 - Add focus-scope and dismissible-layer ordering tests before implementing nested popovers,
   submenus, command dialogs, or sheets.
 - Keep `docs/ui/component-contract.md` current whenever a component state type adds new behavior

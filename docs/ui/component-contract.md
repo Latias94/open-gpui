@@ -81,7 +81,8 @@ coordination remain follow-up work.
 controlled versus uncontrolled open mode, action and separator items, disabled item state, roving
 focus, activation payloads, Escape policy, outside-press policy, placement preference, resolved
 metrics, token intents, and menu layer state. `ContextMenuState` reuses the same item and roving
-focus model while adding a point anchor and resolved GPUI placement. Submenus, menu bars, typeahead,
+focus model while adding a point anchor and renderer-neutral placement input. Submenus, menu bars,
+typeahead,
 checkbox/radio items, and application menu integration remain follow-up work.
 
 ## Focus Rings
@@ -141,10 +142,11 @@ multiline input, password masking, undo/redo, and completion remains out of scop
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
 ADR 0006 keeps `open-gpui-ui-headless` deferred after the overlay checkpoint because several
-resolved state types still expose GPUI geometry or adapter placement state. Shared roving-focus
-helpers now live in `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility
-re-exports. The next extraction review should first remove the remaining GPUI placement leaks and
-add window-free focus-scope / dismissible-layer tests.
+resolved state types still expose GPUI geometry aliases while focus-scope and dismissible-layer
+ordering need more window-free tests. Shared roving-focus helpers now live in
+`open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
+`ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`; GPUI placement is resolved
+only inside the adapter/render boundary.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus

@@ -3161,7 +3161,7 @@ fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> 
             "anchor: {} x {} / snap {}",
             format_px(state.anchor_point().x),
             format_px(state.anchor_point().y),
-            format_px(state.placement().snap_margin())
+            format_px(state.overlay().snap_margin())
         ))
         .child(format!(
             "items: {} / layer {} / outside {}",

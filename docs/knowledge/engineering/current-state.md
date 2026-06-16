@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T11:47:45Z
+timestamp: 2026-06-16T11:58:08Z
 status: "active"
 ---
 
@@ -11,6 +11,15 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued ADR 0006 follow-up by moving `ContextMenuState` to renderer-neutral
+  `OverlayPlacementInput` instead of storing resolved `GpuiOverlayPlacement`. The GPUI placement
+  is now derived only at the adapter/render boundary.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-components`,
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo check -p
+  open-gpui-ui-foundation-gallery` passed for the context-menu placement extraction slice.
+- Next action: Keep removing remaining GPUI geometry leaks from resolved state, then add
+  window-free focus-scope and dismissible-layer ordering tests before reconsidering a headless
+  crate.
 - Done: Started ADR 0006 follow-up by moving shared roving-focus helpers out of `tabs.rs` into
   `open_gpui_ui_components::roving_focus`. `Tabs` preserves compatibility re-exports for the old
   helper paths, while `Menu` and `RadioGroup` now depend on the neutral behavior module.
