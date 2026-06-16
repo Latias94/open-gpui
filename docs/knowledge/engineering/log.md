@@ -1,5 +1,16 @@
 # Engineering Memory Update Log
 
+## 2026-06-16
+* **Update**: Completed U4 of the official component roadmap by adding `Tabs` to
+  `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
+  helpers, gallery dogfood, and targeted tests.
+* **Update**: Updated `docs/ui/component-contract.md`, `docs/verification.md`, and the foundation
+  gallery samples to cover Tabs roving-focus behavior, horizontal automatic activation, and
+  vertical manual activation.
+* **Update**: Verified the Tabs slice with `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
+  -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+
 ## 2026-06-15
 * **Update**: Completed U3 of the official component roadmap by adding `Checkbox` and `Label` to
   `open-gpui-ui-components` with resolved state, GPUI adapters, theme intents, tests, gallery

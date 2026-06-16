@@ -2,9 +2,10 @@
 
 use open_gpui_ui_components::{
     Button, ButtonState, ButtonVariant, Checkbox, CheckboxState, Field, FieldState, Label,
-    LabelState, Switch, SwitchState, TextInput, TextInputState,
+    LabelState, Switch, SwitchState, TabsActivationMode, TabsItemDescriptor, TabsState, TextInput,
+    TextInputState,
 };
-use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
 /// Page title.
 pub const TITLE: &str = "Components";
@@ -19,6 +20,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::TextInput",
     "open_gpui_ui_components::TextInputController",
     "open_gpui_ui_components::Field",
+    "open_gpui_ui_components::Tabs",
+    "open_gpui_ui_components::TabsItem",
+    "open_gpui_ui_components::TabsActivationMode",
+    "open_gpui_ui_components::TabsState",
     "ThemeTokens",
     "Size",
     "Role::Button",
@@ -26,6 +31,9 @@ pub const SIGNALS: &[&str] = &[
     "Role::CheckBox",
     "Role::Label",
     "Role::TextInput",
+    "Role::TabList",
+    "Role::Tab",
+    "Role::TabPanel",
 ];
 
 /// One button sample in the gallery.
@@ -92,6 +100,42 @@ pub struct FieldSample {
     pub state: FieldState,
     /// Resolved control state.
     pub input_state: TextInputState,
+}
+
+/// One tab item sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabsItemSample {
+    /// Stable tab value.
+    pub value: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+    /// Panel copy shown for the sample.
+    pub panel: &'static str,
+    /// Whether the tab is disabled.
+    pub disabled: bool,
+}
+
+/// One tabs sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabsSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Tab orientation.
+    pub orientation: Orientation,
+    /// Activation mode.
+    pub activation_mode: TabsActivationMode,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Selected tab value.
+    pub selected: &'static str,
+    /// Tab items.
+    pub items: Vec<TabsItemSample>,
+    /// Resolved state.
+    pub state: TabsState,
 }
 
 /// Returns button samples backed by real component state.
@@ -472,5 +516,115 @@ pub fn field_samples(tokens: ThemeTokens) -> [FieldSample; 3] {
                 input_state: input.state(),
             }
         },
+    )
+}
+
+/// Returns tabs samples backed by real component state.
+pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
+    let overview_items = vec![
+        TabsItemSample {
+            value: "overview",
+            label: "Overview",
+            panel: "Project snapshot and recent activity.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "details",
+            label: "Details",
+            panel: "Important metadata and settings.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "history",
+            label: "History",
+            panel: "Previous revisions and timeline.",
+            disabled: true,
+        },
+    ];
+    let workspace_items = vec![
+        TabsItemSample {
+            value: "profile",
+            label: "Profile",
+            panel: "Identity and display settings.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "security",
+            label: "Security",
+            panel: "Keys, authentication, and access rules.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "billing",
+            label: "Billing",
+            panel: "Plans, invoices, and payment method.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "integrations",
+            label: "Integrations",
+            panel: "Connected apps and webhooks.",
+            disabled: true,
+        },
+    ];
+
+    [
+        TabsSample {
+            id: "overview-tabs",
+            title: "Overview",
+            summary: "Automatic activation with roving focus and one disabled tab.",
+            orientation: Orientation::Horizontal,
+            activation_mode: TabsActivationMode::Automatic,
+            size: Size::Medium,
+            selected: "overview",
+            state: tabs_state(
+                Orientation::Horizontal,
+                TabsActivationMode::Automatic,
+                Size::Medium,
+                "overview",
+                &overview_items,
+                tokens,
+            ),
+            items: overview_items,
+        },
+        TabsSample {
+            id: "workspace-tabs",
+            title: "Workspace",
+            summary: "Manual activation with vertical navigation.",
+            orientation: Orientation::Vertical,
+            activation_mode: TabsActivationMode::Manual,
+            size: Size::Small,
+            selected: "profile",
+            state: tabs_state(
+                Orientation::Vertical,
+                TabsActivationMode::Manual,
+                Size::Small,
+                "profile",
+                &workspace_items,
+                tokens,
+            ),
+            items: workspace_items,
+        },
+    ]
+}
+
+fn tabs_state(
+    orientation: Orientation,
+    activation_mode: TabsActivationMode,
+    size: Size,
+    selected: &str,
+    items: &[TabsItemSample],
+    tokens: ThemeTokens,
+) -> TabsState {
+    TabsState::resolve(
+        orientation,
+        activation_mode,
+        size,
+        Some(selected),
+        None,
+        items
+            .iter()
+            .map(|item| TabsItemDescriptor::new(item.value, item.label).disabled(item.disabled)),
+        tokens,
     )
 }

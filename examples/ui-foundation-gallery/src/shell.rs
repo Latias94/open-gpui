@@ -9,12 +9,12 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field, FieldState, FocusRing, Label,
-    LabelState, Switch, SwitchState, TextInput, TextInputController, TextInputState,
-    focus_ring_shadow, init_text_input,
+    LabelState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
+    TextInputController, TextInputState, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
-    PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens,
+    Orientation, PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -473,6 +473,8 @@ impl GalleryShell {
     }
 
     fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+        let tabs_samples = pages::components::tabs_samples(snapshot.tokens);
+
         div()
             .id("gallery-components-page")
             .flex()
@@ -741,6 +743,98 @@ impl GalleryShell {
                                 }),
                         ),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Tabs"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        tabs_samples.into_iter().map(|sample| {
+                            let state = sample.state.clone();
+                            let tabs = sample.items.into_iter().fold(
+                                Tabs::new(format!("component-tabs:{}", sample.id))
+                                    .orientation(sample.orientation)
+                                    .activation_mode(sample.activation_mode)
+                                    .with_size(sample.size)
+                                    .selected(sample.selected)
+                                    .tokens(snapshot.tokens),
+                                |tabs, item| {
+                                    tabs.item(
+                                        TabsItem::new(
+                                            format!(
+                                                "component-tabs-item:{}:{}",
+                                                sample.id, item.value
+                                            ),
+                                            item.label,
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                                        .child(item.label),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(rgb(0x5a6472))
+                                                        .child(item.panel),
+                                                ),
+                                        )
+                                        .disabled(item.disabled),
+                                    )
+                                },
+                            );
+
+                            div()
+                                .id(format!("component-tabs-sample:{}", sample.id))
+                                .min_w(px(360.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.title),
+                                        )
+                                        .child(label_pill(sample.activation_mode.as_str())),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.summary),
+                                )
+                                .child(tabs)
+                                .child(component_tabs_state_row(
+                                    sample.orientation,
+                                    sample.activation_mode,
+                                    sample.size,
+                                    &state,
+                                ))
+                        }),
+                    )),
             )
             .child(self.render_signal_list(snapshot.selected_page))
     }
@@ -1778,6 +1872,43 @@ fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl
         } else {
             "control locked"
         })
+}
+
+fn component_tabs_state_row(
+    orientation: Orientation,
+    activation_mode: TabsActivationMode,
+    size: Size,
+    state: &TabsState,
+) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let focused = state.focused_value().unwrap_or("none");
+    let tab_stop = state.tab_stop_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            match orientation {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            activation_mode.as_str(),
+            size_label(size)
+        ))
+        .child(format!(
+            "selected {} / focus {} / tab stop {}",
+            selected, focused, tab_stop
+        ))
+        .child(format!(
+            "{} items / {} disabled",
+            state.items().len(),
+            disabled_count
+        ))
 }
 
 fn toggled_label_text(toggled: Toggled) -> &'static str {

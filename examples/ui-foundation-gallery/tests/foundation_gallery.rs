@@ -1,8 +1,8 @@
 use open_gpui::px;
-use open_gpui_ui_components::ThemeMode;
+use open_gpui_ui_components::{TabsActivationMode, ThemeMode};
 use open_gpui_ui_core::{
-    Density, DeviceAdaptiveClass, DeviceShellMode, PanelAdaptiveClass, Role, Size, ThemeTokens,
-    Toggled, semantic,
+    Density, DeviceAdaptiveClass, DeviceShellMode, Orientation, PanelAdaptiveClass, Role, Size,
+    ThemeTokens, Toggled, semantic,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, density_label, device_class_label,
@@ -230,4 +230,27 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert!(fields[2].state.disabled());
     assert!(!fields[2].input_state.editable());
+}
+
+#[test]
+fn components_page_tabs_samples_expose_roving_focus_contract() {
+    let tokens = ThemeTokens::default();
+    let tabs = pages::components::tabs_samples(tokens);
+
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[0].id, "overview-tabs");
+    assert_eq!(tabs[0].orientation, Orientation::Horizontal);
+    assert_eq!(tabs[0].activation_mode, TabsActivationMode::Automatic);
+    assert_eq!(tabs[0].state.selected_value(), Some("overview"));
+    assert_eq!(tabs[0].state.focused_value(), Some("overview"));
+    assert_eq!(tabs[0].state.tab_stop_value(), Some("overview"));
+    assert!(tabs[0].items.iter().any(|item| item.disabled));
+
+    assert_eq!(tabs[1].id, "workspace-tabs");
+    assert_eq!(tabs[1].orientation, Orientation::Vertical);
+    assert_eq!(tabs[1].activation_mode, TabsActivationMode::Manual);
+    assert_eq!(tabs[1].state.selected_value(), Some("profile"));
+    assert_eq!(tabs[1].state.focused_value(), Some("profile"));
+    assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));
+    assert!(tabs[1].items[3].disabled);
 }

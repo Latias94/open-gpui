@@ -7,6 +7,11 @@ pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldStat
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use crate::tabs::{
+    Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
+    TabsSelection, TabsState, active_index_from_str_keys, first_enabled, last_enabled,
+    next_enabled,
+};
 pub use crate::text_input::{
     TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
     init as init_text_input,

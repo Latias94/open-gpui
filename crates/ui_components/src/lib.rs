@@ -13,6 +13,7 @@ pub mod focus;
 pub mod label;
 pub mod prelude;
 pub mod switch;
+pub mod tabs;
 pub mod text_input;
 pub mod theme;
 
@@ -23,6 +24,11 @@ pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
+pub use tabs::{
+    Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
+    TabsSelection, TabsState, active_index_from_str_keys, first_enabled, last_enabled,
+    next_enabled,
+};
 pub use text_input::{
     TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
     init as init_text_input,

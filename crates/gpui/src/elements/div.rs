@@ -1201,6 +1201,21 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the nodes this element controls.
+    fn aria_controls(mut self, controls: impl IntoIterator<Item = accesskit::NodeId>) -> Self {
+        self.interactivity().aria_controls = Some(controls.into_iter().collect());
+        self
+    }
+
+    /// Set the nodes that label this element.
+    fn aria_labelled_by(
+        mut self,
+        labelled_by: impl IntoIterator<Item = accesskit::NodeId>,
+    ) -> Self {
+        self.interactivity().aria_labelled_by = Some(labelled_by.into_iter().collect());
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria_selected = Some(selected);
@@ -1863,6 +1878,8 @@ pub struct Interactivity {
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_controls: Option<Vec<accesskit::NodeId>>,
+    pub(crate) aria_labelled_by: Option<Vec<accesskit::NodeId>>,
     pub(crate) aria_selected: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
@@ -3056,6 +3073,12 @@ impl Interactivity {
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
         if let Some(label) = &self.aria_label {
             node.set_label(label.to_string());
+        }
+        if let Some(controls) = &self.aria_controls {
+            node.set_controls(controls.clone());
+        }
+        if let Some(labelled_by) = &self.aria_labelled_by {
+            node.set_labelled_by(labelled_by.clone());
         }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);

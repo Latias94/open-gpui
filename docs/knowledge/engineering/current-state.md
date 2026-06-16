@@ -9,6 +9,20 @@ status: "active"
 
 # Current State
 
+## 2026-06-16
+
+- Done: Completed U4 of the official component roadmap by adding `Tabs` to
+  `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
+  helpers, gallery dogfood, and targeted tests.
+- Done: Updated the Components gallery and verification docs to cover horizontal automatic
+  activation and vertical manual activation, plus keyboard roving-focus verification.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed for the Tabs slice.
+- Next action: Commit the Tabs slice, then start the next roadmap item (`RadioGroup` / `Toggle`).
+
+## 2026-06-15
+
 - Goal: Grow the official Open GPUI component system under the adapter-first, headless-ready
   architecture from ADR 0005.
 - Branch: `feat/open-gpui-ui-core`

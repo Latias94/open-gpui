@@ -319,7 +319,8 @@ impl Display for GlobalElementId {
 }
 
 impl GlobalElementId {
-    pub(crate) fn accesskit_node_id(&self) -> accesskit::NodeId {
+    /// Returns the AccessKit node id derived from this global element id.
+    pub fn accesskit_node_id(&self) -> accesskit::NodeId {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::hash::DefaultHasher::default();
         self.hash(&mut hasher);

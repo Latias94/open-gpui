@@ -14,6 +14,7 @@ Resolved state should contain:
 - semantic input state such as disabled, selected, checked, indeterminate, open, invalid, read-only,
   and required;
 - activation or editability rules;
+- navigation state for composite widgets such as selected, focused, and tab-stop position;
 - accessibility intent such as role, label requirements, value presence, and required actions;
 - metrics derived from `open_gpui_ui_core::Size`;
 - token intents derived from `open_gpui_ui_core::ThemeTokens`;
@@ -83,4 +84,6 @@ stays separate from the editing controller and remains composition-only. `focus_
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
-resolved-state layer while keeping the visual adapter small.
+resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus
+contract in resolved state, with orientation, activation mode, selected/focused/tab-stop metadata,
+while the GPUI adapter owns the focus handles and `aria` wiring.

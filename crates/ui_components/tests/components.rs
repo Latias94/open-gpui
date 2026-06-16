@@ -1,10 +1,13 @@
-use open_gpui::{AppContext, px};
+use open_gpui::{AppContext, div, px};
 use open_gpui_ui_components::{
     Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Label,
-    Switch, TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    focus_ring_shadow,
+    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    active_index_from_str_keys, first_enabled, focus_ring_shadow, last_enabled, next_enabled,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic};
+use open_gpui_ui_core::{
+    Orientation, Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic,
+};
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
 const TEST_SURFACE_MUTED: TokenKey = TokenKey::new("test.surface_muted");
@@ -73,6 +76,82 @@ fn button_size_helpers_apply_foundation_size_metrics() {
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.metrics().height(), px(36.0));
     assert_eq!(state.metrics().text_size(), Size::Large.control_text_px());
+}
+
+#[test]
+fn tabs_navigation_helpers_skip_disabled_tabs() {
+    let keys = vec![
+        "overview".to_string(),
+        "details".to_string(),
+        "history".to_string(),
+    ];
+    let disabled = [false, true, false];
+
+    assert_eq!(first_enabled(&disabled), Some(0));
+    assert_eq!(last_enabled(&disabled), Some(2));
+    assert_eq!(next_enabled(&disabled, 0, true, true), Some(2));
+    assert_eq!(next_enabled(&disabled, 2, false, true), Some(0));
+    assert_eq!(
+        active_index_from_str_keys(&keys, Some("details"), &disabled),
+        Some(0)
+    );
+    assert_eq!(
+        active_index_from_str_keys(&keys, Some("missing"), &disabled),
+        Some(0)
+    );
+}
+
+#[test]
+fn tabs_state_resolution_tracks_selected_focus_and_tab_stop() {
+    let state = TabsState::resolve(
+        Orientation::Vertical,
+        TabsActivationMode::Manual,
+        Size::Small,
+        Some("security"),
+        Some("billing"),
+        [
+            TabsItemDescriptor::new("profile", "Profile"),
+            TabsItemDescriptor::new("security", "Security"),
+            TabsItemDescriptor::new("billing", "Billing").disabled(true),
+            TabsItemDescriptor::new("integrations", "Integrations"),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.orientation(), Orientation::Vertical);
+    assert_eq!(state.activation_mode(), TabsActivationMode::Manual);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.selected_value(), Some("security"));
+    assert_eq!(state.focused_value(), Some("security"));
+    assert_eq!(state.tab_stop_value(), Some("security"));
+    assert!(state.items()[1].selected());
+    assert!(state.items()[1].focused());
+    assert!(state.items()[1].tab_stop());
+    assert!(state.items()[2].disabled());
+    assert!(!state.items()[2].tab_stop());
+}
+
+#[test]
+fn tabs_builder_state_falls_back_to_first_enabled_tab() {
+    let state = Tabs::new("settings")
+        .orientation(Orientation::Horizontal)
+        .activation_mode(TabsActivationMode::Automatic)
+        .with_size(Size::Large)
+        .selected("history")
+        .item(TabsItem::new("overview", "Overview", div()))
+        .item(TabsItem::new("details", "Details", div()))
+        .item(TabsItem::new("history", "History", div()).disabled(true))
+        .state();
+
+    assert_eq!(state.orientation(), Orientation::Horizontal);
+    assert_eq!(state.activation_mode(), TabsActivationMode::Automatic);
+    assert_eq!(state.size(), Size::Large);
+    assert_eq!(state.selected_value(), Some("overview"));
+    assert_eq!(state.focused_value(), Some("overview"));
+    assert_eq!(state.tab_stop_value(), Some("overview"));
+    assert_eq!(state.items().len(), 3);
+    assert!(state.items()[2].disabled());
+    assert!(!state.items()[2].selected());
 }
 
 #[test]
