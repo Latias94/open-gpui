@@ -40,4 +40,4 @@ pub use text_input::{
     init as init_text_input,
 };
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
-pub use toggle::{Toggle, ToggleState, ToggleVariant};
+pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};

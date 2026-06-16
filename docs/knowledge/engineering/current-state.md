@@ -14,6 +14,10 @@ status: "active"
 - Done: Completed U5 of the official component roadmap by adding `RadioGroup` and `Toggle` to
   `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, exports, gallery
   dogfood, and targeted tests.
+- Done: Applied a follow-up U5 cleanup that shared Tabs/Radio selection helpers, removed the
+  Toggle gallery sample drift, and gave `Toggle` its own exported metrics/colors aliases while
+  keeping the Button implementation as the underlying visual model.
+- Done: Committed the main U5 slice as `5e562f3 feat(ui): add radio group and toggle components`.
 - Done: `RadioGroup` now reuses the U4 roving-focus helpers, exposes group required/disabled
   metadata plus per-item selected/focused/tab-stop state, and maps radio items with
   `Role::RadioButton` + `aria_selected` on the current GPUI/AccessKit surface.
@@ -21,9 +25,9 @@ status: "active"
   while staying separate from Checkbox tri-state semantics.
 - Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
-  nextest run -p open-gpui-ui-foundation-gallery` passed during U5 implementation.
-- Next action: Finish U5 formatting/docs verification and commit, then start the next roadmap item
-  (`Badge` / `IconButton`).
+  nextest run -p open-gpui-ui-foundation-gallery` passed during U5 implementation and again after
+  the follow-up cleanup.
+- Next action: Start the next roadmap item (`Badge` / `IconButton`).
 - Done: Completed U4 of the official component roadmap by adding `Tabs` to
   `open-gpui-ui-components` with a pure resolved-state contract, GPUI adapter, roving-focus
   helpers, gallery dogfood, and targeted tests.

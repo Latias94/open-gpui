@@ -13,7 +13,9 @@ use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::tabs::{first_enabled, last_enabled, next_enabled};
+use crate::tabs::{
+    active_index_from_str_keys, roving_navigation_target, selection_index_from_str_keys,
+};
 use crate::theme::ThemeResolver;
 
 /// Pure descriptor for one radio item.
@@ -659,13 +661,22 @@ impl RenderOnce for RadioGroup {
             let colors = state.colors();
             let focus_ring = state.focus_ring();
             let is_vertical = matches!(orientation, Orientation::Vertical);
-            let focus_handles = Rc::new(runtime.read(cx).focus_handles.clone());
+            let focus_handles = {
+                let runtime = runtime.read(cx);
+                state
+                    .items()
+                    .iter()
+                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
+                    .collect::<Vec<_>>()
+            };
 
             div()
                 .id(id.clone())
                 .role(state.role())
                 .aria_orientation(orientation)
                 .aria_label(label.unwrap_or_else(|| SharedString::from("Radio group")))
+                .aria_required(state.required())
+                .aria_disabled(state.disabled())
                 .flex()
                 .gap(metrics.item_gap())
                 .when(is_vertical, |this| this.flex_col())
@@ -673,7 +684,7 @@ impl RenderOnce for RadioGroup {
                 .children(state.items().iter().enumerate().map(|(index, item)| {
                     let descriptor = item_descriptors[index].clone();
                     let disabled_items = disabled_items.clone();
-                    let focus_handle = focus_handles.get(item.value()).cloned();
+                    let focus_handle = focus_handles[index].clone();
                     let click_runtime = runtime.clone();
                     let click_on_selection_change = on_selection_change.clone();
                     let click_selected_value = selected_value.clone();
@@ -692,6 +703,7 @@ impl RenderOnce for RadioGroup {
                         .role(item.role())
                         .aria_label(descriptor.label())
                         .aria_selected(is_selected)
+                        .aria_disabled(item.disabled())
                         .aria_position_in_set(item_index + 1)
                         .aria_size_of_set(state.items().len())
                         .when_some(focus_handle, |this, focus_handle| {
@@ -759,7 +771,7 @@ impl RenderOnce for RadioGroup {
                                 }
 
                                 let key = event.keystroke.key.as_str();
-                                let Some(target_index) = radio_navigation_target(
+                                let Some(target_index) = roving_navigation_target(
                                     orientation,
                                     key,
                                     item_index,
@@ -878,14 +890,16 @@ impl RadioRuntime {
     }
 
     fn set_active(&mut self, value: &str, cx: &mut Context<Self>) -> Option<FocusHandle> {
+        if self.selected_value.as_deref() == Some(value)
+            && self.focused_value.as_deref() == Some(value)
+        {
+            return self.focus_handles.get(value).cloned();
+        }
+
         let value = value.to_owned();
-        let changed = self.selected_value.as_deref() != Some(value.as_str())
-            || self.focused_value.as_deref() != Some(value.as_str());
         self.selected_value = Some(value.clone());
         self.focused_value = Some(value.clone());
-        if changed {
-            cx.notify();
-        }
+        cx.notify();
         self.focus_handles.get(&value).cloned()
     }
 }
@@ -895,18 +909,7 @@ fn resolve_selected_index(
     disabled: &[bool],
     selected: Option<&str>,
 ) -> Option<usize> {
-    if values.len() != disabled.len() {
-        return None;
-    }
-
-    selected
-        .and_then(|candidate| {
-            values
-                .iter()
-                .position(|value| value.as_str() == candidate)
-                .filter(|index| !disabled.get(*index).copied().unwrap_or(true))
-        })
-        .or_else(|| first_enabled(disabled))
+    active_index_from_str_keys(values, selected, disabled)
 }
 
 fn resolve_radio_index(
@@ -915,42 +918,11 @@ fn resolve_radio_index(
     primary: Option<&str>,
     secondary: Option<&str>,
 ) -> Option<usize> {
-    if values.len() != disabled.len() {
-        return first_enabled(disabled);
-    }
-
-    let is_valid = |candidate: &str| {
-        values
-            .iter()
-            .position(|value| value.as_str() == candidate)
-            .filter(|index| !disabled.get(*index).copied().unwrap_or(true))
-    };
-
-    primary
-        .and_then(is_valid)
-        .or_else(|| secondary.and_then(is_valid))
-        .or_else(|| first_enabled(disabled))
+    selection_index_from_str_keys(values, disabled, primary, secondary)
 }
 
 fn radio_item_id(value: &str) -> ElementId {
     format!("radio-{value}").into()
-}
-
-fn radio_navigation_target(
-    orientation: Orientation,
-    key: &str,
-    current: usize,
-    disabled: &[bool],
-) -> Option<usize> {
-    match (orientation, key) {
-        (_, "home") => first_enabled(disabled),
-        (_, "end") => last_enabled(disabled),
-        (Orientation::Horizontal, "left") => next_enabled(disabled, current, false, true),
-        (Orientation::Horizontal, "right") => next_enabled(disabled, current, true, true),
-        (Orientation::Vertical, "up") => next_enabled(disabled, current, false, true),
-        (Orientation::Vertical, "down") => next_enabled(disabled, current, true, true),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -989,15 +961,15 @@ mod tests {
         let disabled = [false, true, false];
 
         assert_eq!(
-            radio_navigation_target(Orientation::Horizontal, "right", 0, &disabled),
+            roving_navigation_target(Orientation::Horizontal, "right", 0, &disabled),
             Some(2)
         );
         assert_eq!(
-            radio_navigation_target(Orientation::Horizontal, "right", 2, &disabled),
+            roving_navigation_target(Orientation::Horizontal, "right", 2, &disabled),
             Some(0)
         );
         assert_eq!(
-            radio_navigation_target(Orientation::Vertical, "up", 2, &disabled),
+            roving_navigation_target(Orientation::Vertical, "up", 2, &disabled),
             Some(0)
         );
     }

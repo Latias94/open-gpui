@@ -21,5 +21,5 @@ pub use crate::text_input::{
     init as init_text_input,
 };
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
-pub use crate::toggle::{Toggle, ToggleState, ToggleVariant};
+pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use open_gpui_ui_core::{Sizable, Size, ThemeTokens};

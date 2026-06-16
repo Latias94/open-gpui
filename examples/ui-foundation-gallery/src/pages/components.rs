@@ -186,10 +186,6 @@ pub struct ToggleSample {
     pub id: &'static str,
     /// Visible label.
     pub label: &'static str,
-    /// Visual variant.
-    pub variant: ToggleVariant,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: ToggleState,
 }
@@ -803,8 +799,6 @@ pub fn toggle_samples(tokens: ThemeTokens) -> [ToggleSample; 4] {
         |(id, label, variant, pressed, disabled, size)| ToggleSample {
             id,
             label,
-            variant,
-            size,
             state: Toggle::new(id, label)
                 .variant(variant)
                 .pressed(pressed)

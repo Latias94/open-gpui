@@ -682,7 +682,7 @@ impl GalleryShell {
                                         format!("component-toggle:{}", sample.id),
                                         sample.label,
                                     )
-                                    .variant(sample.variant)
+                                    .variant(state.variant())
                                     .pressed(state.pressed())
                                     .disabled(state.disabled())
                                     .with_size(state.size())

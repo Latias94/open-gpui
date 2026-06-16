@@ -362,11 +362,13 @@ impl TabsState {
         let descriptors: Vec<TabsItemDescriptor> = items.into_iter().collect();
         let values: Vec<String> = descriptors.iter().map(|item| item.value.clone()).collect();
         let disabled: Vec<bool> = descriptors.iter().map(|item| item.disabled).collect();
-        let selected_index = resolve_index(&values, &disabled, selected_value, focused_value);
+        let selected_index =
+            selection_index_from_str_keys(&values, &disabled, selected_value, focused_value);
         let selected_seed = selected_index
             .and_then(|index| values.get(index))
             .map(String::as_str);
-        let focused_index = resolve_index(&values, &disabled, focused_value, selected_seed);
+        let focused_index =
+            selection_index_from_str_keys(&values, &disabled, focused_value, selected_seed);
         let tab_stop_index = focused_index.or(selected_index);
         let metrics = TabsMetrics::from_size(size);
         let colors = TabsColors::from_tokens(tokens);
@@ -542,18 +544,48 @@ pub fn active_index_from_str_keys(
     selected: Option<&str>,
     disabled: &[bool],
 ) -> Option<usize> {
+    selection_index_from_str_keys(keys, disabled, selected, None)
+}
+
+/// Resolves an index from primary and secondary stable string keys.
+pub(crate) fn selection_index_from_str_keys(
+    keys: &[String],
+    disabled: &[bool],
+    primary: Option<&str>,
+    secondary: Option<&str>,
+) -> Option<usize> {
     if keys.len() != disabled.len() {
         return first_enabled(disabled);
     }
 
-    if let Some(selected) = selected
-        && let Some(index) = keys.iter().position(|key| key.as_str() == selected)
-        && !disabled.get(index).copied().unwrap_or(true)
-    {
-        return Some(index);
-    }
+    let is_valid = |candidate: &str| {
+        keys.iter()
+            .position(|key| key.as_str() == candidate)
+            .filter(|index| !disabled.get(*index).copied().unwrap_or(true))
+    };
 
-    first_enabled(disabled)
+    primary
+        .and_then(is_valid)
+        .or_else(|| secondary.and_then(is_valid))
+        .or_else(|| first_enabled(disabled))
+}
+
+/// Resolves a roving-focus navigation target from an APG-style key name.
+pub(crate) fn roving_navigation_target(
+    orientation: Orientation,
+    key: &str,
+    current: usize,
+    disabled: &[bool],
+) -> Option<usize> {
+    match (orientation, key) {
+        (_, "home") => first_enabled(disabled),
+        (_, "end") => last_enabled(disabled),
+        (Orientation::Horizontal, "left") => next_enabled(disabled, current, false, true),
+        (Orientation::Horizontal, "right") => next_enabled(disabled, current, true, true),
+        (Orientation::Vertical, "up") => next_enabled(disabled, current, false, true),
+        (Orientation::Vertical, "down") => next_enabled(disabled, current, true, true),
+        _ => None,
+    }
 }
 
 /// A concrete GPUI tab item.
@@ -896,7 +928,7 @@ impl RenderOnce for Tabs {
                                         }
 
                                         let key = event.keystroke.key.as_str();
-                                        let Some(target_index) = navigation_target(
+                                        let Some(target_index) = roving_navigation_target(
                                             orientation,
                                             key,
                                             item_index,
@@ -1036,52 +1068,12 @@ impl TabsRuntime {
     }
 }
 
-fn resolve_index(
-    values: &[String],
-    disabled: &[bool],
-    primary: Option<&str>,
-    secondary: Option<&str>,
-) -> Option<usize> {
-    if values.len() != disabled.len() {
-        return first_enabled(disabled);
-    }
-
-    let is_valid = |candidate: &str| {
-        values
-            .iter()
-            .position(|value| value.as_str() == candidate)
-            .filter(|index| !disabled.get(*index).copied().unwrap_or(true))
-    };
-
-    primary
-        .and_then(is_valid)
-        .or_else(|| secondary.and_then(is_valid))
-        .or_else(|| first_enabled(disabled))
-}
-
 fn tabs_panel_id() -> ElementId {
     "panel".into()
 }
 
 fn tabs_trigger_id(value: &str) -> ElementId {
     format!("tab-{value}").into()
-}
-
-fn navigation_target(
-    orientation: Orientation,
-    key: &str,
-    current: usize,
-    disabled: &[bool],
-) -> Option<usize> {
-    match (orientation, key) {
-        (_, "home") => first_enabled(disabled),
-        (_, "end") => last_enabled(disabled),
-        (Orientation::Horizontal, "left") => next_enabled(disabled, current, false, true),
-        (Orientation::Horizontal, "right") => next_enabled(disabled, current, true, true),
-        (Orientation::Vertical, "up") => next_enabled(disabled, current, false, true),
-        (Orientation::Vertical, "down") => next_enabled(disabled, current, true, true),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

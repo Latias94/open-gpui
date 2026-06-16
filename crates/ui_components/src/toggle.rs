@@ -13,6 +13,12 @@ use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
 
+/// Resolved toggle color intents.
+pub type ToggleColors = ButtonColors;
+
+/// Resolved toggle metrics.
+pub type ToggleMetrics = ButtonMetrics;
+
 /// Visual intent for a [`Toggle`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToggleVariant {
@@ -47,8 +53,8 @@ pub struct ToggleState {
     disabled: bool,
     variant: ToggleVariant,
     size: Size,
-    metrics: ButtonMetrics,
-    colors: ButtonColors,
+    metrics: ToggleMetrics,
+    colors: ToggleColors,
     focus_ring: FocusRing,
 }
 
@@ -68,7 +74,7 @@ impl ToggleState {
             disabled,
             variant,
             size,
-            metrics: ButtonMetrics::from_size(size),
+            metrics: ToggleMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
         }
@@ -114,12 +120,12 @@ impl ToggleState {
     }
 
     /// Returns resolved metrics.
-    pub const fn metrics(self) -> ButtonMetrics {
+    pub const fn metrics(self) -> ToggleMetrics {
         self.metrics
     }
 
     /// Returns resolved color intents.
-    pub const fn colors(self) -> ButtonColors {
+    pub const fn colors(self) -> ToggleColors {
         self.colors
     }
 

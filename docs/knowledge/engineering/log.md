@@ -1,6 +1,17 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Applied U5 follow-up cleanup after review: GPUI `div` now exposes `aria_required`
+  and `aria_disabled`, RadioGroup uses those flags plus per-item disabled semantics, Tabs/Radio
+  share stable-key selection and roving navigation helpers, and Toggle exports its own
+  metrics/colors aliases while reusing Button visuals internally.
+* **Update**: Accepted the U5 efficiency review findings by avoiding full `BTreeMap` focus-handle
+  clones in RadioGroup render and skipping redundant active-state writes on repeated activation.
+* **Update**: Verified the U5 cleanup with `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
+  -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+* **Update**: Committed the main U5 slice as
+  `5e562f3 feat(ui): add radio group and toggle components`.
 * **Update**: Completed U5 of the official component roadmap by adding `RadioGroup` and `Toggle`
   to `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, explicit
   exports, gallery dogfood, and targeted tests.

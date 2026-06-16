@@ -1222,6 +1222,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the required state for this element.
+    fn aria_required(mut self, required: bool) -> Self {
+        self.interactivity().aria_required = Some(required);
+        self
+    }
+
+    /// Set the disabled state for this element.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().aria_disabled = Some(disabled);
+        self
+    }
+
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
         self.interactivity().aria_expanded = Some(expanded);
@@ -1881,6 +1893,8 @@ pub struct Interactivity {
     pub(crate) aria_controls: Option<Vec<accesskit::NodeId>>,
     pub(crate) aria_labelled_by: Option<Vec<accesskit::NodeId>>,
     pub(crate) aria_selected: Option<bool>,
+    pub(crate) aria_required: Option<bool>,
+    pub(crate) aria_disabled: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
     pub(crate) aria_numeric_value: Option<f64>,
@@ -3082,6 +3096,20 @@ impl Interactivity {
         }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);
+        }
+        if let Some(required) = self.aria_required {
+            if required {
+                node.set_required();
+            } else {
+                node.clear_required();
+            }
+        }
+        if let Some(disabled) = self.aria_disabled {
+            if disabled {
+                node.set_disabled();
+            } else {
+                node.clear_disabled();
+            }
         }
         if let Some(expanded) = self.aria_expanded {
             node.set_expanded(expanded);
