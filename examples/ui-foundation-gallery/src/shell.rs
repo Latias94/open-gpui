@@ -11,9 +11,10 @@ use open_gpui_ui_components::{
     Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, ContextMenu,
     Dialog, DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label,
     LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
-    ScrollAreaAxis, ScrollAreaState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
-    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState, Tooltip,
-    TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
+    ScrollAreaAxis, ScrollAreaState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState,
+    Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
+    Toggle, ToggleState, Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow,
+    init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -553,6 +554,7 @@ impl GalleryShell {
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
+        let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
 
         div()
             .id("gallery-components-page")
@@ -602,6 +604,99 @@ impl GalleryShell {
                                 }),
                         ),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Splitter"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        splitter_samples.into_iter().map(|sample| {
+                            let state = sample.state.clone();
+                            let splitter = sample.panels.into_iter().fold(
+                                Splitter::new(format!("component-splitter:{}", sample.id))
+                                    .orientation(sample.orientation)
+                                    .with_size(sample.size),
+                                |splitter, panel| {
+                                    splitter.panel(SplitterPanel::new(
+                                        panel.descriptor,
+                                        div()
+                                            .size_full()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .bg(rgb(0xf8f9f3))
+                                            .px_3()
+                                            .py_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                                    .text_color(rgb(0x3f4a57))
+                                                    .child(panel.title),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x5a6472))
+                                                    .child(panel.body),
+                                            ),
+                                    ))
+                                },
+                            );
+
+                            div()
+                                .id(format!("component-splitter-sample:{}", sample.id))
+                                .w(px(520.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.title),
+                                        )
+                                        .child(label_pill(match sample.orientation {
+                                            Orientation::Horizontal => "horizontal",
+                                            Orientation::Vertical => "vertical",
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.summary),
+                                )
+                                .child(
+                                    div()
+                                        .h(px(164.0))
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xe2e4dc))
+                                        .bg(rgb(0xfcfcf8))
+                                        .child(splitter),
+                                )
+                                .child(component_splitter_state_row(&state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -2928,6 +3023,43 @@ fn component_scroll_area_state_row(state: &ScrollAreaState) -> impl IntoElement 
             "x {} / y {}",
             if state.scrolls_x() { "scroll" } else { "clip" },
             if state.scrolls_y() { "scroll" } else { "clip" }
+        ))
+}
+
+fn component_splitter_state_row(state: &SplitterState) -> impl IntoElement {
+    let fractions = state
+        .panels()
+        .iter()
+        .map(|panel| {
+            if panel.collapsed() {
+                format!("{}:{:.0}% collapsed", panel.id(), panel.fraction() * 100.0)
+            } else {
+                format!("{}:{:.0}%", panel.id(), panel.fraction() * 100.0)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" / ");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} panels / {} handles",
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            state.panels().len(),
+            state.handles().len()
+        ))
+        .child(fractions)
+        .child(format!(
+            "handle {} hit {}",
+            format_px(state.metrics().handle_thickness()),
+            format_px(state.metrics().handle_hit_size())
         ))
 }
 

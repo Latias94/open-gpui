@@ -3,9 +3,9 @@
 use open_gpui_ui_components::{
     Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
     Field, FieldState, IconButton, IconButtonState, Label, LabelState, RadioGroupState,
-    RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Switch, SwitchState,
-    TabsActivationMode, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
-    ToggleState, ToggleVariant,
+    RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
+    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
+    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -35,6 +35,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::ScrollAreaState",
     "open_gpui_ui_components::ScrollAreaAxis",
     "open_gpui_ui_components::ScrollResetPolicy",
+    "open_gpui_ui_components::Splitter",
+    "open_gpui_ui_components::SplitterState",
+    "open_gpui_ui_components::SplitterPanel",
+    "open_gpui_ui_components::SplitterPanelDescriptor",
     "ThemeTokens",
     "Size",
     "Role::Button",
@@ -188,6 +192,38 @@ pub struct ScrollAreaSample {
     pub items: Vec<&'static str>,
     /// Resolved state.
     pub state: ScrollAreaState,
+}
+
+/// One splitter panel sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterPanelSample {
+    /// Stable panel id.
+    pub id: &'static str,
+    /// Visible title.
+    pub title: &'static str,
+    /// Panel body copy.
+    pub body: &'static str,
+    /// Panel descriptor.
+    pub descriptor: SplitterPanelDescriptor,
+}
+
+/// One splitter sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitterSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Splitter orientation.
+    pub orientation: Orientation,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Splitter panels.
+    pub panels: Vec<SplitterPanelSample>,
+    /// Resolved state.
+    pub state: SplitterState,
 }
 
 /// One radio item sample in the gallery.
@@ -867,6 +903,93 @@ pub fn scroll_area_samples(_tokens: ThemeTokens) -> [ScrollAreaSample; 3] {
                 ScrollResetPolicy::ResetOnKeyChange,
                 Some("components".to_string()),
             ),
+        },
+    ]
+}
+
+/// Returns splitter samples backed by real component state.
+pub fn splitter_samples(_tokens: ThemeTokens) -> [SplitterSample; 2] {
+    let workspace_panels = vec![
+        SplitterPanelSample {
+            id: "navigator",
+            title: "Navigator",
+            body: "Folders, symbols, and filters.",
+            descriptor: SplitterPanelDescriptor::new("navigator", 0.24)
+                .min_fraction(0.18)
+                .max_fraction(0.34),
+        },
+        SplitterPanelSample {
+            id: "editor",
+            title: "Editor",
+            body: "Primary working surface.",
+            descriptor: SplitterPanelDescriptor::new("editor", 0.56)
+                .min_fraction(0.42)
+                .max_fraction(0.72),
+        },
+        SplitterPanelSample {
+            id: "inspector",
+            title: "Inspector",
+            body: "Metadata and actions.",
+            descriptor: SplitterPanelDescriptor::new("inspector", 0.2)
+                .min_fraction(0.12)
+                .max_fraction(0.28)
+                .collapsible(true),
+        },
+    ];
+    let details_panels = vec![
+        SplitterPanelSample {
+            id: "summary",
+            title: "Summary",
+            body: "Collapsed header keeps context visible.",
+            descriptor: SplitterPanelDescriptor::new("summary", 0.32)
+                .min_fraction(0.2)
+                .max_fraction(0.45)
+                .collapsible(true)
+                .collapsed(true)
+                .collapsed_fraction(0.08),
+        },
+        SplitterPanelSample {
+            id: "details",
+            title: "Details",
+            body: "Scrollable content can own the remaining space.",
+            descriptor: SplitterPanelDescriptor::new("details", 0.68)
+                .min_fraction(0.42)
+                .max_fraction(0.92),
+        },
+    ];
+
+    [
+        SplitterSample {
+            id: "workspace-split",
+            title: "Workspace split",
+            summary: "Horizontal panels constrained by min and max fractions.",
+            orientation: Orientation::Horizontal,
+            size: Size::Medium,
+            state: SplitterState::resolve(
+                "workspace-split",
+                Orientation::Horizontal,
+                Size::Medium,
+                false,
+                workspace_panels
+                    .iter()
+                    .map(|panel| panel.descriptor.clone()),
+            ),
+            panels: workspace_panels,
+        },
+        SplitterSample {
+            id: "details-split",
+            title: "Details split",
+            summary: "Vertical stack with a collapsed but restorable panel.",
+            orientation: Orientation::Vertical,
+            size: Size::Small,
+            state: SplitterState::resolve(
+                "details-split",
+                Orientation::Vertical,
+                Size::Small,
+                false,
+                details_panels.iter().map(|panel| panel.descriptor.clone()),
+            ),
+            panels: details_panels,
         },
     ]
 }

@@ -149,6 +149,19 @@ scroll handle after the component has a keyed runtime. Layout shells should pass
 handle when another view needs to inspect or manipulate scroll state; resolved state remains the
 testable contract for docs and future headless extraction.
 
+## Splitter Constraints
+
+`SplitterState` describes renderer-neutral resize constraints: stable group id, orientation, panel
+fractions, per-panel min/max bounds, collapsible/collapsed metadata, handle adjacency, disabled
+state, and handle metrics. The state owns the constraint solver for normalizing fractions and
+clamping handle deltas; tests should exercise those rules without a GPUI window.
+
+The GPUI `Splitter` adapter currently renders resolved panel fractions and resize handles from that
+state. It may use GPUI layout primitives and cursor styles, but it should not invent sizing rules in
+the render body. Full pointer-drag persistence, keyboard splitter resizing, and application-level
+layout storage should build on `SplitterState::resized_by` instead of duplicating min/max/collapse
+logic in adapter code.
+
 ## Current Known Gaps
 
 The runtime theme table currently covers semantic component colors for light, dark, and
@@ -185,3 +198,6 @@ coordination, modal popover barriers, and a full reusable focus-scope runtime re
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 wheel routing, nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
+`Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata, and
+stable handle anatomy. Pointer dragging, keyboard resizing, persisted layouts, RTL behavior, and
+nested splitter arbitration remain follow-up work.

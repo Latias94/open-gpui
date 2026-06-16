@@ -502,6 +502,7 @@ fn components_page_samples_expose_component_metadata() {
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
+    let splitters = pages::components::splitter_samples(tokens);
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -624,6 +625,17 @@ fn components_page_samples_expose_component_metadata() {
         ScrollResetPolicy::ResetOnKeyChange
     );
     assert_eq!(scroll_areas[2].state.reset_key(), Some("components"));
+
+    assert_eq!(splitters.len(), 2);
+    assert_eq!(splitters[0].id, "workspace-split");
+    assert_eq!(splitters[0].state.orientation(), Orientation::Horizontal);
+    assert_eq!(splitters[0].state.panels().len(), 3);
+    assert_eq!(splitters[0].state.handles().len(), 2);
+    assert_eq!(splitters[0].state.panels()[0].id(), "navigator");
+    assert!(!splitters[0].state.handles()[0].disabled());
+    assert_eq!(splitters[1].state.orientation(), Orientation::Vertical);
+    assert!(splitters[1].state.panels()[0].collapsed());
+    assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 }
 
 #[test]

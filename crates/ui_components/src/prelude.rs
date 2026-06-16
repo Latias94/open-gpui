@@ -30,6 +30,10 @@ pub use crate::roving_focus::{
 pub use crate::scroll_area::{
     ScrollArea, ScrollAreaAxis, ScrollAreaMetrics, ScrollAreaState, ScrollResetPolicy,
 };
+pub use crate::splitter::{
+    Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
+    SplitterPanelState, SplitterState,
+};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,

@@ -4,13 +4,13 @@ use open_gpui_ui_components::{
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
     FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
     MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Switch,
-    Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
-    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
-    focus_ring_shadow, gpui_anchor, last_enabled, menu_navigation_target, next_enabled,
-    outside_press_open_change, point_anchor_placement,
+    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
+    SplitterPanel, SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
+    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
+    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -657,6 +657,94 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
     assert_eq!(preserved.reset_policy(), ScrollResetPolicy::Preserve);
     assert_eq!(preserved.reset_key(), None);
     assert!(!preserved.should_reset_for_key_change(Some("overview")));
+}
+
+#[test]
+fn splitter_state_normalizes_panel_fractions_and_constraints() {
+    let state = SplitterState::resolve(
+        "workspace",
+        Orientation::Horizontal,
+        Size::Medium,
+        false,
+        [
+            SplitterPanelDescriptor::new("nav", 0.2)
+                .min_fraction(0.18)
+                .max_fraction(0.32),
+            SplitterPanelDescriptor::new("main", 0.65)
+                .min_fraction(0.42)
+                .max_fraction(0.7),
+            SplitterPanelDescriptor::new("inspector", 0.35)
+                .min_fraction(0.12)
+                .max_fraction(0.28),
+        ],
+    );
+
+    let sum: f32 = state.panels().iter().map(|panel| panel.fraction()).sum();
+    assert_eq!(state.group_id(), "workspace");
+    assert_eq!(state.orientation(), Orientation::Horizontal);
+    assert_eq!(state.size(), Size::Medium);
+    assert!((sum - 1.0).abs() < 0.001);
+    assert_eq!(state.panels().len(), 3);
+    assert!(state.panels()[0].fraction() >= 0.18);
+    assert!(state.panels()[1].fraction() <= 0.7);
+    assert!(state.panels()[2].fraction() <= 0.28);
+    assert_eq!(state.handles().len(), 2);
+    assert_eq!(state.handles()[0].before_id(), "nav");
+    assert_eq!(state.handles()[0].after_id(), "main");
+    assert_eq!(state.metrics().handle_hit_size(), px(12.0));
+}
+
+#[test]
+fn splitter_resize_delta_clamps_to_adjacent_min_max() {
+    let state = SplitterState::resolve(
+        "editor",
+        Orientation::Horizontal,
+        Size::Small,
+        false,
+        [
+            SplitterPanelDescriptor::new("left", 0.35)
+                .min_fraction(0.2)
+                .max_fraction(0.4),
+            SplitterPanelDescriptor::new("right", 0.65)
+                .min_fraction(0.5)
+                .max_fraction(0.8),
+        ],
+    );
+    let grown = state.resized_by(0, 0.3);
+    let shrunk = grown.resized_by(0, -0.5);
+
+    assert!((grown.panels()[0].fraction() - 0.4).abs() < 0.001);
+    assert!((grown.panels()[1].fraction() - 0.6).abs() < 0.001);
+    assert!((shrunk.panels()[0].fraction() - 0.2).abs() < 0.001);
+    assert!((shrunk.panels()[1].fraction() - 0.8).abs() < 0.001);
+}
+
+#[test]
+fn splitter_collapsed_panel_uses_collapsed_fraction() {
+    let state = Splitter::new("collapsed-split")
+        .vertical()
+        .small()
+        .panel(SplitterPanel::new(
+            SplitterPanelDescriptor::new("summary", 0.3)
+                .min_fraction(0.2)
+                .collapsible(true)
+                .collapsed(true)
+                .collapsed_fraction(0.05),
+            div(),
+        ))
+        .panel(SplitterPanel::new(
+            SplitterPanelDescriptor::new("details", 0.7).min_fraction(0.4),
+            div(),
+        ))
+        .state();
+
+    assert_eq!(state.orientation(), Orientation::Vertical);
+    assert!(state.panels()[0].collapsible());
+    assert!(state.panels()[0].collapsed());
+    assert!((state.panels()[0].fraction() - 0.05).abs() < 0.001);
+    assert_eq!(state.panels()[0].collapsed_fraction(), 0.05);
+    assert_eq!(state.handles().len(), 1);
+    assert!(!state.handles()[0].disabled());
 }
 
 #[test]

@@ -97,14 +97,16 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    press or Escape.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
-   IconButton, ScrollArea, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs
-   samples render with enabled, disabled, selected, checked, unchecked, indeterminate, pressed,
-   invalid, required, read-only, placeholder, value, help, error, control-association,
-   roving-focus, overflow-axis, and scroll-reset states. The Badge samples should remain
-   display-only. The IconButton samples should be square controls with visible focus and explicit
-   accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
+   IconButton, ScrollArea, Splitter, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field,
+   and Tabs samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
+   pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
+   roving-focus, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
+   remain display-only. The IconButton samples should be square controls with visible focus and
+   explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport
-   while the state readout reports the expected axis and reset policy. The RadioGroup samples should
+   while the state readout reports the expected axis and reset policy. The Splitter samples should
+   show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
+   and collapsed-panel metadata without changing surrounding layout. The RadioGroup samples should
    cover vertical required selection and horizontal navigation that skips disabled items. The Toggle
    samples should expose button-like pressed state without behaving like a checkbox. The Tabs
    samples should cover horizontal automatic activation and vertical manual activation; use arrow

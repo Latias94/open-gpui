@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Added `Splitter` to `open_gpui_ui_components` as the second U11 layout primitive.
+  The resolved state owns panel fraction normalization, min/max constraints, collapsed-panel
+  metadata, handle adjacency, and delta clamping through `SplitterState::resized_by`; the GPUI
+  adapter renders resolved panels and handle affordances without duplicating sizing rules.
+* **Update**: Added Components gallery Splitter samples for horizontal and vertical layouts, updated
+  the component contract and verification docs, and verified with focused component/gallery checks
+  and nextest runs. Pointer dragging and keyboard resizing remain follow-up runtime work.
 * **Update**: Added `ScrollArea` to `open_gpui_ui_components` as the first layout/shell-navigation
   component after the overlay checkpoint. The resolved state keeps viewport id, axis, reset
   policy/key, size, and scrollbar metrics renderer-neutral while the GPUI adapter owns

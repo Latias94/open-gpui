@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T12:45:07Z
+timestamp: 2026-06-16T13:08:39Z
 status: "active"
 ---
 
@@ -11,6 +11,19 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed the U11 Splitter half by adding `Splitter` to `open_gpui_ui_components`.
+  `SplitterState` now records group id, orientation, panel fractions, min/max constraints,
+  collapsible/collapsed metadata, handle adjacency, disabled state, and metrics. It also owns
+  `resized_by` so min/max delta clamping is testable without a GPUI window.
+- Done: Added Components gallery Splitter samples for horizontal workspace panes and a vertical
+  collapsed/details stack, plus gallery metadata tests for panel/handle state. The concrete adapter
+  renders resolved fractions and handle affordances; pointer dragging and keyboard resizing remain
+  deferred runtime work.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` passed after the Splitter slice.
+- Next action: Either wire Splitter pointer-drag runtime on top of `SplitterState::resized_by`, or
+  move to U12 Toolbar/Sidebar now that overflow and resize primitives have first-pass contracts.
 - Done: Started the layout/shell-navigation component series by adding `ScrollArea` to
   `open_gpui_ui_components`. `ScrollAreaState` records stable viewport id, axis, reset policy/key,
   size, and scrollbar metrics without storing GPUI handles; the concrete adapter owns
