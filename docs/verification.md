@@ -116,10 +116,13 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    samples should expose button-like pressed state without behaving like a checkbox. The Tabs
    samples should cover horizontal automatic activation and vertical manual activation; use arrow
    keys, Home/End, Enter, and Space to confirm focus movement and activation behavior. The vertical
-   sample should keep its tab rail scrollable inside the constrained gallery card. The default
-   TextInput sample should accept real text editing through the controller-backed path, while the
-   gallery remains scrollable and keeps focus visible when the page overflows. The app should stay
-   open after opening `Components`; an `accesskit_consumer` panic during that navigation is a
+   sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
+   samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
+   confirm roving focus skips disabled items and separators, and use Enter/Space to activate
+   action/toggle items. The default TextInput sample should accept real text editing through the
+   controller-backed path, while the gallery remains scrollable and keeps focus visible when the
+   page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`
+   panic during that navigation is a
    regression in the accessibility repair gate. The Components page also serves as a conformance
    surface: confirm the visible gate cards for explicit crate exports, gallery metadata, ScrollArea
    redraw persistence, Splitter runtime constraints, Tabs overflow, and explicit accessible

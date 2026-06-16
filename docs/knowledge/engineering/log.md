@@ -1,6 +1,22 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Added U2 Toolbar to `open_gpui_ui_components` with `ToolbarState`,
+  `ToolbarItemDescriptor`, `ToolbarItemState`, `ToolbarSelection`, and a concrete GPUI `Toolbar`
+  adapter. The resolved state owns item kind, disabled/pressed state, tab-stop selection, metrics,
+  colors, and roving-focus targets; the adapter owns focus handles, rendering, and action/toggle
+  event dispatch.
+* **Review**: Toolbar reference research confirmed the v1 scope should stay primitive and stable:
+  reuse the local resolved-state and `roving_focus` patterns, model actions/toggles/separators, and
+  defer workspace command registries, automatic overflow measurement, shortcut display, and app
+  toolbar customization until shell requirements are clearer.
+* **Update**: Added Components gallery Toolbar samples for horizontal editor commands and vertical
+  inspector commands, plus gallery/component tests for exports, metadata, disabled/separator skip
+  behavior, roving focus, toggle pressed metadata, and keyboard activation payloads.
+* **Update**: Documented the Toolbar contract and manual dogfood checklist. Verified the U2 slice
+  with `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest
+  run -p open-gpui-ui-foundation-gallery`, and `git diff --check`.
 * **Update**: Wrote the UI shell, choice, and headless-readiness series plan at
   `docs/plans/2026-06-16-002-feat-ui-shell-choice-headless-series-plan.md`. The sequence starts
   with a gallery conformance gate, then proceeds through Toolbar, Sidebar, AlertDialog/Sheet,

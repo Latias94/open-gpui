@@ -6,6 +6,7 @@ use open_gpui_ui_components::{
     RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
     SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
     TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -35,6 +36,10 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Toggle",
     "open_gpui_ui_components::ToggleState",
     "open_gpui_ui_components::ToggleVariant",
+    "open_gpui_ui_components::Toolbar",
+    "open_gpui_ui_components::ToolbarItem",
+    "open_gpui_ui_components::ToolbarState",
+    "open_gpui_ui_components::ToolbarItemKind",
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
@@ -57,6 +62,7 @@ pub const SIGNALS: &[&str] = &[
     "ThemeTokens",
     "Size",
     "Role::Button",
+    "Role::Toolbar",
     "Role::Switch",
     "Role::CheckBox",
     "Role::RadioGroup",
@@ -362,6 +368,44 @@ pub struct ToggleSample {
     pub label: &'static str,
     /// Resolved state.
     pub state: ToggleState,
+}
+
+/// One toolbar item sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolbarItemSample {
+    /// Stable item value.
+    pub value: &'static str,
+    /// Visible or accessible label.
+    pub label: &'static str,
+    /// Icon glyph used by compact toolbar items.
+    pub icon: Option<&'static str>,
+    /// Item kind.
+    pub kind: ToolbarItemKind,
+    /// Whether the item is disabled.
+    pub disabled: bool,
+    /// Whether the toggle item is pressed.
+    pub pressed: bool,
+}
+
+/// One toolbar sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolbarSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Toolbar orientation.
+    pub orientation: Orientation,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Seeded focused item.
+    pub focused: &'static str,
+    /// Toolbar items.
+    pub items: Vec<ToolbarItemSample>,
+    /// Resolved state.
+    pub state: ToolbarState,
 }
 
 /// Returns button samples backed by real component state.
@@ -1217,6 +1261,131 @@ pub fn toggle_samples(tokens: ThemeTokens) -> [ToggleSample; 4] {
     )
 }
 
+/// Returns toolbar samples backed by real component state.
+pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
+    let editor_items = vec![
+        ToolbarItemSample {
+            value: "undo",
+            label: "Undo",
+            icon: Some("U"),
+            kind: ToolbarItemKind::Action,
+            disabled: false,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "redo",
+            label: "Redo",
+            icon: Some("R"),
+            kind: ToolbarItemKind::Action,
+            disabled: true,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "history-separator",
+            label: "",
+            icon: None,
+            kind: ToolbarItemKind::Separator,
+            disabled: true,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "bold",
+            label: "Bold",
+            icon: Some("B"),
+            kind: ToolbarItemKind::Toggle,
+            disabled: false,
+            pressed: true,
+        },
+        ToolbarItemSample {
+            value: "italic",
+            label: "Italic",
+            icon: Some("I"),
+            kind: ToolbarItemKind::Toggle,
+            disabled: false,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "save",
+            label: "Save",
+            icon: None,
+            kind: ToolbarItemKind::Action,
+            disabled: false,
+            pressed: false,
+        },
+    ];
+    let inspector_items = vec![
+        ToolbarItemSample {
+            value: "pin",
+            label: "Pin",
+            icon: Some("P"),
+            kind: ToolbarItemKind::Toggle,
+            disabled: false,
+            pressed: true,
+        },
+        ToolbarItemSample {
+            value: "refresh",
+            label: "Refresh",
+            icon: Some("R"),
+            kind: ToolbarItemKind::Action,
+            disabled: false,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "inspector-separator",
+            label: "",
+            icon: None,
+            kind: ToolbarItemKind::Separator,
+            disabled: true,
+            pressed: false,
+        },
+        ToolbarItemSample {
+            value: "details",
+            label: "Details",
+            icon: Some("D"),
+            kind: ToolbarItemKind::Action,
+            disabled: false,
+            pressed: false,
+        },
+    ];
+
+    [
+        ToolbarSample {
+            id: "editor-toolbar",
+            title: "Editor toolbar",
+            summary: "Horizontal actions with separators, one disabled item, and pressed toggles.",
+            orientation: Orientation::Horizontal,
+            size: Size::Small,
+            focused: "bold",
+            state: toolbar_state(
+                Orientation::Horizontal,
+                Size::Small,
+                "Editor toolbar",
+                "bold",
+                &editor_items,
+                tokens,
+            ),
+            items: editor_items,
+        },
+        ToolbarSample {
+            id: "inspector-toolbar",
+            title: "Inspector rail",
+            summary: "Vertical toolbar that keeps roving focus on command buttons.",
+            orientation: Orientation::Vertical,
+            size: Size::Medium,
+            focused: "pin",
+            state: toolbar_state(
+                Orientation::Vertical,
+                Size::Medium,
+                "Inspector toolbar",
+                "pin",
+                &inspector_items,
+                tokens,
+            ),
+            items: inspector_items,
+        },
+    ]
+}
+
 fn tabs_state(
     orientation: Orientation,
     activation_mode: TabsActivationMode,
@@ -1234,6 +1403,34 @@ fn tabs_state(
         items
             .iter()
             .map(|item| TabsItemDescriptor::new(item.value, item.label).disabled(item.disabled)),
+        tokens,
+    )
+}
+
+fn toolbar_state(
+    orientation: Orientation,
+    size: Size,
+    label: &str,
+    focused: &str,
+    items: &[ToolbarItemSample],
+    tokens: ThemeTokens,
+) -> ToolbarState {
+    ToolbarState::resolve(
+        orientation,
+        size,
+        false,
+        label,
+        Some(focused),
+        items.iter().map(|item| {
+            let descriptor = match item.kind {
+                ToolbarItemKind::Action => ToolbarItemDescriptor::action(item.value, item.label),
+                ToolbarItemKind::Toggle => {
+                    ToolbarItemDescriptor::toggle(item.value, item.label).pressed(item.pressed)
+                }
+                ToolbarItemKind::Separator => ToolbarItemDescriptor::separator(item.value),
+            };
+            descriptor.disabled(item.disabled)
+        }),
         tokens,
     )
 }

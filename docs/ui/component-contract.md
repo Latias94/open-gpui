@@ -136,6 +136,24 @@ other references target missing nodes.
 Component adapters should still prefer stable element IDs for both the referring node and referenced
 node. The repair layer is a crash barrier, not a substitute for correct IDs.
 
+## Toolbar Contract
+
+`ToolbarState` describes renderer-neutral command grouping: stable toolbar label, orientation,
+foundation size, disabled state, action/toggle/separator items, pressed toggle metadata, focused
+item, tab stop, shared button metrics, and focus-ring/color intents. Separators are visual only and
+must not participate in roving focus or activation.
+
+The GPUI `Toolbar` adapter owns focus handles, keyboard/click dispatch, and concrete item rendering.
+It should expose `Role::Toolbar`, `aria_orientation`, explicit item labels, button roles for action
+and toggle items, and toggled metadata for pressed toggle items. It should reuse the shared
+roving-focus helpers so arrow keys, Home, and End skip disabled items and separators consistently
+with Tabs, RadioGroup, and Menu.
+
+Toolbar v1 is a primitive command surface, not an application command registry. Automatic overflow
+menus, shortcut rendering, command enablement policies, persisted customization, and icon asset
+resolution remain app/adapter responsibilities until the command and sidebar work proves a common
+contract.
+
 ## Scroll Viewports
 
 `ScrollAreaState` describes renderer-neutral viewport intent: stable viewport id, axis

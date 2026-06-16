@@ -499,6 +499,7 @@ fn components_page_samples_expose_component_metadata() {
     let checkboxes = pages::components::checkbox_samples(tokens);
     let radio_groups = pages::components::radio_group_samples(tokens);
     let toggles = pages::components::toggle_samples(tokens);
+    let toolbars = pages::components::toolbar_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
@@ -590,6 +591,17 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(toggles[2].state.variant(), ToggleVariant::Outline);
     assert!(!toggles[3].state.activation_enabled());
 
+    assert_eq!(toolbars.len(), 2);
+    assert_eq!(toolbars[0].id, "editor-toolbar");
+    assert_eq!(toolbars[0].state.role(), Role::Toolbar);
+    assert_eq!(toolbars[0].state.orientation(), Orientation::Horizontal);
+    assert_eq!(toolbars[0].state.focused_value(), Some("bold"));
+    assert_eq!(toolbars[0].state.tab_stop_value(), Some("bold"));
+    assert_eq!(toolbars[0].state.items()[2].kind().as_str(), "separator");
+    assert!(!toolbars[0].state.items()[2].focusable());
+    assert!(toolbars[0].state.items()[3].pressed());
+    assert_eq!(toolbars[1].state.orientation(), Orientation::Vertical);
+
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
     assert_eq!(labels[0].state.control_id(), Some("email-input"));
@@ -679,6 +691,34 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
     assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));
     assert!(tabs[1].items[3].disabled);
+}
+
+#[test]
+fn components_page_toolbar_samples_expose_roving_focus_contract() {
+    let tokens = ThemeTokens::default();
+    let samples = pages::components::toolbar_samples(tokens);
+    let editor = &samples[0].state;
+    let inspector = &samples[1].state;
+
+    assert_eq!(editor.role(), Role::Toolbar);
+    assert_eq!(editor.focused_value(), Some("bold"));
+    assert_eq!(
+        editor.navigation_target("right").map(|item| item.value()),
+        Some("italic")
+    );
+    assert_eq!(
+        editor
+            .activation_for_key("space")
+            .map(|selection| selection.value().to_owned()),
+        Some("bold".to_string())
+    );
+    assert_eq!(editor.items()[2].role(), None);
+    assert_eq!(editor.items()[3].toggled(), Some(Toggled::True));
+    assert_eq!(inspector.orientation(), Orientation::Vertical);
+    assert_eq!(
+        inspector.navigation_target("down").map(|item| item.value()),
+        Some("refresh")
+    );
 }
 
 #[test]

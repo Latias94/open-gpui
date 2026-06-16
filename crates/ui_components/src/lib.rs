@@ -28,6 +28,7 @@ pub mod tabs;
 pub mod text_input;
 pub mod theme;
 pub mod toggle;
+pub mod toolbar;
 pub mod tooltip;
 
 pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
@@ -73,6 +74,10 @@ pub use text_input::{
 };
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
+pub use toolbar::{
+    Toolbar, ToolbarColors, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
+    ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,
+};
 pub use tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,

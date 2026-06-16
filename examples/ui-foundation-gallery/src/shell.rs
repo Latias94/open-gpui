@@ -13,8 +13,8 @@ use open_gpui_ui_components::{
     LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
     ScrollAreaAxis, ScrollAreaState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState,
     Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
-    Toggle, ToggleState, Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow,
-    init_text_input,
+    Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -585,6 +585,7 @@ impl GalleryShell {
         let tabs_samples = pages::components::tabs_samples(snapshot.tokens);
         let radio_samples = pages::components::radio_group_samples(snapshot.tokens);
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
+        let toolbar_samples = pages::components::toolbar_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
@@ -613,6 +614,90 @@ impl GalleryShell {
                             .flex_wrap()
                             .children(conformance_gate_cards),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Toolbar"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        toolbar_samples.into_iter().map(|sample| {
+                            let state = sample.state.clone();
+                            let mut toolbar = Toolbar::new(
+                                format!("component-toolbar:{}", sample.id),
+                                sample.title,
+                            )
+                            .orientation(sample.orientation)
+                            .focused(sample.focused)
+                            .with_size(sample.size)
+                            .tokens(snapshot.tokens);
+                            for item in sample.items.iter() {
+                                let toolbar_item = match item.kind {
+                                    ToolbarItemKind::Action => match item.icon {
+                                        Some(icon) => {
+                                            ToolbarItem::icon(item.value, icon, item.label)
+                                        }
+                                        None => ToolbarItem::action(item.value, item.label),
+                                    },
+                                    ToolbarItemKind::Toggle => match item.icon {
+                                        Some(icon) => {
+                                            ToolbarItem::toggle_icon(item.value, icon, item.label)
+                                        }
+                                        None => ToolbarItem::toggle(item.value, item.label),
+                                    }
+                                    .pressed(item.pressed),
+                                    ToolbarItemKind::Separator => {
+                                        ToolbarItem::separator(item.value)
+                                    }
+                                }
+                                .disabled(item.disabled);
+                                toolbar = toolbar.item(toolbar_item);
+                            }
+
+                            div()
+                                .id(format!("component-toolbar-sample:{}", sample.id))
+                                .w(px(420.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.title),
+                                        )
+                                        .child(label_pill(match sample.orientation {
+                                            Orientation::Horizontal => "horizontal",
+                                            Orientation::Vertical => "vertical",
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.summary),
+                                )
+                                .child(toolbar)
+                                .child(component_toolbar_state_row(&state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -3177,6 +3262,41 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
             "h {} px {}",
             format_px(state.metrics().height()),
             format_px(state.metrics().padding_x())
+        ))
+}
+
+fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
+    let focused = state.focused_value().unwrap_or("none");
+    let tab_stop = state.tab_stop_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+    let kinds = state
+        .items()
+        .iter()
+        .map(|item| item.kind().as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {}",
+            state.role(),
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            size_label(state.size())
+        ))
+        .child(format!("focus {} / tab stop {}", focused, tab_stop))
+        .child(format!(
+            "{} items / {} disabled / {}",
+            state.items().len(),
+            disabled_count,
+            kinds
         ))
 }
 

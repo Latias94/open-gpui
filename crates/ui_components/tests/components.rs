@@ -10,10 +10,12 @@ use open_gpui_ui_components::{
     RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Splitter,
     SplitterPanel, SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode,
     TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip, TooltipContentKind,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind,
     TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
     escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
     menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
+    toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1086,20 +1088,24 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
 
     let root_button = root::Button::new("save", "Save");
+    let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
     let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
 
     let _ = (
         root_button.state(),
+        root_toolbar.state(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
         prelude_button.state(),
+        prelude_toolbar.state(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
@@ -1109,6 +1115,80 @@ fn crate_root_and_prelude_exports_remain_explicit() {
             OverlayLayerKind::Tooltip,
             OverlayPresence::open(),
         )),
+    );
+}
+
+#[test]
+fn toolbar_state_exposes_roving_focus_and_toggle_metadata() {
+    let state = ToolbarState::resolve(
+        Orientation::Horizontal,
+        Size::Small,
+        false,
+        "Editor toolbar",
+        Some("bold"),
+        [
+            ToolbarItemDescriptor::action("undo", "Undo"),
+            ToolbarItemDescriptor::separator("history-separator"),
+            ToolbarItemDescriptor::toggle("bold", "Bold").pressed(true),
+            ToolbarItemDescriptor::toggle("italic", "Italic").disabled(true),
+            ToolbarItemDescriptor::action("save", "Save"),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.role(), Role::Toolbar);
+    assert_eq!(state.orientation(), Orientation::Horizontal);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.label(), "Editor toolbar");
+    assert_eq!(state.items().len(), 5);
+    assert_eq!(state.focused_value(), Some("bold"));
+    assert_eq!(state.tab_stop_value(), Some("bold"));
+    assert_eq!(state.items()[0].role(), Some(Role::Button));
+    assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
+    assert_eq!(state.items()[1].role(), None);
+    assert!(!state.items()[1].focusable());
+    assert!(state.items()[2].pressed());
+    assert_eq!(state.items()[2].toggled(), Some(Toggled::True));
+    assert!(!state.items()[3].activation_enabled());
+    assert_eq!(
+        state.navigation_target("right").map(|item| item.value()),
+        Some("save")
+    );
+    assert_eq!(
+        state
+            .activation_for_key("space")
+            .map(|selection| (selection.value().to_owned(), selection.kind())),
+        Some(("bold".to_string(), ToolbarItemKind::Toggle))
+    );
+}
+
+#[test]
+fn toolbar_builder_state_skips_disabled_and_separator_items() {
+    let state = Toolbar::new("editor-tools", "Editor")
+        .orientation(Orientation::Vertical)
+        .large()
+        .focused("missing")
+        .item(ToolbarItem::action("cut", "Cut").disabled(true))
+        .item(ToolbarItem::separator("clipboard-separator"))
+        .item(ToolbarItem::icon("copy", "C", "Copy"))
+        .item(ToolbarItem::toggle("wrap", "Wrap").pressed(true))
+        .state();
+
+    assert_eq!(state.orientation(), Orientation::Vertical);
+    assert_eq!(state.size(), Size::Large);
+    assert_eq!(state.focused_value(), Some("copy"));
+    assert_eq!(state.tab_stop_value(), Some("copy"));
+    assert!(state.items()[0].disabled());
+    assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
+    assert!(state.items()[3].pressed());
+    assert_eq!(
+        toolbar_navigation_target(
+            Orientation::Vertical,
+            "down",
+            state.focused_index().unwrap(),
+            &[true, true, false, false],
+        ),
+        Some(3)
     );
 }
 

@@ -45,6 +45,10 @@ pub use crate::text_input::{
 };
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
+pub use crate::toolbar::{
+    Toolbar, ToolbarColors, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarItemState,
+    ToolbarMetrics, ToolbarSelection, ToolbarState, toolbar_navigation_target,
+};
 pub use crate::tooltip::{
     Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
     TooltipOpenIntent, TooltipState,

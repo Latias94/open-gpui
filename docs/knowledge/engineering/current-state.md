@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T16:14:23Z
+timestamp: 2026-06-16T16:43:21Z
 status: "active"
 ---
 
@@ -11,6 +11,22 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U2 Toolbar. Added
+  `Toolbar`, `ToolbarState`, `ToolbarItem`, `ToolbarItemDescriptor`, `ToolbarItemState`, and
+  `ToolbarSelection` to `open_gpui_ui_components`, keeping command grouping, item kind, disabled
+  state, pressed state, tab-stop state, metrics, colors, and roving-focus decisions in resolved
+  state while the GPUI adapter owns focus handles, events, and rendering.
+- Done: Added horizontal and vertical Toolbar samples to the Components gallery, including action,
+  toggle, separator, disabled, focused, and pressed item states. Gallery tests now assert the
+  Toolbar metadata and roving-focus contract, and component tests assert disabled/separator skip
+  behavior plus keyboard activation payloads.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest
+  run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed after the U2 Toolbar
+  slice.
+- Next action: Commit U2, then start U3 Sidebar on the same resolved-state plus GPUI-adapter
+  boundary. Toolbar overflow behavior, shortcut display, app command registry integration,
+  customization, and icon asset resolution remain deferred.
 - Done: Started the UI shell, choice, and headless-readiness series with
   `docs/plans/2026-06-16-002-feat-ui-shell-choice-headless-series-plan.md`. U1 adds a visible
   Components conformance gate surface for explicit crate/prelude exports, gallery metadata,
