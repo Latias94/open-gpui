@@ -1,10 +1,10 @@
 //! Theme resolution helpers for component color intents.
 
 use open_gpui::{Rgba, rgb};
-use open_gpui_ui_core::ThemeTokens;
+use open_gpui_ui_core::{ThemeTokens, TokenKey, semantic};
 
 use crate::button::{ButtonColors, ButtonVariant};
-use crate::color::ColorIntent;
+use crate::color::{ColorIntent, ColorState};
 use crate::field::FieldColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
@@ -25,13 +25,166 @@ const DEFAULT_READ_ONLY_SURFACE: u32 = 0xf8f9f5;
 const DEFAULT_PLACEHOLDER: u32 = 0x6d7785;
 const DEFAULT_MESSAGE: u32 = 0x5a6472;
 
+const LIGHT_THEME_REVISION: u64 = 1;
+const DARK_THEME_REVISION: u64 = 2;
+const HIGH_CONTRAST_THEME_REVISION: u64 = 3;
+
+/// A stable color mode supplied by a component theme snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeMode {
+    /// Light color mode.
+    #[default]
+    Light,
+    /// Dark color mode.
+    Dark,
+    /// High contrast color mode.
+    HighContrast,
+}
+
+impl ThemeMode {
+    /// Returns the stable mode label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::HighContrast => "high-contrast",
+        }
+    }
+}
+
+/// One runtime theme table color entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeColor {
+    token: TokenKey,
+    state: ColorState,
+    rgb: u32,
+}
+
+impl ThemeColor {
+    /// Creates a theme color entry for a semantic token and state.
+    pub const fn new(token: TokenKey, state: ColorState, rgb: u32) -> Self {
+        Self { token, state, rgb }
+    }
+
+    /// Returns the semantic token key.
+    pub const fn token(self) -> TokenKey {
+        self.token
+    }
+
+    /// Returns the component color state.
+    pub const fn state(self) -> ColorState {
+        self.state
+    }
+
+    /// Returns the RGB color without alpha.
+    pub const fn rgb(self) -> u32 {
+        self.rgb
+    }
+}
+
+/// Immutable runtime view of a component theme table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeSnapshot<'a> {
+    mode: ThemeMode,
+    revision: u64,
+    colors: &'a [ThemeColor],
+}
+
+impl<'a> ThemeSnapshot<'a> {
+    /// Creates a theme snapshot from a mode, revision, and color table.
+    pub const fn new(mode: ThemeMode, revision: u64, colors: &'a [ThemeColor]) -> Self {
+        Self {
+            mode,
+            revision,
+            colors,
+        }
+    }
+
+    /// Returns the color mode for this snapshot.
+    pub const fn mode(self) -> ThemeMode {
+        self.mode
+    }
+
+    /// Returns the revision used by callers to invalidate cached resolutions.
+    pub const fn revision(self) -> u64 {
+        self.revision
+    }
+
+    /// Returns the raw color table.
+    pub const fn colors(self) -> &'a [ThemeColor] {
+        self.colors
+    }
+
+    /// Looks up an RGB color for a token and state.
+    pub fn color_rgb(self, token: TokenKey, state: ColorState) -> Option<u32> {
+        self.colors
+            .iter()
+            .find(|entry| entry.token == token && entry.state == state)
+            .map(|entry| entry.rgb)
+            .or_else(|| {
+                self.colors
+                    .iter()
+                    .find(|entry| entry.token == token && entry.state == ColorState::Default)
+                    .map(|entry| entry.rgb)
+            })
+    }
+
+    /// Resolves a color intent to an RGB value, falling back to the intent RGB when needed.
+    pub fn resolve_rgb(self, intent: ColorIntent) -> u32 {
+        self.color_rgb(intent.token(), intent.state())
+            .unwrap_or_else(|| intent.fallback_rgb())
+    }
+
+    /// Resolves a color intent to a concrete GPUI color.
+    pub fn resolve(self, intent: ColorIntent) -> Rgba {
+        rgb(self.resolve_rgb(intent))
+    }
+}
+
+impl ThemeSnapshot<'static> {
+    /// Returns the default light theme snapshot.
+    pub const fn light() -> Self {
+        Self::new(ThemeMode::Light, LIGHT_THEME_REVISION, LIGHT_THEME_COLORS)
+    }
+
+    /// Returns the default dark theme snapshot.
+    pub const fn dark() -> Self {
+        Self::new(ThemeMode::Dark, DARK_THEME_REVISION, DARK_THEME_COLORS)
+    }
+
+    /// Returns the default high contrast theme snapshot.
+    pub const fn high_contrast() -> Self {
+        Self::new(
+            ThemeMode::HighContrast,
+            HIGH_CONTRAST_THEME_REVISION,
+            HIGH_CONTRAST_THEME_COLORS,
+        )
+    }
+}
+
+impl Default for ThemeSnapshot<'static> {
+    fn default() -> Self {
+        Self::light()
+    }
+}
+
 /// Theme resolution namespace for component color intents.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ThemeResolver;
 
 impl ThemeResolver {
-    /// Resolves a color intent to a concrete GPUI color.
+    /// Resolves a color intent with the default light theme snapshot.
     pub fn resolve(intent: ColorIntent) -> Rgba {
+        Self::resolve_with(intent, ThemeSnapshot::light())
+    }
+
+    /// Resolves a color intent with an explicit theme snapshot.
+    pub fn resolve_with(intent: ColorIntent, theme: ThemeSnapshot<'_>) -> Rgba {
+        theme.resolve(intent)
+    }
+
+    /// Resolves a color intent by using only the fallback RGB.
+    pub fn resolve_fallback(intent: ColorIntent) -> Rgba {
         rgb(intent.fallback_rgb())
     }
 
@@ -41,31 +194,55 @@ impl ThemeResolver {
         selected: bool,
     ) -> ButtonColors {
         if selected {
-            return Self::accent_button_colors(tokens);
+            return Self::accent_button_colors(tokens, ColorState::Selected);
         }
 
         match variant {
-            ButtonVariant::Default => Self::accent_button_colors(tokens),
+            ButtonVariant::Default => Self::accent_button_colors(tokens, ColorState::Default),
             ButtonVariant::Secondary => ButtonColors {
                 background: ColorIntent::new(tokens.surface_muted, 0xe8ede6),
                 foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
                 border: ColorIntent::new(tokens.border, 0xd6d8ce),
-                hover_background: ColorIntent::new(tokens.surface_muted, 0xdfe6dc),
-                focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+                hover_background: ColorIntent::with_state(
+                    tokens.surface_muted,
+                    ColorState::Hover,
+                    0xdfe6dc,
+                ),
+                focus_ring: ColorIntent::with_state(
+                    tokens.focus_ring,
+                    ColorState::FocusVisible,
+                    DEFAULT_FOCUS_RING,
+                ),
             },
             ButtonVariant::Outline => ButtonColors {
                 background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
                 foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
                 border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
-                hover_background: ColorIntent::new(tokens.surface_muted, 0xf1f5ee),
-                focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+                hover_background: ColorIntent::with_state(
+                    tokens.surface_muted,
+                    ColorState::Hover,
+                    0xf1f5ee,
+                ),
+                focus_ring: ColorIntent::with_state(
+                    tokens.focus_ring,
+                    ColorState::FocusVisible,
+                    DEFAULT_FOCUS_RING,
+                ),
             },
             ButtonVariant::Ghost => ButtonColors {
                 background: ColorIntent::new(tokens.surface, DEFAULT_GHOST_SURFACE),
                 foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
                 border: ColorIntent::new(tokens.surface, DEFAULT_GHOST_SURFACE),
-                hover_background: ColorIntent::new(tokens.surface_muted, 0xe8ede6),
-                focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+                hover_background: ColorIntent::with_state(
+                    tokens.surface_muted,
+                    ColorState::Hover,
+                    0xe8ede6,
+                ),
+                focus_ring: ColorIntent::with_state(
+                    tokens.focus_ring,
+                    ColorState::FocusVisible,
+                    DEFAULT_FOCUS_RING,
+                ),
             },
             ButtonVariant::Destructive => ButtonColors {
                 background: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE),
@@ -74,8 +251,16 @@ impl ThemeResolver {
                     DEFAULT_DESTRUCTIVE_FOREGROUND,
                 ),
                 border: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE),
-                hover_background: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE_HOVER),
-                focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+                hover_background: ColorIntent::with_state(
+                    tokens.destructive,
+                    ColorState::Hover,
+                    DEFAULT_DESTRUCTIVE_HOVER,
+                ),
+                focus_ring: ColorIntent::with_state(
+                    tokens.focus_ring,
+                    ColorState::FocusVisible,
+                    DEFAULT_FOCUS_RING,
+                ),
             },
         }
     }
@@ -99,11 +284,31 @@ impl ThemeResolver {
         };
 
         SwitchColors {
-            track: ColorIntent::new(track_token, track_fallback),
+            track: ColorIntent::with_state(
+                track_token,
+                if checked {
+                    ColorState::Selected
+                } else {
+                    ColorState::Default
+                },
+                track_fallback,
+            ),
             thumb: ColorIntent::new(tokens.surface, DEFAULT_SWITCH_THUMB_SURFACE),
-            border: ColorIntent::new(border_token, border_fallback),
+            border: ColorIntent::with_state(
+                border_token,
+                if checked {
+                    ColorState::Selected
+                } else {
+                    ColorState::Default
+                },
+                border_fallback,
+            ),
             label: ColorIntent::new(tokens.text, DEFAULT_TEXT),
-            focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
         }
     }
 
@@ -114,19 +319,23 @@ impl ThemeResolver {
         invalid: bool,
     ) -> TextInputColors {
         let border = if invalid {
-            ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE)
+            ColorIntent::with_state(tokens.destructive, ColorState::Invalid, DEFAULT_DESTRUCTIVE)
         } else {
             ColorIntent::new(tokens.border, DEFAULT_BORDER)
         };
         let foreground = if disabled {
-            ColorIntent::new(tokens.text_muted, 0x7a8491)
+            ColorIntent::with_state(tokens.text_muted, ColorState::Disabled, 0x7a8491)
         } else {
             ColorIntent::new(tokens.text, DEFAULT_TEXT)
         };
         let background = if disabled {
-            ColorIntent::new(tokens.surface_muted, 0xf1f5ee)
+            ColorIntent::with_state(tokens.surface_muted, ColorState::Disabled, 0xf1f5ee)
         } else if read_only {
-            ColorIntent::new(tokens.surface_muted, DEFAULT_READ_ONLY_SURFACE)
+            ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::ReadOnly,
+                DEFAULT_READ_ONLY_SURFACE,
+            )
         } else {
             ColorIntent::new(tokens.surface, DEFAULT_SURFACE)
         };
@@ -134,9 +343,17 @@ impl ThemeResolver {
         TextInputColors {
             background,
             foreground,
-            placeholder: ColorIntent::new(tokens.text_muted, DEFAULT_PLACEHOLDER),
+            placeholder: ColorIntent::with_state(
+                tokens.text_muted,
+                ColorState::Placeholder,
+                DEFAULT_PLACEHOLDER,
+            ),
             border,
-            focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
         }
     }
 
@@ -146,12 +363,12 @@ impl ThemeResolver {
         invalid: bool,
     ) -> FieldColors {
         let message = if invalid {
-            ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE)
+            ColorIntent::with_state(tokens.destructive, ColorState::Invalid, DEFAULT_DESTRUCTIVE)
         } else {
-            ColorIntent::new(tokens.text_muted, DEFAULT_MESSAGE)
+            ColorIntent::with_state(tokens.text_muted, ColorState::Message, DEFAULT_MESSAGE)
         };
         let label = if disabled {
-            ColorIntent::new(tokens.text_muted, 0x7a8491)
+            ColorIntent::with_state(tokens.text_muted, ColorState::Disabled, 0x7a8491)
         } else {
             ColorIntent::new(tokens.text, DEFAULT_TEXT)
         };
@@ -159,17 +376,168 @@ impl ThemeResolver {
         FieldColors {
             label,
             message,
-            required_marker: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE),
+            required_marker: ColorIntent::with_state(
+                tokens.destructive,
+                ColorState::Required,
+                DEFAULT_DESTRUCTIVE,
+            ),
         }
     }
 
-    const fn accent_button_colors(tokens: ThemeTokens) -> ButtonColors {
+    const fn accent_button_colors(tokens: ThemeTokens, state: ColorState) -> ButtonColors {
         ButtonColors {
-            background: ColorIntent::new(tokens.accent, DEFAULT_ACCENT),
+            background: ColorIntent::with_state(tokens.accent, state, DEFAULT_ACCENT),
             foreground: ColorIntent::new(tokens.accent_foreground, DEFAULT_ACCENT_FOREGROUND),
-            border: ColorIntent::new(tokens.accent, DEFAULT_ACCENT),
-            hover_background: ColorIntent::new(tokens.accent, DEFAULT_ACCENT_HOVER),
-            focus_ring: ColorIntent::new(tokens.focus_ring, DEFAULT_FOCUS_RING),
+            border: ColorIntent::with_state(tokens.accent, state, DEFAULT_ACCENT),
+            hover_background: ColorIntent::with_state(
+                tokens.accent,
+                ColorState::Hover,
+                DEFAULT_ACCENT_HOVER,
+            ),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
         }
     }
 }
+
+const LIGHT_THEME_COLORS: &[ThemeColor] = &[
+    ThemeColor::new(semantic::SURFACE, ColorState::Default, DEFAULT_SURFACE),
+    ThemeColor::new(
+        semantic::SURFACE_MUTED,
+        ColorState::Default,
+        DEFAULT_GHOST_SURFACE,
+    ),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0xdfe6dc),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0xf1f5ee),
+    ThemeColor::new(
+        semantic::SURFACE_MUTED,
+        ColorState::ReadOnly,
+        DEFAULT_READ_ONLY_SURFACE,
+    ),
+    ThemeColor::new(semantic::BORDER, ColorState::Default, DEFAULT_BORDER),
+    ThemeColor::new(semantic::TEXT, ColorState::Default, DEFAULT_TEXT),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Default, DEFAULT_MESSAGE),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Disabled, 0x7a8491),
+    ThemeColor::new(
+        semantic::TEXT_MUTED,
+        ColorState::Placeholder,
+        DEFAULT_PLACEHOLDER,
+    ),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Message, DEFAULT_MESSAGE),
+    ThemeColor::new(semantic::ACCENT, ColorState::Default, DEFAULT_ACCENT),
+    ThemeColor::new(semantic::ACCENT, ColorState::Selected, DEFAULT_ACCENT),
+    ThemeColor::new(semantic::ACCENT, ColorState::Hover, DEFAULT_ACCENT_HOVER),
+    ThemeColor::new(
+        semantic::ACCENT_FOREGROUND,
+        ColorState::Default,
+        DEFAULT_ACCENT_FOREGROUND,
+    ),
+    ThemeColor::new(
+        semantic::FOCUS_RING,
+        ColorState::Default,
+        DEFAULT_FOCUS_RING,
+    ),
+    ThemeColor::new(
+        semantic::FOCUS_RING,
+        ColorState::FocusVisible,
+        DEFAULT_FOCUS_RING,
+    ),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE,
+        ColorState::Default,
+        DEFAULT_DESTRUCTIVE,
+    ),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE,
+        ColorState::Invalid,
+        DEFAULT_DESTRUCTIVE,
+    ),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE,
+        ColorState::Required,
+        DEFAULT_DESTRUCTIVE,
+    ),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE,
+        ColorState::Hover,
+        DEFAULT_DESTRUCTIVE_HOVER,
+    ),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE_FOREGROUND,
+        ColorState::Default,
+        DEFAULT_DESTRUCTIVE_FOREGROUND,
+    ),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Default, 0x263240),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Overlay, 0x263240),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::Default, 0x111827),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::ModalOverlay, 0x111827),
+];
+
+const DARK_THEME_COLORS: &[ThemeColor] = &[
+    ThemeColor::new(semantic::SURFACE, ColorState::Default, 0x121417),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Default, 0x20262d),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0x2a333d),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0x1a1f25),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::ReadOnly, 0x171b20),
+    ThemeColor::new(semantic::BORDER, ColorState::Default, 0x3b4450),
+    ThemeColor::new(semantic::TEXT, ColorState::Default, 0xf4f7fb),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Default, 0xb7c0cc),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Disabled, 0x7e8996),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Placeholder, 0x9aa5b2),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Message, 0xb7c0cc),
+    ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x5ee0bc),
+    ThemeColor::new(semantic::ACCENT, ColorState::Selected, 0x5ee0bc),
+    ThemeColor::new(semantic::ACCENT, ColorState::Hover, 0x39caa7),
+    ThemeColor::new(semantic::ACCENT_FOREGROUND, ColorState::Default, 0x05231c),
+    ThemeColor::new(semantic::FOCUS_RING, ColorState::Default, 0x7ab8ff),
+    ThemeColor::new(semantic::FOCUS_RING, ColorState::FocusVisible, 0x7ab8ff),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Default, 0xff6b5f),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Invalid, 0xff6b5f),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Required, 0xff6b5f),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Hover, 0xff4d3f),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE_FOREGROUND,
+        ColorState::Default,
+        0x1c0705,
+    ),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Default, 0x0b0f14),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Overlay, 0x0b0f14),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::Default, 0x000000),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::ModalOverlay, 0x000000),
+];
+
+const HIGH_CONTRAST_THEME_COLORS: &[ThemeColor] = &[
+    ThemeColor::new(semantic::SURFACE, ColorState::Default, 0xffffff),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Default, 0xf0f0f0),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0xd9e8ff),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0xe6e6e6),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::ReadOnly, 0xf7f7f7),
+    ThemeColor::new(semantic::BORDER, ColorState::Default, 0x000000),
+    ThemeColor::new(semantic::TEXT, ColorState::Default, 0x000000),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Default, 0x222222),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Disabled, 0x555555),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Placeholder, 0x333333),
+    ThemeColor::new(semantic::TEXT_MUTED, ColorState::Message, 0x222222),
+    ThemeColor::new(semantic::ACCENT, ColorState::Default, 0x005fcc),
+    ThemeColor::new(semantic::ACCENT, ColorState::Selected, 0x005fcc),
+    ThemeColor::new(semantic::ACCENT, ColorState::Hover, 0x004799),
+    ThemeColor::new(semantic::ACCENT_FOREGROUND, ColorState::Default, 0xffffff),
+    ThemeColor::new(semantic::FOCUS_RING, ColorState::Default, 0xffbf00),
+    ThemeColor::new(semantic::FOCUS_RING, ColorState::FocusVisible, 0xffbf00),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Default, 0xd00000),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Invalid, 0xd00000),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Required, 0xd00000),
+    ThemeColor::new(semantic::DESTRUCTIVE, ColorState::Hover, 0x9f0000),
+    ThemeColor::new(
+        semantic::DESTRUCTIVE_FOREGROUND,
+        ColorState::Default,
+        0xffffff,
+    ),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Default, 0x000000),
+    ThemeColor::new(semantic::OVERLAY, ColorState::Overlay, 0x000000),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::Default, 0x000000),
+    ThemeColor::new(semantic::MODAL_OVERLAY, ColorState::ModalOverlay, 0x000000),
+];

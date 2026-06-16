@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Completed the runtime theme table slice from the official component roadmap. Added
+  `ColorState`, `ThemeMode`, `ThemeColor`, and immutable `ThemeSnapshot` support, taught
+  `ThemeResolver::resolve_with` to resolve `(TokenKey, ColorState)` before falling back to intent
+  RGB, and exposed light/dark/high-contrast mode metadata in the foundation gallery.
 * **Update**: Wrote the official UI component roadmap at
   `docs/plans/2026-06-15-004-feat-ui-component-roadmap-plan.md`. The next-series order is runtime
   theme table, editable TextInput controller, Checkbox/Label, roving focus/Tabs,

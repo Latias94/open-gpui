@@ -1,4 +1,5 @@
 use open_gpui::px;
+use open_gpui_ui_components::ThemeMode;
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, PanelAdaptiveClass, Role, Size, ThemeTokens,
     Toggled, semantic,
@@ -83,9 +84,24 @@ fn token_page_samples_follow_theme_token_order() {
 
     assert_eq!(samples.len(), 12);
     assert_eq!(samples[0].key, semantic::SURFACE);
+    assert_eq!(samples[0].preview_rgb, 0xffffff);
     assert_eq!(samples[7].key, semantic::FOCUS_RING);
     assert_eq!(samples[11].key, semantic::MODAL_OVERLAY);
     assert!(pages::tokens::matches_semantic_registry(tokens));
+}
+
+#[test]
+fn token_page_exposes_runtime_theme_mode_metadata() {
+    let samples = pages::tokens::theme_mode_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 3);
+    assert_eq!(samples[0].mode, ThemeMode::Light);
+    assert_eq!(samples[1].mode, ThemeMode::Dark);
+    assert_eq!(samples[2].mode, ThemeMode::HighContrast);
+    assert!(samples[0].revision < samples[1].revision);
+    assert!(samples[1].revision < samples[2].revision);
+    assert_ne!(samples[0].surface_rgb, samples[1].surface_rgb);
+    assert_ne!(samples[1].focus_ring_rgb, samples[2].focus_ring_rgb);
 }
 
 #[test]

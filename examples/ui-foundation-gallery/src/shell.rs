@@ -366,6 +366,58 @@ impl GalleryShell {
                     .child(registry_status),
             )
             .child(
+                div().flex().gap_3().children(
+                    pages::tokens::theme_mode_samples(snapshot.tokens)
+                        .into_iter()
+                        .map(|sample| {
+                            div()
+                                .id(format!("theme-mode:{}", sample.mode.as_str()))
+                                .min_w(px(180.0))
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .size(px(16.0))
+                                                .rounded_sm()
+                                                .border_1()
+                                                .border_color(rgb(0xc8ccbf))
+                                                .bg(rgb(sample.surface_rgb)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(sample.mode.as_str()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(format!("rev {}", sample.revision)),
+                                )
+                                .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
+                                    "surface {:06x} text {:06x} accent {:06x} focus {:06x}",
+                                    sample.surface_rgb,
+                                    sample.text_rgb,
+                                    sample.accent_rgb,
+                                    sample.focus_ring_rgb
+                                )))
+                        }),
+                ),
+            )
+            .child(
                 div().grid().grid_cols(3).gap_3().children(
                     pages::tokens::token_samples(snapshot.tokens)
                         .into_iter()

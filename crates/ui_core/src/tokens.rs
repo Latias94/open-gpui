@@ -58,6 +58,22 @@ pub mod semantic {
     pub const OVERLAY: TokenKey = TokenKey::new("semantic.overlay");
     /// Modal scrim token.
     pub const MODAL_OVERLAY: TokenKey = TokenKey::new("semantic.modal_overlay");
+
+    /// All default semantic tokens in `ThemeTokens` field order.
+    pub const ALL: [TokenKey; 12] = [
+        SURFACE,
+        SURFACE_MUTED,
+        BORDER,
+        TEXT,
+        TEXT_MUTED,
+        ACCENT,
+        ACCENT_FOREGROUND,
+        FOCUS_RING,
+        DESTRUCTIVE,
+        DESTRUCTIVE_FOREGROUND,
+        OVERLAY,
+        MODAL_OVERLAY,
+    ];
 }
 
 /// Default token bundle for the first theme surface.
@@ -108,6 +124,26 @@ impl Default for ThemeTokens {
     }
 }
 
+impl ThemeTokens {
+    /// Returns the token bundle in stable semantic field order.
+    pub const fn all(self) -> [TokenKey; 12] {
+        [
+            self.surface,
+            self.surface_muted,
+            self.border,
+            self.text,
+            self.text_muted,
+            self.accent,
+            self.accent_foreground,
+            self.focus_ring,
+            self.destructive,
+            self.destructive_foreground,
+            self.overlay,
+            self.modal_overlay,
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +160,10 @@ mod tests {
         assert_eq!(tokens.surface, semantic::SURFACE);
         assert_eq!(tokens.focus_ring, semantic::FOCUS_RING);
         assert_eq!(tokens.modal_overlay, semantic::MODAL_OVERLAY);
+    }
+
+    #[test]
+    fn theme_tokens_expose_stable_field_order() {
+        assert_eq!(ThemeTokens::default().all(), semantic::ALL);
     }
 }

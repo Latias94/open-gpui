@@ -15,9 +15,9 @@ pub mod text_input;
 pub mod theme;
 
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
-pub use color::ColorIntent;
+pub use color::{ColorIntent, ColorState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
 pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
-pub use theme::ThemeResolver;
+pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};

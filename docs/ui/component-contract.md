@@ -57,17 +57,24 @@ Keep crate-root exports explicit. Do not use wildcard public re-exports in compo
 ## Theme Resolution
 
 Component state should expose `ColorIntent` values rather than concrete GPUI colors. A color intent
-keeps the semantic `TokenKey` visible for tests, documentation, and future headless extraction.
+keeps the semantic `TokenKey`, `ColorState`, and fallback RGB visible for tests, documentation, and
+future headless extraction.
 
 The GPUI adapter should resolve intents through `ThemeResolver` immediately before calling style
-APIs such as `bg`, `border_color`, and `text_color`. The current resolver is intentionally narrow:
-it centralizes fallback RGB values and returns GPUI colors, but it does not yet read from a runtime
-theme table.
+APIs such as `bg`, `border_color`, and `text_color`. `ThemeResolver::resolve` uses the default
+light `ThemeSnapshot` for compatibility. New code that has an explicit theme should call
+`ThemeResolver::resolve_with(intent, snapshot)` so `(TokenKey, ColorState)` lookups come from the
+runtime theme table before falling back to the intent RGB.
+
+`ThemeSnapshot` is an immutable table view with a `ThemeMode`, `revision`, and color entries. The
+revision is the cache invalidation hook for future app-level theme providers. Components should not
+read global theme state directly; keep the resolved component state renderer-neutral and pass theme
+snapshots at the adapter edge.
 
 ## Current Known Gaps
 
-The first component slices still rely on fallback RGB values inside `ThemeResolver` because a
-runtime theme table is not implemented yet. Rich text input editing must use GPUI's
-`EntityInputHandler`/`ElementInputHandler` path and is intentionally separate from display-level
-field composition. `focus_ring_shadow` is GPUI-adapter code and should stay out of a future headless
-crate if `FocusRing` is extracted.
+The runtime theme table currently covers semantic component colors for light, dark, and
+high-contrast snapshots, but there is not yet an app-level theme registry, user theme loading, or
+JSON schema. Rich text input editing must use GPUI's `EntityInputHandler`/`ElementInputHandler` path
+and is intentionally separate from display-level field composition. `focus_ring_shadow` is
+GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.

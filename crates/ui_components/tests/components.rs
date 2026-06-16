@@ -1,7 +1,7 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    Button, ButtonVariant, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Switch, TextInput,
-    ThemeResolver, focus_ring_shadow,
+    Button, ButtonVariant, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Switch,
+    TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, focus_ring_shadow,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic};
 
@@ -94,8 +94,225 @@ fn theme_resolver_keeps_token_intent_and_resolves_fallback_color() {
     let background = state.colors().background();
 
     assert_eq!(background.token(), tokens.accent);
+    assert_eq!(background.state(), ColorState::Default);
     assert_eq!(background.fallback_rgb(), 0x1f7a66);
     assert_eq!(u32::from(ThemeResolver::resolve(background)), 0x1f7a66ff);
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            background,
+            ThemeSnapshot::dark()
+        )),
+        0x1f7a66ff
+    );
+}
+
+#[test]
+fn theme_resolver_prefers_runtime_theme_table_for_known_tokens() {
+    let state = Button::new("default", "Default").state();
+    let background = state.colors().background();
+    let custom_colors = [ThemeColor::new(
+        semantic::ACCENT,
+        ColorState::Default,
+        0x123456,
+    )];
+    let snapshot = ThemeSnapshot::new(ThemeMode::Light, 42, &custom_colors);
+
+    assert_eq!(background.fallback_rgb(), 0x1f7a66);
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(background, snapshot)),
+        0x123456ff
+    );
+    assert_eq!(snapshot.mode(), ThemeMode::Light);
+    assert_eq!(snapshot.revision(), 42);
+}
+
+#[test]
+fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
+    let light = ThemeSnapshot::light();
+    let dark = ThemeSnapshot::dark();
+    let high_contrast = ThemeSnapshot::high_contrast();
+
+    assert_eq!(light.mode().as_str(), "light");
+    assert_eq!(dark.mode().as_str(), "dark");
+    assert_eq!(high_contrast.mode().as_str(), "high-contrast");
+    assert!(light.revision() < dark.revision());
+    assert!(dark.revision() < high_contrast.revision());
+    assert_ne!(
+        light.color_rgb(semantic::SURFACE, ColorState::Default),
+        dark.color_rgb(semantic::SURFACE, ColorState::Default)
+    );
+    assert_ne!(
+        dark.color_rgb(semantic::FOCUS_RING, ColorState::FocusVisible),
+        high_contrast.color_rgb(semantic::FOCUS_RING, ColorState::FocusVisible)
+    );
+}
+
+#[test]
+fn default_theme_resolves_all_current_component_color_intents() {
+    let theme = ThemeSnapshot::light();
+    let buttons = [
+        Button::new("default", "Default").state(),
+        Button::new("secondary", "Secondary")
+            .variant(ButtonVariant::Secondary)
+            .state(),
+        Button::new("outline", "Outline")
+            .variant(ButtonVariant::Outline)
+            .state(),
+        Button::new("ghost", "Ghost")
+            .variant(ButtonVariant::Ghost)
+            .state(),
+        Button::new("destructive", "Destructive")
+            .variant(ButtonVariant::Destructive)
+            .state(),
+        Button::new("selected", "Selected").selected(true).state(),
+    ];
+    let switches = [
+        Switch::new("off").state(),
+        Switch::new("on").checked(true).state(),
+    ];
+    let text_inputs = [
+        TextInput::new("default", "Default").state(),
+        TextInput::new("disabled", "Disabled")
+            .disabled(true)
+            .state(),
+        TextInput::new("readonly", "Read only")
+            .read_only(true)
+            .state(),
+        TextInput::new("invalid", "Invalid").invalid(true).state(),
+    ];
+    let fields = [
+        Field::new("field", "control", "Field").state(),
+        Field::new("required", "control", "Required")
+            .required(true)
+            .state(),
+        Field::new("disabled", "control", "Disabled")
+            .disabled(true)
+            .state(),
+        Field::new("invalid", "control", "Invalid")
+            .invalid(true)
+            .state(),
+    ];
+
+    for state in buttons {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.border(),
+            colors.hover_background(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in switches {
+        let colors = state.colors();
+        for intent in [
+            colors.track(),
+            colors.thumb(),
+            colors.border(),
+            colors.label(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in text_inputs {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.placeholder(),
+            colors.border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in fields {
+        let colors = state.colors();
+        for intent in [colors.label(), colors.message(), colors.required_marker()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+}
+
+fn assert_theme_has_exact_color(
+    theme: ThemeSnapshot<'_>,
+    intent: open_gpui_ui_components::ColorIntent,
+) {
+    assert!(
+        theme
+            .colors()
+            .iter()
+            .any(|entry| entry.token() == intent.token() && entry.state() == intent.state()),
+        "missing theme color for {} / {}",
+        intent.token(),
+        intent.state().as_str()
+    );
+}
+
+#[test]
+fn theme_snapshots_resolve_state_specific_component_tokens() {
+    let button = Button::new("secondary", "Secondary")
+        .variant(ButtonVariant::Secondary)
+        .state();
+    let selected_switch = Switch::new("feature").checked(true).state();
+    let disabled_input = TextInput::new("disabled", "Disabled")
+        .disabled(true)
+        .state();
+    let invalid_input = TextInput::new("email", "Email").invalid(true).state();
+    let required_field = Field::new("email-field", "email", "Email")
+        .required(true)
+        .state();
+    let theme = ThemeSnapshot::light();
+
+    assert_eq!(
+        button.colors().hover_background().state(),
+        ColorState::Hover
+    );
+    assert_eq!(
+        selected_switch.colors().track().state(),
+        ColorState::Selected
+    );
+    assert_eq!(
+        disabled_input.colors().background().state(),
+        ColorState::Disabled
+    );
+    assert_eq!(invalid_input.colors().border().state(), ColorState::Invalid);
+    assert_eq!(
+        invalid_input.colors().focus_ring().state(),
+        ColorState::FocusVisible
+    );
+    assert_eq!(
+        required_field.colors().required_marker().state(),
+        ColorState::Required
+    );
+
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            button.colors().hover_background(),
+            theme
+        )),
+        0xdfe6dcff
+    );
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            disabled_input.colors().background(),
+            theme
+        )),
+        0xf1f5eeff
+    );
+    assert_eq!(
+        u32::from(ThemeResolver::resolve_with(
+            invalid_input.colors().focus_ring(),
+            theme
+        )),
+        0x2f80edff
+    );
 }
 
 #[test]
