@@ -11,6 +11,16 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U8 of the overlay component series by adding ADR 0006
+  (`docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md`). The checkpoint keeps
+  `open-gpui-ui-headless` deferred: overlay components now prove repeated behavior contracts, but
+  several state types still expose GPUI geometry or adapter placement state, so extraction would
+  freeze the wrong boundary.
+- Done: Updated `docs/ui/component-contract.md`, `docs/verification.md`, and engineering memory so
+  the overlay family documents which behavior is renderer-neutral, which remains GPUI adapter
+  responsibility, and what gate must be met before a future headless crate.
+- Next action: Run the final overlay-series quality pass, update memory with final verification,
+  and commit the U8 checkpoint.
 - Done: Completed U7 of the overlay component series by adding `Menu` and `ContextMenu` to
   `open-gpui-ui-components` with shared menu item descriptors, action/separator items, disabled
   item state, roving-focus navigation, keyboard activation payloads, Escape/outside policies,

@@ -1,6 +1,11 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Decision**: Completed the U8 headless-readiness checkpoint and added ADR 0006. The decision is
+  to keep `open-gpui-ui-headless` deferred for now: the overlay family proves reusable behavior
+  contracts, but several state types still expose GPUI geometry or adapter placement state. Future
+  extraction should first neutralize those leaks, move generic roving-focus helpers out of
+  component-specific modules, and add window-free focus-scope / dismissible-layer tests.
 * **Update**: Completed U5 of the overlay component series by adding the interactive non-modal
   `Popover` component and `PopoverState` contract to `open-gpui-ui-components`. The first slice
   models controlled versus uncontrolled open mode, default-open state, trigger expanded/selected
