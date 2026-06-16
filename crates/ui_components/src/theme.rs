@@ -10,6 +10,7 @@ use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
 use crate::dialog::DialogColors;
 use crate::field::FieldColors;
+use crate::hover_card::HoverCardColors;
 use crate::label::LabelColors;
 use crate::popover::PopoverColors;
 use crate::radio::RadioGroupColors;
@@ -547,6 +548,38 @@ impl ThemeResolver {
         PopoverColors {
             background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
             foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            trigger_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                trigger_state,
+                DEFAULT_GHOST_SURFACE,
+            ),
+            trigger_hover_background: ColorIntent::with_state(
+                tokens.surface_muted,
+                ColorState::Hover,
+                0xf1f5ee,
+            ),
+            trigger_foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            trigger_border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+            focus_ring: ColorIntent::with_state(
+                tokens.focus_ring,
+                ColorState::FocusVisible,
+                DEFAULT_FOCUS_RING,
+            ),
+        }
+    }
+
+    pub(crate) const fn hover_card_colors(tokens: ThemeTokens, open: bool) -> HoverCardColors {
+        let trigger_state = if open {
+            ColorState::Selected
+        } else {
+            ColorState::Default
+        };
+
+        HoverCardColors {
+            background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+            foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            muted_foreground: ColorIntent::new(tokens.text_muted, DEFAULT_TEXT_MUTED),
             border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
             trigger_background: ColorIntent::with_state(
                 tokens.surface_muted,

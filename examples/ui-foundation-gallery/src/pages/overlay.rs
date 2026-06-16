@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
-    DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, Menu, MenuItem, MenuOpenMode,
-    MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance, SheetModalMode, SheetSide,
-    SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
+    DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, HoverCard, HoverCardDelayPolicy,
+    HoverCardOpenIntent, HoverCardState, Menu, MenuItem, MenuOpenMode, MenuState, Popover,
+    PopoverState, Sheet, SheetCloseAffordance, SheetModalMode, SheetSide, SheetState, Tooltip,
+    TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -31,6 +32,7 @@ pub const SIGNALS: &[&str] = &[
     "OutsidePressPolicy",
     "FocusRestoreIntent",
     "TooltipState",
+    "HoverCardState",
     "PopoverState",
     "DialogState",
     "AlertDialogState",
@@ -213,6 +215,74 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             .open(true)
             .disabled(true)
             .placement_side(OverlayPlacementSide::Left)
+            .tokens(tokens)
+            .state(),
+        },
+    ]
+}
+
+/// Hover card sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoverCardSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Text shown by the hover card surface.
+    pub content_text: &'static str,
+    /// Resolved hover card state.
+    pub state: HoverCardState,
+}
+
+/// Returns deterministic hover card samples for gallery dogfood.
+pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
+    [
+        HoverCardSample {
+            id: "profile-preview",
+            label: "Profile preview",
+            content_text: "Interactive hover card opened from pointer hover or keyboard focus.",
+            state: HoverCard::new(
+                "overlay-hover-card:profile-preview",
+                "Profile preview",
+                "Interactive hover card opened from pointer hover or keyboard focus.",
+            )
+            .default_open(true)
+            .placement_side(OverlayPlacementSide::Bottom)
+            .placement_alignment(OverlayPlacementAlignment::Center)
+            .tokens(tokens)
+            .state(),
+        },
+        HoverCardSample {
+            id: "focus-preview",
+            label: "Focus preview",
+            content_text: "Focus-only hover card keeps pointer hover from opening it.",
+            state: HoverCard::new(
+                "overlay-hover-card:focus-preview",
+                "Focus preview",
+                "Focus-only hover card keeps pointer hover from opening it.",
+            )
+            .open_intent(HoverCardOpenIntent::Focus)
+            .placement_side(OverlayPlacementSide::Right)
+            .tokens(tokens)
+            .state(),
+        },
+        HoverCardSample {
+            id: "manual-controlled",
+            label: "Manual card",
+            content_text: "The gallery shell owns this manual hover card open state.",
+            state: HoverCard::new(
+                "overlay-hover-card:manual-controlled",
+                "Manual card",
+                "The gallery shell owns this manual hover card open state.",
+            )
+            .open(false)
+            .open_intent(HoverCardOpenIntent::Manual)
+            .delay(HoverCardDelayPolicy::new(
+                Duration::from_millis(80),
+                Duration::from_millis(20),
+            ))
+            .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+            .placement_side(OverlayPlacementSide::Top)
             .tokens(tokens)
             .state(),
         },

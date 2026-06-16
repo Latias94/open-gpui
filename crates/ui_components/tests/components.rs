@@ -6,19 +6,21 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
-    FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
-    MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
-    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
-    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
-    last_enabled, menu_navigation_target, next_enabled, outside_press_open_change,
-    point_anchor_placement, sidebar_navigation_target, toolbar_navigation_target,
+    FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Menu,
+    MenuItem, MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState,
+    RadioItem, RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
+    Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
+    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind,
+    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
+    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
+    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
+    sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -228,6 +230,85 @@ fn tooltip_state_models_disabled_element_content_and_delay_overrides() {
     assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
     assert_eq!(state.delay(), delay);
     assert_eq!(state.size(), Size::Small);
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn hover_card_state_records_interactive_hover_focus_overlay_policy() {
+    let state = HoverCard::new("profile-card", "Open profile", "Profile details")
+        .open(true)
+        .placement_side(OverlayPlacementSide::Right)
+        .placement_alignment(OverlayPlacementAlignment::End)
+        .state();
+
+    assert_eq!(state.content_kind(), HoverCardContentKind::Text);
+    assert!(state.open());
+    assert_eq!(state.open_mode(), HoverCardOpenMode::Controlled);
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Window);
+    assert!(!state.descriptive());
+    assert!(state.interactive_content());
+    assert!(state.open_intent().opens_on_hover());
+    assert!(state.open_intent().opens_on_focus());
+    assert!(!state.open_intent().opens_manually());
+    assert!(state.trigger_selected());
+    assert_eq!(state.placement_side(), OverlayPlacementSide::Right);
+    assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
+    assert_eq!(state.delay().open_delay(), Duration::from_millis(700));
+    assert_eq!(state.delay().close_delay(), Duration::from_millis(300));
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
+    assert!(state.overlay().wants_outside_press_handler());
+    assert!(state.overlay().layer_state().hit_testable());
+    assert_eq!(state.colors().background().token(), semantic::SURFACE);
+    assert_eq!(
+        state.colors().trigger_background().state(),
+        ColorState::Selected
+    );
+}
+
+#[test]
+fn hover_card_state_models_manual_disabled_and_policy_overrides() {
+    let delay = HoverCardDelayPolicy::new(Duration::from_millis(80), Duration::from_millis(20));
+    let state = HoverCard::element("rich-hover-card", "Details", div().child("Rich"))
+        .default_open(true)
+        .disabled(true)
+        .open_intent(HoverCardOpenIntent::Manual)
+        .delay(delay)
+        .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+        .initial_focus_intent(InitialFocusIntent::FirstFocusable)
+        .focus_restore_intent(FocusRestoreIntent::Trigger)
+        .small()
+        .state();
+
+    assert_eq!(state.content_kind(), HoverCardContentKind::Element);
+    assert_eq!(state.open_mode(), HoverCardOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert!(!state.activation_enabled());
+    assert!(!state.open_intent().opens_on_hover());
+    assert!(!state.open_intent().opens_on_focus());
+    assert!(state.open_intent().opens_manually());
+    assert_eq!(state.delay(), delay);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(
+        state.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
     assert!(!state.overlay().should_render_deferred_layer());
 }
 
@@ -1237,6 +1318,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         "Delete",
     );
     let root_sheet = root::Sheet::new("sheet", "Open sheet", "Sheet", "Sheet content");
+    let root_hover_card = root::HoverCard::new("hover-card", "Profile", "Profile details");
     let root_sidebar = root::Sidebar::new("sidebar", "Primary navigation");
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_scroll = root::ScrollArea::new("scroll", div());
@@ -1251,6 +1333,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         "Delete",
     );
     let prelude_sheet = prelude::Sheet::new("sheet", "Open sheet", "Sheet", "Sheet content");
+    let prelude_hover_card = prelude::HoverCard::new("hover-card", "Profile", "Profile details");
     let prelude_sidebar = prelude::Sidebar::new("sidebar", "Primary navigation");
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
@@ -1261,6 +1344,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_button.state(),
         root_alert_dialog.state(),
         root_sheet.state(),
+        root_hover_card.state(),
         root_sidebar.state(),
         root_toolbar.state(),
         root_scroll.state(),
@@ -1269,6 +1353,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_button.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
+        prelude_hover_card.state(),
         prelude_sidebar.state(),
         prelude_toolbar.state(),
         prelude_scroll.state(),
@@ -1713,6 +1798,12 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         Sheet::new("closed-sheet", "Closed sheet", "Closed", "Closed content").state(),
     ];
+    let hover_cards = [
+        HoverCard::new("hover-card", "Profile", "Profile details")
+            .open(true)
+            .state(),
+        HoverCard::element("closed-hover-card", "Details", div().child("Rich")).state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -1894,6 +1985,23 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.close_hover_background(),
             colors.close_foreground(),
             colors.close_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in hover_cards {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.trigger_background(),
+            colors.trigger_hover_background(),
+            colors.trigger_foreground(),
+            colors.trigger_border(),
             colors.focus_ring(),
         ] {
             assert_theme_has_exact_color(theme, intent);

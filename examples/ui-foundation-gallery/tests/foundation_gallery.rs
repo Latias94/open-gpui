@@ -1,10 +1,10 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant,
-    DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, MenuItemKind, MenuOpenMode, PopoverOpenMode,
-    ScrollAreaAxis, ScrollResetPolicy, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
-    SheetSide, TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
-    default_deferred_priority,
+    DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode,
+    MenuItemKind, MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TabsActivationMode, ThemeMode,
+    ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -288,6 +288,56 @@ fn overlay_page_tooltip_samples_expose_focus_hover_and_disabled_contracts() {
     assert!(!samples[3].state.open());
     assert!(samples[3].state.descriptive());
     assert!(!samples[3].state.interactive_content());
+}
+
+#[test]
+fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
+    let samples = pages::overlay::hover_card_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 3);
+    assert_eq!(samples[0].id, "profile-preview");
+    assert_eq!(
+        samples[0].state.open_mode(),
+        HoverCardOpenMode::Uncontrolled
+    );
+    assert!(samples[0].state.default_open());
+    assert!(samples[0].state.open());
+    assert_eq!(
+        samples[0].state.open_intent(),
+        HoverCardOpenIntent::HoverOrFocus
+    );
+    assert!(samples[0].state.open_intent().opens_on_hover());
+    assert!(samples[0].state.open_intent().opens_on_focus());
+    assert!(samples[0].state.interactive_content());
+    assert!(!samples[0].state.descriptive());
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert!(samples[0].state.overlay().wants_outside_press_handler());
+    assert_eq!(
+        samples[0].state.focus_restore_intent(),
+        &FocusRestoreIntent::None
+    );
+
+    assert_eq!(samples[1].id, "focus-preview");
+    assert_eq!(samples[1].state.open_intent(), HoverCardOpenIntent::Focus);
+    assert!(!samples[1].state.open_intent().opens_on_hover());
+    assert!(samples[1].state.open_intent().opens_on_focus());
+    assert_eq!(
+        samples[1].state.placement_side(),
+        OverlayPlacementSide::Right
+    );
+
+    assert_eq!(samples[2].id, "manual-controlled");
+    assert_eq!(samples[2].state.open_mode(), HoverCardOpenMode::Controlled);
+    assert_eq!(samples[2].state.open_intent(), HoverCardOpenIntent::Manual);
+    assert!(!samples[2].state.open());
+    assert_eq!(samples[2].state.delay().open_delay().as_millis(), 80);
+    assert_eq!(
+        samples[2].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
 }
 
 #[test]

@@ -14,6 +14,7 @@ pub mod context_menu;
 pub mod dialog;
 pub mod field;
 pub mod focus;
+pub mod hover_card;
 pub mod icon_button;
 pub mod label;
 pub mod menu;
@@ -46,6 +47,10 @@ pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
+pub use hover_card::{
+    HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
+    HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
+};
 pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use menu::{

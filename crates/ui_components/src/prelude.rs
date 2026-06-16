@@ -12,6 +12,10 @@ pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
+pub use crate::hover_card::{
+    HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
+    HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
+};
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use crate::menu::{

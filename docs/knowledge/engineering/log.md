@@ -1,6 +1,27 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed the implementation pass for U5 HoverCard in the UI shell, choice, and
+  headless-readiness series. `HoverCardState` records content kind, size, disabled state,
+  controlled/uncontrolled open ownership, default-open state, hover/focus/manual open intent,
+  placement preference, open/close delay policy, outside-press policy, initial focus intent, focus
+  restoration intent, token intents, metrics, and non-modal dismissible overlay state.
+* **Update**: The concrete HoverCard adapter owns GPUI focus handles, hover timers, keyed runtime
+  open state, deferred anchored rendering, Escape/outside event wiring, and trigger/content
+  pointer-focus lifetime coordination. It intentionally does not reuse the descriptive Tooltip
+  policy because HoverCard content is interactive and hit-testable.
+* **Update**: Added Overlay gallery samples for default-open profile preview, focus-only preview,
+  and manual controlled hover card behavior. Gallery/component tests now assert interactive overlay
+  contracts, default delay, focus restore defaults, manual controlled state, pass-through versus
+  consume outside policy, and explicit exports.
+* **Review**: U5 review subagents did not return usable findings before timeout and were
+  interrupted. The implemented shape follows the earlier HoverCard reference research; local
+  self-review found and fixed a focus-lifetime issue so keyboard focus opening is persisted in
+  keyed runtime instead of being only render-derived.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed after the U5
+  implementation pass.
 * **Update**: Completed U4 of the UI shell, choice, and headless-readiness series by adding
   `AlertDialog` and `Sheet` to `open_gpui_ui_components`.
 * **Update**: `AlertDialogState` now records required title/description text, cancel and primary

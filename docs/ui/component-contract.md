@@ -101,6 +101,16 @@ dismiss-and-pass-through outside behavior without installing a blocking barrier.
 owns the barrier for modal sheets, edge positioning, concrete close control, callbacks, keyboard
 handling, deferred rendering, and focus handles.
 
+`HoverCardState` is the interactive hover/focus overlay contract. It records controlled versus
+uncontrolled open mode, default-open state, hover/focus/manual open intent, placement preference,
+open and close delay policy, outside-press policy, initial focus intent, focus restoration intent,
+resolved metrics, token intents, and non-modal dismissible layer state. Hover cards are not
+descriptive tooltips: their surfaces may contain interactive content, default to no initial focus
+or focus restoration, and use dismiss-and-pass-through outside behavior so underlay interaction can
+continue after dismissal. The GPUI adapter owns hover timers, focus handles, keyed runtime open
+state, deferred anchored rendering, Escape/outside event wiring, and pointer/focus lifetime
+coordination.
+
 `MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
 controlled versus uncontrolled open mode, action and separator items, disabled item state, roving
 focus, activation payloads, Escape policy, outside-press policy, placement preference, resolved
@@ -283,6 +293,9 @@ is not a reliable accessible name. `Tooltip` is descriptive-only and currently m
 association and timed hover/focus execution stay in the adapter layer. `Popover` currently covers
 basic non-modal dismissible surfaces with default-open and controlled-open state; nested popover
 coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.
+`HoverCard` covers interactive hover/focus/manual non-modal surfaces with delayed open/close,
+pass-through dismissal, and trigger/content focus lifetime tracking; safe pointer corridors,
+arrows, text-selection leases, and richer focus-scope traversal remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
 nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.

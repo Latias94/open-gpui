@@ -11,6 +11,24 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U5 HoverCard. Added
+  `HoverCard`, `HoverCardState`, hover/focus/manual open intent, controlled/uncontrolled open
+  mode, delay policy, interactive non-modal overlay metadata, token intents, metrics, and explicit
+  crate-root/prelude exports to `open_gpui_ui_components`.
+- Done: HoverCard uses a non-modal dismissible overlay contract instead of reusing descriptive
+  Tooltip semantics. It defaults to no initial focus and no focus restoration, dismiss-and-pass-
+  through outside behavior, open/close delay handling, and keyed runtime state for hover/focus
+  lifetime so keyboard focus can move between trigger and content without immediately closing.
+- Done: Added Overlay gallery HoverCard samples for default-open profile preview, focus-only
+  preview, and manual controlled card behavior. Gallery tests cover interactive overlay metadata,
+  manual/controlled policy, default delay, focus restore defaults, and placement intent.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed after the U5
+  HoverCard slice.
+- Next action: Commit U5 HoverCard, then start U6 Listbox and Select foundation.
+  HoverCard safe pointer corridors, arrows, text-selection leases, richer focus-scope traversal,
+  and role refinement beyond `Role::Window` remain deferred.
 - Done: Continued the UI shell, choice, and headless-readiness series with U4 AlertDialog and
   Sheet. Added `AlertDialog`, `AlertDialogState`, action metadata, destructive intent, and `Sheet`,
   `SheetState`, side/modal/close-affordance enums to `open_gpui_ui_components`, keeping

@@ -10,13 +10,14 @@ use open_gpui::{
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
     Checkbox, CheckboxState, ColorIntent, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
-    FocusRing, IconButton, IconButtonState, Label, LabelState, Menu, MenuItem, Popover,
-    PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Sheet,
-    SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide,
-    SidebarState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState, Tabs,
-    TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
-    Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
+    FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState,
+    Label, LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    SidebarItem, SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState,
+    Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
+    TextInputController, TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem,
+    ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind, TooltipOpenIntent,
+    focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -86,6 +87,7 @@ pub struct GalleryShell {
     overlay_controlled_dialog_open: bool,
     overlay_controlled_alert_dialog_open: bool,
     overlay_controlled_sheet_open: bool,
+    overlay_controlled_hover_card_open: bool,
     overlay_controlled_menu_open: bool,
     overlay_controlled_context_menu_open: bool,
 }
@@ -123,6 +125,7 @@ impl GalleryShell {
             overlay_controlled_dialog_open: false,
             overlay_controlled_alert_dialog_open: false,
             overlay_controlled_sheet_open: false,
+            overlay_controlled_hover_card_open: false,
             overlay_controlled_menu_open: false,
             overlay_controlled_context_menu_open: false,
         }
@@ -159,6 +162,7 @@ impl GalleryShell {
             self.overlay_controlled_dialog_open = false;
             self.overlay_controlled_alert_dialog_open = false;
             self.overlay_controlled_sheet_open = false;
+            self.overlay_controlled_hover_card_open = false;
             self.overlay_controlled_menu_open = false;
             self.overlay_controlled_context_menu_open = false;
             cx.notify();
@@ -239,6 +243,13 @@ impl GalleryShell {
         }
     }
 
+    fn set_controlled_hover_card_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_hover_card_open != open {
+            self.overlay_controlled_hover_card_open = open;
+            cx.notify();
+        }
+    }
+
     fn set_controlled_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.overlay_controlled_menu_open != open {
             self.overlay_controlled_menu_open = open;
@@ -274,6 +285,7 @@ impl Render for GalleryShell {
                     this.set_controlled_dialog_open(false, cx);
                     this.set_controlled_alert_dialog_open(false, cx);
                     this.set_controlled_sheet_open(false, cx);
+                    this.set_controlled_hover_card_open(false, cx);
                     this.set_controlled_menu_open(false, cx);
                     this.set_controlled_context_menu_open(false, cx);
                 }
@@ -1940,6 +1952,7 @@ impl GalleryShell {
         let geometry = pages::overlay::demo_geometry();
         let behavior_samples = pages::overlay::behavior_samples();
         let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
+        let hover_card_samples = pages::overlay::hover_card_samples(snapshot.tokens);
         let popover_samples = pages::overlay::popover_samples(snapshot.tokens);
         let dialog_samples = pages::overlay::dialog_samples(snapshot.tokens);
         let alert_dialog_samples = pages::overlay::alert_dialog_samples(snapshot.tokens);
@@ -2087,6 +2100,39 @@ impl GalleryShell {
                                     .text_sm()
                                     .child(if self.overlay_open { "open" } else { "closed" }),
                             ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("HoverCard samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(3)
+                            .gap_3()
+                            .child(self.render_hover_card_sample_card(
+                                &hover_card_samples[0],
+                                false,
+                                cx,
+                            ))
+                            .child(self.render_hover_card_sample_card(
+                                &hover_card_samples[1],
+                                false,
+                                cx,
+                            ))
+                            .child(self.render_hover_card_sample_card(
+                                &hover_card_samples[2],
+                                self.overlay_controlled_hover_card_open,
+                                cx,
+                            )),
                     ),
             )
             .child(
@@ -2400,6 +2446,97 @@ impl GalleryShell {
                 )
             })
             .child(tooltip_state_row(&state, open))
+    }
+
+    fn render_hover_card_sample_card(
+        &self,
+        sample: &pages::overlay::HoverCardSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "manual-controlled" {
+            HoverCard::new(
+                format!("overlay-hover-card-sample:{}", sample.id),
+                sample.label,
+                sample.content_text,
+            )
+            .open(controlled_open)
+            .open_intent(sample.state.open_intent())
+            .delay(sample.state.delay())
+            .outside_press_policy(sample.state.outside_press_policy())
+            .placement_side(sample.state.placement_side())
+            .placement_alignment(sample.state.placement_alignment())
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let label = sample.label;
+        let content_text = sample.content_text;
+        let forced_open = state.open() && !state.disabled();
+        let effective_open = forced_open;
+        let shell = cx.entity().downgrade();
+
+        let hover_card = HoverCard::new(
+            format!("overlay-hover-card-demo:{}", sample_id),
+            label,
+            content_text,
+        )
+        .open_intent(state.open_intent())
+        .delay(state.delay())
+        .outside_press_policy(state.outside_press_policy())
+        .placement_side(state.placement_side())
+        .placement_alignment(state.placement_alignment())
+        .with_size(state.size());
+        let hover_card = match sample_id {
+            "manual-controlled" => {
+                hover_card
+                    .open(state.open())
+                    .on_open_change(move |open, _, cx| {
+                        shell
+                            .update(cx, |this, cx| this.set_controlled_hover_card_open(open, cx))
+                            .ok();
+                    })
+            }
+            "profile-preview" => hover_card.default_open(state.default_open()),
+            _ => hover_card,
+        };
+
+        div()
+            .id(format!("overlay-hover-card-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(hover_card)
+            .when(sample_id == "manual-controlled", |card| {
+                card.child(
+                    div()
+                        .id("overlay-hover-card-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_hover_card_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close hover card"
+                        } else {
+                            "open hover card"
+                        }),
+                )
+            })
+            .child(hover_card_state_row(&state, effective_open))
     }
 
     fn render_popover_sample_card(
@@ -3792,6 +3929,46 @@ fn tooltip_state_row(
         ))
 }
 
+fn hover_card_state_row(
+    state: &open_gpui_ui_components::HoverCardState,
+    effective_open: bool,
+) -> impl IntoElement {
+    let outside = state.outside_press_policy().resolve();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / intent {}",
+            bool_label(effective_open),
+            hover_card_open_mode_label(state.open_mode()),
+            hover_card_open_intent_label(state.open_intent())
+        ))
+        .child(format!(
+            "placement: {} {} / interactive {} / descriptive {}",
+            tooltip_placement_label(state.placement_side()),
+            popover_alignment_label(state.placement_alignment()),
+            bool_label(state.interactive_content()),
+            bool_label(state.descriptive())
+        ))
+        .child(format!(
+            "delay: open {} / close {} / trigger selected {}",
+            format_duration_ms(state.delay().open_delay()),
+            format_duration_ms(state.delay().close_delay()),
+            bool_label(state.trigger_selected())
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {} / underlay {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+}
+
 fn popover_state_row(state: &open_gpui_ui_components::PopoverState) -> impl IntoElement {
     let outside = state.outside_press_policy().resolve();
 
@@ -4107,6 +4284,22 @@ fn tooltip_open_intent_label(intent: TooltipOpenIntent) -> &'static str {
         TooltipOpenIntent::Hover => "hover",
         TooltipOpenIntent::Focus => "focus",
         TooltipOpenIntent::Manual => "manual",
+    }
+}
+
+fn hover_card_open_mode_label(mode: HoverCardOpenMode) -> &'static str {
+    match mode {
+        HoverCardOpenMode::Uncontrolled => "uncontrolled",
+        HoverCardOpenMode::Controlled => "controlled",
+    }
+}
+
+fn hover_card_open_intent_label(intent: HoverCardOpenIntent) -> &'static str {
+    match intent {
+        HoverCardOpenIntent::HoverOrFocus => "hover or focus",
+        HoverCardOpenIntent::Hover => "hover",
+        HoverCardOpenIntent::Focus => "focus",
+        HoverCardOpenIntent::Manual => "manual",
     }
 }
 
