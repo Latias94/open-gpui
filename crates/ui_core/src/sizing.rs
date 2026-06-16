@@ -117,6 +117,16 @@ impl Size {
         }
     }
 
+    /// Returns the default icon glyph size for icon-bearing controls.
+    pub const fn icon_size(self) -> Px {
+        match self {
+            Self::XSmall => px(13.0),
+            Self::Small => px(14.0),
+            Self::Medium => px(15.0),
+            Self::Large => px(16.0),
+        }
+    }
+
     /// Returns horizontal padding for dense lists.
     pub const fn list_px(self) -> Px {
         match self {
@@ -221,6 +231,7 @@ mod tests {
         assert_eq!(Size::Small.button_h(), px(28.0));
         assert_eq!(Size::Medium.input_h(), px(32.0));
         assert_eq!(Size::Large.icon_button_size(), px(36.0));
+        assert_eq!(Size::Medium.icon_size(), px(15.0));
     }
 
     #[test]

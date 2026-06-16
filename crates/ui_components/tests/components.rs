@@ -1,10 +1,11 @@
 use open_gpui::{AppContext, div, px};
 use open_gpui_ui_components::{
-    Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH, Field, FocusRing, Label,
-    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, active_index_from_str_keys, first_enabled,
-    focus_ring_shadow, last_enabled, next_enabled,
+    Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
+    Field, FocusRing, IconButton, Label, RadioGroup, RadioGroupState, RadioItem,
+    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
+    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, active_index_from_str_keys, first_enabled, focus_ring_shadow, last_enabled,
+    next_enabled,
 };
 use open_gpui_ui_core::{
     Orientation, Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic,
@@ -268,6 +269,65 @@ fn disabled_toggle_blocks_activation_without_checkbox_semantics() {
 }
 
 #[test]
+fn badge_variants_resolve_display_only_token_intents() {
+    let default = Badge::new("status", "Live").state();
+    let secondary = Badge::new("beta", "Beta")
+        .variant(BadgeVariant::Secondary)
+        .small()
+        .state();
+    let destructive = Badge::new("risk", "Risk")
+        .variant(BadgeVariant::Destructive)
+        .state();
+    let outline = Badge::new("neutral", "Neutral")
+        .variant(BadgeVariant::Outline)
+        .state();
+
+    assert_eq!(default.variant(), BadgeVariant::Default);
+    assert!(default.display_only());
+    assert_eq!(default.role(), None);
+    assert_eq!(default.colors().background().token(), semantic::ACCENT);
+    assert_eq!(secondary.size(), Size::Small);
+    assert_eq!(
+        secondary.colors().background().token(),
+        semantic::SURFACE_MUTED
+    );
+    assert_eq!(
+        destructive.colors().background().token(),
+        semantic::DESTRUCTIVE
+    );
+    assert_eq!(outline.colors().border().token(), semantic::BORDER);
+}
+
+#[test]
+fn icon_button_requires_accessible_label_and_reuses_button_primitives() {
+    let button = IconButton::new("search", "?", "Search")
+        .variant(ButtonVariant::Outline)
+        .small();
+    let state = button.state();
+
+    assert_eq!(button.accessible_label(), "Search");
+    assert_eq!(state.role(), Role::Button);
+    assert_eq!(state.variant(), ButtonVariant::Outline);
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.metrics().size(), Size::Small.icon_button_size());
+    assert_eq!(state.metrics().icon_size(), Size::Small.icon_size());
+    assert_eq!(state.colors().border().token(), semantic::BORDER);
+    assert_eq!(state.focus_ring().color().token(), semantic::FOCUS_RING);
+    assert!(state.activation_enabled());
+}
+
+#[test]
+fn disabled_icon_button_blocks_activation_metadata() {
+    let state = IconButton::new("locked", "x", "Locked")
+        .disabled(true)
+        .state();
+
+    assert_eq!(state.role(), Role::Button);
+    assert!(state.disabled());
+    assert!(!state.activation_enabled());
+}
+
+#[test]
 fn button_accepts_custom_token_bundle() {
     let tokens = custom_tokens();
     let state = Button::new("outline", "Outline")
@@ -359,6 +419,27 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         Button::new("selected", "Selected").selected(true).state(),
     ];
+    let badges = [
+        Badge::new("default-badge", "Default").state(),
+        Badge::new("secondary-badge", "Secondary")
+            .variant(BadgeVariant::Secondary)
+            .state(),
+        Badge::new("destructive-badge", "Destructive")
+            .variant(BadgeVariant::Destructive)
+            .state(),
+        Badge::new("outline-badge", "Outline")
+            .variant(BadgeVariant::Outline)
+            .state(),
+    ];
+    let icon_buttons = [
+        IconButton::new("search", "?", "Search").state(),
+        IconButton::new("outline-icon", "+", "Add")
+            .variant(ButtonVariant::Outline)
+            .state(),
+        IconButton::new("danger-icon", "!", "Delete")
+            .variant(ButtonVariant::Destructive)
+            .state(),
+    ];
     let switches = [
         Switch::new("off").state(),
         Switch::new("on").checked(true).state(),
@@ -421,6 +502,26 @@ fn default_theme_resolves_all_current_component_color_intents() {
     ];
 
     for state in buttons {
+        let colors = state.colors();
+        for intent in [
+            colors.background(),
+            colors.foreground(),
+            colors.border(),
+            colors.hover_background(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in badges {
+        let colors = state.colors();
+        for intent in [colors.background(), colors.foreground(), colors.border()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in icon_buttons {
         let colors = state.colors();
         for intent in [
             colors.background(),

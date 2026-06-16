@@ -8,10 +8,10 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field, FieldState, FocusRing, Label,
-    LabelState, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
-    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState,
-    focus_ring_shadow, init_text_input,
+    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field,
+    FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState, RadioGroup, RadioItem,
+    Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
+    TextInputController, TextInputState, Toggle, ToggleState, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -477,6 +477,8 @@ impl GalleryShell {
         let tabs_samples = pages::components::tabs_samples(snapshot.tokens);
         let radio_samples = pages::components::radio_group_samples(snapshot.tokens);
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
+        let badge_samples = pages::components::badge_samples(snapshot.tokens);
+        let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
 
         div()
             .id("gallery-components-page")
@@ -526,6 +528,45 @@ impl GalleryShell {
                                 }),
                         ),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Badge"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        badge_samples.into_iter().map(|sample| {
+                            let state = sample.state;
+                            div()
+                                .id(format!("component-badge-sample:{}", sample.id))
+                                .min_w(px(160.0))
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    Badge::new(
+                                        format!("component-badge:{}", sample.id),
+                                        sample.label,
+                                    )
+                                    .variant(state.variant())
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens),
+                                )
+                                .child(component_badge_state_row(state))
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -689,6 +730,50 @@ impl GalleryShell {
                                     .tokens(snapshot.tokens),
                                 )
                                 .child(component_toggle_state_row(&state))
+                        }),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("IconButton"),
+                    )
+                    .child(div().flex().gap_3().flex_wrap().children(
+                        icon_button_samples.into_iter().map(|sample| {
+                            let state = sample.state;
+                            div()
+                                .id(format!("component-icon-button-sample:{}", sample.id))
+                                .min_w(px(170.0))
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .gap_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xd6d8ce))
+                                .bg(rgb(0xffffff))
+                                .p_3()
+                                .child(
+                                    IconButton::new(
+                                        format!("component-icon-button:{}", sample.id),
+                                        sample.icon,
+                                        sample.accessible_label,
+                                    )
+                                    .variant(state.variant())
+                                    .disabled(state.disabled())
+                                    .with_size(state.size())
+                                    .tokens(snapshot.tokens),
+                                )
+                                .child(component_icon_button_state_row(
+                                    sample.accessible_label,
+                                    state,
+                                ))
                         }),
                     )),
             )
@@ -1725,6 +1810,53 @@ fn component_button_state_row(state: ButtonState) -> impl IntoElement {
             format_px(state.metrics().height()),
             format_px(state.metrics().padding_x())
         ))
+}
+
+fn component_badge_state_row(state: BadgeState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / display",
+            state.variant().as_str(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "h {} px {}",
+            format_px(state.metrics().min_height()),
+            format_px(state.metrics().padding_x())
+        ))
+}
+
+fn component_icon_button_state_row(
+    accessible_label: &'static str,
+    state: IconButtonState,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            state.variant().as_str(),
+            size_label(state.size()),
+            if state.activation_enabled() {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        ))
+        .child(format!(
+            "box {} icon {}",
+            format_px(state.metrics().size()),
+            format_px(state.metrics().icon_size())
+        ))
+        .child(format!("aria {}", accessible_label))
 }
 
 fn component_switch_state_row(state: SwitchState) -> impl IntoElement {

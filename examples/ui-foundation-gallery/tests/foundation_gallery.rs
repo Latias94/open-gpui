@@ -1,5 +1,7 @@
 use open_gpui::px;
-use open_gpui_ui_components::{TabsActivationMode, ThemeMode, ToggleVariant};
+use open_gpui_ui_components::{
+    BadgeVariant, ButtonVariant, TabsActivationMode, ThemeMode, ToggleVariant,
+};
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, Orientation, PanelAdaptiveClass, Role, Size,
     ThemeTokens, Toggled, semantic,
@@ -163,6 +165,8 @@ fn overlay_page_geometry_prefers_visual_bounds_and_insets_window() {
 fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
     let buttons = pages::components::button_samples(tokens);
+    let badges = pages::components::badge_samples(tokens);
+    let icon_buttons = pages::components::icon_button_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
     let checkboxes = pages::components::checkbox_samples(tokens);
     let radio_groups = pages::components::radio_group_samples(tokens);
@@ -179,6 +183,31 @@ fn components_page_samples_expose_component_metadata() {
         semantic::DESTRUCTIVE
     );
     assert!(!buttons[5].state.activation_enabled());
+
+    assert_eq!(badges.len(), 4);
+    assert_eq!(badges[0].state.variant(), BadgeVariant::Default);
+    assert!(badges[0].state.display_only());
+    assert_eq!(badges[0].state.role(), None);
+    assert_eq!(
+        badges[2].state.colors().background().token(),
+        semantic::DESTRUCTIVE
+    );
+    assert_eq!(badges[3].state.variant(), BadgeVariant::Outline);
+    assert_eq!(badges[3].state.size(), Size::Small);
+
+    assert_eq!(icon_buttons.len(), 4);
+    assert_eq!(icon_buttons[0].accessible_label, "Search");
+    assert_eq!(icon_buttons[0].state.role(), Role::Button);
+    assert_eq!(icon_buttons[1].state.variant(), ButtonVariant::Outline);
+    assert_eq!(
+        icon_buttons[1].state.metrics().size(),
+        Size::Small.icon_button_size()
+    );
+    assert_eq!(
+        icon_buttons[2].state.colors().background().token(),
+        semantic::DESTRUCTIVE
+    );
+    assert!(!icon_buttons[3].state.activation_enabled());
 
     assert_eq!(switches.len(), 4);
     assert_eq!(switches[0].state.role(), Role::Switch);

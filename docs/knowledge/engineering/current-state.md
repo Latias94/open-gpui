@@ -11,6 +11,27 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U6 of the official component roadmap by adding `Badge` and `IconButton` to
+  `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, explicit exports,
+  theme intents, gallery dogfood, and targeted tests.
+- Done: Added `Size::icon_size()` to the UI foundation sizing vocabulary so icon-bearing controls
+  do not hide glyph metrics in individual component adapters.
+- Done: Hardened GPUI accessibility tree repair to strip invalid cross-node references such as
+  `labelled_by`, `controls`, and active-descendant pointers before handing updates to AccessKit
+  platform adapters. This addresses the Components-page crash where `accesskit_consumer` panicked
+  while resolving an explicit label reference to a missing node.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui`, `cargo check -p
+  open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run
+  -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery` passed
+  during U6 implementation.
+- Verification note: `cargo nextest run -p open-gpui --lib
+  window::a11y::tests::repair_tree_update_strips_invalid_node_references` could not compile the
+  `open-gpui` test harness because local font assets under `assets/fonts/ibm-plex-sans` and
+  `assets/fonts/lilex` are missing. The regular `cargo check -p open-gpui` path passes.
+- Next action: Commit the U6 slice, then decide whether to start the shared overlay behavior /
+  Tooltip-Popover sequence or first add a tiny runtime smoke for accessibility tree repair that
+  avoids the missing-font test harness path.
 - Done: Completed U5 of the official component roadmap by adding `RadioGroup` and `Toggle` to
   `open-gpui-ui-components` with pure resolved-state contracts, GPUI adapters, exports, gallery
   dogfood, and targeted tests.

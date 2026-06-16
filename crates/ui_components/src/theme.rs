@@ -3,6 +3,7 @@
 use open_gpui::{Rgba, rgb};
 use open_gpui_ui_core::{ThemeTokens, TokenKey, semantic};
 
+use crate::badge::{BadgeColors, BadgeVariant};
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::checkbox::CheckboxColors;
 use crate::color::{ColorIntent, ColorState};
@@ -265,6 +266,34 @@ impl ThemeResolver {
                     ColorState::FocusVisible,
                     DEFAULT_FOCUS_RING,
                 ),
+            },
+        }
+    }
+
+    pub(crate) const fn badge_colors(tokens: ThemeTokens, variant: BadgeVariant) -> BadgeColors {
+        match variant {
+            BadgeVariant::Default => BadgeColors {
+                background: ColorIntent::new(tokens.accent, DEFAULT_ACCENT),
+                foreground: ColorIntent::new(tokens.accent_foreground, DEFAULT_ACCENT_FOREGROUND),
+                border: ColorIntent::new(tokens.accent, DEFAULT_ACCENT),
+            },
+            BadgeVariant::Secondary => BadgeColors {
+                background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+                foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+                border: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+            },
+            BadgeVariant::Destructive => BadgeColors {
+                background: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE),
+                foreground: ColorIntent::new(
+                    tokens.destructive_foreground,
+                    DEFAULT_DESTRUCTIVE_FOREGROUND,
+                ),
+                border: ColorIntent::new(tokens.destructive, DEFAULT_DESTRUCTIVE),
+            },
+            BadgeVariant::Outline => BadgeColors {
+                background: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+                foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+                border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
             },
         }
     }

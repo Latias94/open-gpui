@@ -1,6 +1,22 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed U6 of the official component roadmap by adding `Badge` and `IconButton`
+  to `open-gpui-ui-components` with resolved state, GPUI adapters, theme intents, exports, gallery
+  samples, component tests, and foundation gallery metadata tests.
+* **Update**: Hardened GPUI accessibility tree repair so invalid cross-node AccessKit references
+  (`labelled_by`, `controls`, `active_descendant`, and related node-id properties) are stripped
+  before the update reaches platform adapters. This addresses the Components-page crash reported
+  with `accesskit_consumer` panicking while resolving a missing explicit label reference.
+* **Update**: Added `Size::icon_size()` to `open-gpui-ui-core` and moved `IconButton` glyph sizing
+  onto that shared foundation helper.
+* **Update**: Verified U6 with `cargo fmt --all --check`, focused `cargo check` for `open-gpui`,
+  `open-gpui-ui-core`, `open-gpui-ui-components`, and `open-gpui-ui-foundation-gallery`, plus
+  `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and
+  `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+* **Verification Note**: The direct `open-gpui` a11y unit test command could not compile the
+  package test harness because the local checkout is missing bundled test fonts under
+  `assets/fonts/ibm-plex-sans` and `assets/fonts/lilex`; normal `cargo check -p open-gpui` passes.
 * **Update**: Applied U5 follow-up cleanup after review: GPUI `div` now exposes `aria_required`
   and `aria_disabled`, RadioGroup uses those flags plus per-item disabled semantics, Tabs/Radio
   share stable-key selection and roving navigation helpers, and Toggle exports its own

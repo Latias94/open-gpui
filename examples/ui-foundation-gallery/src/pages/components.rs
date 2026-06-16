@@ -1,9 +1,10 @@
 //! Component consumer samples for the foundation gallery.
 
 use open_gpui_ui_components::{
-    Button, ButtonState, ButtonVariant, Checkbox, CheckboxState, Field, FieldState, Label,
-    LabelState, RadioGroupState, RadioItemDescriptor, Switch, SwitchState, TabsActivationMode,
-    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
+    Field, FieldState, IconButton, IconButtonState, Label, LabelState, RadioGroupState,
+    RadioItemDescriptor, Switch, SwitchState, TabsActivationMode, TabsItemDescriptor, TabsState,
+    TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
 };
 use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
 
@@ -14,6 +15,8 @@ pub const SUMMARY: &str = "First concrete component consumers built on the found
 /// Foundation signals exercised by this page.
 pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Button",
+    "open_gpui_ui_components::Badge",
+    "open_gpui_ui_components::IconButton",
     "open_gpui_ui_components::Switch",
     "open_gpui_ui_components::Checkbox",
     "open_gpui_ui_components::RadioGroup",
@@ -50,6 +53,30 @@ pub struct ButtonSample {
     pub label: &'static str,
     /// Resolved state.
     pub state: ButtonState,
+}
+
+/// One badge sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BadgeSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible label.
+    pub label: &'static str,
+    /// Resolved state.
+    pub state: BadgeState,
+}
+
+/// One icon button sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IconButtonSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible icon glyph.
+    pub icon: &'static str,
+    /// Required accessible label.
+    pub accessible_label: &'static str,
+    /// Resolved state.
+    pub state: IconButtonState,
 }
 
 /// One switch sample in the gallery.
@@ -251,6 +278,81 @@ pub fn button_samples(tokens: ThemeTokens) -> [ButtonSample; 6] {
                 .with_size(size)
                 .disabled(disabled)
                 .selected(selected)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns badge samples backed by real component state.
+pub fn badge_samples(tokens: ThemeTokens) -> [BadgeSample; 4] {
+    [
+        ("default", "Live", BadgeVariant::Default, Size::Medium),
+        ("secondary", "Beta", BadgeVariant::Secondary, Size::Medium),
+        (
+            "destructive",
+            "Risk",
+            BadgeVariant::Destructive,
+            Size::Medium,
+        ),
+        ("outline", "Neutral", BadgeVariant::Outline, Size::Small),
+    ]
+    .map(|(id, label, variant, size)| BadgeSample {
+        id,
+        label,
+        state: Badge::new(id, label)
+            .variant(variant)
+            .with_size(size)
+            .tokens(tokens)
+            .state(),
+    })
+}
+
+/// Returns icon button samples backed by real component state.
+pub fn icon_button_samples(tokens: ThemeTokens) -> [IconButtonSample; 4] {
+    [
+        (
+            "search",
+            "?",
+            "Search",
+            ButtonVariant::Ghost,
+            false,
+            Size::Medium,
+        ),
+        (
+            "add",
+            "+",
+            "Add item",
+            ButtonVariant::Outline,
+            false,
+            Size::Small,
+        ),
+        (
+            "delete",
+            "!",
+            "Delete item",
+            ButtonVariant::Destructive,
+            false,
+            Size::Medium,
+        ),
+        (
+            "locked",
+            "x",
+            "Locked action",
+            ButtonVariant::Ghost,
+            true,
+            Size::Medium,
+        ),
+    ]
+    .map(
+        |(id, icon, accessible_label, variant, disabled, size)| IconButtonSample {
+            id,
+            icon,
+            accessible_label,
+            state: IconButton::new(id, icon, accessible_label)
+                .variant(variant)
+                .disabled(disabled)
+                .with_size(size)
                 .tokens(tokens)
                 .state(),
         },

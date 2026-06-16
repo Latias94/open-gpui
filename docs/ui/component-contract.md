@@ -73,6 +73,17 @@ revision is the cache invalidation hook for future app-level theme providers. Co
 read global theme state directly; keep the resolved component state renderer-neutral and pass theme
 snapshots at the adapter edge.
 
+## Accessibility References
+
+Adapters may wire explicit AccessKit relationships such as controls, labelled-by, active descendant,
+and popup references, but those references must point to nodes that are present in the current
+accessibility tree update. GPUI defensively strips invalid cross-node references before handing the
+tree update to the platform adapter, because AccessKit consumers may panic when explicit labels or
+other references target missing nodes.
+
+Component adapters should still prefer stable element IDs for both the referring node and referenced
+node. The repair layer is a crash barrier, not a substitute for correct IDs.
+
 ## Current Known Gaps
 
 The runtime theme table currently covers semantic component colors for light, dark, and
@@ -91,4 +102,7 @@ roving-focus helpers as `Tabs`, exposes group required/disabled metadata plus pe
 selected/focused/tab-stop state, and maps items through `Role::RadioButton` with `aria_selected`
 because the current AccessKit surface exposed by GPUI does not provide a separate checked
 property. `Toggle` is button-like: it exposes `pressed`, maps to `Role::Button` with
-`aria_toggled`, and intentionally stays separate from `Checkbox` tri-state semantics.
+`aria_toggled`, and intentionally stays separate from `Checkbox` tri-state semantics. `Badge` is
+display-only and exposes no role in resolved state. `IconButton` reuses Button visual variants and
+focus-ring color intents, but requires an explicit accessible label because the visible icon glyph
+is not a reliable accessible name.

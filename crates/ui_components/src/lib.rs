@@ -5,11 +5,13 @@
 //! This crate sits above `open-gpui-ui-core`: it renders styled GPUI elements while consuming the
 //! foundation vocabulary for sizing, tokens, accessibility, and focus.
 
+pub mod badge;
 pub mod button;
 pub mod checkbox;
 pub mod color;
 pub mod field;
 pub mod focus;
+pub mod icon_button;
 pub mod label;
 pub mod prelude;
 pub mod radio;
@@ -19,11 +21,13 @@ pub mod text_input;
 pub mod theme;
 pub mod toggle;
 
+pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use color::{ColorIntent, ColorState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
+pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
