@@ -19,7 +19,8 @@ status: "active"
 - Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
   nextest run -p open-gpui-ui-foundation-gallery` passed for the Tabs slice.
-- Next action: Commit the Tabs slice, then start the next roadmap item (`RadioGroup` / `Toggle`).
+- Done: Committed the Tabs slice as `f0dbf96 feat(ui): add Tabs roving focus slice`.
+- Next action: Start the next roadmap item (`RadioGroup` / `Toggle`).
 
 ## 2026-06-15
 

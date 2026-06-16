@@ -10,6 +10,7 @@
 * **Update**: Verified the Tabs slice with `cargo fmt --all`, `cargo check -p
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
   -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+* **Update**: Committed the Tabs slice as `f0dbf96 feat(ui): add Tabs roving focus slice`.
 
 ## 2026-06-15
 * **Update**: Completed U3 of the official component roadmap by adding `Checkbox` and `Label` to
