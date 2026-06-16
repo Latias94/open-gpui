@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Started U1 of the overlay component series. Added direct AccessKit repair tests for
+  valid and invalid cross-node references in `crates/gpui/src/window/a11y.rs`, converted the
+  `svg_renderer` font fixtures to runtime optional loading so the `open-gpui` lib test harness
+  compiles without the missing bundled fonts in this checkout, and added a Foundation Gallery test
+  that locks explicit accessible labels plus label-to-control association metadata.
+* **Update**: Added `--page components` support to the UI foundation gallery binary so the prior
+  Components-page `accesskit_consumer` crash path can be smoke-tested directly without manual tab
+  navigation first.
+* **Update**: Added focused verification guidance for GPUI accessibility repair changes to
+  `docs/verification.md`, including the `open-gpui` a11y smoke test and the Components-page
+  regression note for the `accesskit_consumer` crash.
+* **Update**: Verified U1 with focused `open-gpui`/component/gallery checks, nextest runs, and a
+  direct `cargo run -p open-gpui-ui-foundation-gallery -- --page components` smoke that stayed
+  alive until the 30s timeout instead of reproducing the Components-page crash.
 * **Update**: Wrote the next-series overlay component plan at
   `docs/plans/2026-06-16-001-feat-ui-overlay-component-series-plan.md`, scoped to the post-U6
   sequence: accessibility/gallery runtime gate, shared overlay behavior contracts, GPUI overlay

@@ -25,6 +25,19 @@ pub enum GalleryPage {
 }
 
 impl GalleryPage {
+    /// Parses a stable page id.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "tokens" => Some(Self::Tokens),
+            "sizing-density" => Some(Self::SizingDensity),
+            "adaptive" => Some(Self::Adaptive),
+            "focus-a11y" => Some(Self::FocusAccessibility),
+            "overlay" => Some(Self::Overlay),
+            "components" => Some(Self::Components),
+            _ => None,
+        }
+    }
+
     /// Returns the stable page id.
     pub const fn id(self) -> &'static str {
         match self {

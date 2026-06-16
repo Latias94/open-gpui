@@ -55,6 +55,11 @@ fn compact_width_uses_mobile_shell_and_compact_density() {
 
 #[test]
 fn labels_are_stable_for_manual_dogfood_output() {
+    assert_eq!(
+        GalleryPage::from_id("components"),
+        Some(GalleryPage::Components)
+    );
+    assert_eq!(GalleryPage::from_id("missing"), None);
     assert_eq!(shell_mode_label(DeviceShellMode::Desktop), "desktop");
     assert_eq!(shell_mode_label(DeviceShellMode::Mobile), "mobile");
     assert_eq!(density_label(Density::Spacious), "spacious");
@@ -303,4 +308,50 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
     assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));
     assert!(tabs[1].items[3].disabled);
+}
+
+#[test]
+fn components_page_samples_keep_explicit_a11y_metadata() {
+    use std::collections::BTreeSet;
+
+    let tokens = ThemeTokens::default();
+    let icon_buttons = pages::components::icon_button_samples(tokens);
+    let labels = pages::components::label_samples(tokens);
+
+    assert!(
+        icon_buttons
+            .iter()
+            .all(|sample| !sample.accessible_label.trim().is_empty())
+    );
+    assert!(
+        icon_buttons
+            .iter()
+            .all(|sample| sample.state.role() == Role::Button)
+    );
+
+    let control_ids = labels
+        .iter()
+        .filter_map(|sample| sample.state.control_id())
+        .collect::<Vec<_>>();
+    let unique_control_ids = control_ids.iter().copied().collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        control_ids,
+        vec!["email-input", "terms-checkbox", "disabled-control"]
+    );
+    assert_eq!(unique_control_ids.len(), control_ids.len());
+    assert!(
+        labels
+            .iter()
+            .filter(|sample| sample.id != "standalone")
+            .all(|sample| sample.state.associated())
+    );
+    assert!(
+        !labels
+            .iter()
+            .find(|sample| sample.id == "standalone")
+            .unwrap()
+            .state
+            .associated()
+    );
 }

@@ -78,9 +78,9 @@ pub struct GalleryShell {
 }
 
 impl GalleryShell {
-    fn build(cx: &mut Context<Self>) -> Self {
+    fn build(selected_page: GalleryPage, cx: &mut Context<Self>) -> Self {
         Self {
-            selected_page: GalleryPage::Tokens,
+            selected_page,
             width: DEFAULT_GALLERY_WIDTH,
             navigation_scroll: ScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
@@ -106,7 +106,12 @@ impl GalleryShell {
 impl GalleryShell {
     /// Creates a gallery shell entity.
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::build(cx)
+        Self::with_selected_page(GalleryPage::Tokens, cx)
+    }
+
+    /// Creates a gallery shell entity with an initial page.
+    pub fn with_selected_page(page: GalleryPage, cx: &mut Context<Self>) -> Self {
+        Self::build(page, cx)
     }
 
     /// Returns the currently selected page.
@@ -1697,6 +1702,11 @@ impl GalleryShell {
 
 /// Opens the foundation gallery window.
 pub fn open_gallery(cx: &mut App) {
+    open_gallery_page(GalleryPage::Tokens, cx);
+}
+
+/// Opens the foundation gallery window on a specific page.
+pub fn open_gallery_page(page: GalleryPage, cx: &mut App) {
     init_text_input(cx);
 
     let bounds = Bounds::centered(
@@ -1710,7 +1720,7 @@ pub fn open_gallery(cx: &mut App) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             ..Default::default()
         },
-        |_, cx| cx.new(GalleryShell::new),
+        move |_, cx| cx.new(|cx| GalleryShell::with_selected_page(page, cx)),
     )
     .expect("failed to open UI foundation gallery window");
 

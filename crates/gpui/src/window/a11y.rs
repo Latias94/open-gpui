@@ -464,4 +464,84 @@ mod tests {
         assert_eq!(button.labelled_by(), &[valid_label]);
         assert_eq!(button.active_descendant(), None);
     }
+
+    #[test]
+    fn repair_tree_update_preserves_valid_node_references() {
+        let button_id = NodeId(1);
+        let label_id = NodeId(2);
+        let controlled_id = NodeId(3);
+        let mut root = accesskit::Node::new(accesskit::Role::Window);
+        let mut button = accesskit::Node::new(accesskit::Role::Button);
+        let label = accesskit::Node::new(accesskit::Role::Label);
+        let controlled = accesskit::Node::new(accesskit::Role::List);
+
+        root.set_children([button_id, label_id, controlled_id]);
+        button.set_controls([controlled_id]);
+        button.set_labelled_by([label_id]);
+        button.set_active_descendant(controlled_id);
+
+        let update = accesskit::TreeUpdate {
+            nodes: vec![
+                (ROOT_NODE_ID, root),
+                (button_id, button),
+                (label_id, label),
+                (controlled_id, controlled),
+            ],
+            tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: button_id,
+        };
+
+        let repaired = A11yNodeBuilder::repair_tree_update(update);
+        let root = repaired
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_NODE_ID)
+            .map(|(_, node)| node)
+            .unwrap();
+        let button = repaired
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == button_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(repaired.focus, button_id);
+        assert_eq!(root.children(), &[button_id, label_id, controlled_id]);
+        assert_eq!(button.controls(), &[controlled_id]);
+        assert_eq!(button.labelled_by(), &[label_id]);
+        assert_eq!(button.active_descendant(), Some(controlled_id));
+    }
+
+    #[test]
+    fn repair_tree_update_clears_invalid_single_node_references() {
+        let input_id = NodeId(1);
+        let missing_error = NodeId(42);
+        let missing_popup = NodeId(43);
+        let mut root = accesskit::Node::new(accesskit::Role::Window);
+        let mut input = accesskit::Node::new(accesskit::Role::TextInput);
+
+        root.set_children([input_id]);
+        input.set_error_message(missing_error);
+        input.set_popup_for(missing_popup);
+
+        let update = accesskit::TreeUpdate {
+            nodes: vec![(ROOT_NODE_ID, root), (input_id, input)],
+            tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus: input_id,
+        };
+
+        let repaired = A11yNodeBuilder::repair_tree_update(update);
+        let input = repaired
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == input_id)
+            .map(|(_, node)| node)
+            .unwrap();
+
+        assert_eq!(repaired.focus, input_id);
+        assert_eq!(input.error_message(), None);
+        assert_eq!(input.popup_for(), None);
+    }
 }

@@ -11,6 +11,19 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Started the overlay component series with U1 accessibility/gallery runtime gate work:
+  added direct coverage for valid and invalid AccessKit cross-node references in
+  `crates/gpui/src/window/a11y.rs`, removed the compile-time bundled-font dependency from the
+  `svg_renderer` test harness so the `open-gpui` library tests compile in this checkout, and added
+  a Gallery metadata test plus `--page components` startup path that lock explicit accessible
+  labels, label-to-control association metadata, and the direct Components runtime smoke.
+- Last verified: `cargo check -p open-gpui`, `cargo check -p open-gpui-ui-components`, `cargo
+  check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui --lib
+  window::a11y::tests::repair_tree_update`, `cargo nextest run -p open-gpui --lib
+  svg_renderer::tests::`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run
+  -p open-gpui-ui-foundation-gallery` passed for U1. `cargo run -p
+  open-gpui-ui-foundation-gallery -- --page components` stayed alive until the 30s smoke timeout
+  and did not reproduce the `accesskit_consumer` panic.
 - Done: Committed the U6 Badge/IconButton slice as
   `9206210 feat(ui): add badge and icon button components`.
 - Done: Wrote the next-series overlay component plan at

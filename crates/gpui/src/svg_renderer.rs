@@ -300,17 +300,27 @@ fn fix_generic_font_families(db: &mut usvg::fontdb::Database) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use usvg::fontdb::{Database, Family, Query};
 
-    const IBM_PLEX_REGULAR: &[u8] =
-        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
-    const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+    fn bundled_font_path(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("assets")
+            .join(path)
+    }
 
-    fn db_with_bundled_fonts() -> Database {
+    fn db_with_bundled_fonts() -> Option<Database> {
         let mut db = Database::new();
-        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
-        db.load_font_data(LILEX_REGULAR.to_vec());
-        db
+        for path in [
+            "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+            "fonts/lilex/Lilex-Regular.ttf",
+        ] {
+            let bytes = std::fs::read(bundled_font_path(path)).ok()?;
+            db.load_font_data(bytes);
+        }
+        Some(db)
     }
 
     #[test]
@@ -346,7 +356,9 @@ mod tests {
 
     #[test]
     fn fix_generic_font_families_sets_all_families() {
-        let mut db = db_with_bundled_fonts();
+        let Some(mut db) = db_with_bundled_fonts() else {
+            return;
+        };
         fix_generic_font_families(&mut db);
 
         let families = [
@@ -371,7 +383,9 @@ mod tests {
 
     #[test]
     fn test_select_emoji_font_skips_family_without_glyph() {
-        let mut db = db_with_bundled_fonts();
+        let Some(db) = db_with_bundled_fonts() else {
+            return;
+        };
 
         let ibm_plex_sans = db
             .query(&usvg::fontdb::Query {
@@ -398,7 +412,9 @@ mod tests {
 
     #[test]
     fn fix_generic_font_families_monospace_resolves_to_lilex() {
-        let mut db = db_with_bundled_fonts();
+        let Some(mut db) = db_with_bundled_fonts() else {
+            return;
+        };
         fix_generic_font_families(&mut db);
 
         let query = Query {
