@@ -1,6 +1,12 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Fix**: Fixed `ScrollArea` samples appearing non-scrollable when the component value is rebuilt
+  each render. The default `ScrollHandle` now lives in the adapter's keyed runtime instead of the
+  `ScrollArea::new` builder value, while externally owned handles remain supported. Added a GPUI
+  window regression test that scrolls a reconstructed `ScrollArea` and asserts child bounds move
+  after redraw. Verified with `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-components`, and `cargo check -p open-gpui-ui-foundation-gallery`.
 * **Fix**: Fixed vertical Splitter dragging for samples that start with a collapsed panel. The state
   layer now treats collapsed panels as restorable once a resize/runtime fraction reaches the
   restore threshold; below that threshold the collapsed fraction remains stable. This preserves the

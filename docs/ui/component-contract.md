@@ -149,6 +149,12 @@ scroll handle after the component has a keyed runtime. Layout shells should pass
 handle when another view needs to inspect or manipulate scroll state; resolved state remains the
 testable contract for docs and future headless extraction.
 
+The default `ScrollHandle` must live in the adapter's keyed runtime, not in the `ScrollArea::new`
+builder value. Render code commonly reconstructs `RenderOnce` component values every frame, so a
+handle allocated by the builder would reset the scroll offset on every notify/redraw and make the
+viewport appear non-scrollable. An explicitly supplied external handle remains caller-owned, but the
+default path must preserve offset across reconstructed component values.
+
 ## Splitter Constraints
 
 `SplitterState` describes renderer-neutral resize constraints: stable group id, orientation, panel
@@ -202,7 +208,7 @@ basic non-modal dismissible surfaces with default-open and controlled-open state
 coordination, modal popover barriers, and a full reusable focus-scope runtime remain deferred.
 `ScrollArea` covers viewport overflow, axis metadata, scrollbar width metrics, and explicit
 reset-on-key-change semantics. It intentionally does not yet expose custom scrollbar anatomy,
-wheel routing, nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
+nested scroll arbitration, or Radix-style hover/auto scrollbar visibility.
 `Splitter` covers panel fraction normalization, min/max constraints, collapsed-panel metadata,
 stable handle anatomy, and local pointer dragging through keyed runtime state. Keyboard resizing,
 controlled resize callbacks, persisted layouts, RTL behavior, and nested splitter arbitration

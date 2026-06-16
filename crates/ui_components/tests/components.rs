@@ -1,4 +1,7 @@
-use open_gpui::{Anchor, AppContext, ParentElement, div, point, px, size};
+use open_gpui::{
+    Anchor, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
+    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px, size,
+};
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
@@ -636,6 +639,7 @@ fn scroll_area_state_exposes_axis_metrics_and_reset_policy() {
 
 #[test]
 fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
+    let external_handle = open_gpui::ScrollHandle::new();
     let state = ScrollArea::new("component-scroll", div())
         .horizontal()
         .large()
@@ -643,6 +647,7 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
         .state();
     let preserved = ScrollArea::new("preserved-scroll", div())
         .both()
+        .scroll_handle(&external_handle)
         .preserve_scroll()
         .state();
 
@@ -657,6 +662,62 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
     assert_eq!(preserved.reset_policy(), ScrollResetPolicy::Preserve);
     assert_eq!(preserved.reset_key(), None);
     assert!(!preserved.should_reset_for_key_change(Some("overview")));
+}
+
+#[open_gpui::test]
+fn scroll_area_default_handle_survives_reconstructed_component_values(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows = (0..10).map(|index| {
+                div()
+                    .debug_selector(move || format!("scroll-row-{index}"))
+                    .h(px(24.0))
+                    .w_full()
+                    .child(format!("Row {index}"))
+            });
+
+            div().size_full().child(
+                div().w(px(180.0)).h(px(60.0)).child(
+                    ScrollArea::new(
+                        "default-runtime-scroll",
+                        div().flex().flex_col().children(rows),
+                    )
+                    .vertical(),
+                ),
+            )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let before = cx
+        .debug_bounds("scroll-row-2")
+        .expect("row should be rendered before scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(10.0), px(10.0)),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-40.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let after = cx
+        .debug_bounds("scroll-row-2")
+        .expect("row should still be rendered after scrolling");
+
+    assert!(
+        after.top() < before.top(),
+        "expected row bounds to move upward after wheel scrolling; before={before:?} after={after:?}"
+    );
 }
 
 #[test]

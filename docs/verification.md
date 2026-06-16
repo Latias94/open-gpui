@@ -104,7 +104,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    remain display-only. The IconButton samples should be square controls with visible focus and
    explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport
-   while the state readout reports the expected axis and reset policy. The Splitter samples should
+   and remain responsive after redraws/component rerenders, while the state readout reports the
+   expected axis and reset policy. The Splitter samples should
    show horizontal and vertical panel groups, stable handle affordances, min/max fraction readouts,
    collapsed-panel metadata, and pointer-drag resizing without changing surrounding layout. Drag the
    vertical collapsed sample far enough to restore the collapsed panel, then confirm subsequent

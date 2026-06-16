@@ -171,6 +171,7 @@ impl ScrollAreaState {
 #[derive(Debug, Clone, Default)]
 struct ScrollAreaRuntime {
     reset_key: Option<String>,
+    scroll_handle: ScrollHandle,
 }
 
 /// A concrete GPUI scroll area viewport.
@@ -183,7 +184,7 @@ pub struct ScrollArea {
     size: Size,
     reset_policy: ScrollResetPolicy,
     reset_key: Option<String>,
-    scroll_handle: ScrollHandle,
+    scroll_handle: Option<ScrollHandle>,
 }
 
 impl ScrollArea {
@@ -199,7 +200,7 @@ impl ScrollArea {
             size: Size::Medium,
             reset_policy: ScrollResetPolicy::Preserve,
             reset_key: None,
-            scroll_handle: ScrollHandle::new(),
+            scroll_handle: None,
         }
     }
 
@@ -226,7 +227,7 @@ impl ScrollArea {
 
     /// Uses an externally owned scroll handle.
     pub fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
-        self.scroll_handle = scroll_handle.clone();
+        self.scroll_handle = Some(scroll_handle.clone());
         self
     }
 
@@ -273,12 +274,17 @@ impl RenderOnce for ScrollArea {
             let current_reset_key = current_reset_key.clone();
             |_, _| ScrollAreaRuntime {
                 reset_key: current_reset_key,
+                scroll_handle: ScrollHandle::new(),
             }
         });
         let previous_reset_key = runtime.read(cx).reset_key.clone();
+        let scroll_handle = self
+            .scroll_handle
+            .clone()
+            .unwrap_or_else(|| runtime.read(cx).scroll_handle.clone());
 
         if state.should_reset_for_key_change(previous_reset_key.as_deref()) {
-            self.scroll_handle.set_offset(point(px(0.0), px(0.0)));
+            scroll_handle.set_offset(point(px(0.0), px(0.0)));
         }
 
         if previous_reset_key.as_deref() != current_reset_key.as_deref() {
@@ -294,7 +300,7 @@ impl RenderOnce for ScrollArea {
             .min_h(px(0.0))
             .overflow_hidden()
             .scrollbar_width(state.metrics().scrollbar_width())
-            .track_scroll(&self.scroll_handle)
+            .track_scroll(&scroll_handle)
             .when(state.scrolls_x(), |this| this.overflow_x_scroll())
             .when(state.scrolls_y(), |this| this.overflow_y_scroll())
             .child(self.content)
