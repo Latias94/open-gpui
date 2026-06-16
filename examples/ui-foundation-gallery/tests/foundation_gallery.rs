@@ -3,8 +3,9 @@ use open_gpui_ui_components::{
     BadgeVariant, ButtonVariant, TabsActivationMode, ThemeMode, ToggleVariant,
 };
 use open_gpui_ui_core::{
-    Density, DeviceAdaptiveClass, DeviceShellMode, Orientation, PanelAdaptiveClass, Role, Size,
-    ThemeTokens, Toggled, semantic,
+    Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
+    InitialFocusIntent, Orientation, OutsidePressPolicy, OverlayLayerKind, PanelAdaptiveClass,
+    Role, Size, ThemeTokens, Toggled, semantic,
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, density_label, device_class_label,
@@ -164,6 +165,69 @@ fn overlay_page_geometry_prefers_visual_bounds_and_insets_window() {
     assert_eq!(geometry.safe_window_rect.origin.y, px(12.0));
     assert_eq!(geometry.safe_window_rect.size.width, px(616.0));
     assert_eq!(geometry.safe_window_rect.size.height, px(336.0));
+}
+
+#[test]
+fn overlay_page_samples_expose_behavior_contracts() {
+    let samples = pages::overlay::behavior_samples();
+
+    assert_eq!(samples.len(), 4);
+    assert_eq!(samples[0].id, "tooltip");
+    assert_eq!(samples[0].policy.kind(), OverlayLayerKind::Tooltip);
+    assert_eq!(
+        samples[0].policy.outside_press_policy(),
+        OutsidePressPolicy::Ignore
+    );
+    assert_eq!(
+        samples[0].policy.escape_key_policy(),
+        EscapeKeyPolicy::Ignore
+    );
+    assert_eq!(
+        samples[0].policy.focus_restore_intent(),
+        &FocusRestoreIntent::None
+    );
+    assert_eq!(
+        samples[0].policy.initial_focus_intent(),
+        &InitialFocusIntent::None
+    );
+
+    assert_eq!(samples[1].id, "popover");
+    assert_eq!(
+        samples[1].policy.kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        samples[1].policy.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert_eq!(
+        samples[1].policy.focus_restore_intent(),
+        &FocusRestoreIntent::Trigger
+    );
+    assert!(samples[1].policy.layer_state().wants_outside_press());
+
+    assert_eq!(samples[2].id, "dialog");
+    assert_eq!(samples[2].policy.kind(), OverlayLayerKind::Modal);
+    assert_eq!(
+        samples[2].policy.outside_press_policy(),
+        OutsidePressPolicy::Consume
+    );
+    assert_eq!(
+        samples[2].policy.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert!(samples[2].policy.layer_state().blocks_underlay_input());
+
+    assert_eq!(samples[3].id, "menu");
+    assert_eq!(samples[3].policy.kind(), OverlayLayerKind::Menu);
+    assert_eq!(
+        samples[3].policy.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(
+        pages::overlay::layer_kind_label(samples[3].policy.kind()),
+        "menu"
+    );
 }
 
 #[test]

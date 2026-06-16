@@ -11,6 +11,17 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Started U2 by extending `open-gpui-ui-core::overlay` from geometry helpers to
+  renderer-neutral overlay behavior contracts: layer identity/kind, presence, outside-press policy,
+  Escape policy, dismiss reason, focus restore intent, initial focus intent, layer-state resolution,
+  Escape stack resolution, and anchor/placement input. These contracts intentionally avoid GPUI
+  runtime types.
+- Done: Updated the foundation gallery overlay page to expose a behavior contract matrix for
+  tooltip, popover, dialog, and menu policies, and updated `docs/ui/component-contract.md` with the
+  overlay resolved-state boundary.
+- Last verified: `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, and `cargo nextest
+  run -p open-gpui-ui-foundation-gallery` passed after the U2 overlay behavior contract work.
 - Done: Started the overlay component series with U1 accessibility/gallery runtime gate work:
   added direct coverage for valid and invalid AccessKit cross-node references in
   `crates/gpui/src/window/a11y.rs`, removed the compile-time bundled-font dependency from the

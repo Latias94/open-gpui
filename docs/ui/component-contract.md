@@ -37,6 +37,22 @@ The concrete component owns the GPUI adapter. This layer may use:
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
 
+## Overlay Behavior
+
+Overlay component state should use renderer-neutral policy types from `open_gpui_ui_core` before
+reaching GPUI adapters. The shared contract distinguishes:
+
+- semantic `open` state from `present` and `interactive` overlay presence;
+- layer kind (`Tooltip`, non-modal dismissible, `Modal`, and menu-like surfaces);
+- outside-press policy (`ignore`, `consume`, `dismiss + consume`, and `dismiss + pass-through`);
+- Escape-key policy and dismiss reason;
+- initial focus and focus restoration intent;
+- anchor and placement inputs that do not store `Window`, `Context`, `FocusHandle`, `ElementId`, or
+  callback types.
+
+GPUI adapters remain responsible for `deferred` and `anchored` rendering, event subscriptions,
+hitboxes, focus handles, concrete focus restoration, and AccessKit relationship wiring.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

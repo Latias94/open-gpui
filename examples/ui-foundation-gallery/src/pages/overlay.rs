@@ -2,18 +2,25 @@
 
 use open_gpui::{Pixels, point, px, size};
 use open_gpui_ui_core::{
-    Rect, anchor_rect_from_point, outer_bounds_with_window_margin, prefer_visual_bounds, rect,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
+    OverlayLayerPolicy, OverlayPresence, Rect, anchor_rect_from_point,
+    outer_bounds_with_window_margin, prefer_visual_bounds, rect,
 };
 
 /// Page title.
 pub const TITLE: &str = "Overlay";
 /// Page summary.
-pub const SUMMARY: &str = "Anchor rectangles, visual bounds, and window-margin geometry helpers.";
+pub const SUMMARY: &str =
+    "Anchor geometry plus renderer-neutral overlay presence, dismissal, and focus policy.";
 /// Foundation signals rendered by this page.
 pub const SIGNALS: &[&str] = &[
     "anchor_rect_from_point()",
     "prefer_visual_bounds()",
     "outer_bounds_with_window_margin()",
+    "OverlayLayerPolicy",
+    "OverlayPresence",
+    "OutsidePressPolicy",
+    "FocusRestoreIntent",
     "OverlayEdges",
     "OverlaySize",
 ];
@@ -55,5 +62,93 @@ pub fn demo_geometry() -> OverlayDemoGeometry {
         visual_rect,
         preferred_rect,
         safe_window_rect,
+    }
+}
+
+/// Overlay behavior sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayBehaviorSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing sample label.
+    pub label: &'static str,
+    /// Resolved behavior policy.
+    pub policy: OverlayLayerPolicy,
+}
+
+/// Returns deterministic overlay behavior samples for the gallery.
+pub fn behavior_samples() -> [OverlayBehaviorSample; 4] {
+    [
+        OverlayBehaviorSample {
+            id: "tooltip",
+            label: "Tooltip",
+            policy: OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
+        },
+        OverlayBehaviorSample {
+            id: "popover",
+            label: "Popover",
+            policy: OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+            ),
+        },
+        OverlayBehaviorSample {
+            id: "dialog",
+            label: "Dialog",
+            policy: OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
+        },
+        OverlayBehaviorSample {
+            id: "menu",
+            label: "Menu",
+            policy: OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
+        },
+    ]
+}
+
+/// Returns a stable label for overlay layer kind.
+pub const fn layer_kind_label(kind: OverlayLayerKind) -> &'static str {
+    match kind {
+        OverlayLayerKind::Tooltip => "tooltip",
+        OverlayLayerKind::NonModalDismissible => "non-modal dismissible",
+        OverlayLayerKind::Modal => "modal",
+        OverlayLayerKind::Menu => "menu",
+    }
+}
+
+/// Returns a stable label for outside-press policy.
+pub const fn outside_press_label(policy: OutsidePressPolicy) -> &'static str {
+    match policy {
+        OutsidePressPolicy::Ignore => "ignore",
+        OutsidePressPolicy::Consume => "consume",
+        OutsidePressPolicy::DismissAndConsume => "dismiss + consume",
+        OutsidePressPolicy::DismissAndPassThrough => "dismiss + pass-through",
+    }
+}
+
+/// Returns a stable label for Escape-key policy.
+pub const fn escape_key_label(policy: EscapeKeyPolicy) -> &'static str {
+    match policy {
+        EscapeKeyPolicy::Ignore => "ignore",
+        EscapeKeyPolicy::Dismiss => "dismiss",
+    }
+}
+
+/// Returns a stable label for focus restoration intent.
+pub fn focus_restore_label(intent: &FocusRestoreIntent) -> &'static str {
+    match intent {
+        FocusRestoreIntent::None => "none",
+        FocusRestoreIntent::Trigger => "trigger",
+        FocusRestoreIntent::Fallback(_) => "fallback",
+        FocusRestoreIntent::TriggerOrFallback(_) => "trigger or fallback",
+    }
+}
+
+/// Returns a stable label for initial focus intent.
+pub fn initial_focus_label(intent: &InitialFocusIntent) -> &'static str {
+    match intent {
+        InitialFocusIntent::None => "none",
+        InitialFocusIntent::FirstFocusable => "first focusable",
+        InitialFocusIntent::Target(_) => "target",
+        InitialFocusIntent::TargetOrFirstFocusable(_) => "target or first focusable",
     }
 }

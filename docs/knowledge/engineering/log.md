@@ -1,6 +1,16 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Started U2 of the overlay component series by extending
+  `open-gpui-ui-core::overlay` with renderer-neutral behavior contracts for layer kind, presence,
+  outside-press policy, Escape policy, dismiss reason, focus restore, initial focus, layer-state
+  resolution, Escape stack resolution, and anchor/placement input.
+* **Update**: Updated the UI foundation gallery overlay page to show the shared behavior contract
+  matrix for tooltip, popover, dialog, and menu policies, and documented the overlay resolved-state
+  boundary in `docs/ui/component-contract.md`.
+* **Update**: Verified U2 with `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, and `cargo nextest
+  run -p open-gpui-ui-foundation-gallery`.
 * **Update**: Started U1 of the overlay component series. Added direct AccessKit repair tests for
   valid and invalid cross-node references in `crates/gpui/src/window/a11y.rs`, converted the
   `svg_renderer` font fixtures to runtime optional loading so the `open-gpui` lib test harness

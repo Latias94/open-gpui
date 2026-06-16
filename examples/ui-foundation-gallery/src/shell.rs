@@ -1410,6 +1410,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let geometry = pages::overlay::demo_geometry();
+        let behavior_samples = pages::overlay::behavior_samples();
 
         div()
             .id("gallery-overlay-page")
@@ -1551,6 +1552,25 @@ impl GalleryShell {
                                     .text_sm()
                                     .child(if self.overlay_open { "open" } else { "closed" }),
                             ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Behavior contracts"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(4)
+                            .gap_3()
+                            .children(behavior_samples.iter().map(overlay_behavior_card)),
                     ),
             )
             .child(self.render_signal_list(snapshot.selected_page))
@@ -2211,6 +2231,68 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
         ))
 }
 
+fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl IntoElement {
+    let policy = &sample.policy;
+    let presence = policy.presence();
+    let layer_state = policy.layer_state();
+    let outside = policy.outside_press_policy().resolve();
+
+    div()
+        .id(format!("overlay-behavior:{}", sample.id))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xffffff))
+        .p_3()
+        .text_xs()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .text_color(rgb(0x24313f))
+                .child(sample.label),
+        )
+        .child(format!(
+            "kind: {}",
+            pages::overlay::layer_kind_label(policy.kind())
+        ))
+        .child(format!(
+            "presence: open {} / present {} / interactive {}",
+            bool_label(presence.is_open()),
+            bool_label(presence.present()),
+            bool_label(presence.interactive())
+        ))
+        .child(format!(
+            "outside: {}",
+            pages::overlay::outside_press_label(policy.outside_press_policy())
+        ))
+        .child(format!(
+            "escape: {}",
+            pages::overlay::escape_key_label(policy.escape_key_policy())
+        ))
+        .child(format!(
+            "focus: open {} / close {}",
+            pages::overlay::initial_focus_label(policy.initial_focus_intent()),
+            pages::overlay::focus_restore_label(policy.focus_restore_intent())
+        ))
+        .child(format!(
+            "layer: visible {} / hit {} / underlay {} / outside {}",
+            bool_label(layer_state.visible()),
+            bool_label(layer_state.hit_testable()),
+            bool_label(layer_state.blocks_underlay_input()),
+            bool_label(layer_state.wants_outside_press())
+        ))
+        .child(format!(
+            "outside outcome: dismiss {} / consume {} / underlay {}",
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event()),
+            bool_label(outside.allows_underlay_dispatch())
+        ))
+}
+
 fn toggled_label_text(toggled: Toggled) -> &'static str {
     match toggled {
         Toggled::True => "on",
@@ -2241,4 +2323,8 @@ fn geometry_row(label: &'static str, rect: Rect) -> impl IntoElement {
 
 fn format_px(value: Pixels) -> String {
     format!("{:.0}px", value.as_f32())
+}
+
+fn bool_label(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
 }
