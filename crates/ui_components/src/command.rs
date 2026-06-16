@@ -1268,11 +1268,7 @@ impl RenderOnce for Command {
             });
         }
 
-        let query = if self.query.is_empty() {
-            input_controller.read(cx).value().to_owned()
-        } else {
-            self.query.clone()
-        };
+        let query = input_controller.read(cx).value().to_owned();
         let selected_value = self
             .selected_value
             .as_deref()
@@ -1308,9 +1304,6 @@ impl RenderOnce for Command {
         input_controller.update(cx, |controller, cx| {
             if controller.placeholder() != self.placeholder.as_ref() {
                 controller.set_placeholder(self.placeholder.clone(), cx);
-            }
-            if controller.value() != query {
-                controller.set_value(query.clone(), cx);
             }
         });
         runtime.update(cx, |runtime, _| {
@@ -1536,6 +1529,7 @@ fn command_content_element(
         .tokens(tokens)
         .with_size(state.size())
         .empty_label(state.empty_label().to_owned())
+        .disabled(state.disabled())
         .embedded(true)
         .on_select({
             let runtime = runtime.clone();
@@ -1578,6 +1572,11 @@ fn command_content_element(
     let loading_id: ElementId = (content_id.clone(), "loading").into();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
+    let key_state = state.clone();
+    let key_runtime = runtime.clone();
+    let key_on_select = on_select.clone();
+    let key_on_open_change = on_open_change.clone();
+    let key_dialog_enabled = state.dialog().is_some();
     let escape_change = state
         .dialog()
         .map(|dialog_state| escape_open_change(dialog_state.overlay().policy()))
@@ -1605,7 +1604,8 @@ fn command_content_element(
         })
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
-            if event.keystroke.key.as_str() == "escape" && escape_change.is_some() {
+            let key = event.keystroke.key.as_str();
+            if key == "escape" && escape_change.is_some() {
                 cx.stop_propagation();
                 window.prevent_default();
                 close_command_dialog(
@@ -1614,6 +1614,37 @@ fn command_content_element(
                     window,
                     cx,
                 );
+                return;
+            }
+
+            match command_keyboard_action(&key_state, key) {
+                CommandKeyboardAction::Navigate(value) => {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.active_value = Some(value);
+                    });
+                }
+                CommandKeyboardAction::Select(selection) => {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    key_runtime.update(cx, |runtime, _| {
+                        runtime.selected_value = Some(selection.value().to_owned());
+                        runtime.active_value = Some(selection.value().to_owned());
+                        if key_dialog_enabled {
+                            runtime.open = false;
+                        }
+                    });
+                    if let Some(on_select) = key_on_select.as_ref() {
+                        on_select(selection, window, cx);
+                    }
+                    if key_dialog_enabled {
+                        if let Some(on_open_change) = key_on_open_change.as_ref() {
+                            on_open_change(false, window, cx);
+                        }
+                    }
+                }
+                CommandKeyboardAction::Ignore => {}
             }
         })
         .when(outside_change.is_some(), |this| {
@@ -1649,6 +1680,29 @@ fn command_content_element(
                 .preserve_scroll()
                 .with_size(state.size()),
         )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommandKeyboardAction {
+    Navigate(String),
+    Select(CommandSelection),
+    Ignore,
+}
+
+fn command_keyboard_action(state: &CommandState, key: &str) -> CommandKeyboardAction {
+    if state.disabled() {
+        return CommandKeyboardAction::Ignore;
+    }
+
+    if let Some(target) = state.listbox().navigation_target(key) {
+        return CommandKeyboardAction::Navigate(target.value().to_owned());
+    }
+
+    if let Some(selection) = state.activation_for_key(key) {
+        return CommandKeyboardAction::Select(selection);
+    }
+
+    CommandKeyboardAction::Ignore
 }
 
 fn close_command_dialog(
@@ -1825,5 +1879,58 @@ impl ThemeResolver {
                 0x2f80ed,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyboard_state(disabled: bool) -> CommandState {
+        Command::new("palette", "Command palette")
+            .open(true)
+            .disabled(disabled)
+            .query("file")
+            .selected("new-file")
+            .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
+            .group(
+                CommandGroup::new("file", "File")
+                    .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
+                    .item(CommandItem::new("close-window", "Close Window").shortcut("Alt+F4")),
+            )
+            .state()
+    }
+
+    #[test]
+    fn keyboard_action_moves_and_selects_active_command() {
+        let state = keyboard_state(false);
+
+        assert_eq!(
+            command_keyboard_action(&state, "up"),
+            CommandKeyboardAction::Navigate("open-file".to_string())
+        );
+        assert_eq!(
+            command_keyboard_action(&state, "enter"),
+            CommandKeyboardAction::Select(CommandSelection::new(
+                1,
+                "new-file".to_string(),
+                "New File".to_string(),
+                Some("Ctrl+N".to_string()),
+            ))
+        );
+    }
+
+    #[test]
+    fn keyboard_action_ignores_disabled_command() {
+        let state = keyboard_state(true);
+
+        assert_eq!(
+            command_keyboard_action(&state, "down"),
+            CommandKeyboardAction::Ignore
+        );
+        assert_eq!(
+            command_keyboard_action(&state, "enter"),
+            CommandKeyboardAction::Ignore
+        );
     }
 }

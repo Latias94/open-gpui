@@ -867,11 +867,7 @@ impl RenderOnce for Combobox {
             });
         }
 
-        let query = if self.query.is_empty() {
-            input_controller.read(cx).value().to_owned()
-        } else {
-            self.query.clone()
-        };
+        let query = input_controller.read(cx).value().to_owned();
         let selected_value = self
             .selected_value
             .as_deref()
@@ -905,9 +901,6 @@ impl RenderOnce for Combobox {
         input_controller.update(cx, |controller, cx| {
             if controller.placeholder() != self.placeholder.as_ref() {
                 controller.set_placeholder(self.placeholder.clone(), cx);
-            }
-            if controller.value() != query {
-                controller.set_value(query.clone(), cx);
             }
         });
         runtime.update(cx, |runtime, _| {
@@ -961,14 +954,49 @@ impl RenderOnce for Combobox {
                     .aria_disabled(disabled)
                     .on_key_down({
                         let runtime = runtime.clone();
+                        let input_controller = input_controller.clone();
                         let on_open_change = self.on_open_change.clone();
-                        move |event: &KeyDownEvent, window, cx| {
-                            if disabled {
-                                return;
+                        let on_select = self.on_select.clone();
+                        let key_state = state.clone();
+                        move |event: &KeyDownEvent, window, cx| match combobox_keyboard_action(
+                            &key_state,
+                            event.keystroke.key.as_str(),
+                        ) {
+                            ComboboxKeyboardAction::Navigate(value) => {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.open = true;
+                                    runtime.active_value = Some(value);
+                                });
+                                if !key_state.open() {
+                                    if let Some(on_open_change) = on_open_change.as_ref() {
+                                        on_open_change(true, window, cx);
+                                    }
+                                }
                             }
-
-                            let key = event.keystroke.key.as_str();
-                            if matches!(key, "down" | "up" | "enter" | "space") {
+                            ComboboxKeyboardAction::Select(selection) => {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                runtime.update(cx, |runtime, _| {
+                                    runtime.selected_value = Some(selection.value().to_owned());
+                                    runtime.active_value = Some(selection.value().to_owned());
+                                    runtime.query = selection.label().to_owned();
+                                    runtime.open = false;
+                                });
+                                input_controller.update(cx, |controller, cx| {
+                                    controller.set_value(selection.label().to_owned(), cx);
+                                });
+                                if let Some(on_select) = on_select.as_ref() {
+                                    on_select(selection, window, cx);
+                                }
+                                if let Some(on_open_change) = on_open_change.as_ref() {
+                                    on_open_change(false, window, cx);
+                                }
+                            }
+                            ComboboxKeyboardAction::Open => {
+                                cx.stop_propagation();
+                                window.prevent_default();
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
                                 });
@@ -976,6 +1004,12 @@ impl RenderOnce for Combobox {
                                     on_open_change(true, window, cx);
                                 }
                             }
+                            ComboboxKeyboardAction::Close => {
+                                cx.stop_propagation();
+                                window.prevent_default();
+                                close_combobox(runtime.clone(), on_open_change.clone(), window, cx);
+                            }
+                            ComboboxKeyboardAction::Ignore => {}
                         }
                     })
                     .child(
@@ -1051,6 +1085,43 @@ impl RenderOnce for Combobox {
                 )
             })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ComboboxKeyboardAction {
+    Navigate(String),
+    Select(ComboboxSelection),
+    Open,
+    Close,
+    Ignore,
+}
+
+fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> ComboboxKeyboardAction {
+    if state.disabled() {
+        return ComboboxKeyboardAction::Ignore;
+    }
+
+    if let Some(target) = state.listbox().navigation_target(key) {
+        return ComboboxKeyboardAction::Navigate(target.value().to_owned());
+    }
+
+    if matches!(key, "down" | "up" | "home" | "end") {
+        return ComboboxKeyboardAction::Open;
+    }
+
+    if let Some(selection) = state.listbox().activation_for_key(key) {
+        return ComboboxKeyboardAction::Select(ComboboxSelection::new(
+            selection.value().to_owned(),
+            selection.label().to_owned(),
+            state.query().to_owned(),
+        ));
+    }
+
+    if key == "escape" && state.open() {
+        return ComboboxKeyboardAction::Close;
+    }
+
+    ComboboxKeyboardAction::Ignore
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1315,5 +1386,58 @@ impl ThemeResolver {
                 0x2f80ed,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyboard_state(disabled: bool) -> ComboboxState {
+        Combobox::new("frameworks", "Frameworks")
+            .open(true)
+            .disabled(disabled)
+            .query("re")
+            .selected("solid")
+            .option(ComboboxOption::new("react", "React"))
+            .option(ComboboxOption::new("solid", "Solid"))
+            .option(ComboboxOption::new("relay", "Relay"))
+            .state()
+    }
+
+    #[test]
+    fn keyboard_action_moves_and_selects_active_option() {
+        let state = keyboard_state(false);
+
+        assert_eq!(
+            combobox_keyboard_action(&state, "down"),
+            ComboboxKeyboardAction::Navigate("relay".to_string())
+        );
+        assert_eq!(
+            combobox_keyboard_action(&state, "enter"),
+            ComboboxKeyboardAction::Select(ComboboxSelection::new(
+                "react".to_string(),
+                "React".to_string(),
+                "re".to_string(),
+            ))
+        );
+        assert_eq!(
+            combobox_keyboard_action(&state, "escape"),
+            ComboboxKeyboardAction::Close
+        );
+    }
+
+    #[test]
+    fn keyboard_action_ignores_disabled_combobox() {
+        let state = keyboard_state(true);
+
+        assert_eq!(
+            combobox_keyboard_action(&state, "down"),
+            ComboboxKeyboardAction::Ignore
+        );
+        assert_eq!(
+            combobox_keyboard_action(&state, "enter"),
+            ComboboxKeyboardAction::Ignore
+        );
     }
 }
