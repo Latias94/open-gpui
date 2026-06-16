@@ -1,11 +1,17 @@
 //! Overlay foundation page metadata.
 
 use open_gpui::{Pixels, point, px, size};
-use open_gpui_ui_components::{GpuiOverlayAdapterConfig, GpuiOverlayState};
+use std::time::Duration;
+
+use open_gpui_ui_components::{
+    GpuiOverlayAdapterConfig, GpuiOverlayState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent,
+    TooltipState,
+};
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayLayerPolicy, OverlayPresence, Rect, anchor_rect_from_point,
-    outer_bounds_with_window_margin, prefer_visual_bounds, rect,
+    OverlayLayerPolicy, OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Rect,
+    Sizable, Size, ThemeTokens, anchor_rect_from_point, outer_bounds_with_window_margin,
+    prefer_visual_bounds, rect,
 };
 
 /// Page title.
@@ -22,6 +28,7 @@ pub const SIGNALS: &[&str] = &[
     "OverlayPresence",
     "OutsidePressPolicy",
     "FocusRestoreIntent",
+    "TooltipState",
     "OverlayEdges",
     "OverlaySize",
 ];
@@ -121,6 +128,85 @@ pub fn behavior_samples() -> [OverlayBehaviorSample; 4] {
             policy: OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
             adapter: GpuiOverlayAdapterConfig::new(OverlayLayerKind::Menu, OverlayPresence::open())
                 .state(),
+        },
+    ]
+}
+
+/// Tooltip sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TooltipSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Text shown by the tooltip surface.
+    pub tooltip_text: &'static str,
+    /// Resolved tooltip state.
+    pub state: TooltipState,
+}
+
+/// Returns deterministic tooltip samples for gallery dogfood.
+pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
+    [
+        TooltipSample {
+            id: "hover-focus",
+            label: "Hover or focus",
+            tooltip_text: "Visible from pointer hover or keyboard focus.",
+            state: Tooltip::new(
+                "overlay-tooltip:hover-focus",
+                "Visible from pointer hover or keyboard focus.",
+            )
+            .placement_side(OverlayPlacementSide::Top)
+            .placement_alignment(OverlayPlacementAlignment::Center)
+            .tokens(tokens)
+            .state(),
+        },
+        TooltipSample {
+            id: "focus-only",
+            label: "Focus only",
+            tooltip_text: "Keyboard focus can reveal this tooltip without pointer input.",
+            state: Tooltip::new(
+                "overlay-tooltip:focus-only",
+                "Keyboard focus can reveal this tooltip without pointer input.",
+            )
+            .open_intent(TooltipOpenIntent::Focus)
+            .placement_side(OverlayPlacementSide::Bottom)
+            .tokens(tokens)
+            .state(),
+        },
+        TooltipSample {
+            id: "delayed-manual",
+            label: "Manual delayed",
+            tooltip_text: "Resolved state keeps explicit delay policy and controlled open.",
+            state: Tooltip::new(
+                "overlay-tooltip:delayed-manual",
+                "Resolved state keeps explicit delay policy and controlled open.",
+            )
+            .open(true)
+            .open_intent(TooltipOpenIntent::Manual)
+            .delay(TooltipDelayPolicy::new(
+                Duration::from_millis(120),
+                Duration::from_millis(40),
+                Duration::from_millis(250),
+            ))
+            .placement_side(OverlayPlacementSide::Right)
+            .with_size(Size::Small)
+            .tokens(tokens)
+            .state(),
+        },
+        TooltipSample {
+            id: "disabled",
+            label: "Disabled",
+            tooltip_text: "Disabled triggers do not expose a focusable tooltip target.",
+            state: Tooltip::new(
+                "overlay-tooltip:disabled",
+                "Disabled triggers do not expose a focusable tooltip target.",
+            )
+            .open(true)
+            .disabled(true)
+            .placement_side(OverlayPlacementSide::Left)
+            .tokens(tokens)
+            .state(),
         },
     ]
 }

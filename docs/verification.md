@@ -79,7 +79,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    close it from the popover or press Escape. The geometry readout should keep anchor, layout,
    visual, preferred, and safe-window rectangles visible. The behavior contract matrix should show
    distinct tooltip, popover, dialog, and menu policies for presence, outside press, Escape, focus,
-   underlay blocking, and GPUI adapter fields such as deferred priority and snap margin.
+   underlay blocking, and GPUI adapter fields such as deferred priority and snap margin. In the
+   Tooltip samples, hover `Hover or focus`, tab to `Focus only`, and confirm each reveals
+   descriptive tooltip content while `Disabled` remains unfocusable and closed; `Manual delayed`
+   should stay visible and report its custom delay policy.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs samples

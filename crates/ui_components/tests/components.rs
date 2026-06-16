@@ -1,13 +1,13 @@
-use open_gpui::{Anchor, AppContext, div, point, px, size};
+use open_gpui::{Anchor, AppContext, ParentElement, div, point, px, size};
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
     DEFAULT_OVERLAY_SAFE_MARGIN, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
     IconButton, Label, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs,
     TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant,
-    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
-    focus_ring_shadow, gpui_anchor, last_enabled, next_enabled, outside_press_open_change,
-    point_anchor_placement,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
+    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
+    last_enabled, next_enabled, outside_press_open_change, point_anchor_placement,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -15,6 +15,7 @@ use open_gpui_ui_core::{
     OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
     Toggled, TokenKey, rect, semantic,
 };
+use std::time::Duration;
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
 const TEST_SURFACE_MUTED: TokenKey = TokenKey::new("test.surface_muted");
@@ -165,6 +166,58 @@ fn overlay_open_change_helpers_match_core_policies() {
         GpuiOverlayPlacement::resolve(point_placement, DEFAULT_OVERLAY_SAFE_MARGIN).anchor(),
         Anchor::TopLeft
     );
+}
+
+#[test]
+fn tooltip_state_records_descriptive_overlay_policy() {
+    let state = Tooltip::new("tip", "Save changes").open(true).state();
+
+    assert_eq!(state.content_kind(), TooltipContentKind::Text);
+    assert_eq!(state.role(), Role::Label);
+    assert!(state.open());
+    assert!(state.descriptive());
+    assert!(!state.interactive_content());
+    assert!(state.open_intent().opens_on_hover());
+    assert!(state.open_intent().opens_on_focus());
+    assert_eq!(state.placement_side(), OverlayPlacementSide::Top);
+    assert_eq!(
+        state.placement_alignment(),
+        OverlayPlacementAlignment::Center
+    );
+    assert_eq!(state.delay().open_delay(), Duration::from_millis(500));
+    assert_eq!(state.colors().background().token(), semantic::OVERLAY);
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Tooltip);
+    assert!(state.overlay().should_render_deferred_layer());
+    assert!(!state.overlay().layer_state().hit_testable());
+}
+
+#[test]
+fn tooltip_state_models_disabled_element_content_and_delay_overrides() {
+    let delay = TooltipDelayPolicy::new(
+        Duration::from_millis(120),
+        Duration::from_millis(40),
+        Duration::from_millis(250),
+    );
+    let state = Tooltip::element("rich-tip", div().child("Rich"))
+        .open(true)
+        .disabled(true)
+        .open_intent(TooltipOpenIntent::Focus)
+        .placement_side(OverlayPlacementSide::Bottom)
+        .placement_alignment(OverlayPlacementAlignment::End)
+        .delay(delay)
+        .small()
+        .state();
+
+    assert_eq!(state.content_kind(), TooltipContentKind::Element);
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert!(!state.open_intent().opens_on_hover());
+    assert!(state.open_intent().opens_on_focus());
+    assert_eq!(state.placement_side(), OverlayPlacementSide::Bottom);
+    assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
+    assert_eq!(state.delay(), delay);
+    assert_eq!(state.size(), Size::Small);
+    assert!(!state.overlay().should_render_deferred_layer());
 }
 
 #[test]

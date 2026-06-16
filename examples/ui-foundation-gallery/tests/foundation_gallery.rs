@@ -1,7 +1,7 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
     BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, TabsActivationMode, ThemeMode,
-    ToggleVariant, default_deferred_priority,
+    ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -242,6 +242,48 @@ fn overlay_page_samples_expose_behavior_contracts() {
         pages::overlay::layer_kind_label(samples[3].policy.kind()),
         "menu"
     );
+}
+
+#[test]
+fn overlay_page_tooltip_samples_expose_focus_hover_and_disabled_contracts() {
+    let samples = pages::overlay::tooltip_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 4);
+    assert_eq!(samples[0].id, "hover-focus");
+    assert_eq!(
+        samples[0].state.open_intent(),
+        TooltipOpenIntent::HoverOrFocus
+    );
+    assert!(samples[0].state.open_intent().opens_on_hover());
+    assert!(samples[0].state.open_intent().opens_on_focus());
+    assert!(!samples[0].state.open());
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::Tooltip
+    );
+
+    assert_eq!(samples[1].id, "focus-only");
+    assert_eq!(samples[1].state.open_intent(), TooltipOpenIntent::Focus);
+    assert!(!samples[1].state.open_intent().opens_on_hover());
+    assert!(samples[1].state.open_intent().opens_on_focus());
+
+    assert_eq!(samples[2].id, "delayed-manual");
+    assert_eq!(samples[2].state.open_intent(), TooltipOpenIntent::Manual);
+    assert!(samples[2].state.open());
+    assert_eq!(
+        samples[2].state.delay().open_delay(),
+        std::time::Duration::from_millis(120)
+    );
+    assert_eq!(
+        samples[2].state.delay().close_delay(),
+        std::time::Duration::from_millis(40)
+    );
+
+    assert_eq!(samples[3].id, "disabled");
+    assert!(samples[3].state.disabled());
+    assert!(!samples[3].state.open());
+    assert!(samples[3].state.descriptive());
+    assert!(!samples[3].state.interactive_content());
 }
 
 #[test]

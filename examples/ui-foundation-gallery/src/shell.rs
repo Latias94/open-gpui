@@ -11,7 +11,8 @@ use open_gpui_ui_components::{
     Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Field,
     FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState, RadioGroup, RadioItem,
     Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
-    TextInputController, TextInputState, Toggle, ToggleState, focus_ring_shadow, init_text_input,
+    TextInputController, TextInputState, Toggle, ToggleState, Tooltip, TooltipContentKind,
+    TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -71,10 +72,12 @@ pub struct GalleryShell {
     root_focus: FocusHandle,
     editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
+    tooltip_focus_controls: [FocusHandle; 4],
     focus_message: &'static str,
     a11y_counter: i32,
     a11y_enabled: bool,
     overlay_open: bool,
+    hovered_tooltip_sample: Option<&'static str>,
 }
 
 impl GalleryShell {
@@ -95,10 +98,17 @@ impl GalleryShell {
                 cx.focus_handle().tab_index(2).tab_stop(true),
                 cx.focus_handle().tab_index(3).tab_stop(true),
             ],
+            tooltip_focus_controls: [
+                cx.focus_handle().tab_index(10).tab_stop(true),
+                cx.focus_handle().tab_index(11).tab_stop(true),
+                cx.focus_handle().tab_index(12).tab_stop(true),
+                cx.focus_handle().tab_index(13).tab_stop(true),
+            ],
             focus_message: "Ready for keyboard focus.",
             a11y_counter: 0,
             a11y_enabled: false,
             overlay_open: false,
+            hovered_tooltip_sample: None,
         }
     }
 }
@@ -128,6 +138,7 @@ impl GalleryShell {
         if self.selected_page != page {
             self.selected_page = page;
             self.page_scroll.set_offset(point(px(0.0), px(0.0)));
+            self.hovered_tooltip_sample = None;
             cx.notify();
         }
     }
@@ -170,10 +181,17 @@ impl GalleryShell {
             cx.notify();
         }
     }
+
+    fn set_hovered_tooltip_sample(&mut self, sample: Option<&'static str>, cx: &mut Context<Self>) {
+        if self.hovered_tooltip_sample != sample {
+            self.hovered_tooltip_sample = sample;
+            cx.notify();
+        }
+    }
 }
 
 impl Render for GalleryShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let snapshot = self.snapshot();
         let page = snapshot.selected_page;
 
@@ -187,10 +205,11 @@ impl Render for GalleryShell {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key.as_str() == "escape" {
                     this.set_overlay_open(false, cx);
+                    this.set_hovered_tooltip_sample(None, cx);
                 }
             }))
             .child(self.render_navigation(page, cx))
-            .child(self.render_content(snapshot, cx))
+            .child(self.render_content(snapshot, window, cx))
     }
 }
 
@@ -289,6 +308,7 @@ impl GalleryShell {
     fn render_content(
         &self,
         snapshot: GalleryShellSnapshot,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let page = snapshot.selected_page;
@@ -339,13 +359,14 @@ impl GalleryShell {
                     .min_h(px(0.0))
                     .overflow_y_scroll()
                     .track_scroll(&self.page_scroll)
-                    .child(self.render_page_body(snapshot, cx)),
+                    .child(self.render_page_body(snapshot, window, cx)),
             )
     }
 
     fn render_page_body(
         &self,
         snapshot: GalleryShellSnapshot,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         match snapshot.selected_page {
@@ -355,7 +376,9 @@ impl GalleryShell {
             GalleryPage::FocusAccessibility => {
                 self.render_focus_a11y_page(snapshot, cx).into_any_element()
             }
-            GalleryPage::Overlay => self.render_overlay_page(snapshot, cx).into_any_element(),
+            GalleryPage::Overlay => self
+                .render_overlay_page(snapshot, window, cx)
+                .into_any_element(),
             GalleryPage::Components => self.render_components_page(snapshot).into_any_element(),
         }
     }
@@ -1407,10 +1430,12 @@ impl GalleryShell {
     fn render_overlay_page(
         &self,
         snapshot: GalleryShellSnapshot,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let geometry = pages::overlay::demo_geometry();
         let behavior_samples = pages::overlay::behavior_samples();
+        let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
 
         div()
             .id("gallery-overlay-page")
@@ -1573,7 +1598,134 @@ impl GalleryShell {
                             .children(behavior_samples.iter().map(overlay_behavior_card)),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Tooltip samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(4)
+                            .gap_3()
+                            .child(self.render_tooltip_sample_card(
+                                &tooltip_samples[0],
+                                &self.tooltip_focus_controls[0],
+                                self.tooltip_focus_controls[0].is_focused(window),
+                                cx,
+                            ))
+                            .child(self.render_tooltip_sample_card(
+                                &tooltip_samples[1],
+                                &self.tooltip_focus_controls[1],
+                                self.tooltip_focus_controls[1].is_focused(window),
+                                cx,
+                            ))
+                            .child(self.render_tooltip_sample_card(
+                                &tooltip_samples[2],
+                                &self.tooltip_focus_controls[2],
+                                self.tooltip_focus_controls[2].is_focused(window),
+                                cx,
+                            ))
+                            .child(self.render_tooltip_sample_card(
+                                &tooltip_samples[3],
+                                &self.tooltip_focus_controls[3],
+                                self.tooltip_focus_controls[3].is_focused(window),
+                                cx,
+                            )),
+                    ),
+            )
             .child(self.render_signal_list(snapshot.selected_page))
+    }
+
+    fn render_tooltip_sample_card(
+        &self,
+        sample: &pages::overlay::TooltipSample,
+        focus_handle: &FocusHandle,
+        focus_handle_is_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = sample.state.clone();
+        let sample_id = sample.id;
+        let label = sample.label;
+        let tooltip_text = sample.tooltip_text;
+        let focused =
+            focus_handle_is_focused && state.open_intent().opens_on_focus() && !state.disabled();
+        let hovered = self.hovered_tooltip_sample == Some(sample_id)
+            && state.open_intent().opens_on_hover()
+            && !state.disabled();
+        let forced_open = state.open() && !state.disabled();
+        let open = focused || hovered || forced_open;
+        let focus_ring = FocusRing::from_color(ColorIntent::new(
+            ThemeTokens::default().focus_ring,
+            0x2f80ed,
+        ));
+
+        div()
+            .id(format!("overlay-tooltip-sample:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(
+                div()
+                    .id(format!("overlay-tooltip-trigger:{}", sample_id))
+                    .min_h(px(44.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if open { rgb(0x1f7a66) } else { rgb(0xd6d8ce) })
+                    .bg(if state.disabled() {
+                        rgb(0xf1f2ed)
+                    } else if open {
+                        rgb(0xe8f3ef)
+                    } else {
+                        rgb(0xffffff)
+                    })
+                    .px_3()
+                    .py_2()
+                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                    .track_focus(focus_handle)
+                    .focusable()
+                    .tab_stop(!state.disabled())
+                    .role(Role::Button)
+                    .aria_label(label)
+                    .cursor_pointer()
+                    .hover(|style| style.bg(rgb(0xf1f5ee)))
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.set_hovered_tooltip_sample(hovered.then_some(sample_id), cx);
+                    }))
+                    .child(label),
+            )
+            .when(open, |card| {
+                card.child(
+                    Tooltip::new(
+                        format!("overlay-tooltip-content:{}", sample_id),
+                        tooltip_text,
+                    )
+                    .open(true)
+                    .open_intent(state.open_intent())
+                    .placement_side(state.placement_side())
+                    .placement_alignment(state.placement_alignment())
+                    .delay(state.delay())
+                    .with_size(state.size()),
+                )
+            })
+            .child(tooltip_state_row(&state, open))
     }
 
     fn render_overlay_bounds(&self, label: &'static str, bounds: Rect) -> impl IntoElement {
@@ -2299,6 +2451,66 @@ fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl
             bool_label(adapter.should_render_deferred_layer()),
             bool_label(adapter.wants_outside_press_handler())
         ))
+}
+
+fn tooltip_state_row(
+    state: &open_gpui_ui_components::TooltipState,
+    open: bool,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / intent {} / content {}",
+            bool_label(open),
+            tooltip_open_intent_label(state.open_intent()),
+            tooltip_content_kind_label(state.content_kind())
+        ))
+        .child(format!(
+            "placement: {} {} / disabled {} / descriptive {}",
+            pages::overlay::layer_kind_label(state.overlay().policy().kind()),
+            tooltip_placement_label(state.placement_side()),
+            bool_label(state.disabled()),
+            bool_label(state.descriptive())
+        ))
+        .child(format!(
+            "delay: open {} / close {} / skip {}",
+            format_duration_ms(state.delay().open_delay()),
+            format_duration_ms(state.delay().close_delay()),
+            format_duration_ms(state.delay().skip_delay())
+        ))
+}
+
+fn tooltip_open_intent_label(intent: TooltipOpenIntent) -> &'static str {
+    match intent {
+        TooltipOpenIntent::HoverOrFocus => "hover or focus",
+        TooltipOpenIntent::Hover => "hover",
+        TooltipOpenIntent::Focus => "focus",
+        TooltipOpenIntent::Manual => "manual",
+    }
+}
+
+fn tooltip_content_kind_label(kind: TooltipContentKind) -> &'static str {
+    match kind {
+        TooltipContentKind::Text => "text",
+        TooltipContentKind::Element => "element",
+    }
+}
+
+fn tooltip_placement_label(side: open_gpui_ui_core::OverlayPlacementSide) -> &'static str {
+    match side {
+        open_gpui_ui_core::OverlayPlacementSide::Top => "top",
+        open_gpui_ui_core::OverlayPlacementSide::Right => "right",
+        open_gpui_ui_core::OverlayPlacementSide::Bottom => "bottom",
+        open_gpui_ui_core::OverlayPlacementSide::Left => "left",
+    }
+}
+
+fn format_duration_ms(duration: std::time::Duration) -> String {
+    format!("{}ms", duration.as_millis())
 }
 
 fn toggled_label_text(toggled: Toggled) -> &'static str {

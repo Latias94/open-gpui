@@ -11,6 +11,19 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U4 of the overlay component series by adding descriptive `Tooltip` to
+  `open-gpui-ui-components` with `TooltipState`, hover/focus/manual open intent, delay policy,
+  placement metadata, token/metric resolution, explicit exports, component tests, and Overlay
+  gallery samples that reveal tooltip content from hover or keyboard focus while keeping disabled
+  triggers closed.
+- Done: Updated `docs/ui/component-contract.md` and `docs/verification.md` so Tooltip is documented
+  as a descriptive non-interactive overlay contract, with timing execution and trigger/focus wiring
+  remaining in the GPUI adapter/gallery layer.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U4 Tooltip work.
+- Next action: Start U5 Popover on top of the shared overlay adapter, covering controlled/default
+  open state, Escape/outside dismissal, placement, and focus restoration.
 - Done: Started U2 by extending `open-gpui-ui-core::overlay` from geometry helpers to
   renderer-neutral overlay behavior contracts: layer identity/kind, presence, outside-press policy,
   Escape policy, dismiss reason, focus restore intent, initial focus intent, layer-state resolution,

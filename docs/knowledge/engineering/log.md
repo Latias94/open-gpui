@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed U4 of the overlay component series by adding the descriptive `Tooltip`
+  component and `TooltipState` contract to `open-gpui-ui-components`. The first slice models text
+  or simple element content, hover/focus/manual open intent, delay policy, placement metadata,
+  disabled trigger behavior, tooltip layer state, token intents, and metrics while keeping the
+  content non-interactive.
+* **Update**: Added Overlay gallery Tooltip samples for hover/focus, focus-only, manual delayed,
+  and disabled cases. The gallery wires hover state and focus handles at the adapter layer so
+  keyboard traversal can reveal descriptive tooltip content without putting GPUI runtime types into
+  `TooltipState`.
+* **Update**: Documented Tooltip in `docs/ui/component-contract.md` and `docs/verification.md`,
+  including the current `Role::Label` mapping until GPUI exposes a public tooltip role wrapper.
+* **Update**: Verified U4 with `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`.
 * **Update**: Started U3 by adding `open_gpui_ui_components::overlay`, a narrow GPUI adapter helper
   layer that maps shared overlay policy into deferred priority, snap margin, GPUI anchor/offset,
   Escape open-change, and outside-press open-change decisions without introducing a global overlay

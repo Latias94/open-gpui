@@ -12,6 +12,7 @@ use crate::label::LabelColors;
 use crate::radio::RadioGroupColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
+use crate::tooltip::TooltipColors;
 
 const DEFAULT_SURFACE: u32 = 0xffffff;
 const DEFAULT_GHOST_SURFACE: u32 = 0xf6f7f2;
@@ -521,6 +522,14 @@ impl ThemeResolver {
                 ColorState::Required,
                 DEFAULT_DESTRUCTIVE,
             ),
+        }
+    }
+
+    pub(crate) const fn tooltip_colors(tokens: ThemeTokens) -> TooltipColors {
+        TooltipColors {
+            background: ColorIntent::with_state(tokens.overlay, ColorState::Overlay, 0x263240),
+            foreground: ColorIntent::new(tokens.surface, DEFAULT_SURFACE),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
         }
     }
 

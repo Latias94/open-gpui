@@ -29,4 +29,8 @@ pub use crate::text_input::{
 };
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
+pub use crate::tooltip::{
+    Tooltip, TooltipColors, TooltipContentKind, TooltipDelayPolicy, TooltipMetrics,
+    TooltipOpenIntent, TooltipState,
+};
 pub use open_gpui_ui_core::{Sizable, Size, ThemeTokens};

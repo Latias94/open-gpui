@@ -56,6 +56,13 @@ hitboxes, focus handles, concrete focus restoration, and AccessKit relationship 
 snap-to-window margin, GPUI anchor mapping, and open-change decisions derived from the shared
 policy. It does not own global overlay ordering, callback storage, or window subscriptions.
 
+`TooltipState` is the first descriptive overlay component contract. It records content kind,
+disabled/open state, hover/focus/manual open intent, placement preference, delay policy, resolved
+metrics, token intents, and tooltip layer state. The first slice is intentionally non-interactive:
+hover/focus subscriptions, focus handles, timing execution, and anchored/deferred rendering remain
+GPUI adapter responsibilities. Rich hover cards and action-bearing tooltip content should not reuse
+the descriptive tooltip contract as-is.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by
@@ -124,4 +131,6 @@ property. `Toggle` is button-like: it exposes `pressed`, maps to `Role::Button` 
 `aria_toggled`, and intentionally stays separate from `Checkbox` tri-state semantics. `Badge` is
 display-only and exposes no role in resolved state. `IconButton` reuses Button visual variants and
 focus-ring color intents, but requires an explicit accessible label because the visible icon glyph
-is not a reliable accessible name.
+is not a reliable accessible name. `Tooltip` is descriptive-only and currently maps its surface to
+`Role::Label` until the public GPUI/AccessKit role wrapper exposes a tooltip role; trigger
+association and timed hover/focus execution stay in the adapter layer.
