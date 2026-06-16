@@ -5,6 +5,9 @@ pub use crate::color::{ColorIntent, ColorState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
-pub use crate::text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
+pub use crate::text_input::{
+    TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
+    init as init_text_input,
+};
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use open_gpui_ui_core::{Sizable, Size, ThemeTokens};

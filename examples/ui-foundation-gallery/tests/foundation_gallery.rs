@@ -184,6 +184,12 @@ fn components_page_samples_expose_component_metadata() {
 
     assert_eq!(text_inputs.len(), 5);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);
+    assert!(text_inputs[0].controller_driven);
+    assert!(
+        text_inputs[1..]
+            .iter()
+            .all(|sample| !sample.controller_driven)
+    );
     assert!(text_inputs[0].state.displaying_placeholder());
     assert!(text_inputs[1].state.has_value());
     assert_eq!(

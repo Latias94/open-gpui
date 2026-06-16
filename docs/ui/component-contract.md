@@ -75,6 +75,8 @@ snapshots at the adapter edge.
 
 The runtime theme table currently covers semantic component colors for light, dark, and
 high-contrast snapshots, but there is not yet an app-level theme registry, user theme loading, or
-JSON schema. Rich text input editing must use GPUI's `EntityInputHandler`/`ElementInputHandler` path
-and is intentionally separate from display-level field composition. `focus_ring_shadow` is
+JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler`/
+`ElementInputHandler` path through `TextInputController`; richer editor behavior such as
+multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
+stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.

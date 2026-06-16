@@ -1,6 +1,16 @@
 # Engineering Memory Update Log
 
 ## 2026-06-15
+* **Update**: Implemented the real single-line editable `TextInputController` slice in
+  `open-gpui-ui-components`, including GPUI `EntityInputHandler` / `ElementInputHandler`
+  integration, UTF-16 selection and marked-range conversion, grapheme-aware deletion, clipboard
+  actions, and gallery dogfood for the default components sample.
+* **Subagent Finding**: Recorded editable TextInput controller research at
+  `docs/knowledge/engineering/subagents/text-input-controller-research.md`: use GPUI's native
+  input handler path for single-line editing and defer multiline/password/editor-grade behavior.
+* **Update**: Updated `docs/ui/component-contract.md` so the contract now records that
+  `TextInputController` owns the editable single-line path while `Field` stays composition-only,
+  and multiline/password/undo/redo/completion remain out of scope.
 * **Update**: Completed the runtime theme table slice from the official component roadmap. Added
   `ColorState`, `ThemeMode`, `ThemeColor`, and immutable `ThemeSnapshot` support, taught
   `ThemeResolver::resolve_with` to resolve `(TokenKey, ColorState)` before falling back to intent

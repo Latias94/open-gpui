@@ -1,15 +1,84 @@
 //! Text input component.
 
+use std::ops::Range;
+
 use open_gpui::prelude::*;
 use open_gpui::{
-    CursorStyle, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, InspectorElementId,
+    IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, Point, RenderOnce, ShapedLine, SharedString, Style, Styled,
+    TextRun, UTF16Selection, Window, actions, div, fill, point, px, relative, rgba,
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
+
+actions!(
+    text_input,
+    [
+        /// Delete the previous grapheme.
+        Backspace,
+        /// Delete the next grapheme.
+        Delete,
+        /// Move the caret one grapheme left.
+        Left,
+        /// Move the caret one grapheme right.
+        Right,
+        /// Extend selection one grapheme left.
+        SelectLeft,
+        /// Extend selection one grapheme right.
+        SelectRight,
+        /// Select the entire input value.
+        SelectAll,
+        /// Move the caret to the start.
+        Home,
+        /// Move the caret to the end.
+        End,
+        /// Paste text from the clipboard.
+        Paste,
+        /// Copy selected text to the clipboard.
+        Copy,
+        /// Cut selected text to the clipboard.
+        Cut,
+        /// Open the platform character palette.
+        ShowCharacterPalette,
+    ]
+);
+
+const TEXT_INPUT_KEY_CONTEXT: &str = "TextInput";
+
+/// Registers default key bindings for editable text inputs.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("backspace", Backspace, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("shift-backspace", Backspace, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("delete", Delete, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("shift-delete", Delete, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("left", Left, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("right", Right, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("shift-left", SelectLeft, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("shift-right", SelectRight, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("home", Home, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("end", End, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("cmd-a", SelectAll, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-a", SelectAll, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("cmd-c", Copy, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-c", Copy, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("cmd-x", Cut, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-x", Cut, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("cmd-v", Paste, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new("ctrl-v", Paste, Some(TEXT_INPUT_KEY_CONTEXT)),
+        KeyBinding::new(
+            "ctrl-cmd-space",
+            ShowCharacterPalette,
+            Some(TEXT_INPUT_KEY_CONTEXT),
+        ),
+    ]);
+}
 
 /// Resolved text input color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +165,616 @@ impl TextInputMetrics {
     }
 }
 
+/// Editable single-line text input controller.
+///
+/// The controller owns editing state and implements GPUI's platform text input handler. It is kept
+/// separate from `TextInputState` so resolved component state remains renderer-neutral.
+#[derive(Debug)]
+pub struct TextInputController {
+    focus_handle: FocusHandle,
+    content: SharedString,
+    placeholder: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+    marked_range: Option<Range<usize>>,
+    last_layout: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    is_selecting: bool,
+    disabled: bool,
+    read_only: bool,
+}
+
+impl TextInputController {
+    /// Creates a new editable text input controller.
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            content: SharedString::default(),
+            placeholder: SharedString::default(),
+            selected_range: 0..0,
+            selection_reversed: false,
+            marked_range: None,
+            last_layout: None,
+            last_bounds: None,
+            is_selecting: false,
+            disabled: false,
+            read_only: false,
+        }
+    }
+
+    /// Creates a new controller with an initial value.
+    pub fn with_value(value: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
+        let mut this = Self::new(cx);
+        this.content = sanitize_single_line(value.into().as_ref()).into();
+        this.selected_range = this.content.len()..this.content.len();
+        this
+    }
+
+    /// Returns the current input value.
+    pub fn value(&self) -> &str {
+        self.content.as_ref()
+    }
+
+    /// Returns the placeholder value used by editable rendering.
+    pub fn placeholder(&self) -> &str {
+        self.placeholder.as_ref()
+    }
+
+    /// Sets the placeholder value.
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    /// Sets the full input value and moves the caret to the end.
+    pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = sanitize_single_line(value.into().as_ref()).into();
+        self.selected_range = self.content.len()..self.content.len();
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.notify();
+    }
+
+    /// Returns whether the controller is disabled.
+    pub const fn disabled(&self) -> bool {
+        self.disabled
+    }
+
+    /// Sets disabled state.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if self.disabled != disabled {
+            self.disabled = disabled;
+            cx.notify();
+        }
+    }
+
+    /// Returns whether the controller is read-only.
+    pub const fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Sets read-only state.
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        if self.read_only != read_only {
+            self.read_only = read_only;
+            cx.notify();
+        }
+    }
+
+    /// Returns whether platform text input should mutate this controller.
+    pub const fn accepts_editing(&self) -> bool {
+        !self.disabled && !self.read_only
+    }
+
+    /// Returns the selected byte range.
+    pub fn selected_range(&self) -> Range<usize> {
+        self.selected_range.clone()
+    }
+
+    /// Returns the selected UTF-16 range.
+    pub fn selected_range_utf16(&self) -> Range<usize> {
+        self.range_to_utf16(&self.selected_range)
+    }
+
+    /// Returns the marked UTF-16 range.
+    pub fn marked_range_utf16(&self) -> Option<Range<usize>> {
+        self.marked_range
+            .as_ref()
+            .map(|range| self.range_to_utf16(range))
+    }
+
+    /// Replaces a UTF-16 range, the marked range, or the current selection.
+    pub fn replace_text_in_range_utf16(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.accepts_editing() {
+            self.replace_text_in_range_inner(range_utf16, text);
+            cx.notify();
+        }
+    }
+
+    /// Replaces and marks text using UTF-16 ranges.
+    pub fn replace_and_mark_text_in_range_utf16(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        selected_utf16: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.accepts_editing() {
+            self.replace_and_mark_text_in_range_inner(range_utf16, text, selected_utf16);
+            cx.notify();
+        }
+    }
+
+    /// Moves the caret to a byte offset clamped to a character boundary.
+    pub fn move_to_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.move_to(offset, cx);
+    }
+
+    /// Selects a byte range clamped to character boundaries.
+    pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let start = clamp_to_char_boundary(self.value(), range.start);
+        let end = clamp_to_char_boundary(self.value(), range.end);
+        self.selected_range = start.min(end)..start.max(end);
+        self.selection_reversed = end < start;
+        cx.notify();
+    }
+
+    /// Returns text for a UTF-16 range and updates the adjusted range.
+    pub fn text_for_range_utf16(
+        &self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+    ) -> Option<String> {
+        let range = self.range_from_utf16(&range_utf16);
+        adjusted_range.replace(self.range_to_utf16(&range));
+        self.content.get(range).map(ToString::to_string)
+    }
+
+    /// Deletes the previous grapheme or selected text.
+    pub fn delete_backward(&mut self, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        if self.selected_range.is_empty() {
+            let previous = self.previous_boundary(self.cursor_offset());
+            if previous == self.cursor_offset() {
+                return;
+            }
+            self.selected_range = previous..self.cursor_offset();
+        }
+        self.replace_text_in_range_inner(None, "");
+        cx.notify();
+    }
+
+    /// Deletes the next grapheme or selected text.
+    pub fn delete_forward(&mut self, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        if self.selected_range.is_empty() {
+            let next = self.next_boundary(self.cursor_offset());
+            if next == self.cursor_offset() {
+                return;
+            }
+            self.selected_range = self.cursor_offset()..next;
+        }
+        self.replace_text_in_range_inner(None, "");
+        cx.notify();
+    }
+
+    fn sync_interaction_state(&mut self, disabled: bool, read_only: bool) {
+        self.disabled = disabled;
+        self.read_only = read_only;
+    }
+
+    fn cursor_offset(&self) -> usize {
+        if self.selection_reversed {
+            self.selected_range.start
+        } else {
+            self.selected_range.end
+        }
+    }
+
+    fn offset_from_utf16(&self, offset: usize) -> usize {
+        let mut utf8_offset = 0;
+        let mut utf16_count = 0;
+
+        for ch in self.content.chars() {
+            if utf16_count >= offset {
+                break;
+            }
+            utf16_count += ch.len_utf16();
+            utf8_offset += ch.len_utf8();
+        }
+
+        utf8_offset.min(self.content.len())
+    }
+
+    fn offset_to_utf16(&self, offset: usize) -> usize {
+        let offset = clamp_to_char_boundary(self.value(), offset);
+        let mut utf16_offset = 0;
+        let mut utf8_count = 0;
+
+        for ch in self.content.chars() {
+            if utf8_count >= offset {
+                break;
+            }
+            utf8_count += ch.len_utf8();
+            utf16_offset += ch.len_utf16();
+        }
+
+        utf16_offset
+    }
+
+    fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
+        let start = self.offset_from_utf16(range_utf16.start);
+        let end = self.offset_from_utf16(range_utf16.end);
+        start.min(end)..start.max(end)
+    }
+
+    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+    }
+
+    fn previous_boundary(&self, offset: usize) -> usize {
+        self.content
+            .grapheme_indices(true)
+            .rev()
+            .find_map(|(idx, _)| (idx < offset).then_some(idx))
+            .unwrap_or(0)
+    }
+
+    fn next_boundary(&self, offset: usize) -> usize {
+        self.content
+            .grapheme_indices(true)
+            .find_map(|(idx, _)| (idx > offset).then_some(idx))
+            .unwrap_or(self.content.len())
+    }
+
+    fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
+        if self.content.is_empty() {
+            return 0;
+        }
+
+        let (Some(bounds), Some(line)) = (self.last_bounds.as_ref(), self.last_layout.as_ref())
+        else {
+            return 0;
+        };
+        if position.y < bounds.top() {
+            return 0;
+        }
+        if position.y > bounds.bottom() {
+            return self.content.len();
+        }
+        line.closest_index_for_x(position.x - bounds.left())
+    }
+
+    fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = clamp_to_char_boundary(self.value(), offset);
+        self.selected_range = offset..offset;
+        self.selection_reversed = false;
+        cx.notify();
+    }
+
+    fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let offset = clamp_to_char_boundary(self.value(), offset);
+        if self.selection_reversed {
+            self.selected_range.start = offset;
+        } else {
+            self.selected_range.end = offset;
+        }
+        if self.selected_range.end < self.selected_range.start {
+            self.selection_reversed = !self.selection_reversed;
+            self.selected_range = self.selected_range.end..self.selected_range.start;
+        }
+        cx.notify();
+    }
+
+    fn replace_text_in_range_inner(&mut self, range_utf16: Option<Range<usize>>, new_text: &str) {
+        let range = range_utf16
+            .as_ref()
+            .map(|range| self.range_from_utf16(range))
+            .or(self.marked_range.clone())
+            .unwrap_or_else(|| self.selected_range.clone());
+        let new_text = sanitize_single_line(new_text);
+        let new_end = range.start + new_text.len();
+
+        self.content =
+            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
+                .into();
+        self.selected_range = new_end..new_end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+    }
+
+    fn replace_and_mark_text_in_range_inner(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        selected_utf16: Option<Range<usize>>,
+    ) {
+        let range = range_utf16
+            .as_ref()
+            .map(|range| self.range_from_utf16(range))
+            .or(self.marked_range.clone())
+            .unwrap_or_else(|| self.selected_range.clone());
+        let new_text = sanitize_single_line(new_text);
+        let new_end = range.start + new_text.len();
+
+        self.content =
+            (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
+                .into();
+        self.marked_range = (!new_text.is_empty()).then_some(range.start..new_end);
+        self.selected_range = selected_utf16
+            .as_ref()
+            .map(|selected| {
+                range.start + offset_from_utf16_in_text(&new_text, selected.start)
+                    ..range.start + offset_from_utf16_in_text(&new_text, selected.end)
+            })
+            .unwrap_or(new_end..new_end);
+        self.selection_reversed = false;
+    }
+
+    fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(self.previous_boundary(self.cursor_offset()), cx);
+        } else {
+            self.move_to(self.selected_range.start, cx);
+        }
+    }
+
+    fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.move_to(self.next_boundary(self.cursor_offset()), cx);
+        } else {
+            self.move_to(self.selected_range.end, cx);
+        }
+    }
+
+    fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.next_boundary(self.cursor_offset()), cx);
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.selected_range = 0..self.content.len();
+        self.selection_reversed = false;
+        cx.notify();
+    }
+
+    fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+    }
+
+    fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(self.content.len(), cx);
+    }
+
+    fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        if self.selected_range.is_empty() {
+            let previous = self.previous_boundary(self.cursor_offset());
+            if previous == self.cursor_offset() {
+                window.play_system_bell();
+                return;
+            }
+            self.selected_range = previous..self.cursor_offset();
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        if self.selected_range.is_empty() {
+            let next = self.next_boundary(self.cursor_offset());
+            if next == self.cursor_offset() {
+                window.play_system_bell();
+                return;
+            }
+            self.selected_range = self.cursor_offset()..next;
+        }
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.replace_text_in_range(None, &text, window, cx);
+        }
+    }
+
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.selected_range.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                self.content[self.selected_range.clone()].to_string(),
+            ));
+        }
+    }
+
+    fn cut(&mut self, action: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accepts_editing() {
+            return;
+        }
+        self.copy(&Copy, window, cx);
+        if !self.selected_range.is_empty() {
+            let _ = action;
+            self.replace_text_in_range(None, "", window, cx);
+        }
+    }
+
+    fn show_character_palette(
+        &mut self,
+        _: &ShowCharacterPalette,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+        window.show_character_palette();
+    }
+
+    fn on_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.is_selecting = true;
+
+        if event.modifiers.shift {
+            self.select_to(self.index_for_mouse_position(event.position), cx);
+        } else {
+            self.move_to(self.index_for_mouse_position(event.position), cx);
+        }
+    }
+
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+        self.is_selecting = false;
+    }
+
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.is_selecting {
+            self.select_to(self.index_for_mouse_position(event.position), cx);
+        }
+    }
+}
+
+impl Focusable for TextInputController {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EntityInputHandler for TextInputController {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        self.text_for_range_utf16(range_utf16, adjusted_range)
+    }
+
+    fn selected_text_range(
+        &mut self,
+        ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        if self.disabled && !ignore_disabled_input {
+            return None;
+        }
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selected_range),
+            reversed: self.selection_reversed,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.marked_range
+            .as_ref()
+            .map(|range| self.range_to_utf16(range))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.marked_range = None;
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.accepts_editing() {
+            return;
+        }
+        self.replace_text_in_range_inner(range_utf16, new_text);
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        selected_utf16: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.accepts_editing() {
+            return;
+        }
+        self.replace_and_mark_text_in_range_inner(range_utf16, new_text, selected_utf16);
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let last_layout = self.last_layout.as_ref()?;
+        let range = self.range_from_utf16(&range_utf16);
+        Some(Bounds::from_corners(
+            point(
+                bounds.left() + last_layout.x_for_index(range.start),
+                bounds.top(),
+            ),
+            point(
+                bounds.left() + last_layout.x_for_index(range.end),
+                bounds.bottom(),
+            ),
+        ))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let bounds = self.last_bounds?;
+        let last_layout = self.last_layout.as_ref()?;
+        if point.y < bounds.top() {
+            return Some(0);
+        }
+        if point.y > bounds.bottom() {
+            return Some(self.offset_to_utf16(self.content.len()));
+        }
+        let utf8_index = last_layout.index_for_x(point.x - bounds.left())?;
+        Some(self.offset_to_utf16(utf8_index))
+    }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.accepts_editing()
+    }
+}
+
 /// Resolved text input state used by tests, demos, and rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextInputState {
@@ -106,6 +785,7 @@ pub struct TextInputState {
     read_only: bool,
     invalid: bool,
     required: bool,
+    controller_driven: bool,
     metrics: TextInputMetrics,
     colors: TextInputColors,
     focus_ring: FocusRing,
@@ -121,6 +801,7 @@ impl TextInputState {
         read_only: bool,
         invalid: bool,
         required: bool,
+        controller_driven: bool,
         tokens: ThemeTokens,
     ) -> Self {
         let colors = ThemeResolver::text_input_colors(tokens, disabled, read_only, invalid);
@@ -133,6 +814,7 @@ impl TextInputState {
             read_only,
             invalid,
             required,
+            controller_driven,
             metrics: TextInputMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -203,6 +885,11 @@ impl TextInputState {
         self.required
     }
 
+    /// Returns whether this state is backed by an editable controller.
+    pub const fn controller_driven(&self) -> bool {
+        self.controller_driven
+    }
+
     /// Returns whether text editing should be accepted.
     pub const fn input_enabled(&self) -> bool {
         !self.disabled && !self.read_only
@@ -251,6 +938,7 @@ pub struct TextInput {
     label: SharedString,
     value: SharedString,
     placeholder: Option<SharedString>,
+    controller: Option<Entity<TextInputController>>,
     size: Size,
     disabled: bool,
     read_only: bool,
@@ -267,6 +955,7 @@ impl TextInput {
             label: label.into(),
             value: SharedString::default(),
             placeholder: None,
+            controller: None,
             size: Size::Medium,
             disabled: false,
             read_only: false,
@@ -274,6 +963,12 @@ impl TextInput {
             required: false,
             tokens: ThemeTokens::default(),
         }
+    }
+
+    /// Binds this input to an editable controller entity.
+    pub fn controller(mut self, controller: Entity<TextInputController>) -> Self {
+        self.controller = Some(controller);
+        self
     }
 
     /// Sets the displayed value.
@@ -328,6 +1023,7 @@ impl TextInput {
             self.read_only,
             self.invalid,
             self.required,
+            self.controller.is_some(),
             self.tokens,
         )
     }
@@ -346,18 +1042,34 @@ impl RenderOnce for TextInput {
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
-        let show_placeholder = state.placeholder_visible();
-        let display_text = if show_placeholder {
-            self.placeholder.unwrap_or_default()
+        let controller = self.controller.clone();
+        let builder_placeholder = self.placeholder.clone().unwrap_or_default();
+        if let Some(controller) = controller.as_ref() {
+            controller.update(_cx, |controller, _cx| {
+                controller.sync_interaction_state(state.disabled(), state.read_only());
+            });
+        }
+        let controller_text = controller.as_ref().map(|controller| controller.read(_cx));
+        let placeholder = controller_text
+            .as_ref()
+            .map(|controller| controller.placeholder().to_owned().into())
+            .filter(|placeholder: &SharedString| !placeholder.is_empty())
+            .unwrap_or(builder_placeholder.clone());
+        let show_placeholder = controller_text
+            .as_ref()
+            .map(|controller| controller.value().is_empty() && !placeholder.is_empty())
+            .unwrap_or_else(|| state.placeholder_visible());
+        let static_display_text = if show_placeholder {
+            placeholder.clone()
         } else {
             self.value.clone()
         };
-        let text_color = if show_placeholder {
+        let text_color_intent = if show_placeholder {
             colors.placeholder()
         } else {
             colors.foreground()
         };
-
+        let text_color = ThemeResolver::resolve(text_color_intent);
         div()
             .id(self.id)
             .min_h(metrics.height())
@@ -373,7 +1085,7 @@ impl RenderOnce for TextInput {
             .py(metrics.padding_y())
             .text_size(metrics.text_size())
             .line_height(metrics.text_size())
-            .text_color(ThemeResolver::resolve(text_color))
+            .text_color(text_color)
             .focusable()
             .tab_stop(state.tab_stop_enabled())
             .role(state.role())
@@ -388,11 +1100,316 @@ impl RenderOnce for TextInput {
             .when(state.read_only() && !state.disabled(), |this| {
                 this.cursor_default()
             })
+            .when_some(controller.clone(), |this, controller| {
+                let focus = controller.focus_handle(_cx);
+                let backspace = controller.clone();
+                let delete = controller.clone();
+                let left = controller.clone();
+                let right = controller.clone();
+                let select_left = controller.clone();
+                let select_right = controller.clone();
+                let select_all = controller.clone();
+                let home = controller.clone();
+                let end = controller.clone();
+                let paste = controller.clone();
+                let copy = controller.clone();
+                let cut = controller.clone();
+                let character_palette = controller.clone();
+                let mouse_down = controller.clone();
+                let mouse_up = controller.clone();
+                let mouse_up_out = controller.clone();
+                let mouse_move = controller.clone();
+
+                this.key_context(TEXT_INPUT_KEY_CONTEXT)
+                    .track_focus(&focus)
+                    .on_action(move |action: &Backspace, window, cx| {
+                        backspace.update(cx, |controller, cx| {
+                            controller.backspace(action, window, cx);
+                        });
+                    })
+                    .on_action(move |action: &Delete, window, cx| {
+                        delete.update(cx, |controller, cx| {
+                            controller.delete(action, window, cx);
+                        });
+                    })
+                    .on_action(move |action: &Left, window, cx| {
+                        left.update(cx, |controller, cx| controller.left(action, window, cx));
+                    })
+                    .on_action(move |action: &Right, window, cx| {
+                        right.update(cx, |controller, cx| controller.right(action, window, cx));
+                    })
+                    .on_action(move |action: &SelectLeft, window, cx| {
+                        select_left.update(cx, |controller, cx| {
+                            controller.select_left(action, window, cx);
+                        });
+                    })
+                    .on_action(move |action: &SelectRight, window, cx| {
+                        select_right.update(cx, |controller, cx| {
+                            controller.select_right(action, window, cx);
+                        });
+                    })
+                    .on_action(move |action: &SelectAll, window, cx| {
+                        select_all.update(cx, |controller, cx| {
+                            controller.select_all(action, window, cx);
+                        });
+                    })
+                    .on_action(move |action: &Home, window, cx| {
+                        home.update(cx, |controller, cx| controller.home(action, window, cx));
+                    })
+                    .on_action(move |action: &End, window, cx| {
+                        end.update(cx, |controller, cx| controller.end(action, window, cx));
+                    })
+                    .on_action(move |action: &Paste, window, cx| {
+                        paste.update(cx, |controller, cx| controller.paste(action, window, cx));
+                    })
+                    .on_action(move |action: &Copy, window, cx| {
+                        copy.update(cx, |controller, cx| controller.copy(action, window, cx));
+                    })
+                    .on_action(move |action: &Cut, window, cx| {
+                        cut.update(cx, |controller, cx| controller.cut(action, window, cx));
+                    })
+                    .on_action(move |action: &ShowCharacterPalette, window, cx| {
+                        character_palette.update(cx, |controller, cx| {
+                            controller.show_character_palette(action, window, cx);
+                        });
+                    })
+                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                        mouse_down.update(cx, |controller, cx| {
+                            controller.on_mouse_down(event, window, cx);
+                        });
+                    })
+                    .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                        mouse_up.update(cx, |controller, cx| {
+                            controller.on_mouse_up(event, window, cx);
+                        });
+                    })
+                    .on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
+                        mouse_up_out.update(cx, |controller, cx| {
+                            controller.on_mouse_up(event, window, cx);
+                        });
+                    })
+                    .on_mouse_move(move |event, window, cx| {
+                        mouse_move.update(cx, |controller, cx| {
+                            controller.on_mouse_move(event, window, cx);
+                        });
+                    })
+            })
             .child(
                 div()
                     .min_w(open_gpui::px(0.0))
+                    .w_full()
                     .truncate()
-                    .child(display_text),
+                    .children(
+                        controller
+                            .into_iter()
+                            .map(|controller| EditableTextElement {
+                                controller,
+                                placeholder: placeholder.clone(),
+                                text_color: text_color.into(),
+                                placeholder_color: ThemeResolver::resolve(colors.placeholder())
+                                    .into(),
+                                selection_color: rgba(0x2f80ed33).into(),
+                                caret_color: text_color.into(),
+                                text_size: metrics.text_size(),
+                            }),
+                    )
+                    .when(!state.controller_driven(), |this| {
+                        this.child(static_display_text)
+                    }),
             )
     }
+}
+
+struct EditableTextElement {
+    controller: Entity<TextInputController>,
+    placeholder: SharedString,
+    text_color: Hsla,
+    placeholder_color: Hsla,
+    selection_color: Hsla,
+    caret_color: Hsla,
+    text_size: Pixels,
+}
+
+struct EditableTextPrepaint {
+    line: Option<ShapedLine>,
+    cursor: Option<PaintQuad>,
+    selection: Option<PaintQuad>,
+}
+
+impl IntoElement for EditableTextElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for EditableTextElement {
+    type RequestLayoutState = ();
+    type PrepaintState = EditableTextPrepaint;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = window.line_height().into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+        let controller = self.controller.read(_cx);
+        let content = controller.value();
+        let selected_range = controller.selected_range();
+        let cursor = controller.cursor_offset();
+        let (display_text, text_color): (SharedString, Hsla) = if content.is_empty() {
+            (self.placeholder.clone(), self.placeholder_color)
+        } else {
+            (content.to_string().into(), self.text_color)
+        };
+        let font = window.text_style().font();
+        let line = window.text_system().shape_line(
+            display_text.clone(),
+            self.text_size,
+            &[TextRun {
+                len: display_text.len(),
+                font,
+                color: text_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }],
+            None,
+        );
+
+        let cursor = controller.selected_range.is_empty().then(|| {
+            let x = line.x_for_index(cursor);
+            fill(
+                Bounds::from_corners(
+                    point(bounds.left() + x, bounds.top()),
+                    point(bounds.left() + x + px(1.0), bounds.bottom()),
+                ),
+                self.caret_color,
+            )
+        });
+        let selection = (!selected_range.is_empty()).then(|| {
+            fill(
+                Bounds::from_corners(
+                    point(
+                        bounds.left() + line.x_for_index(selected_range.start),
+                        bounds.top(),
+                    ),
+                    point(
+                        bounds.left() + line.x_for_index(selected_range.end),
+                        bounds.bottom(),
+                    ),
+                ),
+                self.selection_color,
+            )
+        });
+
+        let _ = controller;
+
+        EditableTextPrepaint {
+            line: Some(line),
+            cursor,
+            selection,
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let focus_handle = self.controller.focus_handle(cx);
+        window.handle_input(
+            &focus_handle,
+            ElementInputHandler::new(bounds, self.controller.clone()),
+            cx,
+        );
+
+        if let Some(selection) = prepaint.selection.take() {
+            window.paint_quad(selection);
+        }
+
+        let line = prepaint.line.take().unwrap_or_default();
+        let _ = line.paint(
+            bounds.origin,
+            window.line_height(),
+            open_gpui::TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+
+        if focus_handle.is_focused(window)
+            && let Some(cursor) = prepaint.cursor.take()
+        {
+            window.paint_quad(cursor);
+        }
+
+        self.controller.update(cx, |controller, _cx| {
+            controller.last_layout = Some(line);
+            controller.last_bounds = Some(bounds);
+        });
+    }
+}
+
+fn sanitize_single_line(text: &str) -> String {
+    text.replace(['\r', '\n'], " ")
+}
+
+fn clamp_to_char_boundary(text: &str, offset: usize) -> usize {
+    if offset >= text.len() {
+        return text.len();
+    }
+    if text.is_char_boundary(offset) {
+        return offset;
+    }
+    let mut clamped = offset;
+    while clamped > 0 && !text.is_char_boundary(clamped) {
+        clamped -= 1;
+    }
+    clamped
+}
+
+fn offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
+    let mut utf8_offset = 0;
+    let mut utf16_count = 0;
+
+    for ch in text.chars() {
+        if utf16_count >= offset {
+            break;
+        }
+        utf16_count += ch.len_utf16();
+        utf8_offset += ch.len_utf8();
+    }
+
+    utf8_offset.min(text.len())
 }

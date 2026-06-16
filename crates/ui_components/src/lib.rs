@@ -19,5 +19,8 @@ pub use color::{ColorIntent, ColorState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use switch::{Switch, SwitchColors, SwitchMetrics, SwitchState};
-pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
+pub use text_input::{
+    TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
+    init as init_text_input,
+};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};

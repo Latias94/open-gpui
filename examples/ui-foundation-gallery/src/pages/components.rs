@@ -15,6 +15,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::Switch",
     "open_gpui_ui_components::TextInput",
+    "open_gpui_ui_components::TextInputController",
     "open_gpui_ui_components::Field",
     "ThemeTokens",
     "Size",
@@ -52,6 +53,8 @@ pub struct TextInputSample {
     pub id: &'static str,
     /// Sample label.
     pub label: &'static str,
+    /// Whether this sample is rendered with an editable controller.
+    pub controller_driven: bool,
     /// Resolved state.
     pub state: TextInputState,
 }
@@ -168,6 +171,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             false,
             Size::Medium,
+            true,
         ),
         (
             "filled",
@@ -179,6 +183,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             false,
             Size::Medium,
+            false,
         ),
         (
             "invalid",
@@ -190,6 +195,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             true,
             true,
             Size::Medium,
+            false,
         ),
         (
             "read-only",
@@ -201,6 +207,7 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             false,
             Size::Medium,
+            false,
         ),
         (
             "disabled",
@@ -212,13 +219,26 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             false,
             false,
             Size::Medium,
+            false,
         ),
     ]
     .map(
-        |(id, label, value, placeholder, disabled, read_only, required, invalid, size)| {
+        |(
+            id,
+            label,
+            value,
+            placeholder,
+            disabled,
+            read_only,
+            required,
+            invalid,
+            size,
+            controller_driven,
+        )| {
             TextInputSample {
                 id,
                 label,
+                controller_driven,
                 state: TextInput::new(id, label)
                     .value(value)
                     .placeholder(placeholder)

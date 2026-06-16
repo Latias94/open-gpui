@@ -9,7 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     Button, ButtonState, ColorIntent, Field, FieldState, FocusRing, Switch, SwitchState, TextInput,
-    TextInputState, focus_ring_shadow,
+    TextInputController, TextInputState, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -67,6 +67,7 @@ pub struct GalleryShell {
     navigation_scroll: ScrollHandle,
     page_scroll: ScrollHandle,
     root_focus: FocusHandle,
+    editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
     focus_message: &'static str,
     a11y_counter: i32,
@@ -82,6 +83,11 @@ impl GalleryShell {
             navigation_scroll: ScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
+            editable_text_input: cx.new(|cx| {
+                let mut controller = TextInputController::with_value("", cx);
+                controller.set_placeholder("Type in the gallery", cx);
+                controller
+            }),
             focus_controls: [
                 cx.focus_handle().tab_index(1).tab_stop(true),
                 cx.focus_handle().tab_index(2).tab_stop(true),
@@ -573,6 +579,9 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let state = sample.state.clone();
+                                    let controller = sample
+                                        .controller_driven
+                                        .then(|| self.editable_text_input.clone());
                                     div()
                                         .id(format!("component-text-input-sample:{}", sample.id))
                                         .min_w(px(240.0))
@@ -596,8 +605,12 @@ impl GalleryShell {
                                             sample.label,
                                             &state,
                                             snapshot.tokens,
+                                            controller,
                                         ))
-                                        .child(component_text_input_state_row(&state))
+                                        .child(component_text_input_state_row(
+                                            &state,
+                                            sample.controller_driven,
+                                        ))
                                 }),
                         ),
                     ),
@@ -639,6 +652,7 @@ impl GalleryShell {
                                                 field_state.label(),
                                                 &input_state,
                                                 snapshot.tokens,
+                                                None,
                                             ),
                                             snapshot.tokens,
                                         ))
@@ -1332,6 +1346,8 @@ impl GalleryShell {
 
 /// Opens the foundation gallery window.
 pub fn open_gallery(cx: &mut App) {
+    init_text_input(cx);
+
     let bounds = Bounds::centered(
         None,
         size(DEFAULT_GALLERY_WIDTH, DEFAULT_GALLERY_HEIGHT),
@@ -1475,6 +1491,7 @@ fn component_text_input(
     label: impl Into<open_gpui::SharedString>,
     state: &TextInputState,
     tokens: ThemeTokens,
+    controller: Option<open_gpui::Entity<TextInputController>>,
 ) -> TextInput {
     let input = TextInput::new(id, label)
         .value(state.value())
@@ -1484,6 +1501,11 @@ fn component_text_input(
         .required(state.required())
         .invalid(state.invalid())
         .tokens(tokens);
+    let input = if let Some(controller) = controller {
+        input.controller(controller)
+    } else {
+        input
+    };
 
     if let Some(placeholder) = state.placeholder() {
         input.placeholder(placeholder)
@@ -1518,7 +1540,10 @@ fn component_field(
     }
 }
 
-fn component_text_input_state_row(state: &TextInputState) -> impl IntoElement {
+fn component_text_input_state_row(
+    state: &TextInputState,
+    controller_driven: bool,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -1544,6 +1569,11 @@ fn component_text_input_state_row(state: &TextInputState) -> impl IntoElement {
                 "display value"
             }
         ))
+        .child(if controller_driven || state.controller_driven() {
+            "controller"
+        } else {
+            "static"
+        })
 }
 
 fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl IntoElement {

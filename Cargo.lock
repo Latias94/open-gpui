@@ -4679,6 +4679,7 @@ version = "0.1.0"
 dependencies = [
  "open-gpui",
  "open-gpui-ui-core",
+ "unicode-segmentation",
 ]
 
 [[package]]
