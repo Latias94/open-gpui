@@ -110,8 +110,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, ScrollArea, Splitter, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field,
-   Tabs, Toolbar, Sidebar, Listbox, and Select samples render with enabled, disabled, selected,
-   checked, unchecked, indeterminate,
+   Tabs, Toolbar, Sidebar, Listbox, Select, Combobox, and Command samples render with enabled,
+   disabled, selected, checked, unchecked, indeterminate,
    pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
    roving-focus, popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
    remain display-only. The IconButton samples should be square controls with visible focus and
@@ -141,7 +141,12 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label
    reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
    scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains
-   closed. The default TextInput sample should accept real text editing through the
+   closed. The Combobox samples should expose editable filtering, selected value metadata that does
+   not disappear when the query hides the selected option, an empty filtered state, and disabled
+   input/popup suppression. The Command samples should expose grouped command items, shortcut
+   labels, loading and empty states, inline and dialog-backed presentation, and modal dialog
+   outside/Escape dismissal while preserving the Components page scrollability. The default TextInput
+   sample should accept real text editing through the
    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
    page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`
    panic during that navigation is a

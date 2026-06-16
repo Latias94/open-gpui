@@ -10,6 +10,8 @@ pub mod badge;
 pub mod button;
 pub mod checkbox;
 pub mod color;
+pub mod combobox;
+pub mod command;
 pub mod context_menu;
 pub mod dialog;
 pub mod field;
@@ -45,6 +47,15 @@ pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use color::{ColorIntent, ColorState};
+pub use combobox::{
+    Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
+    ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
+};
+pub use command::{
+    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor, CommandItem,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMetrics, CommandOpenMode,
+    CommandSelection, CommandState,
+};
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};

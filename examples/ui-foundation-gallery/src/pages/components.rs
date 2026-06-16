@@ -2,7 +2,9 @@
 
 use open_gpui_ui_components::{
     Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
-    Field, FieldState, IconButton, IconButtonState, Label, LabelState, ListboxGroupDescriptor,
+    ComboboxGroupDescriptor, ComboboxOpenMode, ComboboxOptionDescriptor, ComboboxState,
+    CommandGroupDescriptor, CommandItemDescriptor, CommandOpenMode, CommandState, Field,
+    FieldState, IconButton, IconButtonState, Label, LabelState, ListboxGroupDescriptor,
     ListboxOptionDescriptor, ListboxState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis,
     ScrollAreaState, ScrollResetPolicy, SelectOpenMode, SelectState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
@@ -11,7 +13,7 @@ use open_gpui_ui_components::{
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{
-    FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
+    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens,
 };
 
@@ -57,6 +59,12 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Select",
     "open_gpui_ui_components::SelectState",
     "open_gpui_ui_components::SelectOpenMode",
+    "open_gpui_ui_components::Combobox",
+    "open_gpui_ui_components::ComboboxState",
+    "open_gpui_ui_components::ComboboxOpenMode",
+    "open_gpui_ui_components::Command",
+    "open_gpui_ui_components::CommandState",
+    "open_gpui_ui_components::CommandOpenMode",
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
@@ -84,6 +92,8 @@ pub const SIGNALS: &[&str] = &[
     "Role::Section",
     "Role::ListBox",
     "Role::ListBoxOption",
+    "Role::EditableComboBox",
+    "Role::ProgressIndicator",
     "Role::Switch",
     "Role::CheckBox",
     "Role::RadioGroup",
@@ -558,6 +568,90 @@ pub struct SelectSample {
     pub groups: Vec<ListboxGroupSample>,
     /// Resolved state.
     pub state: SelectState,
+}
+
+/// One combobox sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComboboxSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Placeholder text.
+    pub placeholder: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Query text.
+    pub query: &'static str,
+    /// Selected option value.
+    pub selected: Option<&'static str>,
+    /// Whether the combobox is disabled.
+    pub disabled: bool,
+    /// Open-state ownership.
+    pub open_mode: ComboboxOpenMode,
+    /// Standalone options.
+    pub options: Vec<ListboxOptionSample>,
+    /// Grouped options.
+    pub groups: Vec<ListboxGroupSample>,
+    /// Resolved state.
+    pub state: ComboboxState,
+}
+
+/// One command item sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandItemSample {
+    /// Stable command value.
+    pub value: &'static str,
+    /// Visible command label.
+    pub label: &'static str,
+    /// Optional shortcut display.
+    pub shortcut: Option<&'static str>,
+    /// Whether the command is disabled.
+    pub disabled: bool,
+}
+
+/// One command group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandGroupSample {
+    /// Stable group value.
+    pub value: &'static str,
+    /// Visible group label.
+    pub label: &'static str,
+    /// Commands in this group.
+    pub items: Vec<CommandItemSample>,
+}
+
+/// One command palette sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Placeholder text.
+    pub placeholder: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Query text.
+    pub query: &'static str,
+    /// Selected command value.
+    pub selected: Option<&'static str>,
+    /// Whether the command surface is disabled.
+    pub disabled: bool,
+    /// Open-state ownership.
+    pub open_mode: CommandOpenMode,
+    /// Whether the surface models command dialog policy.
+    pub dialog: bool,
+    /// Standalone command items.
+    pub items: Vec<CommandItemSample>,
+    /// Grouped command items.
+    pub groups: Vec<CommandGroupSample>,
+    /// Resolved state.
+    pub state: CommandState,
 }
 
 /// Returns button samples backed by real component state.
@@ -2046,6 +2140,264 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
     ]
 }
 
+/// Returns combobox samples backed by real component state.
+pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
+    let framework_options = vec![
+        ListboxOptionSample {
+            value: "react",
+            label: "React",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "solid",
+            label: "Solid",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "ember",
+            label: "Ember",
+            disabled: true,
+        },
+    ];
+    let framework_groups = vec![ListboxGroupSample {
+        value: "meta",
+        label: "Meta",
+        options: vec![
+            ListboxOptionSample {
+                value: "remix",
+                label: "Remix",
+                disabled: false,
+            },
+            ListboxOptionSample {
+                value: "relay",
+                label: "Relay",
+                disabled: false,
+            },
+        ],
+    }];
+    let empty_options = vec![ListboxOptionSample {
+        value: "rust",
+        label: "Rust",
+        disabled: false,
+    }];
+    let disabled_options = Vec::new();
+
+    [
+        ComboboxSample {
+            id: "framework-combobox",
+            title: "Framework",
+            summary: "Editable combobox filters grouped options while keeping listbox navigation.",
+            placeholder: "Search frameworks",
+            size: Size::Medium,
+            query: "re",
+            selected: None,
+            disabled: false,
+            open_mode: ComboboxOpenMode::Controlled,
+            state: combobox_state(
+                Size::Medium,
+                false,
+                Some(true),
+                false,
+                "Framework",
+                "Search frameworks",
+                "re",
+                None,
+                &framework_options,
+                &framework_groups,
+                tokens,
+            ),
+            options: framework_options,
+            groups: framework_groups,
+        },
+        ComboboxSample {
+            id: "empty-combobox",
+            title: "Empty search",
+            summary: "Filtered empty state keeps the selected value independent from query text.",
+            placeholder: "Search stack",
+            size: Size::Small,
+            query: "zz",
+            selected: None,
+            disabled: false,
+            open_mode: ComboboxOpenMode::Controlled,
+            state: combobox_state(
+                Size::Small,
+                false,
+                Some(true),
+                false,
+                "Empty search",
+                "Search stack",
+                "zz",
+                None,
+                &empty_options,
+                &[],
+                tokens,
+            ),
+            options: empty_options,
+            groups: Vec::new(),
+        },
+        ComboboxSample {
+            id: "disabled-combobox",
+            title: "Disabled search",
+            summary: "Disabled combobox preserves query metadata but suppresses popup presence.",
+            placeholder: "Unavailable",
+            size: Size::Small,
+            query: "",
+            selected: None,
+            disabled: true,
+            open_mode: ComboboxOpenMode::Uncontrolled,
+            state: combobox_state(
+                Size::Small,
+                true,
+                None,
+                true,
+                "Disabled search",
+                "Unavailable",
+                "",
+                None,
+                &disabled_options,
+                &[],
+                tokens,
+            ),
+            options: disabled_options,
+            groups: Vec::new(),
+        },
+    ]
+}
+
+/// Returns command palette samples backed by real component state.
+pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
+    let quick_items = vec![CommandItemSample {
+        value: "open-file",
+        label: "Open File",
+        shortcut: Some("Ctrl+O"),
+        disabled: false,
+    }];
+    let command_groups = vec![
+        CommandGroupSample {
+            value: "file",
+            label: "File",
+            items: vec![
+                CommandItemSample {
+                    value: "new-file",
+                    label: "New File",
+                    shortcut: Some("Ctrl+N"),
+                    disabled: false,
+                },
+                CommandItemSample {
+                    value: "close-window",
+                    label: "Close Window",
+                    shortcut: Some("Alt+F4"),
+                    disabled: true,
+                },
+            ],
+        },
+        CommandGroupSample {
+            value: "view",
+            label: "View",
+            items: vec![CommandItemSample {
+                value: "toggle-sidebar",
+                label: "Toggle Sidebar",
+                shortcut: Some("Ctrl+B"),
+                disabled: false,
+            }],
+        },
+    ];
+    let empty_items = vec![CommandItemSample {
+        value: "save",
+        label: "Save",
+        shortcut: Some("Ctrl+S"),
+        disabled: false,
+    }];
+    let disabled_items = Vec::new();
+
+    [
+        CommandSample {
+            id: "workspace-command",
+            title: "Workspace commands",
+            summary: "Dialog-backed command palette filters groups and exposes shortcut metadata.",
+            placeholder: "Type a command",
+            size: Size::Medium,
+            query: "file",
+            selected: Some("new-file"),
+            disabled: false,
+            open_mode: CommandOpenMode::Controlled,
+            dialog: true,
+            state: command_state(
+                Size::Medium,
+                false,
+                Some(true),
+                false,
+                "Workspace commands",
+                "Type a command",
+                "file",
+                Some("new-file"),
+                &quick_items,
+                &command_groups,
+                true,
+                tokens,
+            ),
+            items: quick_items,
+            groups: command_groups,
+        },
+        CommandSample {
+            id: "empty-command",
+            title: "Empty commands",
+            summary: "Filtered command palette keeps empty and loading states explicit.",
+            placeholder: "Search commands",
+            size: Size::Small,
+            query: "deploy",
+            selected: None,
+            disabled: false,
+            open_mode: CommandOpenMode::Controlled,
+            dialog: false,
+            state: command_state(
+                Size::Small,
+                false,
+                Some(true),
+                false,
+                "Empty commands",
+                "Search commands",
+                "deploy",
+                None,
+                &empty_items,
+                &[],
+                false,
+                tokens,
+            ),
+            items: empty_items,
+            groups: Vec::new(),
+        },
+        CommandSample {
+            id: "disabled-command",
+            title: "Disabled commands",
+            summary: "Disabled command surface blocks editing and hides deferred content.",
+            placeholder: "Unavailable",
+            size: Size::Small,
+            query: "",
+            selected: None,
+            disabled: true,
+            open_mode: CommandOpenMode::Uncontrolled,
+            dialog: false,
+            state: command_state(
+                Size::Small,
+                true,
+                None,
+                true,
+                "Disabled commands",
+                "Unavailable",
+                "",
+                None,
+                &disabled_items,
+                &[],
+                false,
+                tokens,
+            ),
+            items: disabled_items,
+            groups: Vec::new(),
+        },
+    ]
+}
+
 fn tabs_state(
     orientation: Orientation,
     activation_mode: TabsActivationMode,
@@ -2193,6 +2545,84 @@ fn select_state(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn combobox_state(
+    size: Size,
+    disabled: bool,
+    open: Option<bool>,
+    default_open: bool,
+    label: &str,
+    placeholder: &str,
+    query: &str,
+    selected: Option<&str>,
+    options: &[ListboxOptionSample],
+    groups: &[ListboxGroupSample],
+    tokens: ThemeTokens,
+) -> ComboboxState {
+    ComboboxState::resolve(
+        size,
+        disabled,
+        false,
+        open,
+        default_open,
+        label,
+        placeholder,
+        query,
+        selected,
+        selected,
+        "No results",
+        groups.iter().map(combobox_group_descriptor),
+        options.iter().map(combobox_option_descriptor),
+        OverlayPlacementSide::Bottom,
+        OverlayPlacementAlignment::Start,
+        OutsidePressPolicy::DismissAndConsume,
+        InitialFocusIntent::None,
+        FocusRestoreIntent::Trigger,
+        tokens,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn command_state(
+    size: Size,
+    disabled: bool,
+    open: Option<bool>,
+    default_open: bool,
+    label: &str,
+    placeholder: &str,
+    query: &str,
+    selected: Option<&str>,
+    items: &[CommandItemSample],
+    groups: &[CommandGroupSample],
+    dialog: bool,
+    tokens: ThemeTokens,
+) -> CommandState {
+    CommandState::resolve(
+        size,
+        disabled,
+        open,
+        default_open,
+        dialog,
+        label,
+        placeholder,
+        query,
+        selected,
+        selected,
+        (!disabled && query == "deploy")
+            .then(|| open_gpui_ui_components::CommandLoadingState::new("Indexing commands", None)),
+        "No results",
+        dialog.then_some("Command palette".to_string()),
+        dialog.then_some("Run a workspace command".to_string()),
+        groups.iter().map(command_group_descriptor),
+        items.iter().map(command_item_descriptor),
+        OutsidePressPolicy::DismissAndConsume,
+        EscapeKeyPolicy::Dismiss,
+        InitialFocusIntent::FirstFocusable,
+        FocusRestoreIntent::Trigger,
+        tokens,
+    )
+}
+
 fn listbox_group_descriptor(group: &ListboxGroupSample) -> ListboxGroupDescriptor {
     ListboxGroupDescriptor::new(group.value, group.label)
         .options(group.options.iter().map(listbox_option_descriptor))
@@ -2200,6 +2630,28 @@ fn listbox_group_descriptor(group: &ListboxGroupSample) -> ListboxGroupDescripto
 
 fn listbox_option_descriptor(option: &ListboxOptionSample) -> ListboxOptionDescriptor {
     ListboxOptionDescriptor::option(option.value, option.label).disabled(option.disabled)
+}
+
+fn combobox_group_descriptor(group: &ListboxGroupSample) -> ComboboxGroupDescriptor {
+    ComboboxGroupDescriptor::new(group.value, group.label)
+        .options(group.options.iter().map(combobox_option_descriptor))
+}
+
+fn combobox_option_descriptor(option: &ListboxOptionSample) -> ComboboxOptionDescriptor {
+    ComboboxOptionDescriptor::new(option.value, option.label).disabled(option.disabled)
+}
+
+fn command_group_descriptor(group: &CommandGroupSample) -> CommandGroupDescriptor {
+    CommandGroupDescriptor::new(group.value, group.label)
+        .items(group.items.iter().map(command_item_descriptor))
+}
+
+fn command_item_descriptor(item: &CommandItemSample) -> CommandItemDescriptor {
+    let mut descriptor = CommandItemDescriptor::new(item.value, item.label).disabled(item.disabled);
+    if let Some(shortcut) = item.shortcut {
+        descriptor = descriptor.shortcut(shortcut);
+    }
+    descriptor
 }
 
 fn radio_group_state(

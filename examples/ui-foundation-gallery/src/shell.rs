@@ -9,16 +9,17 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
-    Checkbox, CheckboxState, ColorIntent, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
-    FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState,
-    Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover,
-    PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select,
-    SelectOpenMode, SelectState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
-    SidebarItem, SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState,
-    Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
-    TextInputController, TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem,
-    ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind, TooltipOpenIntent,
-    focus_ring_shadow, init_text_input,
+    Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
+    ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
+    CommandState, ContextMenu, Dialog, DialogOpenMode, Field, FieldState, FocusRing, HoverCard,
+    HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState, Label, LabelState,
+    Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover, PopoverOpenMode,
+    RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select, SelectOpenMode,
+    SelectState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem,
+    SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState, Switch,
+    SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController,
+    TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
+    Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -626,6 +627,8 @@ impl GalleryShell {
         let sidebar_samples = pages::components::sidebar_samples(snapshot.tokens);
         let listbox_samples = pages::components::listbox_samples(snapshot.tokens);
         let select_samples = pages::components::select_samples(snapshot.tokens);
+        let combobox_samples = pages::components::combobox_samples(snapshot.tokens);
+        let command_samples = pages::components::command_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
@@ -840,6 +843,14 @@ impl GalleryShell {
             ))
             .child(component_select_samples_section(
                 select_samples,
+                snapshot.tokens,
+            ))
+            .child(component_combobox_samples_section(
+                combobox_samples,
+                snapshot.tokens,
+            ))
+            .child(component_command_samples_section(
+                command_samples,
                 snapshot.tokens,
             ))
             .child(
@@ -3862,11 +3873,205 @@ fn component_select_samples_section(
         )
 }
 
+fn component_combobox_samples_section(
+    samples: [pages::components::ComboboxSample; 3],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Combobox"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.into_iter().map(move |sample| {
+                    let state = sample.state.clone();
+                    let mut combobox =
+                        Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
+                            .placeholder(sample.placeholder)
+                            .query(sample.query)
+                            .with_size(sample.size)
+                            .disabled(sample.disabled)
+                            .tokens(tokens);
+                    if let Some(selected) = sample.selected {
+                        combobox = combobox.selected(selected);
+                    }
+                    combobox = match sample.open_mode {
+                        ComboboxOpenMode::Controlled => combobox.open(state.open()),
+                        ComboboxOpenMode::Uncontrolled => {
+                            combobox.default_open(state.default_open())
+                        }
+                    };
+                    for option in sample.options.iter() {
+                        combobox = combobox.option(component_combobox_option(option));
+                    }
+                    for group in sample.groups.iter() {
+                        combobox = combobox.group(component_combobox_group(group));
+                    }
+
+                    div()
+                        .id(format!("component-combobox-sample:{}", sample.id))
+                        .w(px(360.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(sample.title),
+                                )
+                                .child(label_pill(if state.open() { "open" } else { "closed" })),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x5a6472))
+                                .child(sample.summary),
+                        )
+                        .child(combobox)
+                        .child(component_combobox_state_row(&state))
+                })),
+        )
+}
+
+fn component_command_samples_section(
+    samples: [pages::components::CommandSample; 3],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Command"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.into_iter().map(move |sample| {
+                    let state = sample.state.clone();
+                    let mut command =
+                        Command::new(format!("component-command:{}", sample.id), sample.title)
+                            .placeholder(sample.placeholder)
+                            .query(sample.query)
+                            .with_size(sample.size)
+                            .disabled(sample.disabled)
+                            .tokens(tokens);
+                    if let Some(selected) = sample.selected {
+                        command = command.selected(selected);
+                    }
+                    if sample.dialog {
+                        command = command
+                            .dialog("Command palette")
+                            .dialog_description("Run a workspace command");
+                    }
+                    if sample.id == "empty-command" {
+                        command = command.loading("Indexing commands", None);
+                    }
+                    command = match sample.open_mode {
+                        CommandOpenMode::Controlled => command.open(state.open()),
+                        CommandOpenMode::Uncontrolled => command.default_open(state.default_open()),
+                    };
+                    for item in sample.items.iter() {
+                        command = command.item(component_command_item(item));
+                    }
+                    for group in sample.groups.iter() {
+                        command = command.group(component_command_group(group));
+                    }
+
+                    div()
+                        .id(format!("component-command-sample:{}", sample.id))
+                        .w(px(420.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(sample.title),
+                                )
+                                .child(label_pill(if sample.dialog { "dialog" } else { "inline" })),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x5a6472))
+                                .child(sample.summary),
+                        )
+                        .child(command)
+                        .child(component_command_state_row(&state))
+                })),
+        )
+}
+
 fn component_listbox_group(group: &pages::components::ListboxGroupSample) -> ListboxGroup {
     group.options.iter().fold(
         ListboxGroup::new(group.value, group.label),
         |group, option| group.option(component_listbox_option(option)),
     )
+}
+
+fn component_combobox_group(group: &pages::components::ListboxGroupSample) -> ComboboxGroup {
+    group.options.iter().fold(
+        ComboboxGroup::new(group.value, group.label),
+        |group, option| group.option(component_combobox_option(option)),
+    )
+}
+
+fn component_combobox_option(option: &pages::components::ListboxOptionSample) -> ComboboxOption {
+    ComboboxOption::new(option.value, option.label).disabled(option.disabled)
+}
+
+fn component_command_group(group: &pages::components::CommandGroupSample) -> CommandGroup {
+    group.items.iter().fold(
+        CommandGroup::new(group.value, group.label),
+        |group, item| group.item(component_command_item(item)),
+    )
+}
+
+fn component_command_item(item: &pages::components::CommandItemSample) -> CommandItem {
+    let mut command_item = CommandItem::new(item.value, item.label).disabled(item.disabled);
+    if let Some(shortcut) = item.shortcut {
+        command_item = command_item.shortcut(shortcut);
+    }
+    command_item
 }
 
 fn component_listbox_option(option: &pages::components::ListboxOptionSample) -> ListboxOption {
@@ -3937,6 +4142,71 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
                 "not needed"
             },
             state.outside_press_policy()
+        ))
+}
+
+fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let active = state.active_value().unwrap_or("none");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {:?} / {}",
+            state.input_role(),
+            state.content_role(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "query '{}' / selected {} / active {}",
+            state.query(),
+            selected,
+            active
+        ))
+        .child(format!(
+            "{} of {} options / {:?}",
+            state.filtered_option_count(),
+            state.total_option_count(),
+            state.outside_press_policy()
+        ))
+}
+
+fn component_command_state_row(state: &CommandState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let active = state.active_value().unwrap_or("none");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {:?} / {}",
+            state.input_role(),
+            state.list_role(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "query '{}' / selected {} / active {}",
+            state.query(),
+            selected,
+            active
+        ))
+        .child(format!(
+            "{} groups / {} of {} commands / {}",
+            state.groups().len(),
+            state.filtered_item_count(),
+            state.total_item_count(),
+            if state.dialog().is_some() {
+                "dialog"
+            } else {
+                "inline"
+            }
         ))
 }
 

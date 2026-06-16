@@ -132,8 +132,28 @@ placeholder and selected trigger label, selected and active option values, place
 outside-press policy, initial focus intent, focus restoration intent, resolved metrics, token
 intents, and the listbox content role. The GPUI `Select` adapter owns trigger/content rendering,
 keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
-anchored rendering, and concrete focus handles. Combobox, searchable command palettes, multi-select
-selection models, virtualized long lists, and richer typeahead input remain follow-up work.
+anchored rendering, and concrete focus handles.
+
+`ComboboxState` composes an editable text input, non-modal dismissible popup, scroll viewport
+metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
+default-open state, required/disabled metadata, query text, selected value and label, active option
+value, filtered and total option counts, empty-state label, placement preference, outside-press
+policy, initial focus intent, focus restoration intent, resolved metrics, token intents, and
+editable-combobox/listbox roles. Filtering controls only the visible list: the selected value is
+resolved from the unfiltered descriptors and is not cleared just because the current query hides
+that option. The GPUI adapter owns the `TextInputController`, keyed runtime query/open/selection
+state, callbacks, outside-press and Escape wiring, deferred anchored rendering, scroll handles, and
+concrete focus handles.
+
+`CommandState` composes a search text input, grouped command list, optional dialog wrapper, loading
+metadata, and nested `ListboxState`. It records controlled versus uncontrolled open mode,
+default-open state, selected and active command values, query text, filtered and total command
+counts, standalone/grouped command anatomy, shortcut labels, disabled command state, empty-state
+label, Escape policy, focus restoration intent, resolved metrics, token intents, non-modal inline
+overlay state, and modal dialog overlay state when dialog presentation is enabled. The first
+official command slice is a local surface contract, not a global command registry: async loading,
+fuzzy ranking, multi-select command chips, virtualized result sets, and app-wide indexing remain
+follow-up work.
 
 ## Focus Rings
 

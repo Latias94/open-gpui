@@ -8,6 +8,15 @@ pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVarian
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use crate::color::{ColorIntent, ColorState};
+pub use crate::combobox::{
+    Combobox, ComboboxColors, ComboboxGroup, ComboboxGroupDescriptor, ComboboxMetrics,
+    ComboboxOpenMode, ComboboxOption, ComboboxOptionDescriptor, ComboboxSelection, ComboboxState,
+};
+pub use crate::command::{
+    Command, CommandColors, CommandDialogState, CommandGroup, CommandGroupDescriptor, CommandItem,
+    CommandItemDescriptor, CommandItemState, CommandLoadingState, CommandMetrics, CommandOpenMode,
+    CommandSelection, CommandState,
+};
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};

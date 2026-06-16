@@ -4,11 +4,12 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
-    BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
-    DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
-    FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, Combobox, ComboboxGroup,
+    ComboboxOpenMode, ComboboxOption, Command, CommandGroup, CommandItem, CommandOpenMode,
+    ContextMenu, DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode,
+    Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard,
+    HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
+    Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
     PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, ScrollArea,
     ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, Sheet,
@@ -1325,6 +1326,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
     let root_listbox = root::Listbox::new("listbox", "Choices");
     let root_select = root::Select::new("select", "Choice");
+    let root_combobox = root::Combobox::new("combobox", "Search");
+    let root_command = root::Command::new("command", "Commands");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
@@ -1342,6 +1345,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
     let prelude_listbox = prelude::Listbox::new("listbox", "Choices");
     let prelude_select = prelude::Select::new("select", "Choice");
+    let prelude_combobox = prelude::Combobox::new("combobox", "Search");
+    let prelude_command = prelude::Command::new("command", "Commands");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
@@ -1355,6 +1360,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_toolbar.state(),
         root_listbox.state(),
         root_select.state(),
+        root_combobox.state(),
+        root_command.state(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
@@ -1366,6 +1373,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_toolbar.state(),
         prelude_listbox.state(),
         prelude_select.state(),
+        prelude_combobox.state(),
+        prelude_command.state(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
@@ -1752,6 +1761,153 @@ fn select_state_models_disabled_empty_and_policy_overrides() {
 }
 
 #[test]
+fn combobox_state_filters_query_without_clearing_selection() {
+    let state = Combobox::new("framework-combobox", "Framework")
+        .placeholder("Search frameworks")
+        .open(true)
+        .query("re")
+        .selected("solid")
+        .option(ComboboxOption::new("react", "React").keyword("library"))
+        .option(ComboboxOption::new("solid", "Solid"))
+        .option(ComboboxOption::new("ember", "Ember").disabled(true))
+        .group(
+            ComboboxGroup::new("meta", "Meta")
+                .option(ComboboxOption::new("remix", "Remix").keyword("react"))
+                .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
+        )
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), ComboboxOpenMode::Controlled);
+    assert_eq!(state.input_role(), Role::EditableComboBox);
+    assert_eq!(state.content_role(), Role::ListBox);
+    assert_eq!(state.query(), "re");
+    assert_eq!(state.total_option_count(), 5);
+    assert_eq!(state.filtered_option_count(), 3);
+    assert!(state.filtered());
+    assert_eq!(state.selected_value(), Some("solid"));
+    assert_eq!(state.selected_label(), Some("Solid"));
+    assert_eq!(state.active_value(), Some("react"));
+    assert_eq!(state.listbox().role(), Role::ListBox);
+    assert_eq!(state.listbox().selected_value(), None);
+    assert_eq!(state.listbox().typeahead_query(), Some("re"));
+    assert_eq!(
+        state.listbox().options()[0].role(),
+        Some(Role::ListBoxOption)
+    );
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(state.input().placeholder(), Some("Search frameworks"));
+}
+
+#[test]
+fn combobox_disabled_empty_state_blocks_popup_and_input() {
+    let state = Combobox::new("empty-combobox", "Empty")
+        .placeholder("Search")
+        .default_open(true)
+        .disabled(true)
+        .query("zzz")
+        .option(ComboboxOption::new("react", "React"))
+        .empty_label("No frameworks")
+        .outside_press_policy(OutsidePressPolicy::DismissAndPassThrough)
+        .state();
+
+    assert_eq!(state.open_mode(), ComboboxOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert_eq!(state.filtered_option_count(), 0);
+    assert!(state.listbox().empty());
+    assert_eq!(state.listbox().empty_label(), "No frameworks");
+    assert!(!state.input().editable());
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
+    let state = Command::new("command-palette", "Command palette")
+        .placeholder("Type a command")
+        .open(true)
+        .query("file")
+        .selected("new-file")
+        .loading("Indexing commands", Some(45))
+        .dialog("Command palette")
+        .dialog_description("Run a workspace command")
+        .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
+        .group(
+            CommandGroup::new("file", "File")
+                .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
+                .item(CommandItem::new("close-window", "Close Window").shortcut("Alt+F4")),
+        )
+        .group(
+            CommandGroup::new("view", "View")
+                .item(CommandItem::new("toggle-sidebar", "Toggle Sidebar").keyword("layout")),
+        )
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), CommandOpenMode::Controlled);
+    assert_eq!(state.input_role(), Role::TextInput);
+    assert_eq!(state.list_role(), Role::ListBox);
+    assert_eq!(state.query(), "file");
+    assert_eq!(state.total_item_count(), 4);
+    assert_eq!(state.filtered_item_count(), 2);
+    assert!(state.filtered());
+    assert_eq!(state.selected_value(), Some("new-file"));
+    assert_eq!(state.active_value(), Some("new-file"));
+    assert_eq!(state.groups().len(), 2);
+    assert_eq!(state.groups()[0].label(), "Commands");
+    assert_eq!(state.groups()[1].label(), "File");
+    assert_eq!(state.items().len(), 2);
+    assert_eq!(state.items()[1].shortcut(), Some("Ctrl+N"));
+    assert!(state.items()[1].selected());
+    let activation = state.activation_for_key("enter").unwrap();
+    assert_eq!(activation.value(), "new-file");
+    assert_eq!(activation.shortcut(), Some("Ctrl+N"));
+    assert!(state.loading().is_some());
+    assert_eq!(state.loading().unwrap().role(), Role::ProgressIndicator);
+    assert_eq!(state.loading().unwrap().progress_percent(), Some(45));
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    let dialog = state.dialog().unwrap();
+    assert!(dialog.open());
+    assert_eq!(dialog.content_role(), Role::Window);
+    assert_eq!(dialog.overlay().policy().kind(), OverlayLayerKind::Modal);
+    assert_eq!(dialog.description(), Some("Run a workspace command"));
+}
+
+#[test]
+fn command_state_models_empty_disabled_and_escape_policy() {
+    let state = Command::new("empty-command", "Commands")
+        .default_open(true)
+        .disabled(true)
+        .query("missing")
+        .item(CommandItem::new("open", "Open"))
+        .escape_key_policy(EscapeKeyPolicy::Ignore)
+        .focus_restore_intent(FocusRestoreIntent::None)
+        .state();
+
+    assert_eq!(state.open_mode(), CommandOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert_eq!(state.filtered_item_count(), 0);
+    assert!(state.listbox().empty());
+    assert!(!state.input().editable());
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Ignore);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
 fn disabled_icon_button_blocks_activation_metadata() {
     let state = IconButton::new("locked", "x", "Locked")
         .disabled(true)
@@ -1993,6 +2149,22 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         Select::new("closed-select", "Choice").state(),
     ];
+    let comboboxes = [
+        Combobox::new("combobox", "Search")
+            .open(true)
+            .query("one")
+            .option(ComboboxOption::new("one", "One"))
+            .state(),
+        Combobox::new("closed-combobox", "Search").state(),
+    ];
+    let commands = [
+        Command::new("command", "Commands")
+            .open(true)
+            .query("open")
+            .item(CommandItem::new("open", "Open"))
+            .state(),
+        Command::new("closed-command", "Commands").state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -2227,6 +2399,31 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.content_background(),
             colors.content_foreground(),
             colors.content_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in comboboxes {
+        let colors = state.colors();
+        for intent in [
+            colors.popup_background(),
+            colors.popup_foreground(),
+            colors.popup_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in commands {
+        let colors = state.colors();
+        for intent in [
+            colors.surface(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
             colors.focus_ring(),
         ] {
             assert_theme_has_exact_color(theme, intent);

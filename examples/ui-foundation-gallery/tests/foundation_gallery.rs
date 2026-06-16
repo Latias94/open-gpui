@@ -1,10 +1,11 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant,
-    DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode,
-    MenuItemKind, MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TabsActivationMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent, default_deferred_priority,
+    AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
+    CommandOpenMode, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, HoverCardOpenIntent,
+    HoverCardOpenMode, MenuItemKind, MenuOpenMode, PopoverOpenMode, ScrollAreaAxis,
+    ScrollResetPolicy, SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -677,6 +678,8 @@ fn components_page_samples_expose_component_metadata() {
     let sidebars = pages::components::sidebar_samples(tokens);
     let listboxes = pages::components::listbox_samples(tokens);
     let selects = pages::components::select_samples(tokens);
+    let comboboxes = pages::components::combobox_samples(tokens);
+    let commands = pages::components::command_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
@@ -826,6 +829,41 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(selects[1].state.trigger_label(), "Doing");
     assert!(selects[2].state.disabled());
     assert!(!selects[2].state.open());
+
+    assert_eq!(comboboxes.len(), 3);
+    assert_eq!(comboboxes[0].id, "framework-combobox");
+    assert_eq!(
+        comboboxes[0].state.open_mode(),
+        ComboboxOpenMode::Controlled
+    );
+    assert!(comboboxes[0].state.open());
+    assert_eq!(comboboxes[0].state.input_role(), Role::EditableComboBox);
+    assert_eq!(comboboxes[0].state.content_role(), Role::ListBox);
+    assert_eq!(comboboxes[0].state.filtered_option_count(), 3);
+    assert_eq!(comboboxes[1].state.filtered_option_count(), 0);
+    assert!(comboboxes[1].state.listbox().empty());
+    assert!(comboboxes[2].state.disabled());
+    assert!(!comboboxes[2].state.open());
+
+    assert_eq!(commands.len(), 3);
+    assert_eq!(commands[0].id, "workspace-command");
+    assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
+    assert!(commands[0].state.open());
+    assert!(commands[0].state.dialog().is_some());
+    assert_eq!(commands[0].state.list_role(), Role::ListBox);
+    assert_eq!(commands[0].state.selected_value(), Some("new-file"));
+    assert_eq!(commands[0].state.filtered_item_count(), 2);
+    assert!(
+        commands[0]
+            .state
+            .items()
+            .iter()
+            .any(|item| item.shortcut().is_some())
+    );
+    assert!(commands[1].state.loading().is_some());
+    assert!(commands[1].state.empty());
+    assert!(commands[2].state.disabled());
+    assert!(!commands[2].state.open());
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
@@ -1052,6 +1090,71 @@ fn components_page_choice_samples_expose_listbox_and_select_contracts() {
 }
 
 #[test]
+fn components_page_search_samples_expose_combobox_and_command_contracts() {
+    let tokens = ThemeTokens::default();
+    let comboboxes = pages::components::combobox_samples(tokens);
+    let commands = pages::components::command_samples(tokens);
+
+    let framework = &comboboxes[0].state;
+    let empty_combo = &comboboxes[1].state;
+    let disabled_combo = &comboboxes[2].state;
+    let workspace = &commands[0].state;
+    let empty_command = &commands[1].state;
+    let disabled_command = &commands[2].state;
+
+    assert_eq!(framework.open_mode(), ComboboxOpenMode::Controlled);
+    assert!(framework.open());
+    assert_eq!(framework.input_role(), Role::EditableComboBox);
+    assert_eq!(framework.content_role(), Role::ListBox);
+    assert_eq!(framework.total_option_count(), 5);
+    assert_eq!(framework.filtered_option_count(), 3);
+    assert_eq!(framework.active_value(), Some("react"));
+    assert_eq!(framework.listbox().typeahead_query(), Some("re"));
+    assert_eq!(
+        framework.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+
+    assert!(empty_combo.empty());
+    assert_eq!(empty_combo.selected_value(), None);
+    assert!(empty_combo.listbox().empty());
+    assert!(disabled_combo.disabled());
+    assert!(!disabled_combo.open());
+    assert!(!disabled_combo.input().editable());
+
+    assert_eq!(workspace.open_mode(), CommandOpenMode::Controlled);
+    assert!(workspace.open());
+    assert_eq!(workspace.input_role(), Role::TextInput);
+    assert_eq!(workspace.list_role(), Role::ListBox);
+    assert_eq!(workspace.selected_value(), Some("new-file"));
+    assert_eq!(workspace.filtered_item_count(), 2);
+    assert_eq!(workspace.groups().len(), 2);
+    assert!(
+        workspace
+            .items()
+            .iter()
+            .any(|item| item.shortcut().is_some())
+    );
+    let dialog = workspace
+        .dialog()
+        .expect("workspace command is dialog-backed");
+    assert!(dialog.open());
+    assert_eq!(dialog.overlay().policy().kind(), OverlayLayerKind::Modal);
+    assert_eq!(dialog.description(), Some("Run a workspace command"));
+
+    assert!(empty_command.loading().is_some());
+    assert_eq!(
+        empty_command.loading().unwrap().role(),
+        Role::ProgressIndicator
+    );
+    assert!(empty_command.empty());
+    assert!(empty_command.content_visible());
+    assert!(disabled_command.disabled());
+    assert!(!disabled_command.open());
+    assert!(!disabled_command.input().editable());
+}
+
+#[test]
 fn components_page_samples_keep_explicit_a11y_metadata() {
     use std::collections::BTreeSet;
 
@@ -1115,6 +1218,12 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"open_gpui_ui_components::ListboxState"));
     assert!(signals.contains(&"open_gpui_ui_components::Select"));
     assert!(signals.contains(&"open_gpui_ui_components::SelectState"));
+    assert!(signals.contains(&"open_gpui_ui_components::Combobox"));
+    assert!(signals.contains(&"open_gpui_ui_components::ComboboxState"));
+    assert!(signals.contains(&"open_gpui_ui_components::Command"));
+    assert!(signals.contains(&"open_gpui_ui_components::CommandState"));
     assert!(signals.contains(&"Role::ListBox"));
     assert!(signals.contains(&"Role::ListBoxOption"));
+    assert!(signals.contains(&"Role::EditableComboBox"));
+    assert!(signals.contains(&"Role::ProgressIndicator"));
 }

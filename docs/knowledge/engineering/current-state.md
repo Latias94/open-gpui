@@ -11,6 +11,28 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U7 Combobox and
+  Command. Added `Combobox`, `ComboboxState`, grouped/standalone option descriptors, editable
+  query metadata, selected value/label metadata that survives filtering, active option metadata,
+  empty state, non-modal popup overlay policy, scroll viewport metadata, and explicit crate-root/
+  prelude exports to `open_gpui_ui_components`.
+- Done: Added `Command`, `CommandState`, command groups/items, shortcut metadata, loading metadata,
+  empty state, optional dialog wrapper state, modal dialog overlay policy, and command selection
+  payloads. Command v1 remains a local search/list surface and intentionally defers async loading,
+  fuzzy ranking, multi-select chips, virtualized result sets, and global app command registration.
+- Done: Added Components gallery Combobox and Command samples for filtered grouped options, empty
+  search, disabled search, dialog-backed workspace commands, inline empty loading commands, and
+  disabled commands. Gallery tests now assert combobox roles/filtering/empty state and command
+  dialog/loading/shortcut contracts.
+- Review: U7 review subagents `u7_combobox_command_review` and `u7_review_fast` were dispatched
+  as read-only reviewers but did not return within the wait windows. Local review caught and
+  covered the command selection shortcut payload path with a state-level activation assertion.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed during U7.
+- Next action: Commit U7, then start U8 headless-readiness checkpoint. The checkpoint should audit
+  public resolved-state types for GPUI runtime leaks and decide whether ADR 0006 needs an
+  extraction-plan follow-up.
 - Done: Continued the UI shell, choice, and headless-readiness series with U6 Listbox and Select.
   Added `Listbox`, `ListboxState`, grouped/standalone descriptors, option/separator anatomy,
   selected and active descendant metadata, disabled/separator skipping, typeahead target metadata,

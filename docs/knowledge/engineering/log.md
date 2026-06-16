@@ -1,6 +1,27 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed the main U7 Combobox/Command implementation for the UI shell, choice, and
+  headless-readiness series. `ComboboxState` now models editable query text, grouped and
+  standalone options, selected value/label metadata that survives filtering, active option
+  metadata, filtered/total option counts, empty state, nested `ListboxState`, scroll viewport
+  metadata, and non-modal dismissible popup policy.
+* **Update**: Added `CommandState` with command groups/items, shortcut metadata, disabled state,
+  selected/active command values, filtered/total counts, loading metadata, empty state, optional
+  dialog wrapper metadata, inline non-modal overlay state, and modal dialog overlay state. Command
+  selection payload coverage now verifies shortcuts are preserved through state-level activation.
+* **Update**: Added Components gallery Combobox and Command samples plus tests for editable
+  filtering, empty/disabled search states, command dialog presentation, loading/empty command
+  states, shortcut metadata, explicit exports, and component contract signals.
+* **Update**: Updated `docs/ui/component-contract.md` and `docs/verification.md` to move
+  Combobox/Command from follow-up scope into the documented component contract and manual dogfood
+  path.
+* **Review**: U7 read-only review subagents were dispatched but timed out before returning
+  findings. Local review found and covered the command selection shortcut payload path; no blocking
+  local findings remained before commit.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest
+  run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed during U7.
 * **Update**: Completed the main U6 Listbox/Select implementation for the UI shell, choice, and
   headless-readiness series. `ListboxState` now models grouped and standalone options,
   separators, disabled skip behavior, selected/active/tab-stop metadata, APG navigation,
