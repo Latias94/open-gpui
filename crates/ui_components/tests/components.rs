@@ -1,13 +1,14 @@
 use open_gpui::{Anchor, AppContext, ParentElement, div, point, px, size};
 use open_gpui_ui_components::{
-    Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
-    DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field, FocusRing,
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Popover, PopoverOpenMode,
-    RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs, TabsActivationMode,
-    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
-    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled, next_enabled,
+    Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
+    DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
+    FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, IconButton, Label, Menu, MenuItem,
+    MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem,
+    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
+    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
+    focus_ring_shadow, gpui_anchor, last_enabled, menu_navigation_target, next_enabled,
     outside_press_open_change, point_anchor_placement,
 };
 use open_gpui_ui_core::{
@@ -334,6 +335,143 @@ fn dialog_state_models_disabled_default_open_and_policy_overrides() {
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn menu_state_records_items_roving_focus_and_overlay_policy() {
+    let state = Menu::new("file-menu", "File")
+        .open(true)
+        .focused_value("save")
+        .item(MenuItem::action("new", "New"))
+        .item(MenuItem::action("save", "Save"))
+        .item(MenuItem::separator("separator"))
+        .item(MenuItem::action("delete", "Delete").disabled(true))
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), MenuOpenMode::Controlled);
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::Menu);
+    assert!(state.trigger_selected());
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Menu);
+    assert!(state.overlay().wants_outside_press_handler());
+    assert!(state.overlay().layer_state().hit_testable());
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Dismiss);
+    assert_eq!(state.focused_value(), Some("save"));
+    assert_eq!(state.tab_stop_value(), Some("save"));
+    assert_eq!(state.items().len(), 4);
+    assert_eq!(state.items()[0].role(), Some(Role::MenuItem));
+    assert_eq!(state.items()[2].kind(), MenuItemKind::Separator);
+    assert!(!state.items()[2].focusable());
+    assert!(state.items()[3].disabled());
+    assert!(!state.items()[3].activation_enabled());
+    assert_eq!(state.colors().surface().token(), semantic::SURFACE);
+    assert_eq!(
+        state.colors().trigger_background().state(),
+        ColorState::Selected
+    );
+}
+
+#[test]
+fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
+    let state = Menu::new("edit-menu", "Edit")
+        .open(true)
+        .focused_value("copy")
+        .items([
+            MenuItem::action("cut", "Cut"),
+            MenuItem::action("copy", "Copy"),
+            MenuItem::separator("separator"),
+            MenuItem::action("paste", "Paste").disabled(true),
+            MenuItem::action("select-all", "Select all"),
+        ])
+        .state();
+    let disabled = [false, false, true, true, false];
+
+    assert_eq!(menu_navigation_target("down", 1, &disabled), Some(4));
+    assert_eq!(menu_navigation_target("up", 1, &disabled), Some(0));
+    assert_eq!(menu_navigation_target("home", 4, &disabled), Some(0));
+    assert_eq!(menu_navigation_target("end", 0, &disabled), Some(4));
+    assert_eq!(
+        state.navigation_target("down").map(|item| item.value()),
+        Some("select-all")
+    );
+    assert_eq!(
+        state.activation_for_key("enter").map(|selection| {
+            (
+                selection.index(),
+                selection.value().to_owned(),
+                selection.label().to_owned(),
+            )
+        }),
+        Some((1, "copy".to_owned(), "Copy".to_owned()))
+    );
+    assert!(state.activation_for_key("space").is_some());
+    assert!(state.activation_for_key("escape").is_none());
+}
+
+#[test]
+fn menu_state_models_default_open_disabled_and_policy_overrides() {
+    let state = Menu::new("disabled-menu", "Disabled")
+        .default_open(true)
+        .disabled(true)
+        .outside_press_policy(OutsidePressPolicy::Ignore)
+        .escape_key_policy(EscapeKeyPolicy::Ignore)
+        .initial_focus_intent(InitialFocusIntent::None)
+        .focus_restore_intent(FocusRestoreIntent::None)
+        .small()
+        .item(MenuItem::action("open", "Open"))
+        .state();
+
+    assert_eq!(state.open_mode(), MenuOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert_eq!(state.size(), Size::Small);
+    assert_eq!(state.outside_press_policy(), OutsidePressPolicy::Ignore);
+    assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Ignore);
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
+    assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[test]
+fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
+    let anchor = point(px(280.0), px(160.0));
+    let state = ContextMenu::new("canvas-context-menu", "Canvas menu")
+        .open(true)
+        .anchor_point(anchor)
+        .focused_value("duplicate")
+        .item(MenuItem::action("duplicate", "Duplicate"))
+        .item(MenuItem::separator("separator"))
+        .item(MenuItem::action("delete", "Delete").disabled(true))
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), MenuOpenMode::Controlled);
+    assert_eq!(state.anchor_point(), anchor);
+    assert_eq!(state.content_role(), Role::Menu);
+    assert_eq!(state.menu().focused_value(), Some("duplicate"));
+    assert_eq!(state.menu().items()[1].kind(), MenuItemKind::Separator);
+    assert!(!state.menu().items()[2].activation_enabled());
+    assert_eq!(state.overlay().policy().kind(), OverlayLayerKind::Menu);
+    assert!(state.overlay().wants_outside_press_handler());
+    let expected = GpuiOverlayPlacement::resolve(
+        point_anchor_placement(
+            anchor,
+            open_gpui_ui_core::OverlaySize::new(
+                state.metrics().min_width(),
+                state.metrics().item_height(),
+            ),
+        ),
+        DEFAULT_OVERLAY_SAFE_MARGIN,
+    );
+    assert_eq!(state.placement().anchor(), Anchor::TopLeft);
+    assert_eq!(state.placement().position(), expected.position());
+    assert_eq!(state.placement().snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
 }
 
 #[test]
@@ -802,6 +940,15 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .disabled(true)
             .state(),
     ];
+    let menus = [
+        Menu::new("menu", "Menu")
+            .open(true)
+            .item(MenuItem::action("open", "Open"))
+            .state(),
+        Menu::new("closed-menu", "Closed")
+            .item(MenuItem::action("open", "Open"))
+            .state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -916,6 +1063,27 @@ fn default_theme_resolves_all_current_component_color_intents() {
     for state in labels {
         let colors = state.colors();
         for intent in [colors.text(), colors.required_marker()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in menus {
+        let colors = state.colors();
+        for intent in [
+            colors.surface(),
+            colors.foreground(),
+            colors.border(),
+            colors.item_background(),
+            colors.item_hover_background(),
+            colors.item_focus_background(),
+            colors.item_disabled_foreground(),
+            colors.separator(),
+            colors.trigger_background(),
+            colors.trigger_hover_background(),
+            colors.trigger_foreground(),
+            colors.trigger_border(),
+            colors.focus_ring(),
+        ] {
             assert_theme_has_exact_color(theme, intent);
         }
     }

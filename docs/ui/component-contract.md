@@ -77,6 +77,13 @@ The GPUI adapter owns the barrier, concrete dialog surface, close callbacks, key
 deferred rendering, and focus handles. Alert dialogs, nested modal stacking, and full focus-trap
 coordination remain follow-up work.
 
+`MenuState` and `ContextMenuState` are the first menu overlay contracts. `MenuState` records
+controlled versus uncontrolled open mode, action and separator items, disabled item state, roving
+focus, activation payloads, Escape policy, outside-press policy, placement preference, resolved
+metrics, token intents, and menu layer state. `ContextMenuState` reuses the same item and roving
+focus model while adding a point anchor and resolved GPUI placement. Submenus, menu bars, typeahead,
+checkbox/radio items, and application menu integration remain follow-up work.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

@@ -624,7 +624,13 @@ const LIGHT_THEME_COLORS: &[ThemeColor] = &[
         ColorState::Default,
         DEFAULT_GHOST_SURFACE,
     ),
+    ThemeColor::new(
+        semantic::SURFACE_MUTED,
+        ColorState::Selected,
+        DEFAULT_GHOST_SURFACE,
+    ),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0xdfe6dc),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::FocusVisible, 0xe8ede6),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0xf1f5ee),
     ThemeColor::new(
         semantic::SURFACE_MUTED,

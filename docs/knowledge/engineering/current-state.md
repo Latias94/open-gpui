@@ -11,6 +11,18 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Completed U7 of the overlay component series by adding `Menu` and `ContextMenu` to
+  `open-gpui-ui-components` with shared menu item descriptors, action/separator items, disabled
+  item state, roving-focus navigation, keyboard activation payloads, Escape/outside policies,
+  trigger-anchored menu placement, point-anchored context-menu placement, exports, and tests.
+- Done: Added Overlay gallery Menu samples for default-open, controlled, outside-ignored, and
+  disabled cases, plus ContextMenu samples for point-anchor, controlled, and default-open cases.
+  Gallery tests now cover menu roving-focus contracts and context-menu point-anchor placement.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U7 Menu/ContextMenu work.
+- Next action: Start U8 overlay examples checkpoint and headless-readiness review, then run the
+  final quality pass for the full overlay component series.
 - Done: Completed U6 of the overlay component series by adding modal `Dialog` to
   `open-gpui-ui-components` with `DialogState`, controlled/uncontrolled open mode, default-open
   state, title/description metadata, Escape policy, outside-press policy, initial focus and

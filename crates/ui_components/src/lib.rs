@@ -9,11 +9,13 @@ pub mod badge;
 pub mod button;
 pub mod checkbox;
 pub mod color;
+pub mod context_menu;
 pub mod dialog;
 pub mod field;
 pub mod focus;
 pub mod icon_button;
 pub mod label;
+pub mod menu;
 pub mod overlay;
 pub mod popover;
 pub mod prelude;
@@ -29,11 +31,16 @@ pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use color::{ColorIntent, ColorState};
+pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use menu::{
+    Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
+    MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
+};
 pub use overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
     OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,

@@ -89,7 +89,12 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    closed. In the Dialog samples, open and close `Controlled modal`, confirm Escape and the modal
    barrier can close it without activating underlay controls, confirm `Default open` reports a
    blocking modal layer, confirm `Outside ignored` remains open on outside press, and confirm
-   `Disabled` stays closed.
+   `Disabled` stays closed. In the Menu samples, confirm arrow keys move roving focus over enabled
+   action items while skipping separators and disabled items, Enter/Space activates the focused
+   action and closes the menu, Escape closes the controlled menu, and `Outside ignored` keeps its
+   explicit outside policy. In the ContextMenu samples, right-click the hotspot and confirm the
+   menu opens from the pointer point, snaps inside the window near edges, and closes on outside
+   press or Escape.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs samples

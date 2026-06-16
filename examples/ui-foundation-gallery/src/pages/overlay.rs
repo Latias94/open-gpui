@@ -4,8 +4,9 @@ use open_gpui::{Pixels, point, px, size};
 use std::time::Duration;
 
 use open_gpui_ui_components::{
-    Dialog, DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, Popover, PopoverState,
-    Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
+    ContextMenu, ContextMenuState, Dialog, DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState,
+    Menu, MenuItem, MenuOpenMode, MenuState, Popover, PopoverState, Tooltip, TooltipDelayPolicy,
+    TooltipOpenIntent, TooltipState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -31,6 +32,8 @@ pub const SIGNALS: &[&str] = &[
     "TooltipState",
     "PopoverState",
     "DialogState",
+    "MenuState",
+    "ContextMenuState",
     "OverlayEdges",
     "OverlaySize",
 ];
@@ -371,6 +374,130 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             .state(),
         },
     ]
+}
+
+/// Menu sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing trigger label.
+    pub label: &'static str,
+    /// Resolved menu state.
+    pub state: MenuState,
+}
+
+/// Returns deterministic menu samples for gallery dogfood.
+pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
+    [
+        MenuSample {
+            id: "default-open",
+            label: "Default open",
+            state: Menu::new("overlay-menu:default-open", "Default open")
+                .default_open(true)
+                .focused_value("save")
+                .item(MenuItem::action("new", "New"))
+                .item(MenuItem::action("save", "Save"))
+                .item(MenuItem::separator("separator"))
+                .item(MenuItem::action("delete", "Delete").disabled(true))
+                .tokens(tokens)
+                .state(),
+        },
+        MenuSample {
+            id: "controlled",
+            label: "Controlled",
+            state: Menu::new("overlay-menu:controlled", "Controlled")
+                .open(false)
+                .focused_value("copy")
+                .item(MenuItem::action("cut", "Cut"))
+                .item(MenuItem::action("copy", "Copy"))
+                .item(MenuItem::action("paste", "Paste").disabled(true))
+                .tokens(tokens)
+                .state(),
+        },
+        MenuSample {
+            id: "outside-ignore",
+            label: "Outside ignored",
+            state: Menu::new("overlay-menu:outside-ignore", "Outside ignored")
+                .open(true)
+                .outside_press_policy(OutsidePressPolicy::Ignore)
+                .item(MenuItem::action("rename", "Rename"))
+                .item(MenuItem::action("duplicate", "Duplicate"))
+                .tokens(tokens)
+                .state(),
+        },
+        MenuSample {
+            id: "disabled",
+            label: "Disabled",
+            state: Menu::new("overlay-menu:disabled", "Disabled")
+                .default_open(true)
+                .disabled(true)
+                .item(MenuItem::action("open", "Open"))
+                .tokens(tokens)
+                .state(),
+        },
+    ]
+}
+
+/// Context menu sample shown by the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextMenuSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// User-facing hotspot label.
+    pub label: &'static str,
+    /// Resolved context-menu state.
+    pub state: ContextMenuState,
+}
+
+/// Returns deterministic context-menu samples for gallery dogfood.
+pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
+    [
+        ContextMenuSample {
+            id: "point-anchor",
+            label: "Point anchor",
+            state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
+                .open(true)
+                .anchor_point(point(px(520.0), px(300.0)))
+                .focused_value("duplicate")
+                .item(MenuItem::action("duplicate", "Duplicate"))
+                .item(MenuItem::separator("separator"))
+                .item(MenuItem::action("delete", "Delete").disabled(true))
+                .tokens(tokens)
+                .state(),
+        },
+        ContextMenuSample {
+            id: "controlled",
+            label: "Controlled",
+            state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
+                .open(false)
+                .anchor_point(point(px(280.0), px(160.0)))
+                .focused_value("inspect")
+                .item(MenuItem::action("inspect", "Inspect"))
+                .item(MenuItem::action("copy-link", "Copy link"))
+                .tokens(tokens)
+                .state(),
+        },
+        ContextMenuSample {
+            id: "default-open",
+            label: "Default open",
+            state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
+                .default_open(true)
+                .anchor_point(point(px(96.0), px(96.0)))
+                .item(MenuItem::action("open", "Open"))
+                .item(MenuItem::action("close", "Close"))
+                .tokens(tokens)
+                .state(),
+        },
+    ]
+}
+
+/// Returns a stable label for menu open-state ownership.
+pub const fn menu_open_mode_label(mode: MenuOpenMode) -> &'static str {
+    match mode {
+        MenuOpenMode::Uncontrolled => "uncontrolled",
+        MenuOpenMode::Controlled => "controlled",
+    }
 }
 
 /// Returns a stable label for overlay layer kind.

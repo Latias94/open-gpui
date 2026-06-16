@@ -8,11 +8,12 @@ use open_gpui::{
     deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Dialog,
-    DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label, LabelState,
-    Popover, PopoverOpenMode, RadioGroup, RadioItem, Switch, SwitchState, Tabs, TabsActivationMode,
-    TabsItem, TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState,
-    Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
+    Badge, BadgeState, Button, ButtonState, Checkbox, CheckboxState, ColorIntent, ContextMenu,
+    Dialog, DialogOpenMode, Field, FieldState, FocusRing, IconButton, IconButtonState, Label,
+    LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, Switch,
+    SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController,
+    TextInputState, Toggle, ToggleState, Tooltip, TooltipContentKind, TooltipOpenIntent,
+    focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -80,6 +81,8 @@ pub struct GalleryShell {
     hovered_tooltip_sample: Option<&'static str>,
     overlay_controlled_popover_open: bool,
     overlay_controlled_dialog_open: bool,
+    overlay_controlled_menu_open: bool,
+    overlay_controlled_context_menu_open: bool,
 }
 
 impl GalleryShell {
@@ -113,6 +116,8 @@ impl GalleryShell {
             hovered_tooltip_sample: None,
             overlay_controlled_popover_open: false,
             overlay_controlled_dialog_open: false,
+            overlay_controlled_menu_open: false,
+            overlay_controlled_context_menu_open: false,
         }
     }
 }
@@ -145,6 +150,8 @@ impl GalleryShell {
             self.hovered_tooltip_sample = None;
             self.overlay_controlled_popover_open = false;
             self.overlay_controlled_dialog_open = false;
+            self.overlay_controlled_menu_open = false;
+            self.overlay_controlled_context_menu_open = false;
             cx.notify();
         }
     }
@@ -208,6 +215,20 @@ impl GalleryShell {
             cx.notify();
         }
     }
+
+    fn set_controlled_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_menu_open != open {
+            self.overlay_controlled_menu_open = open;
+            cx.notify();
+        }
+    }
+
+    fn set_controlled_context_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if self.overlay_controlled_context_menu_open != open {
+            self.overlay_controlled_context_menu_open = open;
+            cx.notify();
+        }
+    }
 }
 
 impl Render for GalleryShell {
@@ -228,6 +249,8 @@ impl Render for GalleryShell {
                     this.set_hovered_tooltip_sample(None, cx);
                     this.set_controlled_popover_open(false, cx);
                     this.set_controlled_dialog_open(false, cx);
+                    this.set_controlled_menu_open(false, cx);
+                    this.set_controlled_context_menu_open(false, cx);
                 }
             }))
             .child(self.render_navigation(page, cx))
@@ -1460,6 +1483,8 @@ impl GalleryShell {
         let tooltip_samples = pages::overlay::tooltip_samples(snapshot.tokens);
         let popover_samples = pages::overlay::popover_samples(snapshot.tokens);
         let dialog_samples = pages::overlay::dialog_samples(snapshot.tokens);
+        let menu_samples = pages::overlay::menu_samples(snapshot.tokens);
+        let context_menu_samples = pages::overlay::context_menu_samples(snapshot.tokens);
 
         div()
             .id("gallery-overlay-page")
@@ -1716,6 +1741,65 @@ impl GalleryShell {
                             .child(self.render_dialog_sample_card(&dialog_samples[3], false, cx)),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Menu samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(4)
+                            .gap_3()
+                            .child(self.render_menu_sample_card(&menu_samples[0], false, cx))
+                            .child(self.render_menu_sample_card(
+                                &menu_samples[1],
+                                self.overlay_controlled_menu_open,
+                                cx,
+                            ))
+                            .child(self.render_menu_sample_card(&menu_samples[2], false, cx))
+                            .child(self.render_menu_sample_card(&menu_samples[3], false, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("ContextMenu samples"),
+                    )
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(3)
+                            .gap_3()
+                            .child(self.render_context_menu_sample_card(
+                                &context_menu_samples[0],
+                                false,
+                                cx,
+                            ))
+                            .child(self.render_context_menu_sample_card(
+                                &context_menu_samples[1],
+                                self.overlay_controlled_context_menu_open,
+                                cx,
+                            ))
+                            .child(self.render_context_menu_sample_card(
+                                &context_menu_samples[2],
+                                false,
+                                cx,
+                            )),
+                    ),
+            )
             .child(self.render_signal_list(snapshot.selected_page))
     }
 
@@ -1968,6 +2052,161 @@ impl GalleryShell {
                 )
             })
             .child(dialog_state_row(&state))
+    }
+
+    fn render_menu_sample_card(
+        &self,
+        sample: &pages::overlay::MenuSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "controlled" {
+            Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
+                .open(controlled_open)
+                .focused_value(state_focused_value(&sample.state).unwrap_or("copy"))
+                .items(menu_items_for_sample(sample.id))
+                .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let label = sample.label;
+        let shell = cx.entity().downgrade();
+        let menu = Menu::new(format!("overlay-menu-demo:{}", sample_id), label)
+            .items(menu_items_for_sample(sample_id))
+            .disabled(state.disabled())
+            .outside_press_policy(state.outside_press_policy())
+            .escape_key_policy(state.escape_key_policy());
+        let menu = match sample_id {
+            "controlled" => menu
+                .open(state.open())
+                .focused_value(state_focused_value(&state).unwrap_or("copy"))
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
+                        .ok();
+                }),
+            "default-open" => menu
+                .default_open(state.default_open())
+                .focused_value(state_focused_value(&state).unwrap_or("save")),
+            _ => menu.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-menu-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(menu)
+            .when(sample_id == "controlled", |card| {
+                card.child(
+                    div()
+                        .id("overlay-menu-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_menu_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close menu"
+                        } else {
+                            "open menu"
+                        }),
+                )
+            })
+            .child(menu_state_row(&state))
+    }
+
+    fn render_context_menu_sample_card(
+        &self,
+        sample: &pages::overlay::ContextMenuSample,
+        controlled_open: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let state = if sample.id == "controlled" {
+            ContextMenu::new(
+                format!("overlay-context-menu-sample:{}", sample.id),
+                sample.label,
+            )
+            .open(controlled_open)
+            .anchor_point(sample.state.anchor_point())
+            .focused_value(state_focused_value(sample.state.menu()).unwrap_or("inspect"))
+            .items(context_menu_items_for_sample(sample.id))
+            .state()
+        } else {
+            sample.state.clone()
+        };
+        let sample_id = sample.id;
+        let label = sample.label;
+        let shell = cx.entity().downgrade();
+        let context_menu =
+            ContextMenu::new(format!("overlay-context-menu-demo:{}", sample_id), label)
+                .items(context_menu_items_for_sample(sample_id))
+                .anchor_point(state.anchor_point())
+                .outside_press_policy(state.menu().outside_press_policy())
+                .escape_key_policy(state.menu().escape_key_policy());
+        let context_menu = match sample_id {
+            "controlled" => context_menu
+                .open(state.open())
+                .focused_value(state_focused_value(state.menu()).unwrap_or("inspect"))
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| {
+                            this.set_controlled_context_menu_open(open, cx)
+                        })
+                        .ok();
+                }),
+            "default-open" => context_menu.default_open(state.default_open()),
+            _ => context_menu.open(state.open()),
+        };
+
+        div()
+            .id(format!("overlay-context-menu-sample-card:{}", sample_id))
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(rgb(0xd6d8ce))
+            .bg(rgb(0xffffff))
+            .p_3()
+            .text_xs()
+            .text_color(rgb(0x3f4a57))
+            .child(context_menu)
+            .when(sample_id == "controlled", |card| {
+                card.child(
+                    div()
+                        .id("overlay-context-menu-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_context_menu_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close context menu"
+                        } else {
+                            "open context menu"
+                        }),
+                )
+            })
+            .child(context_menu_state_row(&state))
     }
 
     fn render_overlay_bounds(&self, label: &'static str, bounds: Rect) -> impl IntoElement {
@@ -2821,6 +3060,115 @@ fn dialog_open_mode_label(mode: DialogOpenMode) -> &'static str {
         DialogOpenMode::Uncontrolled => "uncontrolled",
         DialogOpenMode::Controlled => "controlled",
     }
+}
+
+fn menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
+    match sample_id {
+        "controlled" => vec![
+            MenuItem::action("cut", "Cut"),
+            MenuItem::action("copy", "Copy"),
+            MenuItem::action("paste", "Paste").disabled(true),
+        ],
+        "outside-ignore" => vec![
+            MenuItem::action("rename", "Rename"),
+            MenuItem::action("duplicate", "Duplicate"),
+        ],
+        "disabled" => vec![MenuItem::action("open", "Open")],
+        _ => vec![
+            MenuItem::action("new", "New"),
+            MenuItem::action("save", "Save"),
+            MenuItem::separator("separator"),
+            MenuItem::action("delete", "Delete").disabled(true),
+        ],
+    }
+}
+
+fn context_menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
+    match sample_id {
+        "controlled" => vec![
+            MenuItem::action("inspect", "Inspect"),
+            MenuItem::action("copy-link", "Copy link"),
+        ],
+        "default-open" => vec![
+            MenuItem::action("open", "Open"),
+            MenuItem::action("close", "Close"),
+        ],
+        _ => vec![
+            MenuItem::action("duplicate", "Duplicate"),
+            MenuItem::separator("separator"),
+            MenuItem::action("delete", "Delete").disabled(true),
+        ],
+    }
+}
+
+fn state_focused_value(state: &open_gpui_ui_components::MenuState) -> Option<&str> {
+    state.focused_value()
+}
+
+fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElement {
+    let outside = state.outside_press_policy().resolve();
+    let focused = state.focused_value().unwrap_or("none");
+    let active_items = state.items().iter().filter(|item| item.focusable()).count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / disabled {}",
+            bool_label(state.open()),
+            pages::overlay::menu_open_mode_label(state.open_mode()),
+            bool_label(state.disabled())
+        ))
+        .child(format!(
+            "items: {} / active {} / focused {}",
+            state.items().len(),
+            active_items,
+            focused
+        ))
+        .child(format!(
+            "outside: {} / dismiss {} / consume {}",
+            pages::overlay::outside_press_label(state.outside_press_policy()),
+            bool_label(outside.dismisses()),
+            bool_label(outside.consumes_event())
+        ))
+        .child(format!(
+            "escape: {} / layer {}",
+            pages::overlay::escape_key_label(state.escape_key_policy()),
+            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+        ))
+}
+
+fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> impl IntoElement {
+    let menu = state.menu();
+    let focused = menu.focused_value().unwrap_or("none");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "state: open {} / mode {} / focused {}",
+            bool_label(state.open()),
+            pages::overlay::menu_open_mode_label(state.open_mode()),
+            focused
+        ))
+        .child(format!(
+            "anchor: {} x {} / snap {}",
+            format_px(state.anchor_point().x),
+            format_px(state.anchor_point().y),
+            format_px(state.placement().snap_margin())
+        ))
+        .child(format!(
+            "items: {} / layer {} / outside {}",
+            menu.items().len(),
+            pages::overlay::layer_kind_label(state.overlay().policy().kind()),
+            pages::overlay::outside_press_label(menu.outside_press_policy())
+        ))
 }
 
 fn tooltip_open_intent_label(intent: TooltipOpenIntent) -> &'static str {

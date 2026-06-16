@@ -1,7 +1,8 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, PopoverOpenMode,
-    TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent, default_deferred_priority,
+    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, MenuItemKind,
+    MenuOpenMode, PopoverOpenMode, TabsActivationMode, ThemeMode, ToggleVariant, TooltipOpenIntent,
+    default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -397,6 +398,88 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
     assert!(!samples[3].state.activation_enabled());
+}
+
+#[test]
+fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
+    let samples = pages::overlay::menu_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 4);
+    assert_eq!(samples[0].id, "default-open");
+    assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
+    assert!(samples[0].state.default_open());
+    assert!(samples[0].state.open());
+    assert_eq!(samples[0].state.focused_value(), Some("save"));
+    assert_eq!(samples[0].state.items()[2].kind(), MenuItemKind::Separator);
+    assert!(!samples[0].state.items()[3].activation_enabled());
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::Menu
+    );
+    assert!(samples[0].state.overlay().wants_outside_press_handler());
+
+    assert_eq!(samples[1].id, "controlled");
+    assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
+    assert!(!samples[1].state.open());
+    assert_eq!(
+        samples[1].state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(
+        samples[1].state.escape_key_policy(),
+        EscapeKeyPolicy::Dismiss
+    );
+
+    assert_eq!(samples[2].id, "outside-ignore");
+    assert!(samples[2].state.open());
+    assert_eq!(
+        samples[2].state.outside_press_policy(),
+        OutsidePressPolicy::Ignore
+    );
+    assert!(
+        !samples[2]
+            .state
+            .outside_press_policy()
+            .resolve()
+            .dismisses()
+    );
+
+    assert_eq!(samples[3].id, "disabled");
+    assert!(samples[3].state.disabled());
+    assert!(!samples[3].state.open());
+}
+
+#[test]
+fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
+    let samples = pages::overlay::context_menu_samples(ThemeTokens::default());
+
+    assert_eq!(samples.len(), 3);
+    assert_eq!(samples[0].id, "point-anchor");
+    assert!(samples[0].state.open());
+    assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Controlled);
+    assert_eq!(samples[0].state.menu().focused_value(), Some("duplicate"));
+    assert_eq!(
+        samples[0].state.menu().items()[1].kind(),
+        MenuItemKind::Separator
+    );
+    assert!(!samples[0].state.menu().items()[2].activation_enabled());
+    assert_eq!(
+        samples[0].state.overlay().policy().kind(),
+        OverlayLayerKind::Menu
+    );
+    assert_eq!(
+        samples[0].state.placement().snap_margin(),
+        DEFAULT_OVERLAY_SAFE_MARGIN
+    );
+
+    assert_eq!(samples[1].id, "controlled");
+    assert!(!samples[1].state.open());
+    assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
+
+    assert_eq!(samples[2].id, "default-open");
+    assert!(samples[2].state.default_open());
+    assert!(samples[2].state.open());
+    assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);
 }
 
 #[test]

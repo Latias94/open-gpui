@@ -4,11 +4,16 @@ pub use crate::badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVarian
 pub use crate::button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use crate::checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};
 pub use crate::color::{ColorIntent, ColorState};
+pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use crate::menu::{
+    Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
+    MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
+};
 pub use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
     OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,
