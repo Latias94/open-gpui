@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T11:58:08Z
+timestamp: 2026-06-16T12:11:23Z
 status: "active"
 ---
 
@@ -11,6 +11,16 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Finished the ADR 0006 stack-ordering follow-up by adding window-free overlay stack ordering
+  primitives in `open_gpui_ui_core::overlay`: `resolve_outside_press` and
+  `resolve_focus_restore`, plus tests for topmost dismissible-layer handling and focus restoration.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-core`,
+  `cargo nextest run -p open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, and
+  `cargo check -p open-gpui-ui-foundation-gallery` passed after the overlay stack resolver work.
+- Next action: Start the next official component roadmap item after ADR 0006; likely candidates are
+  ScrollArea/Toolbar/Sidebar, or a focused geometry-alias cleanup if the headless boundary should
+  be tightened further first. Full focus-trap/scope traversal remains deferred until nested overlay
+  components need it.
 - Done: Continued ADR 0006 follow-up by moving `ContextMenuState` to renderer-neutral
   `OverlayPlacementInput` instead of storing resolved `GpuiOverlayPlacement`. The GPUI placement
   is now derived only at the adapter/render boundary.

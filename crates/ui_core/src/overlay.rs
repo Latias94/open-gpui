@@ -448,6 +448,7 @@ impl OverlayLayerState {
 pub struct OverlayLayer {
     id: OverlayLayerId,
     policy: OverlayLayerPolicy,
+    trigger_focus_target: Option<OverlayFocusTarget>,
 }
 
 impl OverlayLayer {
@@ -456,7 +457,14 @@ impl OverlayLayer {
         Self {
             id: OverlayLayerId::new(id),
             policy,
+            trigger_focus_target: None,
         }
+    }
+
+    /// Applies the focus target associated with this layer's trigger.
+    pub fn with_trigger_focus_target(mut self, target: OverlayFocusTarget) -> Self {
+        self.trigger_focus_target = Some(target);
+        self
     }
 
     /// Returns the layer identity.
@@ -467,6 +475,11 @@ impl OverlayLayer {
     /// Returns the layer policy.
     pub const fn policy(&self) -> &OverlayLayerPolicy {
         &self.policy
+    }
+
+    /// Returns the focus target associated with this layer's trigger.
+    pub fn trigger_focus_target(&self) -> Option<&OverlayFocusTarget> {
+        self.trigger_focus_target.as_ref()
     }
 }
 
@@ -507,6 +520,88 @@ pub fn resolve_escape_key(layers: &[OverlayLayer]) -> EscapeKeyResolution {
         EscapeKeyPolicy::Ignore => EscapeKeyResolution::IgnoredByTopLayer {
             layer_id: layer.id().clone(),
         },
+    }
+}
+
+/// Resolved outside-press handling for an overlay stack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutsidePressResolution {
+    /// The topmost outside-press-aware layer handled the press.
+    Handled {
+        /// Layer that handled the outside press.
+        layer_id: OverlayLayerId,
+        /// Resolved outside-press outcome for the layer.
+        outcome: OutsidePressOutcome,
+    },
+    /// No visible or interactive layer wants outside-press notification.
+    NoOutsidePressLayer,
+}
+
+/// Resolves outside-press handling for a bottom-to-top overlay stack.
+pub fn resolve_outside_press(layers: &[OverlayLayer]) -> OutsidePressResolution {
+    let Some(layer) = layers
+        .iter()
+        .rev()
+        .find(|layer| layer.policy().layer_state().wants_outside_press())
+    else {
+        return OutsidePressResolution::NoOutsidePressLayer;
+    };
+
+    OutsidePressResolution::Handled {
+        layer_id: layer.id().clone(),
+        outcome: layer.policy().outside_press_policy().resolve(),
+    }
+}
+
+/// Resolved focus restoration for an overlay stack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FocusRestoreResolution {
+    /// The topmost restorable layer resolved a concrete focus target.
+    Restore {
+        /// Layer that owns the focus restoration request.
+        layer_id: OverlayLayerId,
+        /// Target that should receive focus.
+        target: OverlayFocusTarget,
+    },
+    /// The topmost restorable layer requested restoration but has no live target.
+    NoTarget {
+        /// Layer that owns the unresolved focus restoration request.
+        layer_id: OverlayLayerId,
+    },
+    /// No present layer requested focus restoration.
+    NoRestorableLayer,
+}
+
+/// Resolves focus restoration for the topmost present overlay layer that requested it.
+pub fn resolve_focus_restore(layers: &[OverlayLayer]) -> FocusRestoreResolution {
+    let Some(layer) = layers.iter().rev().find(|layer| {
+        layer.policy().presence().present()
+            && focus_restore_requested(layer.policy().focus_restore_intent())
+    }) else {
+        return FocusRestoreResolution::NoRestorableLayer;
+    };
+
+    match layer
+        .policy()
+        .focus_restore_intent()
+        .resolve_target(layer.trigger_focus_target())
+    {
+        Some(target) => FocusRestoreResolution::Restore {
+            layer_id: layer.id().clone(),
+            target,
+        },
+        None => FocusRestoreResolution::NoTarget {
+            layer_id: layer.id().clone(),
+        },
+    }
+}
+
+fn focus_restore_requested(intent: &FocusRestoreIntent) -> bool {
+    match intent {
+        FocusRestoreIntent::None => false,
+        FocusRestoreIntent::Trigger
+        | FocusRestoreIntent::Fallback(_)
+        | FocusRestoreIntent::TriggerOrFallback(_) => true,
     }
 }
 
@@ -879,6 +974,62 @@ mod tests {
     }
 
     #[test]
+    fn outside_press_resolution_uses_topmost_interactive_dismissible_layer() {
+        let lower = OverlayLayer::new(
+            "lower-popover",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+            )
+            .with_outside_press_policy(OutsidePressPolicy::DismissAndPassThrough),
+        );
+        let closing_menu = OverlayLayer::new(
+            "closing-menu",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::closing()),
+        );
+        let upper_dialog = OverlayLayer::new(
+            "upper-dialog",
+            OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open())
+                .with_outside_press_policy(OutsidePressPolicy::DismissAndConsume),
+        );
+
+        assert_eq!(
+            resolve_outside_press(&[lower.clone(), closing_menu, upper_dialog]),
+            OutsidePressResolution::Handled {
+                layer_id: OverlayLayerId::new("upper-dialog"),
+                outcome: OutsidePressOutcome {
+                    dismiss: true,
+                    consume_event: true,
+                    allow_underlay: false,
+                    reason: Some(DismissReason::OutsidePress),
+                },
+            }
+        );
+
+        assert_eq!(
+            resolve_outside_press(&[lower]),
+            OutsidePressResolution::Handled {
+                layer_id: OverlayLayerId::new("lower-popover"),
+                outcome: OutsidePressOutcome {
+                    dismiss: true,
+                    consume_event: false,
+                    allow_underlay: true,
+                    reason: Some(DismissReason::OutsidePress),
+                },
+            }
+        );
+
+        let tooltip = OverlayLayer::new(
+            "tooltip",
+            OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
+        );
+        assert_eq!(
+            resolve_outside_press(&[tooltip]),
+            OutsidePressResolution::NoOutsidePressLayer
+        );
+    }
+
+    #[test]
     fn focus_restore_prefers_trigger_but_can_fallback_or_skip() {
         let trigger = OverlayFocusTarget::new("trigger");
         let fallback = OverlayFocusTarget::new("fallback");
@@ -903,6 +1054,65 @@ mod tests {
         assert_eq!(
             FocusRestoreIntent::TriggerOrFallback(fallback.clone()).resolve_target(None),
             Some(fallback)
+        );
+    }
+
+    #[test]
+    fn focus_restore_resolution_uses_topmost_present_restorable_layer() {
+        let lower_trigger = OverlayFocusTarget::new("lower-trigger");
+        let upper_trigger = OverlayFocusTarget::new("upper-trigger");
+        let fallback = OverlayFocusTarget::new("fallback-target");
+        let lower = OverlayLayer::new(
+            "lower-popover",
+            OverlayLayerPolicy::new(
+                OverlayLayerKind::NonModalDismissible,
+                OverlayPresence::open(),
+            )
+            .with_focus_restore_intent(FocusRestoreIntent::Trigger),
+        )
+        .with_trigger_focus_target(lower_trigger);
+        let upper = OverlayLayer::new(
+            "upper-menu",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::closing())
+                .with_focus_restore_intent(FocusRestoreIntent::TriggerOrFallback(fallback.clone())),
+        )
+        .with_trigger_focus_target(upper_trigger.clone());
+
+        assert_eq!(
+            resolve_focus_restore(&[lower.clone(), upper]),
+            FocusRestoreResolution::Restore {
+                layer_id: OverlayLayerId::new("upper-menu"),
+                target: upper_trigger,
+            }
+        );
+
+        let fallback_layer = OverlayLayer::new(
+            "fallback-menu",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::closing())
+                .with_focus_restore_intent(FocusRestoreIntent::TriggerOrFallback(fallback.clone())),
+        );
+        assert_eq!(
+            resolve_focus_restore(&[lower.clone(), fallback_layer]),
+            FocusRestoreResolution::Restore {
+                layer_id: OverlayLayerId::new("fallback-menu"),
+                target: fallback,
+            }
+        );
+
+        let missing_trigger = OverlayLayer::new(
+            "missing-trigger",
+            OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::closing())
+                .with_focus_restore_intent(FocusRestoreIntent::Trigger),
+        );
+        assert_eq!(
+            resolve_focus_restore(&[lower, missing_trigger]),
+            FocusRestoreResolution::NoTarget {
+                layer_id: OverlayLayerId::new("missing-trigger"),
+            }
+        );
+        assert_eq!(
+            resolve_focus_restore(&[]),
+            FocusRestoreResolution::NoRestorableLayer
         );
     }
 

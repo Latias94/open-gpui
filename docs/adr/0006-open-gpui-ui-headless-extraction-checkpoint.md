@@ -89,7 +89,8 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
 3. Geometry vocabulary either lives in `open-gpui-ui-core` as renderer-neutral aliases or has a
    clear non-GPUI representation.
 4. Focus scope, dismissible layer ordering, and focus restoration have tests that do not require a
-   GPUI window.
+   GPUI window. The current checkpoint covers overlay stack outside-press and focus-restore
+   ordering; full focus-trap/scope traversal remains future component work.
 5. Gallery samples and component tests can identify which behavior is headless and which behavior
    is GPUI adapter-owned.
 
@@ -100,7 +101,8 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
   `RadioGroup` depend on the neutral module.
 - Completed 2026-06-16: `ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`;
   GPUI placement is resolved only inside the adapter/render boundary.
-- Add focus-scope and dismissible-layer ordering tests before implementing nested popovers,
-  submenus, command dialogs, or sheets.
+- Completed 2026-06-16: added window-free overlay stack ordering tests for outside press and focus
+  restoration through `resolve_outside_press` and `resolve_focus_restore`. Full focus-trap/scope
+  traversal remains deferred until the first nested overlay component needs it.
 - Keep `docs/ui/component-contract.md` current whenever a component state type adds new behavior
   metadata.

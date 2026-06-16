@@ -55,6 +55,10 @@ hitboxes, focus handles, concrete focus restoration, and AccessKit relationship 
 `open_gpui_ui_components::overlay` provides the narrow GPUI mapping layer: deferred priority,
 snap-to-window margin, GPUI anchor mapping, and open-change decisions derived from the shared
 policy. It does not own global overlay ordering, callback storage, or window subscriptions.
+`open_gpui_ui_core::overlay` owns renderer-neutral stack ordering through
+`resolve_escape_key`, `resolve_outside_press`, and `resolve_focus_restore`, so nested overlay
+behavior can be tested without a GPUI window before an adapter wires concrete events and focus
+handles.
 
 `TooltipState` is the first descriptive overlay component contract. It records content kind,
 disabled/open state, hover/focus/manual open intent, placement preference, delay policy, resolved
@@ -142,11 +146,12 @@ multiline input, password masking, undo/redo, and completion remains out of scop
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
 ADR 0006 keeps `open-gpui-ui-headless` deferred after the overlay checkpoint because several
-resolved state types still expose GPUI geometry aliases while focus-scope and dismissible-layer
-ordering need more window-free tests. Shared roving-focus helpers now live in
+resolved state types still expose GPUI geometry aliases and full focus-scope traversal remains
+future work. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
 `ContextMenuState` now stores renderer-neutral `OverlayPlacementInput`; GPUI placement is resolved
-only inside the adapter/render boundary.
+only inside the adapter/render boundary. Overlay stack Escape, outside-press, and focus-restore
+ordering now have window-free tests in `open_gpui_ui_core`.
 `Checkbox` now exposes checked, unchecked, and indeterminate resolved state plus theme intents for
 the box, indicator, label, and focus ring. `Label` now exposes control-association metadata at the
 resolved-state layer while keeping the visual adapter small. `Tabs` now keeps the roving-focus

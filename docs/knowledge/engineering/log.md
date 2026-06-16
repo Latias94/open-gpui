@@ -1,6 +1,11 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Finished the ADR 0006 stack-ordering follow-up by adding window-free overlay stack ordering
+  primitives in `open_gpui_ui_core::overlay`: `resolve_outside_press` and `resolve_focus_restore`.
+  Tests now cover topmost dismissible-layer outside-press handling and topmost present
+  focus-restore resolution without a GPUI window. Full focus-trap/scope traversal remains deferred
+  until nested overlay components need it.
 * **Update**: Continued ADR 0006 follow-up by changing `ContextMenuState` to store
   renderer-neutral `OverlayPlacementInput` instead of resolved `GpuiOverlayPlacement`; GPUI
   placement is now resolved only inside the context-menu adapter/render boundary.
