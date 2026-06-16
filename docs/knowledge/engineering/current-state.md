@@ -24,9 +24,11 @@ status: "active"
   search, disabled search, dialog-backed workspace commands, inline empty loading commands, and
   disabled commands. Gallery tests now assert combobox roles/filtering/empty state and command
   dialog/loading/shortcut contracts.
-- Review: U7 review subagents `u7_combobox_command_review` and `u7_review_fast` were dispatched
-  as read-only reviewers but did not return within the wait windows. Local review caught and
-  covered the command selection shortcut payload path with a state-level activation assertion.
+- Review: U7 review subagent `u7_review_fast` returned after the main U7 commit. It flagged a
+  gallery coverage gap for combobox selection persistence, which was fixed in the gallery sample
+  and tests. Its Escape-policy concern matched an already-policy-gated render path using
+  `escape_open_change`, so a direct overlay-policy assertion was added instead of changing the
+  close handler.
 - Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo
   nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed during U7.

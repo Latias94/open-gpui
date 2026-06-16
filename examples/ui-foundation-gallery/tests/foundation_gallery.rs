@@ -840,6 +840,8 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(comboboxes[0].state.input_role(), Role::EditableComboBox);
     assert_eq!(comboboxes[0].state.content_role(), Role::ListBox);
     assert_eq!(comboboxes[0].state.filtered_option_count(), 3);
+    assert_eq!(comboboxes[0].state.selected_value(), Some("solid"));
+    assert_eq!(comboboxes[0].state.listbox().selected_value(), None);
     assert_eq!(comboboxes[1].state.filtered_option_count(), 0);
     assert!(comboboxes[1].state.listbox().empty());
     assert!(comboboxes[2].state.disabled());
@@ -1108,6 +1110,9 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(framework.content_role(), Role::ListBox);
     assert_eq!(framework.total_option_count(), 5);
     assert_eq!(framework.filtered_option_count(), 3);
+    assert_eq!(framework.selected_value(), Some("solid"));
+    assert_eq!(framework.selected_label(), Some("Solid"));
+    assert_eq!(framework.listbox().selected_value(), None);
     assert_eq!(framework.active_value(), Some("react"));
     assert_eq!(framework.listbox().typeahead_query(), Some("re"));
     assert_eq!(

@@ -1903,6 +1903,10 @@ fn command_state_models_empty_disabled_and_escape_policy() {
     assert!(state.listbox().empty());
     assert!(!state.input().editable());
     assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Ignore);
+    assert_eq!(
+        state.overlay().policy().escape_key_policy(),
+        EscapeKeyPolicy::Ignore
+    );
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
 }

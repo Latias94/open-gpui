@@ -1575,6 +1575,7 @@ fn command_content_element(
         listbox = listbox.active(active_value);
     }
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
+    let loading_id: ElementId = (content_id.clone(), "loading").into();
     let escape_runtime = runtime.clone();
     let on_escape_open_change = on_open_change.clone();
     let escape_change = state
@@ -1634,6 +1635,7 @@ fn command_content_element(
         .when_some(state.loading().cloned(), |this, loading| {
             this.child(
                 div()
+                    .id(loading_id)
                     .text_color(ThemeResolver::resolve(colors.muted_foreground()))
                     .role(loading.role())
                     .aria_label(loading.message().to_owned())

@@ -16,9 +16,13 @@
 * **Update**: Updated `docs/ui/component-contract.md` and `docs/verification.md` to move
   Combobox/Command from follow-up scope into the documented component contract and manual dogfood
   path.
-* **Review**: U7 read-only review subagents were dispatched but timed out before returning
-  findings. Local review found and covered the command selection shortcut payload path; no blocking
-  local findings remained before commit.
+* **Review**: U7 read-only review subagent `u7_review_fast` returned after the main commit and
+  found one valid gallery coverage gap: the manual dogfood docs promised a combobox sample where
+  query filtering hides the selected option while preserving selected metadata. The follow-up fix
+  changed the framework combobox sample to select `solid` while querying `re` and added gallery
+  assertions for `selected_value() == Some("solid")` plus hidden listbox selection. Its Escape
+  concern matched an already-policy-gated render path using `escape_open_change`; a direct
+  overlay-policy assertion was added for `EscapeKeyPolicy::Ignore`.
 * **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest
   run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed during U7.

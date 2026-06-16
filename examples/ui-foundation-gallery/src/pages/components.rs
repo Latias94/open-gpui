@@ -2190,7 +2190,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             placeholder: "Search frameworks",
             size: Size::Medium,
             query: "re",
-            selected: None,
+            selected: Some("solid"),
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
             state: combobox_state(
@@ -2201,7 +2201,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
                 "Framework",
                 "Search frameworks",
                 "re",
-                None,
+                Some("solid"),
                 &framework_options,
                 &framework_groups,
                 tokens,
