@@ -1420,7 +1420,7 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>");
-        for state in public_state_structs(&source) {
+        for state in public_contract_structs(&source, &["State"]) {
             checked += 1;
             let fields = uncommented_lines(state.fields);
             for forbidden in FORBIDDEN {
@@ -1439,12 +1439,139 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
     );
 }
 
-struct PublicStateStruct<'a> {
+#[test]
+fn public_contract_extraction_blockers_match_allowlist() {
+    const BLOCKER_TOKENS: &[&str] = &["GpuiOverlayState", "open_gpui::Pixels", "Point<Pixels>"];
+    let expected = [
+        ("alert_dialog.rs", "AlertDialogMetrics", "open_gpui::Pixels"),
+        ("alert_dialog.rs", "AlertDialogState", "GpuiOverlayState"),
+        ("badge.rs", "BadgeMetrics", "open_gpui::Pixels"),
+        ("button.rs", "ButtonMetrics", "open_gpui::Pixels"),
+        ("checkbox.rs", "CheckboxMetrics", "open_gpui::Pixels"),
+        ("combobox.rs", "ComboboxMetrics", "open_gpui::Pixels"),
+        ("combobox.rs", "ComboboxState", "GpuiOverlayState"),
+        ("command.rs", "CommandDialogState", "GpuiOverlayState"),
+        ("command.rs", "CommandMetrics", "open_gpui::Pixels"),
+        ("command.rs", "CommandState", "GpuiOverlayState"),
+        ("context_menu.rs", "ContextMenuState", "Point<Pixels>"),
+        ("dialog.rs", "DialogMetrics", "open_gpui::Pixels"),
+        ("dialog.rs", "DialogState", "GpuiOverlayState"),
+        ("field.rs", "FieldMetrics", "open_gpui::Pixels"),
+        ("hover_card.rs", "HoverCardMetrics", "open_gpui::Pixels"),
+        ("hover_card.rs", "HoverCardState", "GpuiOverlayState"),
+        ("icon_button.rs", "IconButtonMetrics", "open_gpui::Pixels"),
+        ("label.rs", "LabelMetrics", "open_gpui::Pixels"),
+        ("listbox.rs", "ListboxMetrics", "open_gpui::Pixels"),
+        ("menu.rs", "MenuMetrics", "open_gpui::Pixels"),
+        ("menu.rs", "MenuState", "GpuiOverlayState"),
+        ("popover.rs", "PopoverMetrics", "open_gpui::Pixels"),
+        ("popover.rs", "PopoverState", "GpuiOverlayState"),
+        ("radio.rs", "RadioGroupMetrics", "open_gpui::Pixels"),
+        ("scroll_area.rs", "ScrollAreaMetrics", "open_gpui::Pixels"),
+        ("select.rs", "SelectMetrics", "open_gpui::Pixels"),
+        ("select.rs", "SelectState", "GpuiOverlayState"),
+        ("sheet.rs", "SheetMetrics", "open_gpui::Pixels"),
+        ("sheet.rs", "SheetState", "GpuiOverlayState"),
+        ("sidebar.rs", "SidebarMetrics", "open_gpui::Pixels"),
+        ("splitter.rs", "SplitterMetrics", "open_gpui::Pixels"),
+        ("switch.rs", "SwitchMetrics", "open_gpui::Pixels"),
+        ("tabs.rs", "TabsMetrics", "open_gpui::Pixels"),
+        ("text_input.rs", "TextInputMetrics", "open_gpui::Pixels"),
+        ("toolbar.rs", "ToolbarMetrics", "open_gpui::Pixels"),
+        ("tooltip.rs", "TooltipMetrics", "open_gpui::Pixels"),
+        ("tooltip.rs", "TooltipState", "GpuiOverlayState"),
+    ];
+    let mut expected = expected
+        .into_iter()
+        .map(|(file, contract, token)| {
+            PublicContractBlocker::new(file.to_owned(), contract.to_owned(), token.to_owned())
+        })
+        .collect::<Vec<_>>();
+    expected.sort();
+
+    let mut actual = public_contract_extraction_blockers(BLOCKER_TOKENS);
+    actual.sort();
+
+    assert_eq!(
+        actual, expected,
+        "public component contracts gained or removed extraction blockers; update this inventory as U2-U6 migrate them"
+    );
+}
+
+#[test]
+fn adapter_only_public_surfaces_match_allowlist() {
+    let expected = [
+        ("focus.rs", "BoxShadow"),
+        ("focus.rs", "focus_ring_shadow"),
+        ("lib.rs", "TextInputController"),
+        ("lib.rs", "focus_ring_shadow"),
+        ("prelude.rs", "TextInputController"),
+        ("prelude.rs", "focus_ring_shadow"),
+        ("scroll_area.rs", "ScrollHandle"),
+        ("text_input.rs", "Entity<TextInputController>"),
+        ("text_input.rs", "EntityInputHandler"),
+        ("text_input.rs", "TextInputController"),
+    ];
+    let mut expected = expected
+        .into_iter()
+        .map(|(file, token)| PublicSurfaceBlocker::new(file.to_owned(), token.to_owned()))
+        .collect::<Vec<_>>();
+    expected.sort();
+
+    let mut actual = public_surface_blockers(&[
+        "BoxShadow",
+        "Entity<TextInputController>",
+        "EntityInputHandler",
+        "ScrollHandle",
+        "TextInputController",
+        "focus_ring_shadow",
+    ]);
+    actual.sort();
+
+    assert_eq!(
+        actual, expected,
+        "adapter-only public surfaces changed; update this inventory as U6 classifies or narrows GPUI-specific APIs"
+    );
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PublicContractBlocker {
+    file: String,
+    contract: String,
+    token: String,
+}
+
+impl PublicContractBlocker {
+    fn new(file: String, contract: String, token: String) -> Self {
+        Self {
+            file,
+            contract,
+            token,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PublicSurfaceBlocker {
+    file: String,
+    token: String,
+}
+
+impl PublicSurfaceBlocker {
+    fn new(file: String, token: String) -> Self {
+        Self { file, token }
+    }
+}
+
+struct PublicContractStruct<'a> {
     name: &'a str,
     fields: &'a str,
 }
 
-fn public_state_structs(source: &str) -> Vec<PublicStateStruct<'_>> {
+fn public_contract_structs<'a>(
+    source: &'a str,
+    suffixes: &[&str],
+) -> Vec<PublicContractStruct<'a>> {
     let mut states = Vec::new();
     let mut search_from = 0;
 
@@ -1458,7 +1585,7 @@ fn public_state_structs(source: &str) -> Vec<PublicStateStruct<'_>> {
         let name = &source[name_start..name_end];
 
         search_from = name_end;
-        if !name.ends_with("State") {
+        if !suffixes.iter().any(|suffix| name.ends_with(suffix)) {
             continue;
         }
 
@@ -1469,7 +1596,7 @@ fn public_state_structs(source: &str) -> Vec<PublicStateStruct<'_>> {
             continue;
         };
 
-        states.push(PublicStateStruct {
+        states.push(PublicContractStruct {
             name,
             fields: &source[open_brace + 1..close_brace],
         });
@@ -1477,6 +1604,128 @@ fn public_state_structs(source: &str) -> Vec<PublicStateStruct<'_>> {
     }
 
     states
+}
+
+fn public_contract_extraction_blockers(tokens: &[&str]) -> Vec<PublicContractBlocker> {
+    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+        .expect("ui_components src directory should be readable")
+        .map(|entry| {
+            entry
+                .expect("source directory entry should be readable")
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect::<Vec<_>>();
+    source_files.sort();
+
+    let mut blockers = Vec::new();
+    for source_file in source_files {
+        let source = std::fs::read_to_string(&source_file)
+            .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
+        let file_name = source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+        for contract in public_contract_structs(&source, &["State", "Metrics"]) {
+            let fields = uncommented_lines(contract.fields);
+            for token in tokens {
+                if fields.contains(token) {
+                    blockers.push(PublicContractBlocker::new(
+                        file_name.to_owned(),
+                        contract.name.to_owned(),
+                        (*token).to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    blockers
+}
+
+fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
+    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+        .expect("ui_components src directory should be readable")
+        .map(|entry| {
+            entry
+                .expect("source directory entry should be readable")
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect::<Vec<_>>();
+    source_files.sort();
+
+    let mut blockers = Vec::new();
+    for source_file in source_files {
+        let source = std::fs::read_to_string(&source_file)
+            .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
+        let surface = public_api_surface(&uncommented_lines(&source));
+        let file_name = source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>");
+
+        for token in tokens {
+            if surface.contains(token) {
+                blockers.push(PublicSurfaceBlocker::new(
+                    file_name.to_owned(),
+                    (*token).to_owned(),
+                ));
+            }
+        }
+    }
+
+    blockers
+}
+
+fn public_api_surface(source: &str) -> String {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut surface = Vec::new();
+    let mut line_index = 0usize;
+
+    while line_index < lines.len() {
+        let line = lines[line_index];
+        let trimmed = line.trim_start();
+
+        if trimmed.starts_with("pub use ") {
+            while line_index < lines.len() {
+                let signature_line = lines[line_index];
+                surface.push(signature_line);
+                line_index += 1;
+                if signature_line.contains(';') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if trimmed.starts_with("pub fn ") {
+            while line_index < lines.len() {
+                let signature_line = lines[line_index];
+                surface.push(signature_line);
+                line_index += 1;
+                if signature_line.contains('{') || signature_line.contains(';') {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if trimmed.starts_with("pub const ")
+            || trimmed.starts_with("pub type ")
+            || trimmed.starts_with("pub enum ")
+            || trimmed.starts_with("pub struct ")
+            || trimmed.starts_with("impl EntityInputHandler for ")
+        {
+            surface.push(line);
+            line_index += 1;
+            continue;
+        }
+
+        line_index += 1;
+    }
+
+    surface.join("\n")
 }
 
 fn matching_brace(source: &str, open_brace: usize) -> Option<usize> {

@@ -50,12 +50,13 @@ The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter
 deferred priority, snap margin, anchor conversion, outside-press open-change, and Escape
 open-change without introducing a global overlay runtime.
 The `open-gpui-ui-components` public contract tests should also keep
-`public_resolved_state_contracts_avoid_gpui_runtime_types` passing. That test is the current
+`public_resolved_state_contracts_avoid_gpui_runtime_types` passing. That test is the hard
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,
 `Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and
-callback storage from entering state contracts. It intentionally does not fail on `Pixels` or
-geometry aliases yet; ADR 0006 tracks those as extraction blockers rather than a completed
-migration.
+callback storage from entering state contracts. The companion extraction-blocker inventory tests in
+`open-gpui-ui-components` and `open-gpui-ui-core` pin the known GPUI geometry, `GpuiOverlayState`,
+direct focus/a11y re-export, sizing/adaptive `Pixels` usage, and adapter-metric blockers so later
+extraction-prep work can shrink that allowlist deliberately.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

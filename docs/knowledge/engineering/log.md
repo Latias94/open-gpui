@@ -10,6 +10,15 @@
   or classify the remaining public-boundary blockers first: GPUI geometry aliases, direct GPUI
   focus/a11y re-exports, adapter-facing `GpuiOverlayState`, and GPUI-owned APIs such as
   `TextInputController`, `ScrollHandle`, and `focus_ring_shadow`.
+* **Update**: Completed U1 of the extraction-prep plan by adding extraction-blocker inventory
+  tests for `open-gpui-ui-components` public `*State`/`*Metrics` contracts and
+  `open-gpui-ui-core` public focus/a11y/geometry blockers. The hard runtime/render leak guard still
+  fails on new `Window`, `App`, `Context`, rendering, handle, and callback leaks; the new inventory
+  pins known blockers for U2-U6 to shrink.
+* **Verification**: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `git diff --check`
+  passed for U1.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

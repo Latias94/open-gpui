@@ -308,6 +308,10 @@ Before extraction, keep these blockers explicit:
 
 - public resolved-state structs must continue to avoid GPUI runtime/rendering types, concrete
   element ids, focus handles, scroll handles, and callbacks;
+- public contract guard tests now treat those runtime/rendering leaks as hard failures, while a
+  separate extraction-blocker inventory pins the currently known GPUI geometry, `GpuiOverlayState`,
+  direct focus/a11y re-export, sizing/adaptive `Pixels` usage, and adapter metric blockers until
+  the extraction-prep series removes or classifies them;
 - `open_gpui::Pixels`, `Point`, and `Bounds` usage should be normalized behind neutral geometry
   vocabulary if another UI framework will consume the contracts;
 - `GpuiOverlayState` should be split so neutral overlay policy/presence/focus data is not coupled

@@ -20,10 +20,16 @@ status: "active"
   then migrate neutral geometry/metrics, add focus and accessibility facades, split neutral overlay
   state from GPUI adapter scheduling, classify adapter-only APIs, and finally update ADR 0006 with
   the crate-extraction readiness decision.
-- Last verified: Planning-only change; no Rust tests are required yet. Run `git diff --check`
-  before committing the plan and memory update.
-- Next action: Start U1 of the extraction-prep plan by adding core/component boundary guards that
-  distinguish hard runtime leaks from known extraction blockers.
+- Done: Implemented U1 guard inventory. `open-gpui-ui-components` now has a companion extraction
+  blocker allowlist for public `*State` and `*Metrics` contracts, while `open-gpui-ui-core` has a
+  new `tests/headless_contracts.rs` guard for direct GPUI focus/a11y and geometry blockers.
+- Last verified: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `git diff --check`
+  passed for U1.
+- Next action: Commit U1, then start U2 by adding neutral geometry value types in
+  `open-gpui-ui-core` and migrating overlay placement/context-menu contracts off public GPUI
+  geometry aliases.
 
 ## 2026-06-16
 
