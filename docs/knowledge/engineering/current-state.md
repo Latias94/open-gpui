@@ -3,7 +3,7 @@ type: "Current State"
 title: "Current Engineering State"
 description: "Short durable summary of the active engineering state."
 tags: ["engineering-memory"]
-timestamp: 2026-06-16T13:08:39Z
+timestamp: 2026-06-16T16:14:23Z
 status: "active"
 ---
 
@@ -11,6 +11,20 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Started the UI shell, choice, and headless-readiness series with
+  `docs/plans/2026-06-16-002-feat-ui-shell-choice-headless-series-plan.md`. U1 adds a visible
+  Components conformance gate surface for explicit crate/prelude exports, gallery metadata,
+  ScrollArea redraw persistence, Splitter runtime constraints, Tabs overflow/roving focus, and
+  explicit accessible labels.
+- Done: The Components gallery now renders the conformance gates, and gallery tests assert stable
+  gate ids/evidence alongside the existing component metadata samples. `open_gpui_ui_components`
+  also has an isolated crate-root/prelude export smoke test so deleting a public re-export fails
+  the intended surface.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest
+  run -p open-gpui-ui-foundation-gallery`, and `git diff --check` passed after the U1 conformance
+  gate slice.
+- Next action: Start U2 Toolbar on the existing resolved-state plus GPUI-adapter boundary.
 - Done: Completed the U11 Splitter half by adding `Splitter` to `open_gpui_ui_components`.
   `SplitterState` now records group id, orientation, panel fractions, min/max constraints,
   collapsible/collapsed metadata, handle adjacency, disabled state, and metrics. It also owns

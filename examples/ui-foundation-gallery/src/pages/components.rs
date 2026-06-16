@@ -15,18 +15,33 @@ pub const TITLE: &str = "Components";
 pub const SUMMARY: &str = "First concrete component consumers built on the foundation crate.";
 /// Foundation signals exercised by this page.
 pub const SIGNALS: &[&str] = &[
+    "open_gpui_ui_foundation_gallery::pages::components::CONFORMANCE_GATES",
+    "open_gpui_ui_foundation_gallery::pages::components::ComponentConformanceGate",
     "open_gpui_ui_components::Button",
+    "open_gpui_ui_components::ButtonState",
+    "open_gpui_ui_components::ButtonVariant",
     "open_gpui_ui_components::Badge",
+    "open_gpui_ui_components::BadgeState",
+    "open_gpui_ui_components::BadgeVariant",
     "open_gpui_ui_components::IconButton",
+    "open_gpui_ui_components::IconButtonState",
     "open_gpui_ui_components::Switch",
+    "open_gpui_ui_components::SwitchState",
     "open_gpui_ui_components::Checkbox",
+    "open_gpui_ui_components::CheckboxState",
     "open_gpui_ui_components::RadioGroup",
+    "open_gpui_ui_components::RadioGroupState",
     "open_gpui_ui_components::RadioItem",
     "open_gpui_ui_components::Toggle",
+    "open_gpui_ui_components::ToggleState",
+    "open_gpui_ui_components::ToggleVariant",
     "open_gpui_ui_components::Label",
+    "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
+    "open_gpui_ui_components::TextInputState",
     "open_gpui_ui_components::TextInputController",
     "open_gpui_ui_components::Field",
+    "open_gpui_ui_components::FieldState",
     "open_gpui_ui_components::Tabs",
     "open_gpui_ui_components::TabsItem",
     "open_gpui_ui_components::TabsActivationMode",
@@ -51,6 +66,82 @@ pub const SIGNALS: &[&str] = &[
     "Role::TabList",
     "Role::Tab",
     "Role::TabPanel",
+];
+
+/// One component conformance gate shown by the Components page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentConformanceGate {
+    /// Stable gate id.
+    pub id: &'static str,
+    /// Visible gate title.
+    pub title: &'static str,
+    /// Behavior or contract that this gate protects.
+    pub summary: &'static str,
+    /// Durable test or document evidence for this gate.
+    pub evidence: &'static [&'static str],
+}
+
+/// Regression-prone component behaviors that every new slice should keep covered.
+pub const CONFORMANCE_GATES: &[ComponentConformanceGate] = &[
+    ComponentConformanceGate {
+        id: "public-api-exports",
+        title: "Public API exports",
+        summary: "Crate root and prelude exports stay explicit for every shipped component type.",
+        evidence: &[
+            "crates/ui_components/src/lib.rs",
+            "crates/ui_components/src/prelude.rs",
+            "crates/ui_components/tests/components.rs",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "gallery-metadata",
+        title: "Gallery metadata",
+        summary: "Components samples expose stable ids, real resolved state, and page signals.",
+        evidence: &[
+            "examples/ui-foundation-gallery/src/pages/components.rs",
+            "examples/ui-foundation-gallery/tests/foundation_gallery.rs",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "scroll-redraw",
+        title: "Scroll redraw persistence",
+        summary: "ScrollArea default handles survive reconstructed component values and reset only by policy.",
+        evidence: &[
+            "ScrollAreaRuntime",
+            "scroll_area_default_handle_survives_reconstructed_component_values",
+            "scroll_area_reset_key_resets_default_runtime_handle",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "splitter-runtime",
+        title: "Splitter runtime constraints",
+        summary: "Splitter runtime fractions keep min/max and collapsed-panel restore behavior centralized.",
+        evidence: &[
+            "SplitterState::with_panel_fractions",
+            "SplitterState::resized_by",
+            "splitter_runtime_fraction_overrides_still_use_resize_constraints",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "tabs-overflow",
+        title: "Tabs overflow and roving focus",
+        summary: "Tabs keep disabled-item skipping, tab-stop metadata, and vertical rail overflow dogfood.",
+        evidence: &[
+            "workspace-tabs",
+            "components_page_tabs_samples_expose_roving_focus_contract",
+            "docs/verification.md",
+        ],
+    },
+    ComponentConformanceGate {
+        id: "a11y-labels",
+        title: "A11y labels and associations",
+        summary: "Icon-only controls and label associations remain explicit instead of relying on visual text.",
+        evidence: &[
+            "IconButton::new",
+            "Label::for_control",
+            "components_page_samples_keep_explicit_a11y_metadata",
+        ],
+    },
 ];
 
 /// One button sample in the gallery.

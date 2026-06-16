@@ -173,6 +173,21 @@ controlled resize callbacks, application-level layout persistence, RTL behavior,
 splitter arbitration should build on `SplitterState::resized_by` instead of duplicating
 min/max/collapse logic in adapter code.
 
+## Gallery Conformance Surface
+
+`examples/ui-foundation-gallery` is the durable conformance surface for official UI components. It
+should expose stable sample ids, real resolved state, and a short gate list that names the
+regression-prone behaviors each slice must keep covered.
+
+The Components page should keep these gates visible:
+
+- crate-root and prelude exports stay explicit;
+- gallery samples continue to show real resolved state for each shipped component;
+- ScrollArea redraws preserve the default keyed runtime handle;
+- Splitter runtime fractions continue to share one constraint solver;
+- Tabs keep overflow and roving-focus behavior visible in the page;
+- icon-only affordances and labels keep their accessible metadata explicit.
+
 ## Current Known Gaps
 
 The runtime theme table currently covers semantic component colors for light, dark, and

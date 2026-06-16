@@ -120,7 +120,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    TextInput sample should accept real text editing through the controller-backed path, while the
    gallery remains scrollable and keeps focus visible when the page overflows. The app should stay
    open after opening `Components`; an `accesskit_consumer` panic during that navigation is a
-   regression in the accessibility repair gate.
+   regression in the accessibility repair gate. The Components page also serves as a conformance
+   surface: confirm the visible gate cards for explicit crate exports, gallery metadata, ScrollArea
+   redraw persistence, Splitter runtime constraints, Tabs overflow, and explicit accessible
+   metadata on icon-only and label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

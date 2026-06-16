@@ -1082,6 +1082,37 @@ fn icon_button_requires_accessible_label_and_reuses_button_primitives() {
 }
 
 #[test]
+fn crate_root_and_prelude_exports_remain_explicit() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let root_button = root::Button::new("save", "Save");
+    let root_scroll = root::ScrollArea::new("scroll", div());
+    let root_splitter = root::Splitter::new("split");
+    let root_tabs = root::Tabs::new("tabs");
+    let prelude_button = prelude::Button::new("save", "Save");
+    let prelude_scroll = prelude::ScrollArea::new("scroll", div());
+    let prelude_splitter = prelude::Splitter::new("split");
+    let prelude_tabs = prelude::Tabs::new("tabs");
+
+    let _ = (
+        root_button.state(),
+        root_scroll.state(),
+        root_splitter.state(),
+        root_tabs.state(),
+        prelude_button.state(),
+        prelude_scroll.state(),
+        prelude_splitter.state(),
+        prelude_tabs.state(),
+        prelude::DEFAULT_OVERLAY_SAFE_MARGIN,
+        prelude::default_deferred_priority(OverlayLayerKind::Tooltip),
+        prelude::escape_open_change(&OverlayLayerPolicy::new(
+            OverlayLayerKind::Tooltip,
+            OverlayPresence::open(),
+        )),
+    );
+}
+
+#[test]
 fn disabled_icon_button_blocks_activation_metadata() {
     let state = IconButton::new("locked", "x", "Locked")
         .disabled(true)

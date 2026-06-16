@@ -548,6 +548,40 @@ impl GalleryShell {
     }
 
     fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+        let conformance_gates = pages::components::CONFORMANCE_GATES;
+        let conformance_gate_cards = conformance_gates.iter().map(|gate| {
+            div()
+                .id(format!("component-gate:{}", gate.id))
+                .min_w(px(220.0))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(0xd6d8ce))
+                .bg(rgb(0xffffff))
+                .p_3()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(open_gpui::FontWeight::BOLD)
+                        .child(gate.title),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .line_height(px(18.0))
+                        .text_color(rgb(0x5a6472))
+                        .child(gate.summary),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .line_height(px(18.0))
+                        .text_color(rgb(0x5a6472))
+                        .child(gate.evidence.join(" / ")),
+                )
+        });
         let tabs_samples = pages::components::tabs_samples(snapshot.tokens);
         let radio_samples = pages::components::radio_group_samples(snapshot.tokens);
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
@@ -561,6 +595,25 @@ impl GalleryShell {
             .flex()
             .flex_col()
             .gap_5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Conformance gates"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(conformance_gate_cards),
+                    ),
+            )
             .child(
                 div()
                     .flex()

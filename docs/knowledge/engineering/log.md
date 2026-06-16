@@ -1,6 +1,18 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Wrote the UI shell, choice, and headless-readiness series plan at
+  `docs/plans/2026-06-16-002-feat-ui-shell-choice-headless-series-plan.md`. The sequence starts
+  with a gallery conformance gate, then proceeds through Toolbar, Sidebar, AlertDialog/Sheet,
+  HoverCard, Listbox/Select, Combobox/Command, and a headless-readiness checkpoint.
+* **Update**: Added the Components gallery conformance gate surface for explicit crate/prelude
+  exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints, Tabs
+  overflow/roving focus, and explicit accessible labels. Tests now assert the stable gate metadata
+  and isolate crate-root versus prelude exports so public-surface drift fails before manual dogfood.
+* **Review**: U1 subagent review found the first prelude smoke could be satisfied by existing outer
+  imports and that the plan wording overstated pointer/focus coverage. The test now resolves
+  through `open_gpui_ui_components::prelude`, while the plan keeps pointer drag and focus-visible
+  traversal in the manual dogfood path until state-level tests can prove them.
 * **Fix**: Fixed `ScrollArea` samples appearing non-scrollable when the component value is rebuilt
   each render. The default `ScrollHandle` now lives in the adapter's keyed runtime instead of the
   `ScrollArea::new` builder value, while externally owned handles remain supported. Added a GPUI

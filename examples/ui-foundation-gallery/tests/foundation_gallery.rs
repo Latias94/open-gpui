@@ -491,6 +491,7 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
 #[test]
 fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
+    let gates = pages::components::CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
     let icon_buttons = pages::components::icon_button_samples(tokens);
@@ -503,6 +504,24 @@ fn components_page_samples_expose_component_metadata() {
     let fields = pages::components::field_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
+
+    assert_eq!(gates.len(), 6);
+    assert_eq!(gates[0].id, "public-api-exports");
+    assert!(
+        gates[0]
+            .evidence
+            .contains(&"crates/ui_components/src/lib.rs")
+    );
+    assert_eq!(gates[1].id, "gallery-metadata");
+    assert_eq!(gates[2].id, "scroll-redraw");
+    assert!(
+        gates[2]
+            .evidence
+            .contains(&"scroll_area_default_handle_survives_reconstructed_component_values")
+    );
+    assert_eq!(gates[3].id, "splitter-runtime");
+    assert_eq!(gates[4].id, "tabs-overflow");
+    assert_eq!(gates[5].id, "a11y-labels");
 
     assert_eq!(buttons.len(), 6);
     assert_eq!(buttons[0].id, "default");
@@ -706,4 +725,19 @@ fn components_page_samples_keep_explicit_a11y_metadata() {
             .state
             .associated()
     );
+}
+
+#[test]
+fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
+    let gates = pages::components::CONFORMANCE_GATES;
+
+    assert!(gates.iter().all(|gate| !gate.title.trim().is_empty()));
+    assert!(gates.iter().all(|gate| !gate.summary.trim().is_empty()));
+    assert!(
+        gates
+            .iter()
+            .all(|gate| gate.evidence.iter().all(|item| !item.trim().is_empty()))
+    );
+    assert!(gates.iter().any(|gate| gate.id == "scroll-redraw"));
+    assert!(gates.iter().any(|gate| gate.id == "tabs-overflow"));
 }
