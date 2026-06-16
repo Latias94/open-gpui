@@ -13,6 +13,7 @@ pub mod field;
 pub mod focus;
 pub mod icon_button;
 pub mod label;
+pub mod overlay;
 pub mod prelude;
 pub mod radio;
 pub mod switch;
@@ -29,6 +30,11 @@ pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
 pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use overlay::{
+    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
+    OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,
+    outside_press_open_change, point_anchor_placement,
+};
 pub use radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,

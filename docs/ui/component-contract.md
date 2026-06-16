@@ -52,6 +52,9 @@ reaching GPUI adapters. The shared contract distinguishes:
 
 GPUI adapters remain responsible for `deferred` and `anchored` rendering, event subscriptions,
 hitboxes, focus handles, concrete focus restoration, and AccessKit relationship wiring.
+`open_gpui_ui_components::overlay` provides the narrow GPUI mapping layer: deferred priority,
+snap-to-window margin, GPUI anchor mapping, and open-change decisions derived from the shared
+policy. It does not own global overlay ordering, callback storage, or window subscriptions.
 
 ## Focus Rings
 

@@ -1,6 +1,7 @@
 use open_gpui::px;
 use open_gpui_ui_components::{
-    BadgeVariant, ButtonVariant, TabsActivationMode, ThemeMode, ToggleVariant,
+    BadgeVariant, ButtonVariant, DEFAULT_OVERLAY_SAFE_MARGIN, TabsActivationMode, ThemeMode,
+    ToggleVariant, default_deferred_priority,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -175,6 +176,14 @@ fn overlay_page_samples_expose_behavior_contracts() {
     assert_eq!(samples[0].id, "tooltip");
     assert_eq!(samples[0].policy.kind(), OverlayLayerKind::Tooltip);
     assert_eq!(
+        samples[0].adapter.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::Tooltip)
+    );
+    assert_eq!(
+        samples[0].adapter.snap_margin(),
+        DEFAULT_OVERLAY_SAFE_MARGIN
+    );
+    assert_eq!(
         samples[0].policy.outside_press_policy(),
         OutsidePressPolicy::Ignore
     );
@@ -205,6 +214,7 @@ fn overlay_page_samples_expose_behavior_contracts() {
         &FocusRestoreIntent::Trigger
     );
     assert!(samples[1].policy.layer_state().wants_outside_press());
+    assert!(samples[1].adapter.wants_outside_press_handler());
 
     assert_eq!(samples[2].id, "dialog");
     assert_eq!(samples[2].policy.kind(), OverlayLayerKind::Modal);
@@ -217,6 +227,10 @@ fn overlay_page_samples_expose_behavior_contracts() {
         &InitialFocusIntent::FirstFocusable
     );
     assert!(samples[2].policy.layer_state().blocks_underlay_input());
+    assert_eq!(
+        samples[2].adapter.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::Modal)
+    );
 
     assert_eq!(samples[3].id, "menu");
     assert_eq!(samples[3].policy.kind(), OverlayLayerKind::Menu);

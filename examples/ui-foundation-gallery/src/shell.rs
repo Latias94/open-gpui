@@ -2233,6 +2233,7 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
 
 fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl IntoElement {
     let policy = &sample.policy;
+    let adapter = &sample.adapter;
     let presence = policy.presence();
     let layer_state = policy.layer_state();
     let outside = policy.outside_press_policy().resolve();
@@ -2290,6 +2291,13 @@ fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
+        ))
+        .child(format!(
+            "gpui: priority {} / margin {} / layer {} / outside handler {}",
+            adapter.deferred_priority(),
+            format_px(adapter.snap_margin()),
+            bool_label(adapter.should_render_deferred_layer()),
+            bool_label(adapter.wants_outside_press_handler())
         ))
 }
 

@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Started U3 by adding `open_gpui_ui_components::overlay`, a narrow GPUI adapter helper
+  layer that maps shared overlay policy into deferred priority, snap margin, GPUI anchor/offset,
+  Escape open-change, and outside-press open-change decisions without introducing a global overlay
+  runtime.
+* **Update**: Verified U3 with `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`.
 * **Update**: Started U2 of the overlay component series by extending
   `open-gpui-ui-core::overlay` with renderer-neutral behavior contracts for layer kind, presence,
   outside-press policy, Escape policy, dismiss reason, focus restore, initial focus, layer-state

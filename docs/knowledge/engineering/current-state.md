@@ -22,6 +22,13 @@ status: "active"
 - Last verified: `cargo check -p open-gpui-ui-core`, `cargo check -p
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, and `cargo nextest
   run -p open-gpui-ui-foundation-gallery` passed after the U2 overlay behavior contract work.
+- Done: Started U3 by adding `open_gpui_ui_components::overlay`, a narrow GPUI adapter mapping
+  layer that resolves deferred priority, snap margin, GPUI anchor/offset, Escape open-change, and
+  outside-press open-change from the U2 renderer-neutral policy without owning a global overlay
+  runtime or storing GPUI callbacks.
+- Last verified: `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed after the U3 adapter helper work.
 - Done: Started the overlay component series with U1 accessibility/gallery runtime gate work:
   added direct coverage for valid and invalid AccessKit cross-node references in
   `crates/gpui/src/window/a11y.rs`, removed the compile-time bundled-font dependency from the

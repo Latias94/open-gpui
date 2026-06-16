@@ -46,6 +46,9 @@ cargo nextest run -p open-gpui-ui-foundation-gallery
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
 initial focus intent, and placement input without opening a GPUI window.
+The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter mapping for
+deferred priority, snap margin, anchor conversion, outside-press open-change, and Escape
+open-change without introducing a global overlay runtime.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:
@@ -76,7 +79,7 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    close it from the popover or press Escape. The geometry readout should keep anchor, layout,
    visual, preferred, and safe-window rectangles visible. The behavior contract matrix should show
    distinct tooltip, popover, dialog, and menu policies for presence, outside press, Escape, focus,
-   and underlay blocking.
+   underlay blocking, and GPUI adapter fields such as deferred priority and snap margin.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field, and Tabs samples

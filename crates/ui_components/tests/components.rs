@@ -1,14 +1,19 @@
-use open_gpui::{AppContext, div, px};
+use open_gpui::{Anchor, AppContext, div, point, px, size};
 use open_gpui_ui_components::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, DEFAULT_FOCUS_RING_WIDTH,
-    Field, FocusRing, IconButton, Label, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState,
-    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, active_index_from_str_keys, first_enabled, focus_ring_shadow, last_enabled,
-    next_enabled,
+    DEFAULT_OVERLAY_SAFE_MARGIN, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
+    IconButton, Label, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, Switch, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputController,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant,
+    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
+    focus_ring_shadow, gpui_anchor, last_enabled, next_enabled, outside_press_open_change,
+    point_anchor_placement,
 };
 use open_gpui_ui_core::{
-    Orientation, Role, Sizable, Size, ThemeTokens, Toggled, TokenKey, semantic,
+    DismissReason, EscapeKeyPolicy, InitialFocusIntent, Orientation, OutsidePressPolicy,
+    OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
+    OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    Toggled, TokenKey, rect, semantic,
 };
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
@@ -32,6 +37,134 @@ fn custom_tokens() -> ThemeTokens {
         destructive: TEST_DESTRUCTIVE,
         ..ThemeTokens::default()
     }
+}
+
+#[test]
+fn overlay_adapter_config_defaults_follow_overlay_kind_policy() {
+    let tooltip =
+        GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, OverlayPresence::open()).state();
+    let popover = GpuiOverlayAdapterConfig::new(
+        OverlayLayerKind::NonModalDismissible,
+        OverlayPresence::open(),
+    )
+    .state();
+    let dialog =
+        GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, OverlayPresence::open()).state();
+    let menu =
+        GpuiOverlayAdapterConfig::new(OverlayLayerKind::Menu, OverlayPresence::open()).state();
+
+    assert_eq!(tooltip.policy().kind(), OverlayLayerKind::Tooltip);
+    assert_eq!(
+        tooltip.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::Tooltip)
+    );
+    assert_eq!(tooltip.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
+    assert!(tooltip.should_render_deferred_layer());
+    assert!(!tooltip.layer_state().hit_testable());
+
+    assert_eq!(
+        popover.policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        popover.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::NonModalDismissible)
+    );
+    assert!(popover.layer_state().visible());
+    assert!(popover.wants_outside_press_handler());
+
+    assert_eq!(dialog.policy().kind(), OverlayLayerKind::Modal);
+    assert_eq!(
+        dialog.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::Modal)
+    );
+    assert!(dialog.layer_state().blocks_underlay_input());
+
+    assert_eq!(menu.policy().kind(), OverlayLayerKind::Menu);
+    assert_eq!(
+        menu.deferred_priority(),
+        default_deferred_priority(OverlayLayerKind::Menu)
+    );
+    assert!(menu.layer_state().visible());
+}
+
+#[test]
+fn overlay_adapter_config_can_override_focus_and_dismiss_policy() {
+    let state = GpuiOverlayAdapterConfig::new(
+        OverlayLayerKind::NonModalDismissible,
+        OverlayPresence::open(),
+    )
+    .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
+    .escape_key_policy(EscapeKeyPolicy::Dismiss)
+    .focus_restore_intent(open_gpui_ui_core::FocusRestoreIntent::TriggerOrFallback(
+        open_gpui_ui_core::OverlayFocusTarget::new("fallback"),
+    ))
+    .initial_focus_intent(InitialFocusIntent::FirstFocusable)
+    .deferred_priority(9)
+    .snap_margin(px(12.0))
+    .state();
+
+    assert_eq!(
+        state.policy().outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(state.policy().escape_key_policy(), EscapeKeyPolicy::Dismiss);
+    assert_eq!(state.deferred_priority(), 9);
+    assert_eq!(state.snap_margin(), px(12.0));
+}
+
+#[test]
+fn overlay_placement_maps_to_gpui_anchor_and_margin() {
+    let input = OverlayPlacementInput::new(
+        OverlayAnchorInput::from_visual_and_layout_bounds(
+            Some(rect(point(px(10.0), px(20.0)), size(px(100.0), px(40.0)))),
+            Some(rect(point(px(30.0), px(40.0)), size(px(120.0), px(60.0)))),
+        ),
+        size(px(180.0), px(120.0)),
+    )
+    .with_side(OverlayPlacementSide::Bottom)
+    .with_alignment(OverlayPlacementAlignment::End)
+    .with_offset(px(6.0))
+    .with_safe_bounds(rect(point(px(0.0), px(0.0)), size(px(300.0), px(220.0))));
+
+    let placement = GpuiOverlayPlacement::resolve(input, DEFAULT_OVERLAY_SAFE_MARGIN);
+
+    assert_eq!(placement.anchor(), Anchor::TopRight);
+    assert_eq!(placement.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
+    assert!(placement.position().is_some());
+    assert_eq!(placement.safe_bounds(), input.safe_bounds());
+}
+
+#[test]
+fn overlay_open_change_helpers_match_core_policies() {
+    let dismissible = OverlayLayerPolicy::new(
+        OverlayLayerKind::NonModalDismissible,
+        OverlayPresence::open(),
+    );
+    let tooltip = OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open());
+
+    let escape =
+        escape_open_change(&dismissible).expect("dismissible overlay should close on escape");
+    assert_eq!(escape.reason(), DismissReason::EscapeKey);
+    assert!(escape.consumes_event());
+    assert!(!escape.allows_underlay_dispatch());
+
+    let outside = outside_press_open_change(&dismissible)
+        .expect("dismissible overlay should close on outside press");
+    assert_eq!(outside.reason(), DismissReason::OutsidePress);
+    assert!(outside.allows_underlay_dispatch());
+
+    assert_eq!(escape_open_change(&tooltip), None);
+    assert_eq!(outside_press_open_change(&tooltip), None);
+    assert_eq!(
+        gpui_anchor(OverlayPlacementSide::Top, OverlayPlacementAlignment::Start),
+        Anchor::BottomLeft
+    );
+    let point_placement = point_anchor_placement(point(px(5.0), px(6.0)), size(px(80.0), px(40.0)));
+    assert_eq!(
+        GpuiOverlayPlacement::resolve(point_placement, DEFAULT_OVERLAY_SAFE_MARGIN).anchor(),
+        Anchor::TopLeft
+    );
 }
 
 #[test]

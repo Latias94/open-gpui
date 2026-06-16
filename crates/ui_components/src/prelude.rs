@@ -8,6 +8,11 @@ pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldStat
 pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
+pub use crate::overlay::{
+    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
+    OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,
+    outside_press_open_change, point_anchor_placement,
+};
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
