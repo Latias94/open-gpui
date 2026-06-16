@@ -11,8 +11,9 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
     Checkbox, CheckboxState, ColorIntent, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
     FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState,
-    Label, LabelState, Menu, MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea,
-    ScrollAreaAxis, ScrollAreaState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover,
+    PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select,
+    SelectOpenMode, SelectState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
     SidebarItem, SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState,
     Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
     TextInputController, TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem,
@@ -623,6 +624,8 @@ impl GalleryShell {
         let toggle_samples = pages::components::toggle_samples(snapshot.tokens);
         let toolbar_samples = pages::components::toolbar_samples(snapshot.tokens);
         let sidebar_samples = pages::components::sidebar_samples(snapshot.tokens);
+        let listbox_samples = pages::components::listbox_samples(snapshot.tokens);
+        let select_samples = pages::components::select_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
@@ -831,6 +834,14 @@ impl GalleryShell {
                         }),
                     )),
             )
+            .child(component_listbox_samples_section(
+                listbox_samples,
+                snapshot.tokens,
+            ))
+            .child(component_select_samples_section(
+                select_samples,
+                snapshot.tokens,
+            ))
             .child(
                 div()
                     .flex()
@@ -3694,6 +3705,238 @@ fn component_splitter_state_row(state: &SplitterState) -> impl IntoElement {
             "handle {} hit {}",
             format_px(state.metrics().handle_thickness()),
             format_px(state.metrics().handle_hit_size())
+        ))
+}
+
+fn component_listbox_samples_section(
+    samples: [pages::components::ListboxSample; 2],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Listbox"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.into_iter().map(move |sample| {
+                    let state = sample.state.clone();
+                    let mut listbox =
+                        Listbox::new(format!("component-listbox:{}", sample.id), sample.title)
+                            .with_size(sample.size)
+                            .disabled(sample.disabled)
+                            .tokens(tokens);
+                    if let Some(selected) = sample.selected {
+                        listbox = listbox.selected(selected);
+                    }
+                    if let Some(active) = sample.active {
+                        listbox = listbox.active(active);
+                    }
+                    for option in sample.options.iter() {
+                        listbox = listbox.option(component_listbox_option(option));
+                    }
+                    for group in sample.groups.iter() {
+                        listbox = listbox.group(component_listbox_group(group));
+                    }
+
+                    div()
+                        .id(format!("component-listbox-sample:{}", sample.id))
+                        .w(px(320.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(sample.title),
+                                )
+                                .child(label_pill(size_label(sample.size))),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x5a6472))
+                                .child(sample.summary),
+                        )
+                        .child(listbox)
+                        .child(component_listbox_state_row(&state))
+                })),
+        )
+}
+
+fn component_select_samples_section(
+    samples: [pages::components::SelectSample; 3],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Select"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(samples.into_iter().map(move |sample| {
+                    let state = sample.state.clone();
+                    let mut select =
+                        Select::new(format!("component-select:{}", sample.id), sample.title)
+                            .placeholder(sample.placeholder)
+                            .with_size(sample.size)
+                            .disabled(sample.disabled)
+                            .tokens(tokens);
+                    if let Some(selected) = sample.selected {
+                        select = select.selected(selected);
+                    }
+                    select = match sample.open_mode {
+                        SelectOpenMode::Controlled => select.open(state.open()),
+                        SelectOpenMode::Uncontrolled => select.default_open(state.default_open()),
+                    };
+                    for option in sample.options.iter() {
+                        select = select.option(component_listbox_option(option));
+                    }
+                    for group in sample.groups.iter() {
+                        select = select.group(component_listbox_group(group));
+                    }
+
+                    div()
+                        .id(format!("component-select-sample:{}", sample.id))
+                        .w(px(340.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(sample.title),
+                                )
+                                .child(label_pill(if state.open() { "open" } else { "closed" })),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x5a6472))
+                                .child(sample.summary),
+                        )
+                        .child(select)
+                        .child(component_select_state_row(&state))
+                })),
+        )
+}
+
+fn component_listbox_group(group: &pages::components::ListboxGroupSample) -> ListboxGroup {
+    group.options.iter().fold(
+        ListboxGroup::new(group.value, group.label),
+        |group, option| group.option(component_listbox_option(option)),
+    )
+}
+
+fn component_listbox_option(option: &pages::components::ListboxOptionSample) -> ListboxOption {
+    if option.label.is_empty() {
+        ListboxOption::separator(option.value)
+    } else {
+        ListboxOption::new(option.value, option.label).disabled(option.disabled)
+    }
+}
+
+fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let active = state.active_value().unwrap_or("none");
+    let tab_stop = state.tab_stop_value().unwrap_or("none");
+    let disabled_count = state
+        .options()
+        .iter()
+        .filter(|option| option.disabled())
+        .count();
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!("{:?} / {}", state.role(), size_label(state.size())))
+        .child(format!(
+            "selected {} / active {} / tab stop {}",
+            selected, active, tab_stop
+        ))
+        .child(format!(
+            "{} groups / {} options / {} disabled",
+            state.groups().len(),
+            state.options().len(),
+            disabled_count
+        ))
+}
+
+fn component_select_state_row(state: &SelectState) -> impl IntoElement {
+    let selected = state.selected_value().unwrap_or("none");
+    let active = state.active_value().unwrap_or("none");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {:?} / {}",
+            state.trigger_role(),
+            state.content_role(),
+            size_label(state.size())
+        ))
+        .child(format!(
+            "{} / selected {} / active {}",
+            if state.open() { "open" } else { "closed" },
+            selected,
+            active
+        ))
+        .child(format!(
+            "{} options / scroll {} / {:?}",
+            state.listbox().options().len(),
+            if state.scrollable_content() {
+                "enabled"
+            } else {
+                "not needed"
+            },
+            state.outside_press_policy()
         ))
 }
 

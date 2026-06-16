@@ -2,14 +2,18 @@
 
 use open_gpui_ui_components::{
     Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
-    Field, FieldState, IconButton, IconButtonState, Label, LabelState, RadioGroupState,
-    RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, SidebarCollapseMode,
+    Field, FieldState, IconButton, IconButtonState, Label, LabelState, ListboxGroupDescriptor,
+    ListboxOptionDescriptor, ListboxState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis,
+    ScrollAreaState, ScrollResetPolicy, SelectOpenMode, SelectState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
     TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
-use open_gpui_ui_core::{Orientation, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{
+    FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
+    OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens,
+};
 
 /// Page title.
 pub const TITLE: &str = "Components";
@@ -46,6 +50,13 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::SidebarSection",
     "open_gpui_ui_components::SidebarItem",
     "open_gpui_ui_components::SidebarCollapseMode",
+    "open_gpui_ui_components::Listbox",
+    "open_gpui_ui_components::ListboxState",
+    "open_gpui_ui_components::ListboxOption",
+    "open_gpui_ui_components::ListboxGroup",
+    "open_gpui_ui_components::Select",
+    "open_gpui_ui_components::SelectState",
+    "open_gpui_ui_components::SelectOpenMode",
     "open_gpui_ui_components::Label",
     "open_gpui_ui_components::LabelState",
     "open_gpui_ui_components::TextInput",
@@ -71,6 +82,8 @@ pub const SIGNALS: &[&str] = &[
     "Role::Toolbar",
     "Role::Navigation",
     "Role::Section",
+    "Role::ListBox",
+    "Role::ListBoxOption",
     "Role::Switch",
     "Role::CheckBox",
     "Role::RadioGroup",
@@ -471,6 +484,80 @@ pub struct SidebarSample {
     pub sections: Vec<SidebarSectionSample>,
     /// Resolved state.
     pub state: SidebarState,
+}
+
+/// One listbox option sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListboxOptionSample {
+    /// Stable option value.
+    pub value: &'static str,
+    /// Visible option label.
+    pub label: &'static str,
+    /// Whether the option is disabled.
+    pub disabled: bool,
+}
+
+/// One listbox group sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListboxGroupSample {
+    /// Stable group value.
+    pub value: &'static str,
+    /// Visible group label.
+    pub label: &'static str,
+    /// Options in this group.
+    pub options: Vec<ListboxOptionSample>,
+}
+
+/// One listbox sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListboxSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Selected option value.
+    pub selected: Option<&'static str>,
+    /// Seeded active option value.
+    pub active: Option<&'static str>,
+    /// Whether the sample is disabled.
+    pub disabled: bool,
+    /// Standalone options.
+    pub options: Vec<ListboxOptionSample>,
+    /// Grouped options.
+    pub groups: Vec<ListboxGroupSample>,
+    /// Resolved state.
+    pub state: ListboxState,
+}
+
+/// One select sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Sample title.
+    pub title: &'static str,
+    /// Sample summary.
+    pub summary: &'static str,
+    /// Placeholder text.
+    pub placeholder: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Selected option value.
+    pub selected: Option<&'static str>,
+    /// Whether the select is disabled.
+    pub disabled: bool,
+    /// Open-state ownership.
+    pub open_mode: SelectOpenMode,
+    /// Standalone options.
+    pub options: Vec<ListboxOptionSample>,
+    /// Grouped options.
+    pub groups: Vec<ListboxGroupSample>,
+    /// Resolved state.
+    pub state: SelectState,
 }
 
 /// Returns button samples backed by real component state.
@@ -1711,6 +1798,254 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
     ]
 }
 
+/// Returns listbox samples backed by real component state.
+pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
+    let assigned_options = vec![
+        ListboxOptionSample {
+            value: "unassigned",
+            label: "Unassigned",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "separator",
+            label: "",
+            disabled: true,
+        },
+    ];
+    let assigned_groups = vec![
+        ListboxGroupSample {
+            value: "core",
+            label: "Core team",
+            options: vec![
+                ListboxOptionSample {
+                    value: "maya",
+                    label: "Maya Chen",
+                    disabled: false,
+                },
+                ListboxOptionSample {
+                    value: "owen",
+                    label: "Owen Patel",
+                    disabled: false,
+                },
+                ListboxOptionSample {
+                    value: "li",
+                    label: "Li Wei",
+                    disabled: true,
+                },
+            ],
+        },
+        ListboxGroupSample {
+            value: "support",
+            label: "Support",
+            options: vec![
+                ListboxOptionSample {
+                    value: "nora",
+                    label: "Nora Lee",
+                    disabled: false,
+                },
+                ListboxOptionSample {
+                    value: "sam",
+                    label: "Sam Rivera",
+                    disabled: false,
+                },
+            ],
+        },
+    ];
+    let empty_options = Vec::new();
+    let empty_groups = Vec::new();
+
+    [
+        ListboxSample {
+            id: "assignee-listbox",
+            title: "Assignee",
+            summary: "Grouped listbox with one disabled option and roving active metadata.",
+            size: Size::Medium,
+            selected: Some("owen"),
+            active: Some("maya"),
+            disabled: false,
+            state: listbox_state(
+                Size::Medium,
+                false,
+                "Assignee",
+                Some("owen"),
+                Some("maya"),
+                &assigned_options,
+                &assigned_groups,
+                tokens,
+            ),
+            options: assigned_options,
+            groups: assigned_groups,
+        },
+        ListboxSample {
+            id: "empty-listbox",
+            title: "Empty list",
+            summary: "Empty state keeps a listbox role but has no tab stop.",
+            size: Size::Small,
+            selected: None,
+            active: None,
+            disabled: false,
+            state: listbox_state(
+                Size::Small,
+                false,
+                "Empty list",
+                None,
+                None,
+                &empty_options,
+                &empty_groups,
+                tokens,
+            ),
+            options: empty_options,
+            groups: empty_groups,
+        },
+    ]
+}
+
+/// Returns select samples backed by real component state.
+pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
+    let priority_options = vec![
+        ListboxOptionSample {
+            value: "low",
+            label: "Low",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "normal",
+            label: "Normal",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "blocked",
+            label: "Blocked",
+            disabled: true,
+        },
+    ];
+    let priority_groups = vec![ListboxGroupSample {
+        value: "urgent",
+        label: "Urgent",
+        options: vec![
+            ListboxOptionSample {
+                value: "high",
+                label: "High",
+                disabled: false,
+            },
+            ListboxOptionSample {
+                value: "critical",
+                label: "Critical",
+                disabled: false,
+            },
+            ListboxOptionSample {
+                value: "today",
+                label: "Today",
+                disabled: false,
+            },
+            ListboxOptionSample {
+                value: "tomorrow",
+                label: "Tomorrow",
+                disabled: false,
+            },
+            ListboxOptionSample {
+                value: "later",
+                label: "Later",
+                disabled: false,
+            },
+        ],
+    }];
+    let status_options = vec![
+        ListboxOptionSample {
+            value: "todo",
+            label: "Todo",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "doing",
+            label: "Doing",
+            disabled: false,
+        },
+        ListboxOptionSample {
+            value: "done",
+            label: "Done",
+            disabled: false,
+        },
+    ];
+    let disabled_options = Vec::new();
+    let disabled_groups = Vec::new();
+
+    [
+        SelectSample {
+            id: "priority-select",
+            title: "Priority",
+            summary: "Open select composes non-modal overlay, listbox, and scroll metadata.",
+            placeholder: "Choose priority",
+            size: Size::Medium,
+            selected: Some("critical"),
+            disabled: false,
+            open_mode: SelectOpenMode::Controlled,
+            state: select_state(
+                Size::Medium,
+                false,
+                Some(true),
+                false,
+                "Priority",
+                "Choose priority",
+                Some("critical"),
+                &priority_options,
+                &priority_groups,
+                tokens,
+            ),
+            options: priority_options,
+            groups: priority_groups,
+        },
+        SelectSample {
+            id: "status-select",
+            title: "Status",
+            summary: "Closed uncontrolled select with selected trigger label.",
+            placeholder: "Choose status",
+            size: Size::Small,
+            selected: Some("doing"),
+            disabled: false,
+            open_mode: SelectOpenMode::Uncontrolled,
+            state: select_state(
+                Size::Small,
+                false,
+                None,
+                false,
+                "Status",
+                "Choose status",
+                Some("doing"),
+                &status_options,
+                &[],
+                tokens,
+            ),
+            options: status_options,
+            groups: Vec::new(),
+        },
+        SelectSample {
+            id: "disabled-select",
+            title: "Disabled",
+            summary: "Disabled empty select suppresses popup presence and activation.",
+            placeholder: "Unavailable",
+            size: Size::Small,
+            selected: None,
+            disabled: true,
+            open_mode: SelectOpenMode::Uncontrolled,
+            state: select_state(
+                Size::Small,
+                true,
+                None,
+                true,
+                "Disabled",
+                "Unavailable",
+                None,
+                &disabled_options,
+                &disabled_groups,
+                tokens,
+            ),
+            options: disabled_options,
+            groups: disabled_groups,
+        },
+    ]
+}
+
 fn tabs_state(
     orientation: Orientation,
     activation_mode: TabsActivationMode,
@@ -1799,6 +2134,72 @@ fn toolbar_state(
         }),
         tokens,
     )
+}
+
+fn listbox_state(
+    size: Size,
+    disabled: bool,
+    label: &str,
+    selected: Option<&str>,
+    active: Option<&str>,
+    options: &[ListboxOptionSample],
+    groups: &[ListboxGroupSample],
+    tokens: ThemeTokens,
+) -> ListboxState {
+    ListboxState::resolve(
+        size,
+        disabled,
+        label,
+        selected,
+        active,
+        None,
+        "No options",
+        groups.iter().map(listbox_group_descriptor),
+        options.iter().map(listbox_option_descriptor),
+        tokens,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_state(
+    size: Size,
+    disabled: bool,
+    open: Option<bool>,
+    default_open: bool,
+    label: &str,
+    placeholder: &str,
+    selected: Option<&str>,
+    options: &[ListboxOptionSample],
+    groups: &[ListboxGroupSample],
+    tokens: ThemeTokens,
+) -> SelectState {
+    SelectState::resolve(
+        size,
+        disabled,
+        open,
+        default_open,
+        label,
+        placeholder,
+        selected,
+        selected,
+        groups.iter().map(listbox_group_descriptor),
+        options.iter().map(listbox_option_descriptor),
+        OverlayPlacementSide::Bottom,
+        OverlayPlacementAlignment::Start,
+        OutsidePressPolicy::DismissAndConsume,
+        InitialFocusIntent::FirstFocusable,
+        FocusRestoreIntent::Trigger,
+        tokens,
+    )
+}
+
+fn listbox_group_descriptor(group: &ListboxGroupSample) -> ListboxGroupDescriptor {
+    ListboxGroupDescriptor::new(group.value, group.label)
+        .options(group.options.iter().map(listbox_option_descriptor))
+}
+
+fn listbox_option_descriptor(option: &ListboxOptionSample) -> ListboxOptionDescriptor {
+    ListboxOptionDescriptor::option(option.value, option.label).disabled(option.disabled)
 }
 
 fn radio_group_state(

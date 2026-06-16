@@ -7,20 +7,22 @@ use open_gpui_ui_components::{
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, ContextMenu,
     DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
     FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Menu,
-    MenuItem, MenuItemKind, MenuOpenMode, Popover, PopoverOpenMode, RadioGroup, RadioGroupState,
-    RadioItem, RadioItemDescriptor, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
-    Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
-    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsState, TextInput, TextInputController, ThemeColor, ThemeMode,
-    ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind,
-    TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority,
-    escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor, last_enabled,
-    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
-    sidebar_navigation_target, toolbar_navigation_target,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ListboxOptionKind, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
+    PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
+    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
+    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
+    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
+    last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
+    outside_press_open_change, point_anchor_placement, sidebar_navigation_target,
+    toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1321,6 +1323,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_hover_card = root::HoverCard::new("hover-card", "Profile", "Profile details");
     let root_sidebar = root::Sidebar::new("sidebar", "Primary navigation");
     let root_toolbar = root::Toolbar::new("toolbar", "Editor");
+    let root_listbox = root::Listbox::new("listbox", "Choices");
+    let root_select = root::Select::new("select", "Choice");
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
@@ -1336,6 +1340,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_hover_card = prelude::HoverCard::new("hover-card", "Profile", "Profile details");
     let prelude_sidebar = prelude::Sidebar::new("sidebar", "Primary navigation");
     let prelude_toolbar = prelude::Toolbar::new("toolbar", "Editor");
+    let prelude_listbox = prelude::Listbox::new("listbox", "Choices");
+    let prelude_select = prelude::Select::new("select", "Choice");
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
@@ -1347,6 +1353,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_hover_card.state(),
         root_sidebar.state(),
         root_toolbar.state(),
+        root_listbox.state(),
+        root_select.state(),
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
@@ -1356,6 +1364,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_hover_card.state(),
         prelude_sidebar.state(),
         prelude_toolbar.state(),
+        prelude_listbox.state(),
+        prelude_select.state(),
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
@@ -1576,6 +1586,169 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
         ),
         Some(3)
     );
+}
+
+#[test]
+fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
+    let state = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Assignee",
+        Some("bravo"),
+        Some("missing"),
+        Some("ch"),
+        "No assignees",
+        [ListboxGroupDescriptor::new("team", "Team")
+            .option(ListboxOptionDescriptor::option("charlie", "Charlie"))
+            .option(ListboxOptionDescriptor::option("delta", "Delta").disabled(true))
+            .option(ListboxOptionDescriptor::option("bravo", "Bravo"))],
+        [
+            ListboxOptionDescriptor::option("alpha", "Alpha"),
+            ListboxOptionDescriptor::separator("standalone-separator"),
+        ],
+        ThemeTokens::default(),
+    );
+
+    assert_eq!(state.role(), Role::ListBox);
+    assert_eq!(state.label(), "Assignee");
+    assert_eq!(state.typeahead_query(), Some("ch"));
+    assert_eq!(state.groups().len(), 1);
+    assert_eq!(state.groups()[0].role(), Role::Group);
+    assert_eq!(state.groups()[0].option_count(), 3);
+    assert_eq!(state.options().len(), 5);
+    assert_eq!(state.selected_value(), Some("bravo"));
+    assert_eq!(state.active_value(), Some("bravo"));
+    assert_eq!(state.tab_stop_value(), Some("bravo"));
+    assert_eq!(state.options()[1].kind(), ListboxOptionKind::Separator);
+    assert_eq!(state.options()[1].role(), None);
+    assert!(!state.options()[1].focusable());
+    assert!(state.options()[3].disabled());
+    assert!(!state.options()[3].focusable());
+    assert_eq!(state.options()[4].role(), Some(Role::ListBoxOption));
+    assert_eq!(state.options()[4].position_in_set(), Some(4));
+    assert_eq!(state.options()[4].size_of_set(), 4);
+    assert_eq!(
+        state.navigation_target("down").map(|option| option.value()),
+        Some("alpha")
+    );
+    assert_eq!(
+        state.typeahead_target("ch").map(|option| option.value()),
+        Some("charlie")
+    );
+    assert_eq!(
+        state
+            .activation_for_key("enter")
+            .map(|selection| selection.value().to_owned()),
+        Some("bravo".to_string())
+    );
+    assert_eq!(
+        listbox_navigation_target(
+            "down",
+            state.active_index().unwrap(),
+            &[false, true, false, true, false]
+        ),
+        Some(0)
+    );
+}
+
+#[test]
+fn listbox_builder_state_models_empty_disabled_and_tokens() {
+    let tokens = custom_tokens();
+    let empty = Listbox::new("empty-listbox", "Empty")
+        .empty_label("Nothing available")
+        .tokens(tokens)
+        .state();
+    let disabled = Listbox::new("disabled-listbox", "Disabled")
+        .disabled(true)
+        .selected("one")
+        .option(ListboxOption::new("one", "One"))
+        .state();
+
+    assert!(empty.empty());
+    assert_eq!(empty.empty_label(), "Nothing available");
+    assert_eq!(empty.tab_stop_value(), None);
+    assert_eq!(empty.colors().surface().token(), tokens.surface);
+    assert!(disabled.disabled());
+    assert_eq!(disabled.selected_value(), None);
+    assert_eq!(disabled.active_value(), None);
+    assert_eq!(disabled.activation_for_key("space"), None);
+}
+
+#[test]
+fn select_state_records_popup_listbox_overlay_and_scroll_contract() {
+    let state = Select::new("priority-select", "Priority")
+        .placeholder("Choose priority")
+        .open(true)
+        .selected("high")
+        .placement(OverlayPlacementSide::Right, OverlayPlacementAlignment::End)
+        .option(ListboxOption::new("low", "Low"))
+        .option(ListboxOption::new("medium", "Medium").disabled(true))
+        .group(
+            ListboxGroup::new("recommended", "Recommended")
+                .option(ListboxOption::new("high", "High"))
+                .option(ListboxOption::new("urgent", "Urgent"))
+                .option(ListboxOption::new("normal", "Normal"))
+                .option(ListboxOption::new("later", "Later"))
+                .option(ListboxOption::new("someday", "Someday")),
+        )
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.open_mode(), SelectOpenMode::Controlled);
+    assert_eq!(state.trigger_role(), Role::Button);
+    assert_eq!(state.content_role(), Role::ListBox);
+    assert!(state.trigger_selected());
+    assert_eq!(state.trigger_label(), "High");
+    assert_eq!(state.selected_value(), Some("high"));
+    assert_eq!(state.active_value(), Some("high"));
+    assert_eq!(state.placement_side(), OverlayPlacementSide::Right);
+    assert_eq!(state.placement_alignment(), OverlayPlacementAlignment::End);
+    assert_eq!(
+        state.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(
+        state.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
+    assert_eq!(state.listbox().role(), Role::ListBox);
+    assert_eq!(state.listbox().selected_value(), Some("high"));
+    assert!(state.scrollable_content());
+    assert!(state.scroll_area().scrolls_y());
+}
+
+#[test]
+fn select_state_models_disabled_empty_and_policy_overrides() {
+    let state = Select::new("empty-select", "Empty")
+        .placeholder("Nothing to choose")
+        .default_open(true)
+        .disabled(true)
+        .outside_press_policy(OutsidePressPolicy::DismissAndPassThrough)
+        .initial_focus_intent(InitialFocusIntent::None)
+        .focus_restore_intent(FocusRestoreIntent::None)
+        .small()
+        .state();
+
+    assert_eq!(state.open_mode(), SelectOpenMode::Uncontrolled);
+    assert!(state.default_open());
+    assert!(state.disabled());
+    assert!(!state.open());
+    assert_eq!(state.trigger_label(), "Nothing to choose");
+    assert_eq!(state.selected_value(), None);
+    assert_eq!(state.active_value(), None);
+    assert!(!state.scrollable_content());
+    assert_eq!(
+        state.outside_press_policy(),
+        OutsidePressPolicy::DismissAndPassThrough
+    );
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
+    assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
+    assert!(!state.overlay().should_render_deferred_layer());
 }
 
 #[test]
@@ -1804,6 +1977,22 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .state(),
         HoverCard::element("closed-hover-card", "Details", div().child("Rich")).state(),
     ];
+    let listboxes = [
+        Listbox::new("listbox", "Choices")
+            .selected("one")
+            .option(ListboxOption::new("one", "One"))
+            .option(ListboxOption::new("two", "Two").disabled(true))
+            .state(),
+        Listbox::new("empty-listbox", "Empty").state(),
+    ];
+    let selects = [
+        Select::new("select", "Choice")
+            .open(true)
+            .selected("one")
+            .option(ListboxOption::new("one", "One"))
+            .state(),
+        Select::new("closed-select", "Choice").state(),
+    ];
 
     for state in buttons {
         let colors = state.colors();
@@ -2002,6 +2191,42 @@ fn default_theme_resolves_all_current_component_color_intents() {
             colors.trigger_hover_background(),
             colors.trigger_foreground(),
             colors.trigger_border(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in listboxes {
+        let colors = state.colors();
+        for intent in [
+            colors.surface(),
+            colors.foreground(),
+            colors.muted_foreground(),
+            colors.border(),
+            colors.option_background(),
+            colors.option_hover_background(),
+            colors.option_active_background(),
+            colors.option_selected_background(),
+            colors.option_disabled_foreground(),
+            colors.separator(),
+            colors.focus_ring(),
+        ] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in selects {
+        let colors = state.colors();
+        for intent in [
+            colors.trigger_background(),
+            colors.trigger_hover_background(),
+            colors.trigger_foreground(),
+            colors.trigger_placeholder_foreground(),
+            colors.trigger_border(),
+            colors.content_background(),
+            colors.content_foreground(),
+            colors.content_border(),
             colors.focus_ring(),
         ] {
             assert_theme_has_exact_color(theme, intent);

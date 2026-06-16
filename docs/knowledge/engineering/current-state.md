@@ -11,6 +11,24 @@ status: "active"
 
 ## 2026-06-16
 
+- Done: Continued the UI shell, choice, and headless-readiness series with U6 Listbox and Select.
+  Added `Listbox`, `ListboxState`, grouped/standalone descriptors, option/separator anatomy,
+  selected and active descendant metadata, disabled/separator skipping, typeahead target metadata,
+  and explicit crate-root/prelude exports to `open_gpui_ui_components`.
+- Done: Added `Select`, `SelectState`, controlled/uncontrolled open mode, placeholder and selected
+  trigger label metadata, nested `ListboxState`, non-modal dismissible overlay policy, scroll
+  viewport metadata, and keyed runtime state for open/selected/active behavior. Select v1 composes
+  trigger + overlay + Listbox; searchable Combobox/Command behavior remains deferred.
+- Done: Added Components gallery Listbox and Select samples for grouped choices, empty state,
+  controlled-open long select, closed selected select, and disabled empty select. Gallery tests now
+  assert choice roles, listbox navigation/activation/typeahead, Select overlay/focus/outside-press
+  policy, and scrollable popup metadata.
+- Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `cargo check -p
+  open-gpui-ui-foundation-gallery` passed during the U6 Listbox/Select slice.
+- Next action: Finish U6 review/doc polish and commit, then start U7 Combobox and Command. Listbox
+  real text event accumulation for typeahead, multi-select, option virtualization, richer
+  active-descendant AccessKit references, and Select item-aligned positioning remain deferred.
 - Done: Continued the UI shell, choice, and headless-readiness series with U5 HoverCard. Added
   `HoverCard`, `HoverCardState`, hover/focus/manual open intent, controlled/uncontrolled open
   mode, delay policy, interactive non-modal overlay metadata, token intents, metrics, and explicit

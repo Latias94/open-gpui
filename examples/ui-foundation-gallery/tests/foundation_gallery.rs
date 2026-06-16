@@ -2,7 +2,7 @@ use open_gpui::px;
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant,
     DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode,
-    MenuItemKind, MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy,
+    MenuItemKind, MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TabsActivationMode, ThemeMode,
     ToggleVariant, TooltipOpenIntent, default_deferred_priority,
 };
@@ -675,6 +675,8 @@ fn components_page_samples_expose_component_metadata() {
     let toggles = pages::components::toggle_samples(tokens);
     let toolbars = pages::components::toolbar_samples(tokens);
     let sidebars = pages::components::sidebar_samples(tokens);
+    let listboxes = pages::components::listbox_samples(tokens);
+    let selects = pages::components::select_samples(tokens);
     let labels = pages::components::label_samples(tokens);
     let text_inputs = pages::components::text_input_samples(tokens);
     let fields = pages::components::field_samples(tokens);
@@ -794,6 +796,36 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[2].state.side().as_str(), "right");
     assert!(sidebars[2].state.scrollable());
     assert!(sidebars[2].state.items().len() > 8);
+
+    assert_eq!(listboxes.len(), 2);
+    assert_eq!(listboxes[0].id, "assignee-listbox");
+    assert_eq!(listboxes[0].state.role(), Role::ListBox);
+    assert_eq!(listboxes[0].state.selected_value(), Some("owen"));
+    assert_eq!(listboxes[0].state.active_value(), Some("maya"));
+    assert_eq!(
+        listboxes[0].state.options()[0].role(),
+        Some(Role::ListBoxOption)
+    );
+    assert!(
+        listboxes[0]
+            .state
+            .options()
+            .iter()
+            .any(|option| option.disabled())
+    );
+    assert!(listboxes[1].state.empty());
+    assert_eq!(listboxes[1].state.tab_stop_value(), None);
+
+    assert_eq!(selects.len(), 3);
+    assert_eq!(selects[0].id, "priority-select");
+    assert_eq!(selects[0].state.open_mode(), SelectOpenMode::Controlled);
+    assert!(selects[0].state.open());
+    assert_eq!(selects[0].state.trigger_role(), Role::Button);
+    assert_eq!(selects[0].state.content_role(), Role::ListBox);
+    assert!(selects[0].state.scrollable_content());
+    assert_eq!(selects[1].state.trigger_label(), "Doing");
+    assert!(selects[2].state.disabled());
+    assert!(!selects[2].state.open());
 
     assert_eq!(labels.len(), 4);
     assert_eq!(labels[0].state.role(), Role::Label);
@@ -954,6 +986,72 @@ fn components_page_toolbar_samples_expose_roving_focus_contract() {
 }
 
 #[test]
+fn components_page_choice_samples_expose_listbox_and_select_contracts() {
+    let tokens = ThemeTokens::default();
+    let listboxes = pages::components::listbox_samples(tokens);
+    let selects = pages::components::select_samples(tokens);
+    let assignee = &listboxes[0].state;
+    let empty = &listboxes[1].state;
+    let priority = &selects[0].state;
+    let status = &selects[1].state;
+    let disabled = &selects[2].state;
+
+    assert_eq!(assignee.role(), Role::ListBox);
+    assert_eq!(
+        assignee
+            .navigation_target("down")
+            .map(|option| option.value()),
+        Some("owen")
+    );
+    assert_eq!(
+        assignee
+            .activation_for_key("enter")
+            .map(|selection| selection.value().to_owned()),
+        Some("maya".to_string())
+    );
+    assert_eq!(
+        assignee.typeahead_target("no").map(|option| option.value()),
+        Some("nora")
+    );
+    assert!(assignee.options().iter().any(|option| !option.focusable()));
+
+    assert!(empty.empty());
+    assert_eq!(empty.active_value(), None);
+    assert_eq!(empty.tab_stop_value(), None);
+
+    assert_eq!(priority.open_mode(), SelectOpenMode::Controlled);
+    assert!(priority.open());
+    assert_eq!(priority.selected_value(), Some("critical"));
+    assert_eq!(priority.trigger_label(), "Critical");
+    assert_eq!(
+        priority.overlay().policy().kind(),
+        OverlayLayerKind::NonModalDismissible
+    );
+    assert_eq!(
+        priority.outside_press_policy(),
+        OutsidePressPolicy::DismissAndConsume
+    );
+    assert_eq!(
+        priority.initial_focus_intent(),
+        &InitialFocusIntent::FirstFocusable
+    );
+    assert_eq!(
+        priority.focus_restore_intent(),
+        &FocusRestoreIntent::Trigger
+    );
+    assert_eq!(priority.listbox().role(), Role::ListBox);
+    assert!(priority.scrollable_content());
+    assert!(priority.scroll_area().scrolls_y());
+
+    assert_eq!(status.open_mode(), SelectOpenMode::Uncontrolled);
+    assert!(!status.open());
+    assert_eq!(status.trigger_label(), "Doing");
+    assert_eq!(disabled.trigger_label(), "Unavailable");
+    assert!(disabled.disabled());
+    assert!(!disabled.overlay().should_render_deferred_layer());
+}
+
+#[test]
 fn components_page_samples_keep_explicit_a11y_metadata() {
     use std::collections::BTreeSet;
 
@@ -1002,6 +1100,7 @@ fn components_page_samples_keep_explicit_a11y_metadata() {
 #[test]
 fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     let gates = pages::components::CONFORMANCE_GATES;
+    let signals = pages::components::SIGNALS;
 
     assert!(gates.iter().all(|gate| !gate.title.trim().is_empty()));
     assert!(gates.iter().all(|gate| !gate.summary.trim().is_empty()));
@@ -1012,4 +1111,10 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     );
     assert!(gates.iter().any(|gate| gate.id == "scroll-redraw"));
     assert!(gates.iter().any(|gate| gate.id == "tabs-overflow"));
+    assert!(signals.contains(&"open_gpui_ui_components::Listbox"));
+    assert!(signals.contains(&"open_gpui_ui_components::ListboxState"));
+    assert!(signals.contains(&"open_gpui_ui_components::Select"));
+    assert!(signals.contains(&"open_gpui_ui_components::SelectState"));
+    assert!(signals.contains(&"Role::ListBox"));
+    assert!(signals.contains(&"Role::ListBoxOption"));
 }

@@ -110,9 +110,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
    IconButton, ScrollArea, Splitter, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field,
-   Tabs, Toolbar, and Sidebar samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
+   Tabs, Toolbar, Sidebar, Listbox, and Select samples render with enabled, disabled, selected,
+   checked, unchecked, indeterminate,
    pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
-   roving-focus, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
+   roving-focus, popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
    remain display-only. The IconButton samples should be square controls with visible focus and
    explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport
@@ -134,7 +135,13 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    action/toggle items. The Sidebar samples should expose expanded, icon-collapsed, and long
    scrollable navigation; icon collapse should hide visible labels while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
-   frame without making the full Components page unscrollable. The default TextInput sample should accept real text editing through the
+   frame without making the full Components page unscrollable. The Listbox samples should expose
+   grouped options, disabled option skipping, selected and active descendant metadata, empty-state
+   behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The Select
+   samples should expose closed, controlled-open, and disabled states; confirm the trigger label
+   reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
+   scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains
+   closed. The default TextInput sample should accept real text editing through the
    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
    page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`
    panic during that navigation is a

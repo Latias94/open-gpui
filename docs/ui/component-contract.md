@@ -119,6 +119,22 @@ focus model while adding a point anchor and renderer-neutral placement input. Su
 typeahead,
 checkbox/radio items, and application menu integration remain follow-up work.
 
+`ListboxState` is the renderer-neutral collection choice contract. It records grouped and
+standalone option descriptors, separator rows, disabled option state, selected value, active
+descendant value, tab-stop value, APG-style Up/Down/Home/End navigation, Enter/Space activation
+payloads, typeahead target metadata, resolved metrics, token intents, and listbox/listbox-option
+roles. It does not own popup state, selection persistence outside the adapter runtime, scroll
+handles, focus handles, callbacks, or GPUI element ids.
+
+`SelectState` composes a trigger, non-modal dismissible overlay, scroll viewport metadata, and a
+nested `ListboxState`. It records controlled versus uncontrolled open mode, default-open state,
+placeholder and selected trigger label, selected and active option values, placement preference,
+outside-press policy, initial focus intent, focus restoration intent, resolved metrics, token
+intents, and the listbox content role. The GPUI `Select` adapter owns trigger/content rendering,
+keyed runtime open/selected/active state, callbacks, outside-press and Escape wiring, deferred
+anchored rendering, and concrete focus handles. Combobox, searchable command palettes, multi-select
+selection models, virtualized long lists, and richer typeahead input remain follow-up work.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

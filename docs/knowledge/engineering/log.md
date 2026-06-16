@@ -1,6 +1,22 @@
 # Engineering Memory Update Log
 
 ## 2026-06-16
+* **Update**: Completed the main U6 Listbox/Select implementation for the UI shell, choice, and
+  headless-readiness series. `ListboxState` now models grouped and standalone options,
+  separators, disabled skip behavior, selected/active/tab-stop metadata, APG navigation,
+  activation payloads, typeahead target metadata, metrics, color intents, and listbox roles.
+* **Update**: Added `SelectState` as a trigger + non-modal dismissible overlay + nested
+  `ListboxState` contract, including controlled/uncontrolled open mode, selected trigger label,
+  outside-press policy, initial focus and focus restoration intents, scroll viewport metadata, and
+  GPUI keyed runtime state for open/selected/active behavior.
+* **Update**: Added Components gallery Listbox and Select samples plus tests for grouped choices,
+  empty listbox, controlled-open long select, closed selected select, disabled select, choice
+  roles, navigation/activation/typeahead, overlay policy, and scrollable popup metadata.
+* **Update**: Updated `docs/ui/component-contract.md`, `docs/verification.md`, and engineering
+  memory to record the Listbox/Select boundary and manual dogfood checks.
+* **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `cargo check -p
+  open-gpui-ui-foundation-gallery` passed during U6.
 * **Update**: Completed the implementation pass for U5 HoverCard in the UI shell, choice, and
   headless-readiness series. `HoverCardState` records content kind, size, disabled state,
   controlled/uncontrolled open ownership, default-open state, hover/focus/manual open intent,
