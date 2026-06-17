@@ -19,6 +19,12 @@ status: "active"
   open-gpui-ui-foundation-gallery --tests`, `cargo check -p open-gpui --tests`, `cargo check -p
   open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery`,
   `cargo nextest run -p open-gpui-ui-components`, and `cargo run -p xtask -- verify`.
+- Done: Finished the follow-up ownership cleanup and kept the selector contract unified through the
+  overlay cards and gallery smoke tests. The pass now also has `cargo nextest run -p open-gpui
+  --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests`, `cargo fmt --all --check`,
+  and `git diff --check` green.
+- Open: A subagent architecture review is still running. Its result will decide whether the next
+  `ce-plan` should deepen selector metadata in the gallery catalog or move to a different seam.
 
 - Done: Began the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState` now
   exposes `ProgressVisualMode`, determinate indicator fractions, and indeterminate indicator

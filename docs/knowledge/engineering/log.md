@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Finished the follow-up cleanup for the gallery selector unification pass. The
+  remaining tabs ownership issue was fixed, the overlay sample cards now use the sample-owned
+  debug selector helpers consistently, and the gallery test lifecycle bug was removed.
+* **Verification**: The follow-up cleanup passed `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery
+  --tests`, `cargo nextest run -p open-gpui --tests`, `cargo nextest run -p
+  open-gpui-ui-components --tests`, `cargo fmt --all --check`, and `git diff --check`.
 * **Update**: Unified gallery sample debug selectors so the Components and Overlay pages derive
   stable selector strings from sample-owned helpers instead of repeating family prefixes inline in
   the shell and tests. The Components gallery smoke now derives the official sample selector list
