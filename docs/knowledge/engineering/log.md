@@ -1,6 +1,19 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added Listbox runtime keyboard automation. `Listbox` now exposes stable runtime debug
+  selectors for the root, empty state, groups, separators, and options, and
+  `open-gpui-ui-components` has a real rendered Listbox smoke that rejects disabled option clicks,
+  verifies standalone/grouped option payloads, keeps arrow navigation selection-free, skips
+  disabled/separator rows, and activates the focused option with Enter.
+* **Update**: Fixed Listbox keyboard activation parity so Enter/Space dispatch the option-level
+  `on_select` handler before the listbox-level handler, matching the click path.
+* **Verification**: Focused Listbox runtime smoke passed with `cargo fmt -p
+  open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components
+  listbox_runtime_click_and_keyboard_selection_skip_disabled_items`.
+* **Testing Note**: The first Listbox smoke attempt controlled `active("alpha")`, which correctly
+  prevented runtime arrow navigation from changing the active option. The final smoke only seeds
+  `selected("alpha")` so the rendered runtime owns active-descendant movement.
 * **Update**: Added RadioGroup runtime keyboard automation. `RadioGroup` now exposes stable runtime
   debug selectors for the root and items, and `open-gpui-ui-components` has a real rendered
   RadioGroup smoke that rejects disabled clicks, verifies click payloads, skips disabled items with

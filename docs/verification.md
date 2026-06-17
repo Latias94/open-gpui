@@ -52,14 +52,17 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
-The components package includes runtime smoke coverage for RadioGroup, Tabs, and Toolbar keyboard
-navigation. The focused RadioGroup test renders real radio items, rejects disabled clicks, skips
-disabled items with arrow navigation, verifies click and arrow-selection payloads, and confirms
-Space on an already selected radio does not emit a duplicate selection change. The focused Tabs test
-renders real tabs, preserves the builder-selected seed on the first frame, rejects disabled tab
-clicks, keeps manual arrow navigation as focus-only, and activates focused tabs with Enter and
-Space. The focused Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys,
-skips disabled and separator items, and activates the focused item with Enter.
+The components package includes runtime smoke coverage for RadioGroup, Listbox, Tabs, and Toolbar
+keyboard navigation. The focused RadioGroup test renders real radio items, rejects disabled clicks,
+skips disabled items with arrow navigation, verifies click and arrow-selection payloads, and
+confirms Space on an already selected radio does not emit a duplicate selection change. The focused
+Listbox test renders real standalone, separator, and grouped options, rejects disabled clicks,
+keeps arrow navigation selection-free, skips disabled/separator rows, and verifies Enter and Space
+dispatch both option-level and listbox-level selection callbacks. The focused Tabs test renders real
+tabs, preserves the builder-selected seed on the first frame, rejects disabled tab clicks, keeps
+manual arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
+Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
+separator items, and activates the focused item with Enter.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -189,7 +192,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    frame. The gallery smoke now verifies the long sidebar's internal viewport moves relative to its
    sample card. The Listbox samples should expose
    grouped options, disabled option skipping, selected and active descendant metadata, empty-state
-   behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The Select
+   behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The
+   component runtime smoke now verifies rendered Listbox disabled clicks, selection-free arrow
+   navigation, disabled/separator skipping, and option/listbox callback parity for keyboard
+   activation. The Select
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label
    reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
    scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains

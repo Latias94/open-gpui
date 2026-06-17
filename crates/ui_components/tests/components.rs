@@ -10,20 +10,21 @@ use open_gpui_ui_components::{
     DialogOpenMode, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard,
     HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
     Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
-    PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor, RadioSelection,
-    ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select, SelectOpenMode, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
-    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
-    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
-    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
-    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
-    focus_ring_shadow, gpui_anchor, last_enabled, listbox_navigation_target,
-    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
-    sidebar_navigation_target, toolbar_navigation_target,
+    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
+    Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
+    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
+    SelectOpenMode, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
+    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
+    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
+    TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputController, ThemeColor,
+    ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
+    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
+    last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
+    outside_press_open_change, point_anchor_placement, sidebar_navigation_target,
+    toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -2742,6 +2743,172 @@ fn listbox_builder_state_models_empty_disabled_and_tokens() {
     assert_eq!(disabled.selected_value(), None);
     assert_eq!(disabled.active_value(), None);
     assert_eq!(disabled.activation_for_key("space"), None);
+}
+
+#[open_gpui::test]
+fn listbox_runtime_click_and_keyboard_selection_skip_disabled_items(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct SelectionEvent {
+        source: &'static str,
+        selection: ListboxSelection,
+    }
+
+    struct TestView {
+        events: Rc<RefCell<Vec<SelectionEvent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let listbox_events = self.events.clone();
+            let alpha_events = self.events.clone();
+            let charlie_events = self.events.clone();
+
+            div().size_full().child(
+                Listbox::new("runtime-listbox", "Runtime listbox")
+                    .selected("alpha")
+                    .option(ListboxOption::new("alpha", "Alpha").on_select(
+                        move |selection, _, _| {
+                            alpha_events.borrow_mut().push(SelectionEvent {
+                                source: "option:alpha",
+                                selection,
+                            });
+                        },
+                    ))
+                    .option(ListboxOption::separator("standalone-separator"))
+                    .option(ListboxOption::new("bravo", "Bravo").disabled(true))
+                    .group(
+                        ListboxGroup::new("team", "Team")
+                            .option(ListboxOption::new("charlie", "Charlie").on_select(
+                                move |selection, _, _| {
+                                    charlie_events.borrow_mut().push(SelectionEvent {
+                                        source: "option:charlie",
+                                        selection,
+                                    });
+                                },
+                            ))
+                            .option(ListboxOption::new("delta", "Delta")),
+                    )
+                    .on_select(move |selection, _, _| {
+                        listbox_events.borrow_mut().push(SelectionEvent {
+                            source: "listbox",
+                            selection,
+                        });
+                    }),
+            )
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("listbox:runtime-listbox").is_some(),
+        "listbox root should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-listbox:separator:standalone-separator")
+            .is_some(),
+        "listbox separator should expose a stable debug selector"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-listbox:group:team")
+            .is_some(),
+        "listbox group label should expose a stable debug selector"
+    );
+
+    let disabled_bravo = cx
+        .debug_bounds("listbox:runtime-listbox:option:bravo")
+        .expect("disabled Bravo option should be rendered");
+    cx.simulate_click(disabled_bravo.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        events.borrow().is_empty(),
+        "disabled option click should not emit selection callbacks"
+    );
+
+    let delta = cx
+        .debug_bounds("listbox:runtime-listbox:option:delta")
+        .expect("Delta option should be rendered");
+    cx.simulate_click(delta.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_delta_click = events.borrow().clone();
+    assert_eq!(after_delta_click.len(), 1);
+    assert_eq!(after_delta_click[0].source, "listbox");
+    assert_eq!(after_delta_click[0].selection.index(), 4);
+    assert_eq!(after_delta_click[0].selection.value(), "delta");
+    assert_eq!(after_delta_click[0].selection.label(), "Delta");
+
+    let alpha = cx
+        .debug_bounds("listbox:runtime-listbox:option:alpha")
+        .expect("Alpha option should be rendered");
+    cx.simulate_click(alpha.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_alpha_click = events.borrow().clone();
+    assert_eq!(after_alpha_click.len(), 3);
+    assert_eq!(after_alpha_click[1].source, "option:alpha");
+    assert_eq!(after_alpha_click[1].selection.index(), 0);
+    assert_eq!(after_alpha_click[1].selection.value(), "alpha");
+    assert_eq!(after_alpha_click[2].source, "listbox");
+    assert_eq!(after_alpha_click[2].selection.value(), "alpha");
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().len(),
+        3,
+        "arrow navigation should move active option without selecting"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_enter = events.borrow().clone();
+    assert_eq!(after_enter.len(), 5);
+    assert_eq!(after_enter[3].source, "option:charlie");
+    assert_eq!(after_enter[3].selection.index(), 3);
+    assert_eq!(after_enter[3].selection.value(), "charlie");
+    assert_eq!(after_enter[3].selection.label(), "Charlie");
+    assert_eq!(after_enter[4].source, "listbox");
+    assert_eq!(after_enter[4].selection.value(), "charlie");
+
+    cx.simulate_keystrokes("up");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().len(),
+        5,
+        "arrow navigation after selection should still move active option without selecting"
+    );
+
+    cx.simulate_keystrokes("space");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_space = events.borrow().clone();
+    assert_eq!(after_space.len(), 7);
+    assert_eq!(after_space[5].source, "option:alpha");
+    assert_eq!(after_space[5].selection.index(), 0);
+    assert_eq!(after_space[5].selection.value(), "alpha");
+    assert_eq!(after_space[5].selection.label(), "Alpha");
+    assert_eq!(after_space[6].source, "listbox");
+    assert_eq!(after_space[6].selection.value(), "alpha");
 }
 
 #[test]

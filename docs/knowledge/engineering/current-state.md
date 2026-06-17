@@ -42,6 +42,14 @@ status: "active"
   on an already selected radio does not emit a duplicate selection change.
 - Last verified for the RadioGroup runtime smoke: `cargo nextest run -p open-gpui-ui-components
   radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads`.
+- Done: Added stable runtime debug selectors for `Listbox` root, empty state, groups, separators,
+  and options plus a rendered Listbox smoke in `open-gpui-ui-components`. The smoke rejects
+  disabled option clicks, verifies standalone and grouped option payloads, keeps arrow navigation
+  selection-free, skips disabled/separator rows, and locks keyboard Enter/Space activation so it
+  dispatches both option-level and listbox-level callbacks.
+- Last verified for the Listbox runtime smoke: `cargo fmt -p open-gpui-ui-components` and `cargo
+  nextest run -p open-gpui-ui-components
+  listbox_runtime_click_and_keyboard_selection_skip_disabled_items`.
 - Done: Added Tabs runtime keyboard automation in `open-gpui-ui-components` and fixed the rendered
   `Tabs` runtime to honor the builder-selected seed on first render plus bind per-tab focus handles
   to actual trigger elements. The smoke rejects disabled tab clicks, keeps Manual arrow navigation

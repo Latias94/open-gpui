@@ -1019,15 +1019,32 @@ impl RenderOnce for Listbox {
             self.tokens,
         );
         let id = self.id;
+        let debug_id = id.to_string();
         let colors = state.colors();
         let metrics = state.metrics();
         let focus_ring = state.focus_ring();
         let key_state = state.clone();
         let key_runtime = runtime.clone();
         let key_select = self.on_select.clone();
+        let key_option_handlers = Rc::new(
+            self.options
+                .iter()
+                .map(ListboxOption::select_handler)
+                .chain(self.groups.iter().flat_map(|group| {
+                    group
+                        .options_ref()
+                        .iter()
+                        .map(ListboxOption::select_handler)
+                }))
+                .collect::<Vec<_>>(),
+        );
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("listbox:{debug_id}")
+            })
             .min_w(gpui_px_from_ui(metrics.min_width()))
             .when(!self.embedded, |this| {
                 this.max_h(gpui_px_from_ui(metrics.max_height()))
@@ -1059,6 +1076,7 @@ impl RenderOnce for Listbox {
                 handle_listbox_key_down(
                     &key_state,
                     key_runtime.clone(),
+                    key_option_handlers.clone(),
                     key_select.clone(),
                     event,
                     window,
@@ -1066,6 +1084,7 @@ impl RenderOnce for Listbox {
                 );
             })
             .children(listbox_children(
+                debug_id,
                 self.options,
                 self.groups,
                 state,
@@ -1078,6 +1097,7 @@ impl RenderOnce for Listbox {
 fn handle_listbox_key_down(
     state: &ListboxState,
     runtime: Entity<ListboxRuntime>,
+    option_handlers: Rc<Vec<Option<ListboxSelectHandler>>>,
     on_select: Option<ListboxSelectHandler>,
     event: &KeyDownEvent,
     window: &mut Window,
@@ -1097,10 +1117,14 @@ fn handle_listbox_key_down(
     if let Some(selection) = state.activation_for_key(key) {
         cx.stop_propagation();
         window.prevent_default();
+        let option_handler = option_handlers.get(selection.index()).cloned().flatten();
         runtime.update(cx, |runtime, _| {
             runtime.selected_value = Some(selection.value().to_owned());
             runtime.active_value = Some(selection.value().to_owned());
         });
+        if let Some(option_handler) = option_handler.as_ref() {
+            option_handler(selection.clone(), window, cx);
+        }
         if let Some(on_select) = on_select.as_ref() {
             on_select(selection, window, cx);
         }
@@ -1108,6 +1132,7 @@ fn handle_listbox_key_down(
 }
 
 fn listbox_children(
+    debug_id: String,
     options: Vec<ListboxOption>,
     groups: Vec<ListboxGroup>,
     state: ListboxState,
@@ -1117,6 +1142,10 @@ fn listbox_children(
     if state.empty() {
         return vec![
             div()
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("listbox:{debug_id}:empty")
+                })
                 .px(gpui_px_from_ui(state.metrics().option_padding_x()))
                 .py(gpui_px_from_ui(state.metrics().option_padding_y()))
                 .text_color(ThemeResolver::resolve(state.colors().muted_foreground()))
@@ -1134,6 +1163,7 @@ fn listbox_children(
         .collect::<Vec<_>>();
     if !standalone_states.is_empty() {
         children.extend(listbox_option_elements(
+            debug_id.clone(),
             options,
             standalone_states,
             state.metrics(),
@@ -1147,6 +1177,11 @@ fn listbox_children(
         children.push(
             div()
                 .id(format!("listbox-group-label:{}", group_state.value()))
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    let group_value = group_state.value().to_owned();
+                    move || format!("listbox:{debug_id}:group:{group_value}")
+                })
                 .px(gpui_px_from_ui(state.metrics().group_padding_x()))
                 .pt_2()
                 .pb_1()
@@ -1167,6 +1202,7 @@ fn listbox_children(
                 .cloned()
                 .collect::<Vec<_>>();
             children.extend(listbox_option_elements(
+                debug_id.clone(),
                 group.options_ref().to_vec(),
                 states,
                 state.metrics(),
@@ -1181,6 +1217,7 @@ fn listbox_children(
 }
 
 fn listbox_option_elements(
+    debug_id: String,
     options: Vec<ListboxOption>,
     states: Vec<ListboxOptionState>,
     metrics: ListboxMetrics,
@@ -1192,20 +1229,35 @@ fn listbox_option_elements(
         .into_iter()
         .zip(states)
         .map(|(option, state)| match state.kind() {
-            ListboxOptionKind::Separator => div()
-                .id(format!("listbox-separator:{}", state.index()))
-                .h(gpui_px_from_ui(metrics.separator_height()))
-                .my_1()
-                .bg(ThemeResolver::resolve(colors.separator()))
-                .into_any_element(),
+            ListboxOptionKind::Separator => {
+                let option_value = state.value().to_owned();
+
+                div()
+                    .id(format!("listbox-separator:{}", state.index()))
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        let option_value = option_value.clone();
+                        move || format!("listbox:{debug_id}:separator:{option_value}")
+                    })
+                    .h(gpui_px_from_ui(metrics.separator_height()))
+                    .my_1()
+                    .bg(ThemeResolver::resolve(colors.separator()))
+                    .into_any_element()
+            }
             ListboxOptionKind::Option => {
                 let selection = ListboxSelection::from_option(&state);
                 let option_handler = option.select_handler();
                 let global_handler = on_select.clone();
                 let runtime = runtime.clone();
                 let disabled = state.disabled();
+                let option_value = state.value().to_owned();
                 div()
                     .id(format!("listbox-option:{}", state.value()))
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        let option_value = option_value.clone();
+                        move || format!("listbox:{debug_id}:option:{option_value}")
+                    })
                     .min_h(gpui_px_from_ui(metrics.option_height()))
                     .px(gpui_px_from_ui(metrics.option_padding_x()))
                     .py(gpui_px_from_ui(metrics.option_padding_y()))
