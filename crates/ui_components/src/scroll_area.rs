@@ -299,6 +299,10 @@ impl RenderOnce for ScrollArea {
 
         div()
             .id(id)
+            .debug_selector({
+                let viewport_id = state.viewport_id().to_owned();
+                move || format!("scroll-area:{viewport_id}")
+            })
             .size_full()
             .min_w(px(0.0))
             .min_h(px(0.0))

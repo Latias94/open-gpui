@@ -1,6 +1,19 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Hardened the Components gallery interaction dogfood surface after manual feedback:
+  vertical Tabs triggers now remain non-shrinking in constrained tablists, the gallery vertical Tabs
+  sample has enough items to force overflow, and the vertical Splitter sample starts expanded so
+  drag resizing can be exercised directly.
+* **Verification**: Added runtime event tests for horizontal and two-axis ScrollArea wheel behavior,
+  constrained vertical Tabs scrolling, and both horizontal and vertical Splitter dragging. Verified
+  with `cargo fmt -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, and `git diff --check` with only CRLF
+  warnings.
+* **Decision**: Current component-level runtime automation is strong enough for these regressions.
+  The next meaningful enhancement is gallery-level visual smoke coverage for overlay dismissal,
+  scroll containers, and splitter dragging once UI churn makes screenshot drift worth the cost.
 * **Update**: Continued the ADR 0008 productization roadmap through U2-U6 by validating that the
   current crates already contain the runtime foundation, interaction/layout, shell/navigation,
   choice/search, and gallery gate work described by the plan. The follow-up code change tightened

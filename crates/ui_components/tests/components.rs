@@ -1,6 +1,6 @@
 use open_gpui::{
-    Anchor, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
-    ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
+    Anchor, AppContext, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Render, ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
@@ -1028,6 +1028,313 @@ fn scroll_area_reset_key_resets_default_runtime_handle(cx: &mut open_gpui::TestA
         reset.top(),
         initial.top(),
         "expected reset key change to restore the scroll origin; initial={initial:?} reset={reset:?}"
+    );
+}
+
+#[open_gpui::test]
+fn scroll_area_runtime_scrolls_horizontal_and_two_axis_content(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let horizontal_cells = (0..8).map(|index| {
+                div()
+                    .debug_selector(move || format!("horizontal-cell-{index}"))
+                    .w(px(96.0))
+                    .h(px(40.0))
+                    .flex_none()
+                    .child(format!("Column {index}"))
+            });
+            let grid_rows = (0..8).map(|index| {
+                div()
+                    .debug_selector(move || format!("grid-row-{index}"))
+                    .w(px(520.0))
+                    .h(px(36.0))
+                    .flex_none()
+                    .child(format!("Grid row {index}"))
+            });
+
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(
+                    div().w(px(180.0)).h(px(64.0)).child(
+                        ScrollArea::new(
+                            "horizontal-runtime-scroll",
+                            div()
+                                .flex()
+                                .gap_2()
+                                .min_w(px(820.0))
+                                .children(horizontal_cells),
+                        )
+                        .horizontal(),
+                    ),
+                )
+                .child(
+                    div().w(px(180.0)).h(px(70.0)).child(
+                        ScrollArea::new(
+                            "two-axis-runtime-scroll",
+                            div().flex().flex_col().min_w(px(520.0)).children(grid_rows),
+                        )
+                        .both(),
+                    ),
+                )
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let horizontal_before = cx
+        .debug_bounds("horizontal-cell-2")
+        .expect("horizontal cell should be rendered before scrolling");
+    let grid_before_x = cx
+        .debug_bounds("grid-row-2")
+        .expect("grid row should be rendered before scrolling");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(40.0), px(24.0)),
+        delta: ScrollDelta::Pixels(point(px(-70.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(40.0), px(108.0)),
+        delta: ScrollDelta::Pixels(point(px(-60.0), px(0.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let horizontal_after = cx
+        .debug_bounds("horizontal-cell-2")
+        .expect("horizontal cell should remain rendered after scrolling");
+    let grid_after_x = cx
+        .debug_bounds("grid-row-2")
+        .expect("grid row should remain rendered after scrolling");
+
+    assert!(
+        horizontal_after.left() < horizontal_before.left(),
+        "expected horizontal content to move left after wheel scrolling; before={horizontal_before:?} after={horizontal_after:?}"
+    );
+    assert!(
+        grid_after_x.left() < grid_before_x.left(),
+        "expected two-axis content to move left after horizontal wheel scrolling; before={grid_before_x:?} after={grid_after_x:?}"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: point(px(40.0), px(108.0)),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-42.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let grid_after_y = cx
+        .debug_bounds("grid-row-2")
+        .expect("grid row should remain rendered after vertical scrolling");
+    assert!(
+        grid_after_y.top() < grid_after_x.top(),
+        "expected two-axis content to move up after vertical wheel scrolling; before={grid_after_x:?} after={grid_after_y:?}"
+    );
+}
+
+#[open_gpui::test]
+fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let tabs = (0..12).fold(
+                Tabs::new("overflow-tabs")
+                    .orientation(Orientation::Vertical)
+                    .small()
+                    .selected("tab-0"),
+                |tabs, index| {
+                    tabs.item(TabsItem::new(
+                        format!("tab-{index}"),
+                        format!("Tab {index}"),
+                        div().child(format!("Panel {index}")),
+                    ))
+                },
+            );
+
+            div()
+                .size_full()
+                .child(div().w(px(280.0)).h(px(120.0)).child(tabs))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let tab_before = cx
+        .debug_bounds("tabs:overflow-tabs:trigger:tab-3")
+        .expect("tab trigger should be rendered before scrolling");
+    let tablist = cx
+        .debug_bounds("tabs:overflow-tabs:tablist")
+        .expect("tablist should be rendered");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: tablist.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-64.0))),
+        ..Default::default()
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let tab_after = cx
+        .debug_bounds("tabs:overflow-tabs:trigger:tab-3")
+        .expect("tab trigger should remain rendered after scrolling");
+
+    assert!(
+        tab_after.top() < tab_before.top(),
+        "expected constrained vertical tablist to scroll; before={tab_before:?} after={tab_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn splitter_runtime_drag_resizes_horizontal_and_vertical_panels(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let horizontal = Splitter::new("horizontal-drag-split")
+                .horizontal()
+                .panel(SplitterPanel::new(
+                    SplitterPanelDescriptor::new("left", 0.5).min_fraction(0.2),
+                    div(),
+                ))
+                .panel(SplitterPanel::new(
+                    SplitterPanelDescriptor::new("right", 0.5).min_fraction(0.2),
+                    div(),
+                ));
+            let vertical = Splitter::new("vertical-drag-split")
+                .vertical()
+                .panel(SplitterPanel::new(
+                    SplitterPanelDescriptor::new("top", 0.5).min_fraction(0.2),
+                    div(),
+                ))
+                .panel(SplitterPanel::new(
+                    SplitterPanelDescriptor::new("bottom", 0.5).min_fraction(0.2),
+                    div(),
+                ));
+
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(div().w(px(400.0)).h(px(120.0)).child(horizontal))
+                .child(div().w(px(240.0)).h(px(360.0)).child(vertical))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let left_before = cx
+        .debug_bounds("splitter-panel:left")
+        .expect("left panel should be rendered");
+    let right_before = cx
+        .debug_bounds("splitter-panel:right")
+        .expect("right panel should be rendered");
+    let horizontal_handle = cx
+        .debug_bounds("splitter:horizontal-drag-split:handle:0")
+        .expect("horizontal handle should be rendered")
+        .center();
+    let top_before = cx
+        .debug_bounds("splitter-panel:top")
+        .expect("top panel should be rendered");
+    let bottom_before = cx
+        .debug_bounds("splitter-panel:bottom")
+        .expect("bottom panel should be rendered");
+    let vertical_handle = cx
+        .debug_bounds("splitter:vertical-drag-split:handle:0")
+        .expect("vertical handle should be rendered")
+        .center();
+
+    cx.simulate_mouse_down(horizontal_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(horizontal_handle.x + px(4.0), horizontal_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(horizontal_handle.x + px(24.0), horizontal_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(horizontal_handle.x + px(80.0), horizontal_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(horizontal_handle.x + px(80.0), horizontal_handle.y),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_down(vertical_handle, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(vertical_handle.x, vertical_handle.y + px(4.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(vertical_handle.x, vertical_handle.y + px(24.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(vertical_handle.x, vertical_handle.y + px(72.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_up(
+        point(vertical_handle.x, vertical_handle.y + px(72.0)),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let left_after = cx
+        .debug_bounds("splitter-panel:left")
+        .expect("left panel should remain rendered");
+    let right_after = cx
+        .debug_bounds("splitter-panel:right")
+        .expect("right panel should remain rendered");
+    let top_after = cx
+        .debug_bounds("splitter-panel:top")
+        .expect("top panel should remain rendered");
+    let bottom_after = cx
+        .debug_bounds("splitter-panel:bottom")
+        .expect("bottom panel should remain rendered");
+
+    assert!(
+        left_after.size.width > left_before.size.width
+            && right_after.size.width < right_before.size.width,
+        "expected horizontal drag to grow the first panel and shrink the second; before=({left_before:?}, {right_before:?}) after=({left_after:?}, {right_after:?})"
+    );
+    assert!(
+        top_after.size.height > top_before.size.height
+            && bottom_after.size.height < bottom_before.size.height,
+        "expected vertical drag to grow the first panel and shrink the second; before=({top_before:?}, {bottom_before:?}) after=({top_after:?}, {bottom_after:?})"
     );
 }
 

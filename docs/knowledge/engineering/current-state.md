@@ -11,6 +11,22 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Hardened the Components gallery interaction dogfood surface after manual feedback. Vertical
+  Tabs triggers now opt out of flex shrink so constrained vertical tablists can overflow and scroll;
+  the gallery vertical Tabs sample now has enough items to dogfood that behavior, and the vertical
+  Splitter sample starts expanded so drag resizing is visible.
+- Done: Added runtime UI event regressions for horizontal and two-axis `ScrollArea` wheel behavior,
+  constrained vertical Tabs scrolling, and both horizontal and vertical Splitter dragging. The
+  components now expose test-only `debug_selector` anchors for these interaction tests; non-test
+  builds keep `debug_selector` as a no-op.
+- Last verified for the interaction hardening pass: `cargo fmt -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only CRLF warnings.
+- Next automation direction: the component-level runtime tests are now strong enough for ScrollArea,
+  Tabs, and Splitter regressions. The remaining useful enhancement is a small gallery-level visual
+  smoke harness for overlay dismissal, scrolling containers, and splitter dragging when UI churn
+  increases.
 - Done: Wrote the current UI component productization roadmap at
   `docs/plans/2026-06-17-003-feat-ui-component-productization-roadmap-plan.md` and added ADR 0008
   at `docs/adr/0008-open-gpui-ui-component-productization-roadmap.md`.

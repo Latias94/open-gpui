@@ -613,8 +613,10 @@ impl RenderOnce for Splitter {
 }
 
 fn render_panel(state: SplitterPanelState, panel: SplitterPanel, is_vertical: bool) -> AnyElement {
+    let panel_selector = format!("splitter-panel:{}", state.id());
     div()
         .id(format!("splitter-panel:{}", state.id()))
+        .debug_selector(move || panel_selector)
         .min_w(px(0.0))
         .min_h(px(0.0))
         .overflow_hidden()
@@ -647,6 +649,11 @@ fn render_handle(
 
     div()
         .id(format!("splitter-handle:{}", state.index()))
+        .debug_selector({
+            let group_id = splitter_state.group_id().to_owned();
+            let handle_index = state.index();
+            move || format!("splitter:{group_id}:handle:{handle_index}")
+        })
         .flex_none()
         .flex()
         .items_center()

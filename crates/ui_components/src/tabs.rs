@@ -642,6 +642,7 @@ impl RenderOnce for Tabs {
             items,
             on_selection_change,
         } = self;
+        let tabs_id = id.to_string();
         let panel_id = tabs_panel_id();
 
         window.with_id(id.clone(), |window| {
@@ -719,6 +720,10 @@ impl RenderOnce for Tabs {
                 .child(
                     div()
                         .id("tablist")
+                        .debug_selector({
+                            let tabs_id = tabs_id.clone();
+                            move || format!("tabs:{tabs_id}:tablist")
+                        })
                         .ui_role(Role::TabList)
                         .ui_aria_orientation(orientation)
                         .flex()
@@ -748,6 +753,11 @@ impl RenderOnce for Tabs {
 
                             div()
                                 .id(tabs_trigger_id(item.value()))
+                                .debug_selector({
+                                    let tabs_id = tabs_id.clone();
+                                    let value = descriptor.value().to_owned();
+                                    move || format!("tabs:{tabs_id}:trigger:{value}")
+                                })
                                 .focusable()
                                 .tab_stop(is_tab_stop)
                                 .ui_role(Role::Tab)
@@ -756,6 +766,7 @@ impl RenderOnce for Tabs {
                                 .aria_controls(std::iter::once(panel_node_id))
                                 .aria_position_in_set(item_index + 1)
                                 .aria_size_of_set(state.items().len())
+                                .flex_none()
                                 .min_h(gpui_px_from_ui(metrics.tab_min_height()))
                                 .px(gpui_px_from_ui(metrics.tab_padding_x()))
                                 .py(gpui_px_from_ui(metrics.tab_padding_y()))

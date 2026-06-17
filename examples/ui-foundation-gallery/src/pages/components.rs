@@ -1181,6 +1181,36 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             panel: "Migration and power-user settings.",
             disabled: false,
         },
+        TabsItemSample {
+            value: "audit",
+            label: "Audit",
+            panel: "Security log retention and export controls.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "members",
+            label: "Members",
+            panel: "Seat management and team invitations.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "projects",
+            label: "Projects",
+            panel: "Default project templates and access.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "automation",
+            label: "Automation",
+            panel: "Rules, scheduled jobs, and notification routing.",
+            disabled: false,
+        },
+        TabsItemSample {
+            value: "experiments",
+            label: "Experiments",
+            panel: "Feature flags and rollout controls.",
+            disabled: false,
+        },
     ];
 
     [
@@ -1327,12 +1357,11 @@ pub fn splitter_samples(_tokens: ThemeTokens) -> [SplitterSample; 2] {
         SplitterPanelSample {
             id: "summary",
             title: "Summary",
-            body: "Collapsed header keeps context visible.",
+            body: "Resizable header keeps context visible.",
             descriptor: SplitterPanelDescriptor::new("summary", 0.32)
                 .min_fraction(0.2)
                 .max_fraction(0.45)
                 .collapsible(true)
-                .collapsed(true)
                 .collapsed_fraction(0.08),
         },
         SplitterPanelSample {
