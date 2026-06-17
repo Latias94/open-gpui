@@ -11,6 +11,17 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Wrote the current UI component productization roadmap at
+  `docs/plans/2026-06-17-003-feat-ui-component-productization-roadmap-plan.md` and added ADR 0008
+  at `docs/adr/0008-open-gpui-ui-component-productization-roadmap.md`.
+- Decision: ADR 0008 makes `open-gpui-ui-core`, `open-gpui-ui-components`, and
+  `examples/ui-foundation-gallery` the active product boundary for the next UI component phase.
+  ADR 0006 and ADR 0007 remain extraction-boundary references, but standalone
+  `open-gpui-ui-headless` creation is no longer the active roadmap.
+- In progress: U1 of the productization roadmap is aligning ADRs, roadmap docs, component
+  contract, verification notes, and engineering memory around the productization story.
+- Next action: After U1 lands, execute the productization roadmap from runtime foundations and
+  interaction-family hardening instead of starting a behavior-crate extraction plan.
 - Done: Completed the strict UI-core headless boundary plan through the design checkpoint.
   `open-gpui-ui-core` no longer depends on `open_gpui`, its strict boundary guard has an empty
   blocker set, adaptive policy uses neutral `UiPx`, and GPUI geometry/style conversion now lives in
@@ -27,9 +38,8 @@ status: "active"
   `ui_core_extraction_blockers_match_allowlist`, `ui_core_strict_boundary_blockers_match_allowlist`,
   component adapter export/boundary guards, and the gallery headless checkpoint test. `git diff
   --check` passed with only existing CRLF warnings.
-- Next action: Plan the actual behavior-crate extraction as a narrow follow-up. Move one behavior
-  family at a time, keep compatibility re-exports deliberate, and require the future behavior crate
-  to have no `open_gpui` dependency.
+- Prior next action superseded by ADR 0008: the ADR 0007 behavior-crate extraction design is
+  deferred reference material, not the next implementation step.
 - Done: Wrote the next extraction-prep plan at
   `docs/plans/2026-06-17-001-refactor-ui-headless-extraction-prep-plan.md`. The plan keeps
   `open-gpui-ui-headless` deferred and targets the blockers recorded by ADR 0006: public GPUI

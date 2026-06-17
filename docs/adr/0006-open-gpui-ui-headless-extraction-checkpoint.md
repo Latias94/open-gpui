@@ -50,6 +50,9 @@ and proves each move with existing tests before any package is published.
 ADR 0007 records that design gate. It identifies the first extraction candidates and the adapter
 surfaces that must not move.
 
+ADR 0008 later moved the active roadmap away from crate extraction and toward current-crate
+productization. This checkpoint remains the boundary evidence to consult if extraction is reopened.
+
 Likely first extraction candidates:
 
 - overlay policy, presence, dismissal, stack ordering, focus-intent, and placement vocabulary;
@@ -138,7 +141,7 @@ Revisit crate creation when all of the following are true:
   adapter-owned GPUI geometry conversions landed.
 - Completed 2026-06-17: `open_gpui_ui_core` dropped its `open_gpui` dependency and the strict
   boundary blocker inventory became empty.
-- Next: implement the ADR 0007 extraction design with a narrow plan that moves one behavior family
-  at a time and leaves GPUI adapter APIs behind.
+- Roadmap update 2026-06-17: ADR 0008 makes current-crate productization the active next phase.
+  The ADR 0007 extraction design is deferred reference material, not the next implementation step.
 - Keep `docs/ui/component-contract.md` and `docs/verification.md` current whenever a component
   state type adds new behavior metadata or a public adapter-only surface changes.

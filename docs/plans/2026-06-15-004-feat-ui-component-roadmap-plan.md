@@ -19,8 +19,11 @@ depends_on:
 
 Continue the official Open GPUI UI component system as a series of independently shippable slices:
 finish the missing runtime foundations first, then expand form controls, navigation, overlay
-behavior, and composite components, and only then decide whether to extract a standalone headless
-component crate.
+behavior, and composite components, with the current UI crates treated as the product boundary.
+
+Roadmap update 2026-06-17: ADR 0008 supersedes the old extraction-centered next step for active
+planning. Historical headless-readiness notes below should be read as boundary hygiene unless a new
+standalone extraction plan is opened.
 
 The recommended execution order is:
 
@@ -37,16 +40,16 @@ The recommended execution order is:
 11. `ScrollArea` and `Splitter`.
 12. `Toolbar` and `Sidebar`.
 13. Gallery conformance and documentation hardening.
-14. Headless extraction readiness review and API stabilization.
+14. Current-crate productization review and API stabilization.
 
 U1 and U2 are both foundation gates. The default recommendation is to run U1 first because it
 prevents color and state-token debt before the catalog grows. If the next session wants to stress
 the self-drawn engine boundary immediately, U2 can be swapped ahead of U1 without invalidating the
 rest of this roadmap.
 
-Headless readiness is a rolling checkpoint, not a once-at-the-end surprise. Each slice should note
-whether its resolved state remains renderer-neutral and whether it adds new GPUI runtime
-dependencies.
+Renderer-neutral resolved state remains a rolling checkpoint, not a once-at-the-end surprise. Each
+slice should note whether it adds new GPUI runtime dependencies, but ADR 0008 makes productization
+of the current crates the active roadmap.
 
 ## Problem Frame
 
@@ -89,8 +92,8 @@ catalog sprint.
 - R7. Use `repo-ref/gpui-component` as a GPUI-native component reference, `repo-ref/fret` and
   `repo-ref/fret/ecosystem/fret-ui-kit` as headless/policy-layer references, and
   `repo-ref/fret/ecosystem/fret-ui-shadcn` as a taxonomy and interaction-case reference.
-- R8. Defer a standalone `open-gpui-ui-headless` crate until repeated contracts exist across
-  Button, Switch, TextInput/Field, Checkbox/Radio, Tabs, and at least one overlay family.
+- R8. Defer a standalone `open-gpui-ui-headless` crate unless a new extraction plan explicitly
+  reopens it; current work should stabilize the existing UI crates as the product surface.
 
 ## Key Technical Decisions
 
@@ -108,10 +111,9 @@ catalog sprint.
   rules should be factored once before each component grows its own policy.
 - **Gallery as contract harness:** Every slice should add resolved-state tests and gallery metadata
   checks. Manual screenshots are useful, but the durable contract should be in Rust tests.
-- **Headless crate later, but watched continuously:** A headless extraction is plausible and
-  likely valuable for future cross-platform UI adapters, but extracting it before repeated
-  contracts exist would freeze the wrong abstractions. Track extraction signals from the first
-  controller and overlay slices onward instead of waiting until the end.
+- **Productize the current crates first:** A future headless extraction remains possible, but ADR
+  0008 makes the current crates the active product boundary. Keep renderer-neutral contracts and
+  adapter classification visible while stabilizing the shipped surface.
 
 ## Scope Boundaries
 
@@ -121,7 +123,8 @@ catalog sprint.
 - Do not make `fret-ui-kit` or `fret-ui-shadcn` runtime dependencies.
 - Do not add editor, markdown, Tree-sitter, LSP, chart, dock, or webview features to the official
   base component crate.
-- Do not create `open-gpui-ui-headless` before the extraction readiness review.
+- Do not create `open-gpui-ui-headless` in the active roadmap; reopen it only through a separate
+  extraction plan.
 - Do not broaden the gallery into a product shell until the component contracts need that surface.
 
 ## High-Level Technical Design
@@ -137,7 +140,7 @@ flowchart TB
     OverlayComponents[Tooltip Popover Dialog Menu ContextMenu]
     Layout[Toolbar Sidebar ScrollArea Splitter]
     Gallery[Gallery conformance harness]
-    Headless[Headless extraction readiness review]
+    Product[Productization and API stabilization review]
 
     Core --> Theme
     Core --> Text
@@ -151,7 +154,7 @@ flowchart TB
     Roving --> Gallery
     OverlayComponents --> Gallery
     Layout --> Gallery
-    Gallery --> Headless
+    Gallery --> Product
 ```
 
 ## Implementation Units

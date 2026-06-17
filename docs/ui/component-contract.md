@@ -1,8 +1,9 @@
 # Open GPUI Component Contract
 
-Official Open GPUI components use an adapter-first, headless-ready shape. A component may render
-with GPUI today, but its behavior and semantic state should be extractable later without rewriting
-the public API.
+Official Open GPUI components use an adapter-first, productized GPUI shape. A component may render
+with GPUI today, but its behavior and semantic state should stay renderer-neutral enough to test
+without rewriting the public API. ADR 0008 treats the current UI crates as the active product
+boundary; future headless extraction is a deferred option, not the current roadmap.
 
 ## Resolved State
 
@@ -191,7 +192,7 @@ exports at the crate root is acceptable, but these APIs are not renderer-neutral
 
 Component state should expose `ColorIntent` values rather than concrete GPUI colors. A color intent
 keeps the semantic `TokenKey`, `ColorState`, and fallback RGB visible for tests, documentation, and
-future headless extraction.
+future adapter work.
 
 The GPUI adapter should resolve intents through `ThemeResolver` immediately before calling style
 APIs such as `bg`, `border_color`, and `text_color`. `ThemeResolver::resolve` uses the default
@@ -268,7 +269,7 @@ The GPUI `ScrollArea` adapter owns `ScrollHandle`, maps axis intent to GPUI over
 scrollbar width from the resolved metrics, and performs reset-on-key-change by mutating the concrete
 scroll handle after the component has a keyed runtime. Layout shells should pass an externally owned
 handle when another view needs to inspect or manipulate scroll state; resolved state remains the
-testable contract for docs and future headless extraction.
+testable contract for docs and future adapter work.
 
 The default `ScrollHandle` must live in the adapter's keyed runtime, not in the `ScrollArea::new`
 builder value. Render code commonly reconstructs `RenderOnce` component values every frame, so a
@@ -311,11 +312,13 @@ The Components page should keep these gates visible:
 
 ## Headless Readiness Checkpoint
 
-The current component catalog has enough repeated behavior to justify a focused extraction design,
-but the project should still not create `open-gpui-ui-headless` in the current branch. Reusable
-behavior already exists in overlay policy resolution, roving focus, listbox collection navigation,
-scroll viewport intent, and splitter resize constraints. The first extraction candidate should
-therefore be a small behavior package, not a full shadcn/Radix-style component taxonomy.
+ADR 0008 makes current-crate productization the active roadmap. The boundary rules below remain
+useful hygiene for tests and future adapter work, but they are not a directive to create
+`open-gpui-ui-headless` in the current branch.
+
+The current component catalog has enough repeated behavior to keep a future extraction possible:
+overlay policy resolution, roving focus, listbox collection navigation, scroll viewport intent, and
+splitter resize constraints are all renderer-neutral candidates if that work is reopened.
 
 Before extraction, keep these boundary rules explicit:
 
@@ -347,8 +350,9 @@ JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler
 multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
-ADR 0006 keeps `open-gpui-ui-headless` deferred after the strict boundary checkpoint, and
-ADR 0007 records the post-boundary extraction design without creating the behavior crate.
+ADR 0008 keeps current-crate productization as the active roadmap. ADR 0006 keeps
+`open-gpui-ui-headless` deferred after the strict boundary checkpoint, and ADR 0007 records the
+post-boundary extraction design without creating the behavior crate.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
 against GPUI runtime/rendering type leaks. Public component metrics now use neutral `UiPx`

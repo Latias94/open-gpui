@@ -13,6 +13,9 @@ runtime responsibilities into a future headless crate.
 This ADR is a design gate only. It does not create `open-gpui-ui-headless` and does not move
 modules.
 
+ADR 0008 later recentered the active roadmap on current-crate productization. This document remains
+the extraction-boundary reference if the project explicitly revisits a standalone behavior crate.
+
 Reference repositories support the direction rather than dictating APIs. Fret's headless crate
 keeps small deterministic state machines such as roving focus and presence logic free from theme,
 recipe, and runtime policy. Open GPUI should use the same split: behavior/state can move; rendering,

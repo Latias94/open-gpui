@@ -20,9 +20,12 @@ depends_on:
 
 Finish the next obvious official UI component series after `ScrollArea` and `Splitter`: harden the
 gallery quality gate, add shell/navigation primitives, add derived overlay surfaces, add
-choice/search primitives, and then run a headless-readiness checkpoint. The plan keeps components
-inside the current adapter-first crates while continuing to shape APIs so a future headless crate
-can be extracted from proven behavior.
+choice/search primitives, and then run a boundary checkpoint. The plan keeps components inside the
+current adapter-first crates while continuing to shape APIs around proven behavior.
+
+Roadmap update 2026-06-17: ADR 0008 makes current-crate productization the active follow-up. The
+headless-readiness work in this series is now historical boundary evidence, not a directive to
+extract a standalone crate next.
 
 ---
 
@@ -41,9 +44,9 @@ for `Dialog`, `Popover`, and `Tooltip` is reused instead of duplicated. Choice/s
 need a shared collection/listbox contract before `Select`, `Combobox`, and `Command` grow separate
 keyboard and filtering models.
 
-ADR 0006 keeps `open-gpui-ui-headless` deferred. This series should not create the crate by default,
-but it should gather the strongest extraction evidence so the next checkpoint can make that
-decision from code rather than preference.
+ADR 0006 kept `open-gpui-ui-headless` deferred. ADR 0008 now keeps extraction out of the active
+roadmap and shifts the next phase to productizing the current crates from code rather than
+preference.
 
 ---
 
@@ -53,8 +56,8 @@ decision from code rather than preference.
 - The next useful artifact is one consolidated series plan, not separate plan files per component.
 - The official component library should prioritize reusable behavior contracts over copying a full
   shadcn-style taxonomy at once.
-- A standalone headless crate remains out of active scope unless the final checkpoint produces a
-  separate extraction plan.
+- A standalone headless crate remains out of active scope unless a separate future extraction plan
+  explicitly reopens it.
 
 ---
 
@@ -111,9 +114,8 @@ decision from code rather than preference.
   manager.
 - KTD4. Listbox foundation before choice surfaces: `Select`, `Combobox`, and `Command` should not
   each own their own item activation, disabled skipping, grouping, and active-descendant model.
-- KTD5. Headless extraction remains evidence-gated: the series should remove avoidable leaks and
-  record extraction candidates, but crate creation should follow a checkpoint plan rather than
-  happen opportunistically during component work.
+- KTD5. Extraction remains evidence-gated and deferred: the series should remove avoidable leaks
+  and record candidates, but ADR 0008 makes current-crate productization the active follow-up.
 - KTD6. References are pattern inputs: use `gpui-component` for GPUI-native examples and Fret's
   shadcn/kit code for taxonomy and scenario coverage, while keeping Open GPUI public APIs small and
   consistent with `docs/ui/component-contract.md`.

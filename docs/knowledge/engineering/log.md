@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Decision**: Added ADR 0008 and recentered the active UI component roadmap on current-crate
+  productization. `open-gpui-ui-core`, `open-gpui-ui-components`, and
+  `examples/ui-foundation-gallery` are the product boundary for the next phase; standalone
+  `open-gpui-ui-headless` extraction is deferred unless a future plan explicitly reopens it.
+* **Update**: Wrote the productization roadmap plan at
+  `docs/plans/2026-06-17-003-feat-ui-component-productization-roadmap-plan.md` and added memory
+  decision `docs/knowledge/engineering/decisions/open-gpui-ui-productization-roadmap.md`.
+* **Next**: Finish U1 documentation alignment, then continue with runtime foundation and
+  interaction-family hardening rather than behavior-crate extraction.
 * **Update**: Completed the strict UI-core headless boundary plan through the design checkpoint.
   Adaptive policy uses neutral `UiPx`; UI-core `UiPx` no longer implements GPUI style conversions;
   `open-gpui-ui-components::gpui_adapter` exports explicit `gpui_px_from_ui`,
