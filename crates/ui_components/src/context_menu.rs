@@ -21,8 +21,8 @@ use crate::menu::{
     MenuSelection, MenuState,
 };
 use crate::overlay::{
-    GpuiOverlayPlacement, GpuiOverlayState, gpui_point_from_ui, outside_press_open_change,
-    ui_point_from_gpui,
+    GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state, gpui_point_from_ui,
+    outside_press_open_change, ui_point_from_gpui,
 };
 use crate::theme::ThemeResolver;
 
@@ -129,8 +129,8 @@ impl ContextMenuState {
         self.placement_input
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         self.menu.overlay()
     }
 
@@ -359,8 +359,9 @@ impl RenderOnce for ContextMenu {
         let on_escape_close = self.on_escape_close;
         let on_open_change = self.on_open_change;
         let on_select = self.on_select;
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement =
-            GpuiOverlayPlacement::resolve(state.placement_input(), state.overlay().snap_margin());
+            GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
         let first_focusable_value = first_focusable_value(state.menu());
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();
@@ -421,7 +422,7 @@ impl RenderOnce for ContextMenu {
                                 on_select.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

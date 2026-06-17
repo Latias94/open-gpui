@@ -50,6 +50,25 @@
 * **Verification**: U4 currently passes `cargo check -p open-gpui-ui-components` and `cargo check
   -p open-gpui-ui-foundation-gallery`; full fmt/core/component/gallery nextest gate still needs to
   run before committing the slice.
+* **Verification**: U4 final gate passed with `cargo fmt -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo
+  nextest run -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF
+  warnings.
+* **Update**: Completed U5 neutral overlay state split. Added `OverlayResolvedState` to
+  `open-gpui-ui-core`, migrated all overlay-owning component resolved states to expose it, kept
+  `GpuiOverlayState` as GPUI adapter scheduling state, and derived deferred priority/snap margin at
+  render sites instead of storing them in public `*State` contracts.
+* **Review**: U5 read-only review subagent `u5_overlay_state_review` found no blocking issues. It
+  confirmed the public-state overlay blocker allowlist is empty and render paths derive GPUI
+  scheduling state locally. Its residual clone concern was resolved by making
+  `GpuiOverlayState::from_resolved` borrow `OverlayResolvedState`.
+* **Verification**: U5 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

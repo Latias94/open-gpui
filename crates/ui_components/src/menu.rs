@@ -17,7 +17,7 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
     outside_press_open_change,
 };
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
@@ -409,7 +409,7 @@ pub struct MenuState {
     metrics: MenuMetrics,
     colors: MenuColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl MenuState {
@@ -477,8 +477,7 @@ impl MenuState {
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-            .state();
+            .resolved_state();
         let colors = ThemeResolver::menu_colors(tokens, open);
 
         Self {
@@ -631,8 +630,8 @@ impl MenuState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 
@@ -933,6 +932,7 @@ impl RenderOnce for Menu {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -944,7 +944,7 @@ impl RenderOnce for Menu {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            state.overlay().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -1029,7 +1029,7 @@ impl RenderOnce for Menu {
                                 on_select.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

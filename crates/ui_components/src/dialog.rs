@@ -16,7 +16,9 @@ use open_gpui_ui_core::{
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
-use crate::overlay::{GpuiOverlayAdapterConfig, GpuiOverlayState, outside_press_open_change};
+use crate::overlay::{
+    GpuiOverlayAdapterConfig, OverlayResolvedState, gpui_overlay_state, outside_press_open_change,
+};
 use crate::theme::ThemeResolver;
 
 /// Dialog open-state ownership.
@@ -184,7 +186,7 @@ pub struct DialogState {
     metrics: DialogMetrics,
     colors: DialogColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl DialogState {
@@ -219,7 +221,7 @@ impl DialogState {
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .state();
+            .resolved_state();
         let colors = ThemeResolver::dialog_colors(tokens, open);
 
         Self {
@@ -332,8 +334,8 @@ impl DialogState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -555,6 +557,7 @@ impl RenderOnce for Dialog {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
 
         div()
             .id(id)
@@ -634,7 +637,7 @@ impl RenderOnce for Dialog {
                                 on_open_change.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

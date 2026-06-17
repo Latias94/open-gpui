@@ -54,12 +54,14 @@ The `open-gpui-ui-components` public contract tests should also keep
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,
 `Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and
 callback storage from entering state contracts. The companion extraction-blocker inventory tests in
-`open-gpui-ui-components` and `open-gpui-ui-core` pin the remaining `GpuiOverlayState` and adaptive
-`Pixels` usage so later extraction-prep work can shrink that allowlist deliberately. Public
-component metrics and accessibility state now use neutral UI-core vocabulary; adding public GPUI
-`Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the guard
-inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional adapter
-convenience until the strict crate boundary is split.
+`open-gpui-ui-components` and `open-gpui-ui-core` pin remaining public-state extraction blockers so
+later extraction-prep work can shrink the allowlists deliberately. Component public-state overlay
+blockers are currently empty: resolved overlay contracts expose `OverlayResolvedState`, while
+`GpuiOverlayState` stays in the GPUI adapter helper surface for deferred priority and snap margin.
+Public component metrics and accessibility state now use neutral UI-core vocabulary; adding public
+GPUI `Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the
+guard inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional
+adapter convenience until the strict crate boundary is split.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

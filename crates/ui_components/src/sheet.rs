@@ -19,7 +19,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayState, escape_open_change, outside_press_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
+    outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -317,7 +318,7 @@ pub struct SheetState {
     metrics: SheetMetrics,
     colors: SheetColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl SheetState {
@@ -388,7 +389,7 @@ impl SheetState {
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .state();
+            .resolved_state();
         let colors = ThemeResolver::sheet_colors(tokens, open);
 
         Self {
@@ -519,8 +520,8 @@ impl SheetState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -809,6 +810,7 @@ impl RenderOnce for Sheet {
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let close_focus = runtime.read(cx).close_focus.clone();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let on_close = self.on_close;
         let on_open_change = self.on_open_change;
 
@@ -916,7 +918,7 @@ impl RenderOnce for Sheet {
                                 on_open_change.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

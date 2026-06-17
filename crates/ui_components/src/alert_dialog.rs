@@ -19,7 +19,8 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayState, escape_open_change, outside_press_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
+    outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -372,7 +373,7 @@ pub struct AlertDialogState {
     metrics: AlertDialogMetrics,
     colors: AlertDialogColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl AlertDialogState {
@@ -449,7 +450,7 @@ impl AlertDialogState {
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent.clone())
             .focus_restore_intent(focus_restore_intent.clone())
-            .state();
+            .resolved_state();
         let colors = ThemeResolver::alert_dialog_colors(tokens, intent, open);
         let cancel_disabled = cancel_disabled || disabled;
         let action_disabled = action_disabled || disabled;
@@ -599,8 +600,8 @@ impl AlertDialogState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -867,6 +868,7 @@ impl RenderOnce for AlertDialog {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let cancel_focus = runtime.read(cx).cancel_focus.clone();
         let action_focus = runtime.read(cx).action_focus.clone();
@@ -977,7 +979,7 @@ impl RenderOnce for AlertDialog {
                                 on_open_change.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

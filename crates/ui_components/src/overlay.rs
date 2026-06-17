@@ -9,6 +9,7 @@ use open_gpui_ui_core::{
 };
 
 pub(crate) use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, ui_point_from_gpui};
+pub use open_gpui_ui_core::OverlayResolvedState;
 
 /// Default margin used when snapping an anchored overlay inside the window.
 pub const DEFAULT_OVERLAY_SAFE_MARGIN: Pixels = px(8.0);
@@ -30,6 +31,23 @@ impl GpuiOverlayState {
         snap_margin: Pixels,
     ) -> Self {
         let layer_state = policy.layer_state();
+
+        Self {
+            policy,
+            layer_state,
+            deferred_priority,
+            snap_margin,
+        }
+    }
+
+    /// Resolves adapter state from renderer-neutral overlay state.
+    pub fn from_resolved(
+        overlay: &OverlayResolvedState,
+        deferred_priority: usize,
+        snap_margin: Pixels,
+    ) -> Self {
+        let layer_state = overlay.layer_state();
+        let policy = overlay.policy().clone();
 
         Self {
             policy,
@@ -139,8 +157,8 @@ impl GpuiOverlayAdapterConfig {
         self
     }
 
-    /// Resolves the adapter state.
-    pub fn state(self) -> GpuiOverlayState {
+    /// Resolves the renderer-neutral overlay state.
+    pub fn resolved_state(self) -> OverlayResolvedState {
         let mut policy = OverlayLayerPolicy::new(self.kind, self.presence);
 
         if let Some(outside_press) = self.outside_press {
@@ -156,8 +174,25 @@ impl GpuiOverlayAdapterConfig {
             policy = policy.with_initial_focus_intent(initial_focus);
         }
 
-        GpuiOverlayState::resolve(policy, self.deferred_priority, self.snap_margin)
+        OverlayResolvedState::resolve(policy)
     }
+
+    /// Resolves the adapter state.
+    pub fn state(self) -> GpuiOverlayState {
+        let deferred_priority = self.deferred_priority;
+        let snap_margin = self.snap_margin;
+        let overlay = self.resolved_state();
+        GpuiOverlayState::from_resolved(&overlay, deferred_priority, snap_margin)
+    }
+}
+
+/// Derives the default GPUI adapter state from renderer-neutral overlay state.
+pub fn gpui_overlay_state(overlay: &OverlayResolvedState) -> GpuiOverlayState {
+    GpuiOverlayState::from_resolved(
+        overlay,
+        default_deferred_priority(overlay.policy().kind()),
+        DEFAULT_OVERLAY_SAFE_MARGIN,
+    )
 }
 
 /// Resolved GPUI placement state for an anchored overlay.

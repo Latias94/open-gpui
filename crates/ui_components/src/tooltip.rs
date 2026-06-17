@@ -14,7 +14,7 @@ use open_gpui_ui_core::{
 
 use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
-use crate::overlay::{DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState};
+use crate::overlay::{GpuiOverlayAdapterConfig, OverlayResolvedState};
 use crate::theme::ThemeResolver;
 
 /// Open affordance for a tooltip trigger.
@@ -183,7 +183,7 @@ pub struct TooltipState {
     delay: TooltipDelayPolicy,
     metrics: TooltipMetrics,
     colors: TooltipColors,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl TooltipState {
@@ -206,8 +206,7 @@ impl TooltipState {
         };
         let overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, presence)
             .initial_focus_intent(InitialFocusIntent::None)
-            .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-            .state();
+            .resolved_state();
 
         Self {
             content_kind,
@@ -289,8 +288,8 @@ impl TooltipState {
         self.colors
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }

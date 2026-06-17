@@ -83,8 +83,8 @@ pub use menu::{
 };
 pub use overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    OverlayOpenChange, default_deferred_priority, escape_open_change, gpui_anchor,
-    outside_press_open_change, point_anchor_placement,
+    OverlayOpenChange, OverlayResolvedState, default_deferred_priority, escape_open_change,
+    gpui_anchor, outside_press_open_change, point_anchor_placement,
 };
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use radio::{

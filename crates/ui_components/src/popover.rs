@@ -17,7 +17,7 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
     outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
@@ -173,7 +173,7 @@ pub struct PopoverState {
     metrics: PopoverMetrics,
     colors: PopoverColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl PopoverState {
@@ -207,8 +207,7 @@ impl PopoverState {
                 .outside_press_policy(outside_press_policy)
                 .initial_focus_intent(initial_focus_intent.clone())
                 .focus_restore_intent(focus_restore_intent.clone())
-                .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-                .state();
+                .resolved_state();
         let colors = ThemeResolver::popover_colors(tokens, open);
 
         Self {
@@ -315,8 +314,8 @@ impl PopoverState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -530,6 +529,7 @@ impl RenderOnce for Popover {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -541,7 +541,7 @@ impl RenderOnce for Popover {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(6.0)),
-            state.overlay().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -622,7 +622,7 @@ impl RenderOnce for Popover {
                                 on_open_change.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

@@ -10,16 +10,16 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
     Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
     ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
-    CommandState, ContextMenu, Dialog, DialogOpenMode, Field, FieldState, FocusRing, HoverCard,
-    HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState, Label, LabelState,
-    Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover, PopoverOpenMode,
-    RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select, SelectOpenMode,
-    SelectState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem,
-    SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState, Switch,
-    SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController,
-    TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
-    Tooltip, TooltipContentKind, TooltipOpenIntent, UiA11yElementExt, focus_ring_shadow,
-    init_text_input,
+    CommandState, ContextMenu, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
+    FieldState, FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
+    IconButtonState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
+    MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis,
+    ScrollAreaState, Select, SelectOpenMode, SelectState, Sheet, SheetModalMode, SheetOpenMode,
+    SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide, SidebarState, Splitter,
+    SplitterPanel, SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
+    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState, Toolbar,
+    ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind, TooltipOpenIntent,
+    UiA11yElementExt, focus_ring_shadow, init_text_input,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode,
@@ -4784,7 +4784,7 @@ fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> 
             "anchor: {} x {} / snap {}",
             format_ui_px(state.anchor_point().x),
             format_ui_px(state.anchor_point().y),
-            format_px(state.overlay().snap_margin())
+            format_px(DEFAULT_OVERLAY_SAFE_MARGIN)
         ))
         .child(format!(
             "items: {} / layer {} / outside {}",

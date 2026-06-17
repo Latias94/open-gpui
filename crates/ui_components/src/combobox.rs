@@ -22,7 +22,7 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
     outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
@@ -317,7 +317,7 @@ pub struct ComboboxState {
     metrics: ComboboxMetrics,
     colors: ComboboxColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl ComboboxState {
@@ -425,8 +425,7 @@ impl ComboboxState {
                 .outside_press_policy(outside_press_policy)
                 .initial_focus_intent(initial_focus_intent.clone())
                 .focus_restore_intent(focus_restore_intent.clone())
-                .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-                .state();
+                .resolved_state();
         let scroll_area = ScrollAreaState::resolve(
             format!("{label}:combobox-content-scroll"),
             ScrollAreaAxis::Vertical,
@@ -622,8 +621,8 @@ impl ComboboxState {
         self.focus_ring
     }
 
-    /// Returns renderer-facing overlay state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -917,6 +916,7 @@ impl RenderOnce for Combobox {
         let metrics = state.metrics();
         let open = state.open();
         let disabled = state.disabled();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
@@ -928,7 +928,7 @@ impl RenderOnce for Combobox {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(ui_px(4.0)),
-            state.overlay().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -1079,7 +1079,7 @@ impl RenderOnce for Combobox {
                                 self.tokens,
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

@@ -53,11 +53,22 @@ status: "active"
   re-exporting GPUI focus/a11y types. `open-gpui-ui-components::a11y` owns the GPUI/AccessKit
   adapter mapping, and render code applies neutral roles/states/actions through explicit
   `ui_*` adapter methods.
-- Last verified: U4 currently passes `cargo check -p open-gpui-ui-components` and `cargo check -p
-  open-gpui-ui-foundation-gallery`; full fmt/core/component/gallery nextest gate still needs to
-  run before commit.
-- Next action: Finish U4 verification, commit it, then start U5 by splitting neutral overlay state
-  from `GpuiOverlayState` adapter scheduling fields.
+- Last verified: U4 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
+- Done: Implemented U5 neutral overlay state split. `open-gpui-ui-core` now owns
+  `OverlayResolvedState`; Tooltip, Popover, Dialog, Menu, ContextMenu, AlertDialog, Sheet,
+  HoverCard, Select, Combobox, and Command expose that neutral state publicly. GPUI deferred
+  priority and snap margin remain in `GpuiOverlayState` and are derived at render/adapter sites.
+- Last verified: U5 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
+  -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
+- Next action: Commit U5, then start U6 by classifying GPUI-specific text input, scroll handle,
+  focus-ring, and rendering helper APIs as adapter-only surfaces.
 
 ## 2026-06-16
 

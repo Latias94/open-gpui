@@ -1320,6 +1320,12 @@ fn icon_button_requires_accessible_label_and_reuses_button_primitives() {
 fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
 
+    let root_overlay: root::OverlayResolvedState =
+        root::GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, OverlayPresence::open())
+            .resolved_state();
+    let prelude_overlay: prelude::OverlayResolvedState =
+        prelude::GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, OverlayPresence::open())
+            .resolved_state();
     let root_button = root::Button::new("save", "Save");
     let root_alert_dialog = root::AlertDialog::new(
         "delete",
@@ -1386,6 +1392,8 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        root_overlay.policy().kind(),
+        prelude_overlay.policy().kind(),
         prelude::DEFAULT_OVERLAY_SAFE_MARGIN,
         prelude::default_deferred_priority(OverlayLayerKind::Tooltip),
         prelude::escape_open_change(&OverlayLayerPolicy::new(
@@ -1450,19 +1458,7 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
 #[test]
 fn public_contract_extraction_blockers_match_allowlist() {
     const BLOCKER_TOKENS: &[&str] = &["GpuiOverlayState", "open_gpui::Pixels", "Point<Pixels>"];
-    let expected = [
-        ("alert_dialog.rs", "AlertDialogState", "GpuiOverlayState"),
-        ("combobox.rs", "ComboboxState", "GpuiOverlayState"),
-        ("command.rs", "CommandDialogState", "GpuiOverlayState"),
-        ("command.rs", "CommandState", "GpuiOverlayState"),
-        ("dialog.rs", "DialogState", "GpuiOverlayState"),
-        ("hover_card.rs", "HoverCardState", "GpuiOverlayState"),
-        ("menu.rs", "MenuState", "GpuiOverlayState"),
-        ("popover.rs", "PopoverState", "GpuiOverlayState"),
-        ("select.rs", "SelectState", "GpuiOverlayState"),
-        ("sheet.rs", "SheetState", "GpuiOverlayState"),
-        ("tooltip.rs", "TooltipState", "GpuiOverlayState"),
-    ];
+    let expected: [(&str, &str, &str); 0] = [];
     let mut expected = expected
         .into_iter()
         .map(|(file, contract, token)| {

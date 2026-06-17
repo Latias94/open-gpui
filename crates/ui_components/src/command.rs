@@ -21,7 +21,7 @@ use crate::listbox::{
     ListboxState,
 };
 use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState, escape_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
     outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
@@ -505,7 +505,7 @@ pub struct CommandDialogState {
     open: bool,
     title: String,
     description: Option<String>,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl CommandDialogState {
@@ -539,8 +539,8 @@ impl CommandDialogState {
         self.description.as_deref()
     }
 
-    /// Returns renderer-facing overlay state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -564,7 +564,7 @@ pub struct CommandState {
     open: bool,
     default_open: bool,
     open_mode: CommandOpenMode,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
     dialog: Option<CommandDialogState>,
     loading_state: Option<CommandLoadingState>,
     empty_label: String,
@@ -749,15 +749,13 @@ impl CommandState {
                 .escape_key_policy(escape_key_policy)
                 .initial_focus_intent(initial_focus_intent.clone())
                 .focus_restore_intent(focus_restore_intent.clone())
-                .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-                .state();
+                .resolved_state();
         let dialog_overlay = GpuiOverlayAdapterConfig::new(OverlayLayerKind::Modal, presence)
             .outside_press_policy(outside_press_policy)
             .escape_key_policy(escape_key_policy)
             .initial_focus_intent(initial_focus_intent)
             .focus_restore_intent(focus_restore_intent.clone())
-            .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-            .state();
+            .resolved_state();
         let dialog = dialog_enabled.then(|| CommandDialogState {
             enabled: true,
             open,
@@ -855,7 +853,7 @@ impl CommandState {
     }
 
     /// Returns dialog wrapper state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 
@@ -1322,7 +1320,10 @@ impl RenderOnce for Command {
         let focus_ring = state.focus_ring();
         let dialog_state = state.dialog().cloned();
         let dialog_open = dialog_state.clone().filter(|_| state.open());
-        let dialog_priority = state.overlay().deferred_priority();
+        let dialog_priority = dialog_state
+            .as_ref()
+            .map(|dialog| gpui_overlay_state(dialog.overlay()).deferred_priority())
+            .unwrap_or_else(|| gpui_overlay_state(state.overlay()).deferred_priority());
         let viewport = window.viewport_size();
         let dialog_enabled = self.dialog_enabled;
         let trigger_label = self.trigger_label;

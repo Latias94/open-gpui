@@ -18,8 +18,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    escape_open_change, outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, escape_open_change,
+    gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -283,7 +283,7 @@ pub struct HoverCardState {
     metrics: HoverCardMetrics,
     colors: HoverCardColors,
     focus_ring: FocusRing,
-    overlay: GpuiOverlayState,
+    overlay: OverlayResolvedState,
 }
 
 impl HoverCardState {
@@ -351,8 +351,7 @@ impl HoverCardState {
                 .outside_press_policy(outside_press_policy)
                 .initial_focus_intent(initial_focus_intent.clone())
                 .focus_restore_intent(focus_restore_intent.clone())
-                .snap_margin(DEFAULT_OVERLAY_SAFE_MARGIN)
-                .state();
+                .resolved_state();
         let colors = ThemeResolver::hover_card_colors(tokens, open);
 
         Self {
@@ -487,8 +486,8 @@ impl HoverCardState {
         self.focus_ring
     }
 
-    /// Returns resolved overlay adapter state.
-    pub const fn overlay(&self) -> &GpuiOverlayState {
+    /// Returns renderer-neutral overlay state.
+    pub const fn overlay(&self) -> &OverlayResolvedState {
         &self.overlay
     }
 }
@@ -776,6 +775,7 @@ impl RenderOnce for HoverCard {
         let open = state.open();
         let trigger_focus = runtime.read(cx).trigger_focus.clone();
         let content_focus = runtime.read(cx).content_focus.clone();
+        let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
@@ -787,7 +787,7 @@ impl RenderOnce for HoverCard {
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
             .with_offset(metrics.offset()),
-            state.overlay().snap_margin(),
+            overlay_adapter.snap_margin(),
         );
 
         div()
@@ -901,7 +901,7 @@ impl RenderOnce for HoverCard {
                                 on_open_change.clone(),
                             )),
                     )
-                    .priority(state.overlay().deferred_priority()),
+                    .priority(overlay_adapter.deferred_priority()),
                 )
             })
     }

@@ -388,6 +388,45 @@ impl OverlayLayerPolicy {
     }
 }
 
+/// Renderer-neutral resolved state for one overlay layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayResolvedState {
+    policy: OverlayLayerPolicy,
+    layer_state: OverlayLayerState,
+}
+
+impl OverlayResolvedState {
+    /// Resolves neutral layer state from an overlay policy.
+    pub fn resolve(policy: OverlayLayerPolicy) -> Self {
+        let layer_state = policy.layer_state();
+
+        Self {
+            policy,
+            layer_state,
+        }
+    }
+
+    /// Returns the shared overlay policy.
+    pub const fn policy(&self) -> &OverlayLayerPolicy {
+        &self.policy
+    }
+
+    /// Returns resolved layer state.
+    pub const fn layer_state(&self) -> OverlayLayerState {
+        self.layer_state
+    }
+
+    /// Returns whether an adapter should render the overlay layer.
+    pub const fn should_render_deferred_layer(&self) -> bool {
+        self.layer_state.visible()
+    }
+
+    /// Returns whether an adapter should attach outside-press handling.
+    pub const fn wants_outside_press_handler(&self) -> bool {
+        self.layer_state.wants_outside_press()
+    }
+}
+
 /// Resolved layer state that a renderer adapter can map to its own layer system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayLayerState {
