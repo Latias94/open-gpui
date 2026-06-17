@@ -12,7 +12,8 @@
 * **Review**: `/root/tabs_runtime_review` found no blocking issues and confirmed the selected seed
   only initializes runtime state, per-tab focus handles are bound to real triggers, and the smoke
   covers seed, disabled click, Manual focus-only arrows, Enter payload, and Home+Enter payload.
-  Remaining non-blocking gap: Tabs runtime smoke does not yet cover Space activation.
+  The remaining non-blocking Space activation gap was closed by adding an End+Space path that
+  activates the last enabled tab.
 * **Update**: Added Toolbar runtime keyboard automation. `Toolbar` now exposes stable runtime debug
   selectors for the root and items, and `open-gpui-ui-components` has a real rendered Toolbar smoke
   that clicks the first action item, moves roving focus with arrow/Home keys, skips disabled and

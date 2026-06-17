@@ -1344,6 +1344,20 @@ fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
         cx.debug_bounds("tabs-panel:overview").is_some(),
         "Home plus Enter should activate the first enabled tab in manual mode"
     );
+
+    cx.simulate_keystrokes("end space");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_space = selections.borrow().clone();
+    assert_eq!(after_space.len(), 4);
+    assert_eq!(after_space[3].index(), 3);
+    assert_eq!(after_space[3].value(), "history");
+    assert_eq!(after_space[3].label(), "History");
+    assert!(
+        cx.debug_bounds("tabs-panel:history").is_some(),
+        "End plus Space should activate the last enabled tab in manual mode"
+    );
 }
 
 #[open_gpui::test]
