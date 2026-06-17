@@ -11,6 +11,17 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Wrote the next UI component completion plan at
+  `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
+- Decision: The next component series should define the official-component completion checklist and
+  catalog first, then close rendered runtime gaps for existing complex widgets, then add the
+  low-state primitives `Separator`, `Kbd`, `Progress`, `Skeleton`, and `Avatar`, then wire the
+  gallery and verification gate. Standalone `open-gpui-ui-headless` remains deferred under ADR
+  0008.
+- Last verified for the plan write: documentation-only self-review plus `git diff --check` for the
+  new plan file. No Rust build or tests were run for this planning-only update.
+- Next action: Start implementation from U1 of the component completion plan, then proceed through
+  U2 runtime gap closure before adding the new primitive batch.
 - Done: Added a gallery-level Overlay interaction smoke gate. The gallery now renders the Overlay
   page in `open_gpui::test` and drives controlled Popover outside dismissal, modal Dialog barrier
   plus Escape dismissal, non-modal Sheet outside dismissal, Menu Escape/outside dismissal, and

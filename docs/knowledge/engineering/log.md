@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Wrote the next UI component completion plan at
+  `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`. The plan keeps ADR 0008's
+  current-crate product boundary, defines an official-component completion checklist, targets
+  rendered runtime gaps for existing complex widgets, and schedules the low-state primitives
+  `Separator`, `Kbd`, `Progress`, `Skeleton`, and `Avatar` before heavier widgets.
+* **Verification**: Planning-only update passed documentation self-review and `git diff --check`
+  for the new plan file. No Rust build or tests were run.
 * **Update**: Added rendered Combobox and Command search interaction automation. `TextInput` now
   exposes `text-input:{id}:root`; `Combobox` exposes root/input-row/toggle/content selectors; and
   `Command` exposes root/trigger/content selectors so input-driven components can be tested through
