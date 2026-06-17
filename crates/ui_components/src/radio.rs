@@ -623,6 +623,7 @@ impl RenderOnce for RadioGroup {
         } = self;
 
         window.with_id(id.clone(), |window| {
+            let debug_id = id.to_string();
             let descriptors: Vec<RadioItemDescriptor> =
                 items.iter().map(RadioItem::descriptor).collect();
             let selected_seed = selected_value.clone();
@@ -674,6 +675,10 @@ impl RenderOnce for RadioGroup {
 
             div()
                 .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("radio-group:{debug_id}")
+                })
                 .ui_role(state.role())
                 .ui_aria_orientation(orientation)
                 .aria_label(label.unwrap_or_else(|| SharedString::from("Radio group")))
@@ -697,9 +702,15 @@ impl RenderOnce for RadioGroup {
                     let item_index = index;
                     let is_selected = item.selected();
                     let is_tab_stop = item.tab_stop();
+                    let item_value = item.value().to_owned();
 
                     div()
                         .id(radio_item_id(item.value()))
+                        .debug_selector({
+                            let debug_id = debug_id.clone();
+                            let item_value = item_value.clone();
+                            move || format!("radio-group:{debug_id}:item:{item_value}")
+                        })
                         .focusable()
                         .tab_stop(is_tab_stop)
                         .ui_role(item.role())

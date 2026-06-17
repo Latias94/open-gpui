@@ -1,6 +1,17 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added RadioGroup runtime keyboard automation. `RadioGroup` now exposes stable runtime
+  debug selectors for the root and items, and `open-gpui-ui-components` has a real rendered
+  RadioGroup smoke that rejects disabled clicks, verifies click payloads, skips disabled items with
+  arrow navigation, and confirms Space on an already selected radio does not emit a duplicate
+  selection change.
+* **Verification**: Focused RadioGroup runtime smoke passed with `cargo nextest run -p
+  open-gpui-ui-components
+  radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads`.
+* **Review**: `/root/radio_group_runtime_review` flagged that `End+Space` could not prove a Space
+  activation payload because RadioGroup arrow/Home/End navigation selects immediately. The smoke and
+  docs now verify Space as a no-duplicate path on the already selected radio instead.
 * **Update**: Added Tabs runtime keyboard automation and fixed rendered `Tabs` state hydration.
   `Tabs::render` now seeds its runtime from the builder-selected value on first render and tracks
   per-tab focus handles on the actual trigger elements, so Manual keyboard navigation can move

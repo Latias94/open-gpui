@@ -36,6 +36,12 @@ status: "active"
   scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,
   vertical Tabs rail scrolling, Splitter pointer dragging, and long Sidebar internal navigation
   scrolling through runtime events.
+- Done: Added stable runtime debug selectors for `RadioGroup` root/items plus a rendered RadioGroup
+  keyboard smoke in `open-gpui-ui-components`. The smoke rejects disabled radio clicks, verifies
+  click and arrow-selection payloads, skips disabled items with arrow navigation, and confirms Space
+  on an already selected radio does not emit a duplicate selection change.
+- Last verified for the RadioGroup runtime smoke: `cargo nextest run -p open-gpui-ui-components
+  radio_group_runtime_keyboard_navigation_skips_disabled_items_and_payloads`.
 - Done: Added Tabs runtime keyboard automation in `open-gpui-ui-components` and fixed the rendered
   `Tabs` runtime to honor the builder-selected seed on first render plus bind per-tab focus handles
   to actual trigger elements. The smoke rejects disabled tab clicks, keeps Manual arrow navigation
