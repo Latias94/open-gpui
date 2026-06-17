@@ -35,12 +35,18 @@ status: "active"
   now renders the full Components page in `open_gpui::test` and drives short-viewport page
   scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,
   vertical Tabs rail scrolling, and Splitter pointer dragging through runtime events.
+- Done: Added a compact shell/navigation runtime smoke. The gallery test now clicks the compact
+  viewport switch, resizes to the compact viewport, asserts the mobile shell plus compact density
+  snapshot, scrolls the left navigation rail to deep pages, and confirms switching away and back to
+  Components resets the page scroll position.
 - Last verified for the gallery smoke gate: `cargo fmt -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
-- Next automation direction: broaden the gallery smoke gate only when new UI families land. The
-  next useful additions are overlay-page modal/sheet/menu dismissal smoke and a compact-shell
-  navigation smoke, not screenshot coverage by default.
+- Last verified for the compact shell/navigation smoke: `cargo fmt -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` with 41 passing tests.
+- Next automation direction: broaden the gallery smoke gate only when new UI families land or a
+  manual regression exposes another runtime path. Screenshot coverage is not the default next step.
 - Done: Hardened the Components gallery interaction dogfood surface after manual feedback. Vertical
   Tabs triggers now opt out of flex shrink so constrained vertical tablists can overflow and scroll;
   the gallery vertical Tabs sample now has enough items to dogfood that behavior, and the vertical

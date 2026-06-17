@@ -1,5 +1,6 @@
 use open_gpui::{
-    Bounds, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point, px, size,
+    Bounds, Entity, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point,
+    px, size,
 };
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
@@ -16,9 +17,9 @@ use open_gpui_ui_core::{
     Toggled, semantic, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
-    DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, density_label,
-    device_class_label, foundation_snapshot, pages, panel_class_label, shell_mode_label,
-    size_label,
+    DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
+    density_label, device_class_label, foundation_snapshot, pages, panel_class_label,
+    shell_mode_label, size_label,
 };
 
 fn redraw(cx: &mut VisualTestContext) {
@@ -36,10 +37,18 @@ fn open_gallery_page(
     cx: &mut open_gpui::TestAppContext,
     page: GalleryPage,
 ) -> &mut VisualTestContext {
-    let (_, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
+    let (_, cx) = open_gallery_page_with_shell(cx, page);
+    cx
+}
+
+fn open_gallery_page_with_shell(
+    cx: &mut open_gpui::TestAppContext,
+    page: GalleryPage,
+) -> (Entity<GalleryShell>, &mut VisualTestContext) {
+    let (shell, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
     set_short_gallery_viewport(cx);
     redraw(cx);
-    cx
+    (shell, cx)
 }
 
 fn open_components_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
@@ -48,6 +57,13 @@ fn open_components_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTes
 
 fn open_overlay_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
     open_gallery_page(cx, GalleryPage::Overlay)
+}
+
+fn shell_snapshot(
+    shell: &Entity<GalleryShell>,
+    cx: &mut VisualTestContext,
+) -> GalleryShellSnapshot {
+    cx.update(|_, app| shell.read(app).snapshot())
 }
 
 fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
@@ -75,6 +91,35 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
     }
 
     panic!("expected `{selector}` to become visible after scrolling the gallery page");
+}
+
+fn scroll_page_until_vertically_visible(
+    cx: &mut VisualTestContext,
+    selector: &'static str,
+) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, "gallery:page-scroll");
+    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
+
+    for _ in 0..48 {
+        if let Some(target) = cx.debug_bounds(selector) {
+            if bounds_overlap_y(scroll_bounds, target) {
+                return target;
+            }
+        }
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: scroll_position,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-220.0))),
+            ..Default::default()
+        });
+        redraw(cx);
+    }
+
+    panic!("expected `{selector}` to become vertically visible after scrolling the gallery page");
+}
+
+fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
+    target.bottom() >= container.top() && target.top() <= container.bottom()
 }
 
 fn scroll_navigation_until_visible(
@@ -1614,6 +1659,66 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         assert!(
             !reset_page_scroll.contains(&tabs_after_reset.center()),
             "expected switching away and back to Components to reset page scroll so deep Tabs sample is no longer visible; tabs={tabs_after_reset:?} page={reset_page_scroll:?}"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let (shell, cx) = open_gallery_page_with_shell(cx, GalleryPage::Tokens);
+
+    click(cx, "gallery:viewport-switch:compact");
+    cx.simulate_resize(size(px(720.0), px(520.0)));
+    redraw(cx);
+
+    let compact = shell_snapshot(&shell, cx);
+    assert_eq!(compact.selected_page, GalleryPage::Tokens);
+    assert_eq!(compact.shell_mode, DeviceShellMode::Mobile);
+    assert_eq!(compact.density, Density::Compact);
+    assert_eq!(compact.control_size, Size::Small);
+
+    scroll_navigation_until_visible(cx, "gallery:navigation-item:components");
+    click(cx, "gallery:navigation-item:components");
+    assert_eq!(
+        shell_snapshot(&shell, cx).selected_page,
+        GalleryPage::Components
+    );
+
+    let scroll_area_sample =
+        scroll_page_until_vertically_visible(cx, "gallery:component-scroll-area-sample:data-grid");
+    let page_scroll = bounds(cx, "gallery:page-scroll");
+    assert!(
+        bounds_overlap_y(page_scroll, scroll_area_sample),
+        "expected compact Components page to scroll until a deep component sample is visible"
+    );
+
+    scroll_navigation_until_visible(cx, "gallery:navigation-item:overlay");
+    click(cx, "gallery:navigation-item:overlay");
+    assert_eq!(
+        shell_snapshot(&shell, cx).selected_page,
+        GalleryPage::Overlay
+    );
+    assert!(
+        cx.debug_bounds("gallery:overlay-page").is_some(),
+        "expected compact navigation to switch to the Overlay page"
+    );
+
+    scroll_navigation_until_visible(cx, "gallery:navigation-item:components");
+    click(cx, "gallery:navigation-item:components");
+    assert_eq!(
+        shell_snapshot(&shell, cx).selected_page,
+        GalleryPage::Components
+    );
+
+    let reset_page_scroll = bounds(cx, "gallery:page-scroll");
+    if let Some(scroll_area_after_reset) =
+        cx.debug_bounds("gallery:component-scroll-area-sample:data-grid")
+    {
+        assert!(
+            !bounds_overlap_y(reset_page_scroll, scroll_area_after_reset),
+            "expected compact navigation to reset page scroll after switching away and back; scroll_area={scroll_area_after_reset:?} page={reset_page_scroll:?}"
         );
     }
 }

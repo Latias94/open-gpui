@@ -3279,6 +3279,7 @@ impl GalleryShell {
 
         div()
             .id(format!("viewport-switch:{label}"))
+            .debug_selector(move || format!("gallery:viewport-switch:{label}"))
             .px_2()
             .py_1()
             .rounded_sm()

@@ -49,6 +49,10 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging. Run the gallery package tests before relying on manual dogfood for those
 paths.
 
+The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
+compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
+navigation rail to deep pages, and confirms switching away and back resets the page scroll position.
+
 The gallery package also includes Overlay-page runtime smoke coverage for popover, modal dialog,
 non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape dismissal. The
 Overlay gallery intentionally keeps default-open contract samples visually closed at page load so

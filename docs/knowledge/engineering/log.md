@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added a compact shell/navigation gallery smoke. The runtime test clicks the compact
+  viewport switch, resizes the test window to the compact width, verifies the shell snapshot enters
+  mobile/compact mode, scrolls the left navigation rail to deep pages, and confirms switching away
+  and back to Components resets page scroll.
+* **Verification**: Compact shell/navigation smoke passed as part of `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` with 41 passing tests, after `cargo fmt -p
+  open-gpui-ui-foundation-gallery` and `cargo check -p open-gpui-ui-foundation-gallery`.
 * **Update**: Hardened the Overlay gallery ContextMenu runtime smoke from gallery-control opening
   to the real right-click path. The test now scrolls the controlled ContextMenu hotspot into view,
   sends a right mouse down/up pair through `open_gpui::test`, asserts the surface opens, and closes
