@@ -3838,8 +3838,10 @@ fn component_select_samples_section(
                         select = select.selected(selected);
                     }
                     select = match sample.open_mode {
-                        SelectOpenMode::Controlled => select.open(state.open()),
-                        SelectOpenMode::Uncontrolled => select.default_open(state.default_open()),
+                        SelectOpenMode::Controlled => select.open(sample.interactive_open),
+                        SelectOpenMode::Uncontrolled => {
+                            select.default_open(sample.interactive_open)
+                        }
                     };
                     for option in sample.options.iter() {
                         select = select.option(component_listbox_option(option));
@@ -3871,7 +3873,11 @@ fn component_select_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if state.open() { "open" } else { "closed" })),
+                                .child(label_pill(if sample.interactive_open {
+                                    "popup open"
+                                } else {
+                                    "popup closed"
+                                })),
                         )
                         .child(
                             div()
@@ -3917,9 +3923,9 @@ fn component_combobox_samples_section(
                         combobox = combobox.selected(selected);
                     }
                     combobox = match sample.open_mode {
-                        ComboboxOpenMode::Controlled => combobox.open(state.open()),
+                        ComboboxOpenMode::Controlled => combobox.open(sample.interactive_open),
                         ComboboxOpenMode::Uncontrolled => {
-                            combobox.default_open(state.default_open())
+                            combobox.default_open(sample.interactive_open)
                         }
                     };
                     for option in sample.options.iter() {
@@ -3952,7 +3958,11 @@ fn component_combobox_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if state.open() { "open" } else { "closed" })),
+                                .child(label_pill(if sample.interactive_open {
+                                    "popup open"
+                                } else {
+                                    "popup closed"
+                                })),
                         )
                         .child(
                             div()
@@ -4006,8 +4016,10 @@ fn component_command_samples_section(
                         command = command.loading("Indexing commands", None);
                     }
                     command = match sample.open_mode {
-                        CommandOpenMode::Controlled => command.open(state.open()),
-                        CommandOpenMode::Uncontrolled => command.default_open(state.default_open()),
+                        CommandOpenMode::Controlled => command.open(sample.interactive_open),
+                        CommandOpenMode::Uncontrolled => {
+                            command.default_open(sample.interactive_open)
+                        }
                     };
                     for item in sample.items.iter() {
                         command = command.item(component_command_item(item));

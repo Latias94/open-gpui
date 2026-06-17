@@ -562,6 +562,8 @@ pub struct SelectSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: SelectOpenMode,
+    /// Whether the interactive gallery control mounts its popup open.
+    pub interactive_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -591,6 +593,8 @@ pub struct ComboboxSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: ComboboxOpenMode,
+    /// Whether the interactive gallery control mounts its popup open.
+    pub interactive_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -644,6 +648,8 @@ pub struct CommandSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: CommandOpenMode,
+    /// Whether the interactive gallery control mounts its popup open.
+    pub interactive_open: bool,
     /// Whether the surface models command dialog policy.
     pub dialog: bool,
     /// Standalone command items.
@@ -2074,6 +2080,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("critical"),
             disabled: false,
             open_mode: SelectOpenMode::Controlled,
+            interactive_open: false,
             state: select_state(
                 Size::Medium,
                 false,
@@ -2098,6 +2105,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("doing"),
             disabled: false,
             open_mode: SelectOpenMode::Uncontrolled,
+            interactive_open: false,
             state: select_state(
                 Size::Small,
                 false,
@@ -2122,6 +2130,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: None,
             disabled: true,
             open_mode: SelectOpenMode::Uncontrolled,
+            interactive_open: false,
             state: select_state(
                 Size::Small,
                 true,
@@ -2193,6 +2202,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: Some("solid"),
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
+            interactive_open: false,
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -2219,6 +2229,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
+            interactive_open: false,
             state: combobox_state(
                 Size::Small,
                 false,
@@ -2245,6 +2256,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: true,
             open_mode: ComboboxOpenMode::Uncontrolled,
+            interactive_open: false,
             state: combobox_state(
                 Size::Small,
                 true,
@@ -2321,6 +2333,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: Some("new-file"),
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
+            interactive_open: false,
             dialog: true,
             state: command_state(
                 Size::Medium,
@@ -2349,6 +2362,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
+            interactive_open: false,
             dialog: false,
             state: command_state(
                 Size::Small,
@@ -2377,6 +2391,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: true,
             open_mode: CommandOpenMode::Uncontrolled,
+            interactive_open: false,
             dialog: false,
             state: command_state(
                 Size::Small,

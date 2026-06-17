@@ -869,6 +869,10 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(listboxes[1].state.tab_stop_value(), None);
 
     assert_eq!(selects.len(), 3);
+    assert!(
+        selects.iter().all(|sample| !sample.interactive_open),
+        "select samples keep popup state metadata separate from default gallery interactivity"
+    );
     assert_eq!(selects[0].id, "priority-select");
     assert_eq!(selects[0].state.open_mode(), SelectOpenMode::Controlled);
     assert!(selects[0].state.open());
@@ -880,6 +884,10 @@ fn components_page_samples_expose_component_metadata() {
     assert!(!selects[2].state.open());
 
     assert_eq!(comboboxes.len(), 3);
+    assert!(
+        comboboxes.iter().all(|sample| !sample.interactive_open),
+        "combobox samples should not mount popups open on page load"
+    );
     assert_eq!(comboboxes[0].id, "framework-combobox");
     assert_eq!(
         comboboxes[0].state.open_mode(),
@@ -897,6 +905,10 @@ fn components_page_samples_expose_component_metadata() {
     assert!(!comboboxes[2].state.open());
 
     assert_eq!(commands.len(), 3);
+    assert!(
+        commands.iter().all(|sample| !sample.interactive_open),
+        "command samples should not mount popups open on page load"
+    );
     assert_eq!(commands[0].id, "workspace-command");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].state.open());
