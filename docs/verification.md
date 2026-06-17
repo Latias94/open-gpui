@@ -50,10 +50,10 @@ Splitter pointer dragging. Run the gallery package tests before relying on manua
 paths.
 
 The gallery package also includes Overlay-page runtime smoke coverage for popover, modal dialog,
-non-modal sheet, menu, and context-menu dismissal. The Overlay gallery intentionally keeps
-default-open contract samples visually closed at page load so modal barriers and floating layers do
-not block page scrolling; the metadata rows still report each sample's resolved default-open
-contract.
+non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape dismissal. The
+Overlay gallery intentionally keeps default-open contract samples visually closed at page load so
+modal barriers and floating layers do not block page scrolling; the metadata rows still report each
+sample's resolved default-open contract.
 
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,

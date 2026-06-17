@@ -14,7 +14,7 @@ status: "active"
 - Done: Added a gallery-level Overlay interaction smoke gate. The gallery now renders the Overlay
   page in `open_gpui::test` and drives controlled Popover outside dismissal, modal Dialog barrier
   plus Escape dismissal, non-modal Sheet outside dismissal, Menu Escape/outside dismissal, and
-  ContextMenu controlled open/Escape dismissal through runtime events.
+  ContextMenu right-click hotspot open/Escape dismissal through runtime events.
 - Decision: Overlay gallery default-open contract samples now stay visually closed on initial page
   render so modal barriers and floating layers do not block page scrolling or later samples. The
   resolved-state metadata rows still report the original default-open policy.
@@ -23,9 +23,14 @@ status: "active"
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery
   overlay_gallery_smoke`, `cargo nextest run -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery`, and `git diff --check` with only CRLF warnings.
-- Next automation direction: add a true right-click ContextMenu gallery smoke only after the
-  gallery exposes a stable shell-level hotspot selector for the controlled context-menu sample; do
-  not rely on component-internal debug selectors from dependency crates in gallery tests.
+- Done: Hardened the ContextMenu smoke from gallery-control opening to the real right-click hotspot
+  path. The gallery test now scrolls the controlled ContextMenu hotspot into view, sends a right
+  mouse down/up pair, asserts the surface appears, and closes it with Escape.
+- Last verified for the ContextMenu right-click smoke hardening: `cargo fmt -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, engineering wiki validation, and `git diff --check` with only
+  CRLF warnings.
 - Done: Added a gallery-level Components interaction smoke gate. `open-gpui-ui-foundation-gallery`
   now renders the full Components page in `open_gpui::test` and drives short-viewport page
   scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,

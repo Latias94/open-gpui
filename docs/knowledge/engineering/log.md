@@ -1,10 +1,22 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Hardened the Overlay gallery ContextMenu runtime smoke from gallery-control opening
+  to the real right-click path. The test now scrolls the controlled ContextMenu hotspot into view,
+  sends a right mouse down/up pair through `open_gpui::test`, asserts the surface opens, and closes
+  it with Escape.
+* **Verification**: The focused right-click ContextMenu smoke passed with `cargo nextest run -p
+  open-gpui-ui-foundation-gallery
+  overlay_gallery_smoke_opens_context_menu_from_right_click_and_closes_from_escape`.
+* **Verification**: Final gate for the ContextMenu right-click smoke hardening passed `cargo fmt
+  -p open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo
+  nextest run -p open-gpui-ui-foundation-gallery overlay_gallery_smoke`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, engineering wiki validation, and `git diff --check` with only
+  CRLF warnings.
 * **Update**: Added a gallery-level Overlay interaction smoke gate. The new runtime tests drive
   controlled Popover outside dismissal, modal Dialog barrier and Escape dismissal, non-modal Sheet
-  outside dismissal, Menu Escape/outside dismissal, and ContextMenu controlled open/Escape dismissal
-  through `open_gpui::test`.
+  outside dismissal, Menu Escape/outside dismissal, and ContextMenu right-click hotspot
+  open/Escape dismissal through `open_gpui::test`.
 * **Decision**: Overlay gallery default-open contract samples now render visually closed at page
   load so floating overlays and modal barriers do not block page scrolling or later samples. The
   state rows still expose the resolved default-open contracts for metadata verification.

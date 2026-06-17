@@ -136,6 +136,14 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
     redraw(cx);
 }
 
+fn right_click(cx: &mut VisualTestContext, selector: &'static str) {
+    let target = bounds(cx, selector).center();
+    cx.simulate_mouse_down(target, MouseButton::Right, Default::default());
+    cx.simulate_mouse_up(target, MouseButton::Right, Default::default());
+    cx.run_until_parked();
+    redraw(cx);
+}
+
 fn click_point(cx: &mut VisualTestContext, point: open_gpui::Point<Pixels>) {
     cx.simulate_click(point, Default::default());
     redraw(cx);
@@ -1551,17 +1559,23 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
 }
 
 #[open_gpui::test]
-fn overlay_gallery_smoke_opens_context_menu_from_control_and_closes_from_escape(
+fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_closes_from_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:overlay-context-menu-control:controlled");
-    click(cx, "gallery:overlay-context-menu-control:controlled");
+    scroll_page_until_visible(
+        cx,
+        "context-menu:overlay-context-menu-demo:controlled:hotspot",
+    );
+    right_click(
+        cx,
+        "context-menu:overlay-context-menu-demo:controlled:hotspot",
+    );
     assert!(
         cx.debug_bounds("context-menu:overlay-context-menu-demo:controlled:surface")
             .is_some(),
-        "expected controlled ContextMenu surface to open from the gallery control"
+        "expected controlled ContextMenu surface to open from right-clicking its real hotspot"
     );
 
     press_escape(cx);
