@@ -11,6 +11,9 @@ The gate runs:
 - `cargo fmt --all --check`
 - `cargo check --workspace`
 - `cargo check -p open-gpui-smoke-native`
+- `cargo nextest run -p open-gpui-ui-core`
+- `cargo nextest run -p open-gpui-ui-components`
+- `cargo nextest run -p open-gpui-ui-foundation-gallery`
 - `cargo run -p xtask -- scan-import-boundary`
 
 For focused `open-gpui-canvas` work, run:

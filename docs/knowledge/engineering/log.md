@@ -1,6 +1,14 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Promoted the UI foundation/component runtime gates into the default `xtask verify`
+  path. The gate now runs `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run -p
+  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery` after the
+  workspace checks and before the import-boundary scan.
+* **Verification**: The verify-gate promotion passed `cargo fmt -p xtask`, `cargo nextest run -p
+  xtask`, `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo run -p xtask -- verify`, engineering wiki validation,
+  and `git diff --check` with only CRLF warnings.
 * **Update**: Added a compact shell/navigation gallery smoke. The runtime test clicks the compact
   viewport switch, resizes the test window to the compact width, verifies the shell snapshot enters
   mobile/compact mode, scrolls the left navigation rail to deep pages, and confirms switching away

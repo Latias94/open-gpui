@@ -39,6 +39,14 @@ status: "active"
   viewport switch, resizes to the compact viewport, asserts the mobile shell plus compact density
   snapshot, scrolls the left navigation rail to deep pages, and confirms switching away and back to
   Components resets the page scroll position.
+- Done: Promoted the UI foundation/component runtime gates into the default `xtask verify` path.
+  The local and Windows CI verify gate now runs `cargo nextest run -p open-gpui-ui-core`, `cargo
+  nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` after workspace checks and before the import-boundary scan.
+- Last verified for the verify-gate promotion: `cargo fmt -p xtask`, `cargo nextest run -p xtask`,
+  `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo run -p xtask -- verify`, engineering wiki validation,
+  and `git diff --check` with only CRLF warnings.
 - Last verified for the gallery smoke gate: `cargo fmt -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
