@@ -91,9 +91,10 @@ status: "active"
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
   -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery`.
-- Next action: Commit U7, then plan a narrow behavior-crate extraction design that starts with
-  overlay, roving focus, listbox navigation, scroll viewport intent, and splitter constraints after
-  the two remaining core-boundary questions are resolved.
+- Done: Committed U7 as `5318178 docs(ui): update headless extraction checkpoint`.
+- Next action: Plan a narrow behavior-crate extraction design that starts with overlay, roving
+  focus, listbox navigation, scroll viewport intent, and splitter constraints after the two
+  remaining core-boundary questions are resolved.
 
 ## 2026-06-16
 

@@ -100,6 +100,7 @@
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery`.
+* **Update**: Committed U7 as `5318178 docs(ui): update headless extraction checkpoint`.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR
