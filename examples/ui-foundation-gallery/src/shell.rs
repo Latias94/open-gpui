@@ -643,7 +643,7 @@ impl GalleryShell {
                     div()
                         .text_xs()
                         .text_color(rgb(0x5a6472))
-                        .child(entry.state.unwrap_or("adapter-owned")),
+                        .child(entry.display_state_label()),
                 )
                 .child(
                     div()
@@ -3494,14 +3494,7 @@ fn label_pill(label: &'static str) -> impl IntoElement {
 fn component_catalog_status_pill(
     status: pages::components::ComponentCatalogStatus,
 ) -> impl IntoElement {
-    let (background, border, text) = match status {
-        pages::components::ComponentCatalogStatus::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
-        pages::components::ComponentCatalogStatus::AdapterOnly => (0xf4f1ea, 0xd9c7a8, 0x6a512b),
-        pages::components::ComponentCatalogStatus::InternalAnatomy => {
-            (0xf2f4f8, 0xc6cfdd, 0x475569)
-        }
-        pages::components::ComponentCatalogStatus::Deferred => (0xf7f7f2, 0xd6d8ce, 0x5a6472),
-    };
+    let (background, border, text) = status.badge_colors();
 
     div()
         .px_2()

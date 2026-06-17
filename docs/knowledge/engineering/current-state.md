@@ -11,6 +11,13 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Moved the Components gallery catalog state-label fallback and status badge color mapping
+  into `pages/components.rs`, so `shell.rs` now renders catalog entries from catalog-owned display
+  helpers instead of re-deriving status presentation logic inline.
+- Last verified for the catalog presentation cleanup: `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-components
+  --tests`.
 - Done: Deepened `ComponentCatalogEntry` with stable `sample_selector` metadata for official
   gallery entries, so the Components gallery smoke no longer rebuilds official sample selectors
   from sample constructors.

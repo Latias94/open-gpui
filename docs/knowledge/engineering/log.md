@@ -1,6 +1,12 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Moved the Components gallery catalog state-label fallback and status badge colors
+  into `pages/components.rs`, so the shell now renders catalog entries from catalog-owned display
+  helpers instead of re-deriving status presentation logic inline.
+* **Verification**: The presentation cleanup stayed green with `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-components --tests`.
 * **Update**: Deepened the Components gallery catalog so official sample selector metadata now
   lives on `COMPONENT_CATALOG`, and the gallery smoke derives its official selector pairs from that
   single source of truth instead of keeping a second selector table in the test layer.

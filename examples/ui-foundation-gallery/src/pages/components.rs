@@ -144,6 +144,16 @@ impl ComponentCatalogStatus {
             Self::Deferred => "deferred",
         }
     }
+
+    /// Pill colors used by the gallery to render the catalog status badge.
+    pub const fn badge_colors(self) -> (u32, u32, u32) {
+        match self {
+            Self::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
+            Self::AdapterOnly => (0xf4f1ea, 0xd9c7a8, 0x6a512b),
+            Self::InternalAnatomy => (0xf2f4f8, 0xc6cfdd, 0x475569),
+            Self::Deferred => (0xf7f7f2, 0xd6d8ce, 0x5a6472),
+        }
+    }
 }
 
 /// One component catalog entry shown by the Components page.
@@ -214,25 +224,17 @@ impl ComponentCatalogEntry {
         }
     }
 
-    /// Creates a deferred catalog entry.
-    pub const fn deferred(
-        name: &'static str,
-        family: &'static str,
-        coverage: &'static str,
-    ) -> Self {
-        Self {
-            name,
-            status: ComponentCatalogStatus::Deferred,
-            family,
-            state: None,
-            coverage,
-            sample_selector: None,
+    /// Returns the label the gallery should render for this entry's state row.
+    pub const fn display_state_label(self) -> &'static str {
+        match self.state {
+            Some(state) => state,
+            None => match self.status {
+                ComponentCatalogStatus::AdapterOnly => "adapter-owned",
+                ComponentCatalogStatus::InternalAnatomy => "internal-anatomy",
+                ComponentCatalogStatus::Deferred => "deferred",
+                ComponentCatalogStatus::Official => "unclassified",
+            },
         }
-    }
-
-    /// Returns the rendered sample selector for an official catalog entry.
-    pub const fn rendered_sample_selector(self) -> Option<&'static str> {
-        self.sample_selector
     }
 }
 
@@ -418,11 +420,9 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
 
 /// Returns the official catalog entries that own rendered sample selectors.
 pub fn official_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
-    COMPONENT_CATALOG.iter().filter_map(|entry| {
-        entry
-            .rendered_sample_selector()
-            .map(|selector| (entry.name, selector))
-    })
+    COMPONENT_CATALOG
+        .iter()
+        .filter_map(|entry| entry.sample_selector.map(|selector| (entry.name, selector)))
 }
 
 /// One component conformance gate shown by the Components page.
