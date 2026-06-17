@@ -59,116 +59,8 @@ fn open_overlay_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestCo
     open_gallery_page(cx, GalleryPage::Overlay)
 }
 
-macro_rules! first_selector {
-    ($samples:expr) => {{
-        $samples
-            .into_iter()
-            .next()
-            .expect("expected at least one official sample")
-            .debug_selector()
-    }};
-}
-
-fn official_component_sample_selectors() -> Vec<(&'static str, String)> {
-    let tokens = ThemeTokens::default();
-    vec![
-        (
-            "Button",
-            first_selector!(pages::components::button_samples(tokens)),
-        ),
-        (
-            "Badge",
-            first_selector!(pages::components::badge_samples(tokens)),
-        ),
-        (
-            "IconButton",
-            first_selector!(pages::components::icon_button_samples(tokens)),
-        ),
-        (
-            "Switch",
-            first_selector!(pages::components::switch_samples(tokens)),
-        ),
-        (
-            "Checkbox",
-            first_selector!(pages::components::checkbox_samples(tokens)),
-        ),
-        (
-            "RadioGroup",
-            first_selector!(pages::components::radio_group_samples(tokens)),
-        ),
-        (
-            "Toggle",
-            first_selector!(pages::components::toggle_samples(tokens)),
-        ),
-        (
-            "Toolbar",
-            first_selector!(pages::components::toolbar_samples(tokens)),
-        ),
-        (
-            "Sidebar",
-            first_selector!(pages::components::sidebar_samples(tokens)),
-        ),
-        (
-            "Listbox",
-            first_selector!(pages::components::listbox_samples(tokens)),
-        ),
-        (
-            "Select",
-            first_selector!(pages::components::select_samples(tokens)),
-        ),
-        (
-            "Combobox",
-            first_selector!(pages::components::combobox_samples(tokens)),
-        ),
-        (
-            "Command",
-            first_selector!(pages::components::command_samples(tokens)),
-        ),
-        (
-            "Label",
-            first_selector!(pages::components::label_samples(tokens)),
-        ),
-        (
-            "TextInput",
-            first_selector!(pages::components::text_input_samples(tokens)),
-        ),
-        (
-            "Field",
-            first_selector!(pages::components::field_samples(tokens)),
-        ),
-        (
-            "Tabs",
-            first_selector!(pages::components::tabs_samples(tokens)),
-        ),
-        (
-            "ScrollArea",
-            first_selector!(pages::components::scroll_area_samples(tokens)),
-        ),
-        (
-            "Splitter",
-            first_selector!(pages::components::splitter_samples(tokens)),
-        ),
-        (
-            "Separator",
-            first_selector!(pages::components::separator_samples(tokens)),
-        ),
-        (
-            "Kbd",
-            first_selector!(pages::components::kbd_samples(tokens)),
-        ),
-        (
-            "Progress",
-            first_selector!(pages::components::progress_samples(tokens)),
-        ),
-        (
-            "Skeleton",
-            first_selector!(pages::components::skeleton_samples(tokens)),
-        ),
-        (
-            "Avatar",
-            first_selector!(pages::components::avatar_samples(tokens)),
-        ),
-    ]
+fn official_component_sample_selectors() -> Vec<(&'static str, &'static str)> {
+    pages::components::official_sample_selector_pairs().collect()
 }
 
 fn shell_snapshot(
@@ -1441,10 +1333,21 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
     let selectors = official_component_sample_selectors();
     let selector_values = selectors
         .iter()
-        .map(|(_, selector)| selector.as_str())
+        .map(|(_, selector)| *selector)
         .collect::<Vec<_>>();
     let unique_selectors = selector_values.iter().copied().collect::<BTreeSet<_>>();
     assert_eq!(unique_selectors.len(), selector_values.len());
+
+    let stray_selectors = pages::components::COMPONENT_CATALOG
+        .iter()
+        .filter(|entry| entry.status != pages::components::ComponentCatalogStatus::Official)
+        .filter(|entry| entry.sample_selector.is_some())
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
+    assert!(
+        stray_selectors.is_empty(),
+        "non-official catalog entries must not declare sample selectors: {stray_selectors:?}"
+    );
 
     let signals = pages::components::SIGNALS;
     let mut missing = Vec::new();
@@ -1975,7 +1878,7 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
     );
     for (name, selector) in official_component_sample_selectors() {
         assert!(
-            cx.debug_bounds(selector.as_str()).is_some(),
+            cx.debug_bounds(selector).is_some(),
             "expected Components page to render official {name} sample `{selector}`"
         );
     }

@@ -159,207 +159,271 @@ pub struct ComponentCatalogEntry {
     pub state: Option<&'static str>,
     /// Gallery, adapter, or follow-up coverage note.
     pub coverage: &'static str,
+    /// Stable rendered sample selector for official catalog entries.
+    pub sample_selector: Option<&'static str>,
+}
+
+impl ComponentCatalogEntry {
+    /// Creates an official catalog entry with a stable sample selector.
+    pub const fn official(
+        name: &'static str,
+        family: &'static str,
+        state: &'static str,
+        coverage: &'static str,
+        sample_selector: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            status: ComponentCatalogStatus::Official,
+            family,
+            state: Some(state),
+            coverage,
+            sample_selector: Some(sample_selector),
+        }
+    }
+
+    /// Creates an adapter-only catalog entry.
+    pub const fn adapter_only(
+        name: &'static str,
+        family: &'static str,
+        coverage: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            status: ComponentCatalogStatus::AdapterOnly,
+            family,
+            state: None,
+            coverage,
+            sample_selector: None,
+        }
+    }
+
+    /// Creates an internal-anatomy catalog entry.
+    pub const fn internal_anatomy(
+        name: &'static str,
+        family: &'static str,
+        coverage: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            status: ComponentCatalogStatus::InternalAnatomy,
+            family,
+            state: None,
+            coverage,
+            sample_selector: None,
+        }
+    }
+
+    /// Creates a deferred catalog entry.
+    pub const fn deferred(
+        name: &'static str,
+        family: &'static str,
+        coverage: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            status: ComponentCatalogStatus::Deferred,
+            family,
+            state: None,
+            coverage,
+            sample_selector: None,
+        }
+    }
+
+    /// Returns the rendered sample selector for an official catalog entry.
+    pub const fn rendered_sample_selector(self) -> Option<&'static str> {
+        self.sample_selector
+    }
 }
 
 /// Official component catalog and adjacent public surfaces.
 pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
-    ComponentCatalogEntry {
-        name: "Button",
-        status: ComponentCatalogStatus::Official,
-        family: "action",
-        state: Some("ButtonState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Badge",
-        status: ComponentCatalogStatus::Official,
-        family: "display",
-        state: Some("BadgeState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "IconButton",
-        status: ComponentCatalogStatus::Official,
-        family: "action",
-        state: Some("IconButtonState"),
-        coverage: "exports / gallery / a11y metadata",
-    },
-    ComponentCatalogEntry {
-        name: "Switch",
-        status: ComponentCatalogStatus::Official,
-        family: "form",
-        state: Some("SwitchState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Checkbox",
-        status: ComponentCatalogStatus::Official,
-        family: "form",
-        state: Some("CheckboxState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "RadioGroup",
-        status: ComponentCatalogStatus::Official,
-        family: "choice",
-        state: Some("RadioGroupState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Toggle",
-        status: ComponentCatalogStatus::Official,
-        family: "action",
-        state: Some("ToggleState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Toolbar",
-        status: ComponentCatalogStatus::Official,
-        family: "shell",
-        state: Some("ToolbarState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Sidebar",
-        status: ComponentCatalogStatus::Official,
-        family: "shell",
-        state: Some("SidebarState"),
-        coverage: "exports / gallery / scroll smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Listbox",
-        status: ComponentCatalogStatus::Official,
-        family: "choice",
-        state: Some("ListboxState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Select",
-        status: ComponentCatalogStatus::Official,
-        family: "choice",
-        state: Some("SelectState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Combobox",
-        status: ComponentCatalogStatus::Official,
-        family: "choice-search",
-        state: Some("ComboboxState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Command",
-        status: ComponentCatalogStatus::Official,
-        family: "choice-search",
-        state: Some("CommandState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Label",
-        status: ComponentCatalogStatus::Official,
-        family: "form",
-        state: Some("LabelState"),
-        coverage: "exports / gallery / a11y metadata",
-    },
-    ComponentCatalogEntry {
-        name: "TextInput",
-        status: ComponentCatalogStatus::Official,
-        family: "form",
-        state: Some("TextInputState"),
-        coverage: "exports / gallery / controller tests",
-    },
-    ComponentCatalogEntry {
-        name: "Field",
-        status: ComponentCatalogStatus::Official,
-        family: "form",
-        state: Some("FieldState"),
-        coverage: "exports / gallery / composition tests",
-    },
-    ComponentCatalogEntry {
-        name: "Tabs",
-        status: ComponentCatalogStatus::Official,
-        family: "navigation",
-        state: Some("TabsState"),
-        coverage: "exports / gallery / runtime smoke",
-    },
-    ComponentCatalogEntry {
-        name: "ScrollArea",
-        status: ComponentCatalogStatus::Official,
-        family: "layout",
-        state: Some("ScrollAreaState"),
-        coverage: "exports / gallery / redraw smoke",
-    },
-    ComponentCatalogEntry {
-        name: "Splitter",
-        status: ComponentCatalogStatus::Official,
-        family: "layout",
-        state: Some("SplitterState"),
-        coverage: "exports / gallery / drag smoke",
-    },
-    ComponentCatalogEntry {
-        name: "TextInputController",
-        status: ComponentCatalogStatus::AdapterOnly,
-        family: "form-adapter",
-        state: None,
-        coverage: "gpui_adapter export / controller tests",
-    },
-    ComponentCatalogEntry {
-        name: "ToolbarItem",
-        status: ComponentCatalogStatus::InternalAnatomy,
-        family: "shell",
-        state: None,
-        coverage: "Toolbar anatomy",
-    },
-    ComponentCatalogEntry {
-        name: "SidebarItem",
-        status: ComponentCatalogStatus::InternalAnatomy,
-        family: "shell",
-        state: None,
-        coverage: "Sidebar anatomy",
-    },
-    ComponentCatalogEntry {
-        name: "ListboxOption",
-        status: ComponentCatalogStatus::InternalAnatomy,
-        family: "choice",
-        state: None,
-        coverage: "Listbox anatomy",
-    },
-    ComponentCatalogEntry {
-        name: "Separator",
-        status: ComponentCatalogStatus::Official,
-        family: "layout",
-        state: Some("SeparatorState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Kbd",
-        status: ComponentCatalogStatus::Official,
-        family: "display",
-        state: Some("KbdState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Progress",
-        status: ComponentCatalogStatus::Official,
-        family: "status",
-        state: Some("ProgressState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Skeleton",
-        status: ComponentCatalogStatus::Official,
-        family: "status",
-        state: Some("SkeletonState"),
-        coverage: "exports / gallery / state tests",
-    },
-    ComponentCatalogEntry {
-        name: "Avatar",
-        status: ComponentCatalogStatus::Official,
-        family: "identity",
-        state: Some("AvatarState"),
-        coverage: "exports / gallery / state tests",
-    },
+    ComponentCatalogEntry::official(
+        "Button",
+        "action",
+        "ButtonState",
+        "exports / gallery / state tests",
+        "gallery:component-button-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Badge",
+        "display",
+        "BadgeState",
+        "exports / gallery / state tests",
+        "gallery:component-badge-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "IconButton",
+        "action",
+        "IconButtonState",
+        "exports / gallery / a11y metadata",
+        "gallery:component-icon-button-sample:search",
+    ),
+    ComponentCatalogEntry::official(
+        "Switch",
+        "form",
+        "SwitchState",
+        "exports / gallery / state tests",
+        "gallery:component-switch-sample:off",
+    ),
+    ComponentCatalogEntry::official(
+        "Checkbox",
+        "form",
+        "CheckboxState",
+        "exports / gallery / state tests",
+        "gallery:component-checkbox-sample:unchecked",
+    ),
+    ComponentCatalogEntry::official(
+        "RadioGroup",
+        "choice",
+        "RadioGroupState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-radio-sample:persona-radios",
+    ),
+    ComponentCatalogEntry::official(
+        "Toggle",
+        "action",
+        "ToggleState",
+        "exports / gallery / state tests",
+        "gallery:component-toggle-sample:ghost-off",
+    ),
+    ComponentCatalogEntry::official(
+        "Toolbar",
+        "shell",
+        "ToolbarState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-toolbar-sample:editor-toolbar",
+    ),
+    ComponentCatalogEntry::official(
+        "Sidebar",
+        "shell",
+        "SidebarState",
+        "exports / gallery / scroll smoke",
+        "gallery:component-sidebar-sample:workspace-sidebar",
+    ),
+    ComponentCatalogEntry::official(
+        "Listbox",
+        "choice",
+        "ListboxState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-listbox-sample:assignee-listbox",
+    ),
+    ComponentCatalogEntry::official(
+        "Select",
+        "choice",
+        "SelectState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-select-sample:priority-select",
+    ),
+    ComponentCatalogEntry::official(
+        "Combobox",
+        "choice-search",
+        "ComboboxState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-combobox-sample:framework-combobox",
+    ),
+    ComponentCatalogEntry::official(
+        "Command",
+        "choice-search",
+        "CommandState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-command-sample:workspace-command",
+    ),
+    ComponentCatalogEntry::official(
+        "Label",
+        "form",
+        "LabelState",
+        "exports / gallery / a11y metadata",
+        "gallery:component-label-sample:email",
+    ),
+    ComponentCatalogEntry::official(
+        "TextInput",
+        "form",
+        "TextInputState",
+        "exports / gallery / controller tests",
+        "gallery:component-text-input-sample:default",
+    ),
+    ComponentCatalogEntry::official(
+        "Field",
+        "form",
+        "FieldState",
+        "exports / gallery / composition tests",
+        "gallery:component-field-sample:email",
+    ),
+    ComponentCatalogEntry::official(
+        "Tabs",
+        "navigation",
+        "TabsState",
+        "exports / gallery / runtime smoke",
+        "gallery:component-tabs-sample:overview-tabs",
+    ),
+    ComponentCatalogEntry::official(
+        "ScrollArea",
+        "layout",
+        "ScrollAreaState",
+        "exports / gallery / redraw smoke",
+        "gallery:component-scroll-area-sample:activity-log",
+    ),
+    ComponentCatalogEntry::official(
+        "Splitter",
+        "layout",
+        "SplitterState",
+        "exports / gallery / drag smoke",
+        "gallery:component-splitter-sample:workspace-split",
+    ),
+    ComponentCatalogEntry::adapter_only(
+        "TextInputController",
+        "form-adapter",
+        "gpui_adapter export / controller tests",
+    ),
+    ComponentCatalogEntry::internal_anatomy("ToolbarItem", "shell", "Toolbar anatomy"),
+    ComponentCatalogEntry::internal_anatomy("SidebarItem", "shell", "Sidebar anatomy"),
+    ComponentCatalogEntry::internal_anatomy("ListboxOption", "choice", "Listbox anatomy"),
+    ComponentCatalogEntry::official(
+        "Separator",
+        "layout",
+        "SeparatorState",
+        "exports / gallery / state tests",
+        "gallery:component-separator-sample:section-rule",
+    ),
+    ComponentCatalogEntry::official(
+        "Kbd",
+        "display",
+        "KbdState",
+        "exports / gallery / state tests",
+        "gallery:component-kbd-sample:command-palette",
+    ),
+    ComponentCatalogEntry::official(
+        "Progress",
+        "status",
+        "ProgressState",
+        "exports / gallery / state tests",
+        "gallery:component-progress-sample:sync",
+    ),
+    ComponentCatalogEntry::official(
+        "Skeleton",
+        "status",
+        "SkeletonState",
+        "exports / gallery / state tests",
+        "gallery:component-skeleton-sample:body-line",
+    ),
+    ComponentCatalogEntry::official(
+        "Avatar",
+        "identity",
+        "AvatarState",
+        "exports / gallery / state tests",
+        "gallery:component-avatar-sample:ada",
+    ),
 ];
+
+/// Returns the official catalog entries that own rendered sample selectors.
+pub fn official_sample_selector_pairs() -> impl Iterator<Item = (&'static str, &'static str)> {
+    COMPONENT_CATALOG.iter().filter_map(|entry| {
+        entry
+            .rendered_sample_selector()
+            .map(|selector| (entry.name, selector))
+    })
+}
 
 /// One component conformance gate shown by the Components page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

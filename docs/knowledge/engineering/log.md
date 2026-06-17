@@ -1,6 +1,12 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Deepened the Components gallery catalog so official sample selector metadata now
+  lives on `COMPONENT_CATALOG`, and the gallery smoke derives its official selector pairs from that
+  single source of truth instead of keeping a second selector table in the test layer.
+* **Verification**: The catalog metadata deepening pass passed `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-components --tests`.
 * **Update**: Finished the follow-up cleanup for the gallery selector unification pass. The
   remaining tabs ownership issue was fixed, the overlay sample cards now use the sample-owned
   debug selector helpers consistently, and the gallery test lifecycle bug was removed.

@@ -11,6 +11,15 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Deepened `ComponentCatalogEntry` with stable `sample_selector` metadata for official
+  gallery entries, so the Components gallery smoke no longer rebuilds official sample selectors
+  from sample constructors.
+- Done: The Components gallery conformance test now derives the official selector set directly
+  from `COMPONENT_CATALOG` and asserts that non-official entries do not carry sample selectors.
+- Last verified for the catalog-metadata pass: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-components`, and `cargo run
+  -p xtask -- verify`.
 - Done: Unified gallery sample debug selectors so the Components and Overlay pages derive stable
   selector strings from sample-owned helpers instead of repeating family prefixes inline in the
   shell and tests. The Components gallery smoke now derives the official sample selector list from
@@ -23,8 +32,12 @@ status: "active"
   overlay cards and gallery smoke tests. The pass now also has `cargo nextest run -p open-gpui
   --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests`, `cargo fmt --all --check`,
   and `git diff --check` green.
-- Open: A subagent architecture review is still running. Its result will decide whether the next
-  `ce-plan` should deepen selector metadata in the gallery catalog or move to a different seam.
+- Done: Deepened the Components gallery catalog so official sample selector metadata now lives on
+  `COMPONENT_CATALOG` and the gallery smoke derives its official selector pairs from that single
+  source of truth. Non-official catalog entries stay explicit and do not declare sample selectors.
+- Last verified for the catalog metadata deepening pass: `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-components --tests`.
 
 - Done: Began the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState` now
   exposes `ProgressVisualMode`, determinate indicator fractions, and indeterminate indicator
