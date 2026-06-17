@@ -909,6 +909,7 @@ impl RenderOnce for Combobox {
         });
 
         let id = self.id;
+        let debug_id = id.to_string();
         let input_id: ElementId = (id.clone(), "input").into();
         let input_row_id: ElementId = (id.clone(), "input-row").into();
         let toggle_id: ElementId = (id.clone(), "toggle").into();
@@ -934,6 +935,10 @@ impl RenderOnce for Combobox {
 
         div()
             .id(id)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("combobox:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -941,6 +946,10 @@ impl RenderOnce for Combobox {
             .child(
                 div()
                     .id(input_row_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("combobox:{debug_id}:input-row")
+                    })
                     .min_w(gpui_px_from_ui(metrics.popup_min_width()))
                     .max_w(gpui_px_from_ui(metrics.popup_max_width()))
                     .flex()
@@ -1024,6 +1033,10 @@ impl RenderOnce for Combobox {
                     .child(
                         div()
                             .id(toggle_id)
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                move || format!("combobox:{debug_id}:toggle")
+                            })
                             .px_2()
                             .py_1()
                             .rounded(gpui_px_from_ui(state.input().metrics().radius()))
@@ -1070,6 +1083,7 @@ impl RenderOnce for Combobox {
                             .child(combobox_content_element(
                                 content_id.clone(),
                                 listbox_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 self.options,
                                 self.groups,
@@ -1127,6 +1141,7 @@ fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> ComboboxKeyboar
 fn combobox_content_element(
     content_id: ElementId,
     listbox_id: ElementId,
+    debug_id: String,
     state: ComboboxState,
     options: Vec<ComboboxOption>,
     groups: Vec<ComboboxGroup>,
@@ -1194,6 +1209,7 @@ fn combobox_content_element(
 
     div()
         .id(content_id)
+        .debug_selector(move || format!("combobox:{debug_id}:content"))
         .min_w(gpui_px_from_ui(metrics.popup_min_width()))
         .max_w(gpui_px_from_ui(metrics.popup_max_width()))
         .p(gpui_px_from_ui(metrics.popup_padding()))

@@ -52,19 +52,24 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
-The components package includes runtime smoke coverage for RadioGroup, Listbox, Select, Tabs, and
-Toolbar keyboard navigation. The focused RadioGroup test renders real radio items, rejects disabled
-clicks, skips disabled items with arrow navigation, verifies click and arrow-selection payloads, and
-confirms Space on an already selected radio does not emit a duplicate selection change. The focused
-Listbox test renders real standalone, separator, and grouped options, rejects disabled clicks, keeps
-arrow navigation selection-free, skips disabled/separator rows, and verifies Enter and Space dispatch
-both option-level and listbox-level selection callbacks. The focused Select test opens the real
-trigger, rejects disabled popup option clicks, verifies click and keyboard selection payloads,
-closes after selection, and confirms popup Listbox arrow navigation skips disabled rows. The focused
-Tabs test renders real tabs, preserves the builder-selected seed on the first frame, rejects
-disabled tab clicks, keeps manual arrow navigation as focus-only, and activates focused tabs with
-Enter and Space. The focused Toolbar test renders real toolbar items, moves roving focus with
-arrow/Home keys, skips disabled and separator items, and activates the focused item with Enter.
+The components package includes runtime smoke coverage for RadioGroup, Listbox, Select, Combobox,
+Command, Tabs, and Toolbar keyboard navigation. The focused RadioGroup test renders real radio
+items, rejects disabled clicks, skips disabled items with arrow navigation, verifies click and
+arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
+selection change. The focused Listbox test renders real standalone, separator, and grouped options,
+rejects disabled clicks, keeps arrow navigation selection-free, skips disabled/separator rows, and
+verifies Enter and Space dispatch both option-level and listbox-level selection callbacks. The
+focused Select test opens the real trigger, rejects disabled popup option clicks, verifies click and
+keyboard selection payloads, closes after selection, and confirms popup Listbox arrow navigation
+skips disabled rows. The focused Combobox test clicks the controller-backed text input, types a
+query, opens the filtered popup, verifies filtered Listbox options, and selects a filtered option
+with ordered select/open callbacks. The focused Command test clicks the controller-backed text
+input, types a query, verifies inline command filtering, and selects the active command with
+keyboard navigation while keeping non-dialog content open. The focused Tabs test renders real tabs,
+preserves the builder-selected seed on the first frame, rejects disabled tab clicks, keeps manual
+arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
+Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
+separator items, and activates the focused item with Enter.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -205,9 +210,13 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    option rejection, click selection, keyboard popup selection that skips disabled rows, selection
    payloads, and ordered popup close callbacks. The Combobox samples should expose editable
    filtering, selected value metadata that does not disappear when the query hides the selected
-   option, an empty filtered state, and disabled input/popup suppression. The Command samples should expose grouped command items, shortcut
-   labels, loading and empty states, inline and dialog-backed presentation, and modal dialog
-   outside/Escape dismissal while preserving the Components page scrollability. The default TextInput
+   option, an empty filtered state, and disabled input/popup suppression. The component runtime
+   smoke now verifies real Combobox text-input editing, filtered popup options, filtered option
+   click selection, and close callbacks. The Command samples should expose grouped command items,
+   shortcut labels, loading and empty states, inline and dialog-backed presentation, and modal
+   dialog outside/Escape dismissal while preserving the Components page scrollability. The component
+   runtime smoke now verifies real Command text-input editing, inline filtering, keyboard
+   activation, shortcut payloads, and non-dialog content persistence. The default TextInput
    sample should accept real text editing through the
    controller-backed path, while the gallery remains scrollable and keeps focus visible when the
    page overflows. The app should stay open after opening `Components`; an `accesskit_consumer`

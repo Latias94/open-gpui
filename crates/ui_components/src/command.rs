@@ -1311,6 +1311,7 @@ impl RenderOnce for Command {
         });
 
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let input_id: ElementId = (id.clone(), "input").into();
         let content_id: ElementId = (id.clone(), "content").into();
@@ -1336,6 +1337,10 @@ impl RenderOnce for Command {
 
         div()
             .id(id)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("command:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -1348,6 +1353,10 @@ impl RenderOnce for Command {
                 this.child(
                     div()
                         .id(trigger_id)
+                        .debug_selector({
+                            let debug_id = debug_id.clone();
+                            move || format!("command:{debug_id}:trigger")
+                        })
                         .min_h(gpui_px_from_ui(state.size().button_h()))
                         .px(gpui_px_from_ui(state.size().button_px()))
                         .py(gpui_px_from_ui(state.size().button_py()))
@@ -1385,6 +1394,7 @@ impl RenderOnce for Command {
                     content_id.clone(),
                     input_id.clone(),
                     listbox_id.clone(),
+                    debug_id.clone(),
                     state.clone(),
                     items.clone(),
                     groups.clone(),
@@ -1405,6 +1415,7 @@ impl RenderOnce for Command {
                                 content_id,
                                 input_id,
                                 listbox_id,
+                                debug_id,
                                 state,
                                 dialog_state,
                                 viewport,
@@ -1428,6 +1439,7 @@ fn command_dialog_layer_element(
     content_id: ElementId,
     input_id: ElementId,
     listbox_id: ElementId,
+    debug_id: String,
     state: CommandState,
     dialog_state: CommandDialogState,
     viewport: open_gpui::Size<Pixels>,
@@ -1479,6 +1491,7 @@ fn command_dialog_layer_element(
                     content_id,
                     input_id,
                     listbox_id,
+                    debug_id,
                     state,
                     items,
                     groups,
@@ -1496,6 +1509,7 @@ fn command_content_element(
     content_id: ElementId,
     input_id: ElementId,
     listbox_id: ElementId,
+    debug_id: String,
     state: CommandState,
     items: Vec<CommandItem>,
     groups: Vec<CommandGroup>,
@@ -1587,6 +1601,7 @@ fn command_content_element(
 
     div()
         .id(content_id)
+        .debug_selector(move || format!("command:{debug_id}:content"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.padding()))

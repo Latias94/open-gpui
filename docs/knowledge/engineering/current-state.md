@@ -59,6 +59,17 @@ status: "active"
 - Last verified for the Select runtime smoke: `cargo fmt -p open-gpui-ui-components` and `cargo
   nextest run -p open-gpui-ui-components
   select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`.
+- Done: Added stable runtime debug selectors for controller-backed `TextInput`, `Combobox`, and
+  `Command` surfaces plus rendered Combobox and Command search interaction smokes. The Combobox
+  smoke clicks the real text input, types a query, opens the filtered popup, verifies filtered
+  Listbox options, selects a filtered option by click, and checks ordered select/open callbacks.
+  The Command smoke clicks the real text input, types a query, verifies inline filtering, selects
+  the active command with Down+Enter, checks shortcut payloads, and keeps non-dialog content open.
+- Last verified for the Combobox/Command runtime smokes: `cargo fmt -p open-gpui-ui-components`,
+  focused `cargo nextest run -p open-gpui-ui-components
+  combobox_runtime_filters_input_and_selects_filtered_option`, focused `cargo nextest run -p
+  open-gpui-ui-components command_runtime_filters_input_and_selects_with_keyboard`, and full
+  `cargo nextest run -p open-gpui-ui-components` with 124 passing tests.
 - Done: Added Tabs runtime keyboard automation in `open-gpui-ui-components` and fixed the rendered
   `Tabs` runtime to honor the builder-selected seed on first render plus bind per-tab focus handles
   to actual trigger elements. The smoke rejects disabled tab clicks, keeps Manual arrow navigation

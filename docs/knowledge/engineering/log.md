@@ -1,6 +1,21 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added rendered Combobox and Command search interaction automation. `TextInput` now
+  exposes `text-input:{id}:root`; `Combobox` exposes root/input-row/toggle/content selectors; and
+  `Command` exposes root/trigger/content selectors so input-driven components can be tested through
+  real pointer focus and `simulate_input`.
+* **Update**: The Combobox smoke clicks the controller-backed input, types `re`, verifies the popup
+  remains closed until the toggle opens it, checks filtered Listbox options, selects Remix by click,
+  and verifies ordered `ComboboxSelection` plus close callbacks.
+* **Update**: The Command smoke clicks the controller-backed input, types `file`, verifies inline
+  filtering, selects Open File with Down+Enter, verifies the shortcut payload, and confirms non-dialog
+  command content stays open after selection.
+* **Verification**: Focused Combobox/Command smokes passed with `cargo fmt -p
+  open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components
+  combobox_runtime_filters_input_and_selects_filtered_option`, `cargo nextest run -p
+  open-gpui-ui-components command_runtime_filters_input_and_selects_with_keyboard`, and the full
+  `cargo nextest run -p open-gpui-ui-components` with 124 passing tests.
 * **Update**: Added Select runtime keyboard automation. The focused smoke opens the real Select
   trigger, verifies disabled popup options do not select or close the popup, selects an enabled
   option by click, reopens the popup, moves through the embedded Listbox with keyboard navigation,

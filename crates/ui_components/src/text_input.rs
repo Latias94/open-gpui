@@ -1046,6 +1046,7 @@ impl Sizable for TextInput {
 impl RenderOnce for TextInput {
     fn render(self, _window: &mut Window, _cx: &mut open_gpui::App) -> impl IntoElement {
         let state = self.state();
+        let debug_id = self.id.to_string();
         let metrics = state.metrics();
         let colors = state.colors();
         let focus_ring = state.focus_ring();
@@ -1079,6 +1080,7 @@ impl RenderOnce for TextInput {
         let text_color = ThemeResolver::resolve(text_color_intent);
         div()
             .id(self.id)
+            .debug_selector(move || format!("text-input:{debug_id}:root"))
             .min_h(gpui_px_from_ui(metrics.height()))
             .w_full()
             .min_w(px(0.0))

@@ -5,11 +5,12 @@ use open_gpui::{
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
-    ComboboxGroup, ComboboxOpenMode, ComboboxOption, Command, CommandGroup, CommandItem,
-    CommandOpenMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog,
-    DialogOpenMode, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard,
-    HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
-    Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
+    ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
+    CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH,
+    DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field, FocusRing,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Listbox,
+    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
     Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
     RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
@@ -22,7 +23,7 @@ use open_gpui_ui_components::{
     ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
     TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
     default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
-    last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
+    init_text_input, last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
     outside_press_open_change, point_anchor_placement, sidebar_navigation_target,
     toolbar_navigation_target,
 };
@@ -3246,6 +3247,133 @@ fn combobox_disabled_empty_state_blocks_popup_and_input() {
     assert!(!state.overlay().should_render_deferred_layer());
 }
 
+#[open_gpui::test]
+fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui::TestAppContext) {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ComboboxRuntimeEvent {
+        Open(bool),
+        Select(ComboboxSelection),
+    }
+
+    struct TestView {
+        events: Rc<RefCell<Vec<ComboboxRuntimeEvent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_events = self.events.clone();
+            let select_events = self.events.clone();
+
+            div().size_full().child(
+                Combobox::new("runtime-combobox", "Runtime combobox")
+                    .placeholder("Search frameworks")
+                    .option(ComboboxOption::new("react", "React").keyword("library"))
+                    .option(ComboboxOption::new("solid", "Solid"))
+                    .option(ComboboxOption::new("ember", "Ember").disabled(true))
+                    .group(
+                        ComboboxGroup::new("meta", "Meta")
+                            .option(ComboboxOption::new("remix", "Remix").keyword("react"))
+                            .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
+                    )
+                    .on_open_change(move |open, _, _| {
+                        open_events
+                            .borrow_mut()
+                            .push(ComboboxRuntimeEvent::Open(open));
+                    })
+                    .on_select(move |selection, _, _| {
+                        select_events
+                            .borrow_mut()
+                            .push(ComboboxRuntimeEvent::Select(selection));
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("text-input:runtime-combobox-input:root")
+        .expect("combobox text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("re");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("combobox:runtime-combobox:content")
+            .is_none(),
+        "typing text should filter input without implicitly opening the popup"
+    );
+
+    let toggle = cx
+        .debug_bounds("combobox:runtime-combobox:toggle")
+        .expect("combobox toggle should be rendered");
+    cx.simulate_click(toggle.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![ComboboxRuntimeEvent::Open(true)]
+    );
+    assert!(
+        cx.debug_bounds("combobox:runtime-combobox:content")
+            .is_some(),
+        "toggle click should open filtered popup content"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-combobox-listbox:option:react")
+            .is_some(),
+        "React should match query text"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-combobox-listbox:option:remix")
+            .is_some(),
+        "Remix should match query keyword"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-combobox-listbox:option:solid")
+            .is_none(),
+        "Solid should be filtered out by query text"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-combobox-listbox:option:ember")
+            .is_none(),
+        "disabled Ember should still be filtered out when it does not match"
+    );
+
+    let remix = cx
+        .debug_bounds("listbox:runtime-combobox-listbox:option:remix")
+        .expect("filtered Remix option should be rendered");
+    cx.simulate_click(remix.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            ComboboxRuntimeEvent::Open(true),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Open(false),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("combobox:runtime-combobox:content")
+            .is_none(),
+        "combobox selection should close popup content"
+    );
+}
+
 #[test]
 fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     let state = Command::new("command-palette", "Command palette")
@@ -3331,6 +3459,105 @@ fn command_state_models_empty_disabled_and_escape_policy() {
     );
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::TestAppContext) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<CommandSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                Command::new("runtime-command", "Runtime command")
+                    .placeholder("Type a command")
+                    .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
+                    .group(
+                        CommandGroup::new("file", "File")
+                            .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
+                            .item(
+                                CommandItem::new("close-window", "Close Window").shortcut("Alt+F4"),
+                            ),
+                    )
+                    .group(CommandGroup::new("view", "View").item(
+                        CommandItem::new("toggle-sidebar", "Toggle Sidebar").keyword("layout"),
+                    ))
+                    .on_select(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("command:runtime-command:content").is_some(),
+        "inline command content should render immediately"
+    );
+    let input = cx
+        .debug_bounds("text-input:runtime-command-input:root")
+        .expect("command text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("file");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("listbox:runtime-command-listbox:option:open-file")
+            .is_some(),
+        "Open File should match query text"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-command-listbox:option:new-file")
+            .is_some(),
+        "New File should match query text"
+    );
+    assert!(
+        cx.debug_bounds("listbox:runtime-command-listbox:option:toggle-sidebar")
+            .is_none(),
+        "Toggle Sidebar should be filtered out before keyboard activation"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        selections.borrow().is_empty(),
+        "arrow navigation should move active command without selecting"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        selections.borrow().clone(),
+        vec![CommandSelection::new(
+            1,
+            "new-file",
+            "New File",
+            Some("Ctrl+N".to_string())
+        )]
+    );
+    assert!(
+        cx.debug_bounds("command:runtime-command:content").is_some(),
+        "inline command selection should not close non-dialog content"
+    );
 }
 
 #[test]
