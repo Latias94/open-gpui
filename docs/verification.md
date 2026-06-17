@@ -54,14 +54,16 @@ The `open-gpui-ui-components` public contract tests should also keep
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,
 `Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles, scroll handles, and
 callback storage from entering state contracts. The companion extraction-blocker inventory tests in
-`open-gpui-ui-components` and `open-gpui-ui-core` pin remaining public-state extraction blockers so
-later extraction-prep work can shrink the allowlists deliberately. Component public-state overlay
-blockers are currently empty: resolved overlay contracts expose `OverlayResolvedState`, while
+`open-gpui-ui-components` and `open-gpui-ui-core` pin the extraction gate deliberately. Component
+public-state blockers are currently empty: resolved overlay contracts expose `OverlayResolvedState`, while
 `GpuiOverlayState` stays in the GPUI adapter helper surface for deferred priority and snap margin.
 Public component metrics and accessibility state now use neutral UI-core vocabulary; adding public
 GPUI `Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the
 guard inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional
 adapter convenience until the strict crate boundary is split.
+The `open-gpui-ui-core` blocker allowlist currently contains only adaptive viewport
+`Pixels as Px`; treat changes to that allowlist as an extraction-gate decision, not routine test
+maintenance.
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
 surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,

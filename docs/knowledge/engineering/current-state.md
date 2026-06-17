@@ -80,8 +80,20 @@ status: "active"
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
   -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
   open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
-- Next action: Commit U6, then update ADR 0006/U7 checkpoint with the final extraction readiness
-  decision.
+- Done: Updated ADR 0006 for the U7 extraction-prep checkpoint. The decision remains not to create
+  `open-gpui-ui-headless` in this branch. Component resolved-state blockers are cleared, but a
+  strict headless crate still needs decisions for adaptive viewport `Pixels as Px` and `UiPx` GPUI
+  style-conversion impls in UI core.
+- Review: U7 read-only doc review subagent `u7_checkpoint_doc_review` did not return findings
+  before timeout and was interrupted. Local self-review found no current-doc references that still
+  describe geometry/focus/a11y/overlay split work as unfinished.
+- Last verified: U7 passed `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
+  -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
+- Next action: Commit U7, then plan a narrow behavior-crate extraction design that starts with
+  overlay, roving focus, listbox navigation, scroll viewport intent, and splitter constraints after
+  the two remaining core-boundary questions are resolved.
 
 ## 2026-06-16
 

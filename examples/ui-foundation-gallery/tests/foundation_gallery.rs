@@ -100,15 +100,16 @@ fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
     assert!(!workspace_manifest.contains("open-gpui-ui-headless"));
     assert!(!workspace_manifest.contains("open_gpui_ui_headless"));
     assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
-    assert!(adr.contains("shell, layout, and choice/search series"));
+    assert!(adr.contains("extraction-prep series cleared the component resolved-state blockers"));
     assert!(adr.contains("ListboxState"));
     assert!(adr.contains("ComboboxState"));
     assert!(adr.contains("CommandState"));
     assert!(adr.contains("GpuiOverlayState"));
     assert!(adr.contains("TextInputController"));
-    assert!(adr.contains("geometry/focus/a11y facades"));
+    assert!(adr.contains("adaptive viewport `Pixels as Px`"));
+    assert!(adr.contains("UiPx` still has GPUI style-conversion impls"));
     assert!(component_contract.contains(
-        "ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint."
+        "ADR 0006 keeps `open-gpui-ui-headless` deferred after the extraction-prep checkpoint."
     ));
     assert!(component_contract.contains("open_gpui_ui_components::gpui_adapter"));
     assert!(component_contract.contains("TextInputController"));

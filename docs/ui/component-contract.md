@@ -305,11 +305,11 @@ The Components page should keep these gates visible:
 
 ## Headless Readiness Checkpoint
 
-The current component catalog has enough repeated behavior to justify extraction-prep work, but not
-enough boundary cleanliness to create `open-gpui-ui-headless` yet. Reusable behavior already exists
-in overlay policy resolution, roving focus, listbox collection navigation, scroll viewport intent,
-and splitter resize constraints. The first extraction candidate should therefore be a small
-behavior package, not a full shadcn/Radix-style component taxonomy.
+The current component catalog has enough repeated behavior to justify a focused extraction design,
+but the project should still not create `open-gpui-ui-headless` in the current branch. Reusable
+behavior already exists in overlay policy resolution, roving focus, listbox collection navigation,
+scroll viewport intent, and splitter resize constraints. The first extraction candidate should
+therefore be a small behavior package, not a full shadcn/Radix-style component taxonomy.
 
 Before extraction, keep these blockers explicit:
 
@@ -319,9 +319,9 @@ Before extraction, keep these blockers explicit:
   separate extraction-blocker inventory pins any remaining public-state GPUI geometry usage until
   the extraction-prep series removes or classifies it;
 - overlay placement, `ContextMenuState`, UI-core sizing, and public component metrics now use
-  neutral UI-core geometry. Adaptive viewport policies still use GPUI `Pixels`, and `UiPx`
-  currently has GPUI style-conversion impls as a transitional adapter convenience until the core
-  boundary is split more strictly;
+  neutral UI-core geometry. The strict crate gate still has two core-level decisions: adaptive
+  viewport policies use GPUI `Pixels`, and `UiPx` currently has GPUI style-conversion impls as a
+  transitional adapter convenience until the core boundary is split more strictly;
 - `open_gpui_ui_core` now exposes neutral `Role`, `Toggled`, `Orientation`, `AccessibleAction`,
   and `FocusTargetId`; GPUI/AccessKit conversion lives in `open_gpui_ui_components::a11y`;
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
@@ -341,7 +341,7 @@ JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler
 multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
-ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint.
+ADR 0006 keeps `open-gpui-ui-headless` deferred after the extraction-prep checkpoint.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
 against GPUI runtime/rendering type leaks. Public component metrics now use neutral `UiPx`

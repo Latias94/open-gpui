@@ -89,6 +89,17 @@
   open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run
   -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, and `git
   diff --check` with only existing CRLF warnings.
+* **Decision**: Updated ADR 0006 for the U7 extraction-prep checkpoint. Do not create
+  `open-gpui-ui-headless` in this branch. Component resolved-state blockers are cleared, adapter
+  APIs are classified, and the next extraction design should focus on pure behavior modules after
+  deciding how to handle adaptive viewport `Pixels as Px` and `UiPx` GPUI style-conversion impls.
+* **Review**: U7 read-only doc review subagent `u7_checkpoint_doc_review` did not return findings
+  before timeout and was interrupted. Local self-review found no current-doc references that still
+  describe geometry/focus/a11y/overlay split work as unfinished.
+* **Verification**: U7 passed `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR
