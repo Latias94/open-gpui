@@ -3664,6 +3664,11 @@ fn component_progress_state_row(state: ProgressState) -> impl IntoElement {
             format_px(state.metrics().height()),
             format_px(state.metrics().radius())
         ))
+        .child(format!(
+            "indicator start {:.0}% width {:.0}%",
+            state.indicator_start_fraction() * 100.0,
+            state.indicator_fraction() * 100.0
+        ))
 }
 
 fn component_skeleton_state_row(state: SkeletonState) -> impl IntoElement {

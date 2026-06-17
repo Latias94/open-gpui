@@ -105,7 +105,7 @@ pub use menu::{
 };
 pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
-pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
+pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode};
 pub use radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,

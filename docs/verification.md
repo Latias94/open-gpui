@@ -192,8 +192,9 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    decorative, semantic, indeterminate-progress, fallback-initial, source-metadata, roving-focus,
    popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge, Kbd, and Skeleton
    samples should remain display-only. The Separator samples should distinguish semantic and
-   decorative roles. The Progress samples should cover determinate and indeterminate values. The
-   Avatar samples should show derived fallback initials, explicit fallback text, explicit
+   decorative roles. The Progress samples should cover determinate and indeterminate values, with
+   indeterminate progress rendering as a short non-percentage segment rather than a fixed 33% fill.
+   The Avatar samples should show derived fallback initials, explicit fallback text, explicit
    accessible labels, and source metadata without owning image loading. The IconButton samples
    should be square controls with visible focus and explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport

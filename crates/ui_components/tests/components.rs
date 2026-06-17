@@ -11,17 +11,17 @@ use open_gpui_ui_components::{
     HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox, ListboxGroup,
     ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
     ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
-    PopoverOpenMode, Progress, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
-    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
-    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
-    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, Switch, Tabs,
-    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
-    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
-    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
-    first_enabled,
+    PopoverOpenMode, Progress, ProgressVisualMode, RadioGroup, RadioGroupState, RadioItem,
+    RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState,
+    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
+    SplitterState, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, TextInput, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
+    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    active_index_from_str_keys, first_enabled,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
@@ -4115,15 +4115,41 @@ fn progress_state_clamps_values_and_preserves_indeterminate_mode() {
     assert_eq!(full.role(), Role::ProgressIndicator);
     assert_eq!(full.value_percent(), Some(100.0));
     assert_eq!(full.normalized_value(), Some(1.0));
+    assert_eq!(
+        full.visual_mode(),
+        ProgressVisualMode::Determinate {
+            normalized_value: 1.0
+        }
+    );
+    assert_eq!(full.indicator_start_fraction(), 0.0);
+    assert_eq!(full.indicator_fraction(), 1.0);
     assert_eq!(full.metrics().height(), ui_px(10.0));
     assert_eq!(full.colors().track().token(), semantic::SURFACE_MUTED);
     assert_eq!(full.colors().indicator().token(), semantic::ACCENT);
 
     assert_eq!(empty.value_percent(), Some(0.0));
     assert_eq!(empty.normalized_value(), Some(0.0));
+    assert_eq!(
+        empty.visual_mode(),
+        ProgressVisualMode::Determinate {
+            normalized_value: 0.0
+        }
+    );
     assert!(indeterminate.indeterminate());
     assert_eq!(indeterminate.value_percent(), None);
     assert_eq!(indeterminate.normalized_value(), None);
+    assert_eq!(
+        indeterminate.visual_mode(),
+        ProgressVisualMode::Indeterminate
+    );
+    assert!(
+        indeterminate.indicator_start_fraction() > 0.0,
+        "indeterminate progress should not look like a left-anchored determinate fill"
+    );
+    assert!(
+        indeterminate.indicator_fraction() > 0.0 && indeterminate.indicator_fraction() < 0.5,
+        "indeterminate progress should render as a short segment, not as a fixed percentage value"
+    );
 }
 
 #[test]
@@ -4157,6 +4183,7 @@ fn low_state_primitives_render_stable_debug_selectors(cx: &mut open_gpui::TestAp
                 .child(Separator::new("runtime-separator"))
                 .child(Kbd::new("runtime-kbd", "Ctrl+K"))
                 .child(Progress::new("runtime-progress", "Loading").value(40.0))
+                .child(Progress::new("runtime-progress-indeterminate", "Indexing").indeterminate())
                 .child(Skeleton::new("runtime-skeleton"))
         }
     }
@@ -4170,6 +4197,9 @@ fn low_state_primitives_render_stable_debug_selectors(cx: &mut open_gpui::TestAp
         "separator:runtime-separator:root",
         "kbd:runtime-kbd:root",
         "progress:runtime-progress:root",
+        "progress:runtime-progress:indicator",
+        "progress:runtime-progress-indeterminate:root",
+        "progress:runtime-progress-indeterminate:indicator",
         "skeleton:runtime-skeleton:root",
     ] {
         assert!(
@@ -4177,6 +4207,40 @@ fn low_state_primitives_render_stable_debug_selectors(cx: &mut open_gpui::TestAp
             "{selector} should be rendered"
         );
     }
+
+    let determinate_root = cx
+        .debug_bounds("progress:runtime-progress:root")
+        .expect("determinate progress root should render");
+    let determinate_indicator = cx
+        .debug_bounds("progress:runtime-progress:indicator")
+        .expect("determinate progress indicator should render");
+    let indeterminate_root = cx
+        .debug_bounds("progress:runtime-progress-indeterminate:root")
+        .expect("indeterminate progress root should render");
+    let indeterminate_indicator = cx
+        .debug_bounds("progress:runtime-progress-indeterminate:indicator")
+        .expect("indeterminate progress indicator should render");
+
+    let determinate_width =
+        determinate_indicator.size.width.as_f32() / determinate_root.size.width.as_f32();
+    let indeterminate_start = (indeterminate_indicator.left().as_f32()
+        - indeterminate_root.left().as_f32())
+        / indeterminate_root.size.width.as_f32();
+    let indeterminate_width =
+        indeterminate_indicator.size.width.as_f32() / indeterminate_root.size.width.as_f32();
+
+    assert!(
+        (determinate_width - 0.4).abs() < 0.02,
+        "determinate progress indicator should match the provided value"
+    );
+    assert!(
+        indeterminate_start > 0.25,
+        "indeterminate progress indicator should not be left-anchored"
+    );
+    assert!(
+        indeterminate_width > 0.25 && indeterminate_width < 0.45,
+        "indeterminate progress indicator should be a short segment"
+    );
 }
 
 #[test]

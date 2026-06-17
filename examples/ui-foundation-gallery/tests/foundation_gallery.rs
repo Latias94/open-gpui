@@ -277,6 +277,27 @@ fn click_point(cx: &mut VisualTestContext, point: open_gpui::Point<Pixels>) {
     redraw(cx);
 }
 
+fn visible_outside_point(
+    container: Bounds<Pixels>,
+    excluded: Bounds<Pixels>,
+) -> open_gpui::Point<Pixels> {
+    let inset = px(24.0);
+    let candidates = [
+        point(container.left() + inset, container.top() + inset),
+        point(container.right() - inset, container.top() + inset),
+        point(container.left() + inset, container.bottom() - inset),
+        point(container.right() - inset, container.bottom() - inset),
+        container.center(),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|candidate| container.contains(candidate) && !excluded.contains(candidate))
+        .unwrap_or_else(|| {
+            panic!("expected visible outside press point in `{container:?}` outside `{excluded:?}`")
+        })
+}
+
 fn press_escape(cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("escape");
     redraw(cx);
@@ -1848,31 +1869,35 @@ fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
 }
 
 #[open_gpui::test]
-fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_closes_from_escape(
+fn overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses(
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_overlay_gallery(cx);
+    let hotspot = "context-menu:overlay-context-menu-demo:controlled:hotspot";
+    let surface = "context-menu:overlay-context-menu-demo:controlled:surface";
 
-    scroll_page_until_visible(
-        cx,
-        "context-menu:overlay-context-menu-demo:controlled:hotspot",
-    );
-    right_click(
-        cx,
-        "context-menu:overlay-context-menu-demo:controlled:hotspot",
-    );
+    scroll_page_until_visible(cx, hotspot);
+    right_click(cx, hotspot);
     assert!(
-        cx.debug_bounds("context-menu:overlay-context-menu-demo:controlled:surface")
-            .is_some(),
+        cx.debug_bounds(surface).is_some(),
         "expected controlled ContextMenu surface to open from right-clicking its real hotspot"
     );
 
     press_escape(cx);
 
     assert!(
-        cx.debug_bounds("context-menu:overlay-context-menu-demo:controlled:surface")
-            .is_none(),
+        cx.debug_bounds(surface).is_none(),
         "expected Escape to dismiss the controlled ContextMenu"
+    );
+
+    right_click(cx, hotspot);
+    let surface_bounds = bounds(cx, surface);
+    let outside_target = visible_outside_point(bounds(cx, "gallery:content"), surface_bounds);
+    click_point(cx, outside_target);
+
+    assert!(
+        cx.debug_bounds(surface).is_none(),
+        "expected outside press to dismiss the controlled ContextMenu"
     );
 }
 

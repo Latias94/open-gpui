@@ -1,6 +1,22 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Started the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState`
+  now exposes `ProgressVisualMode`, indicator start fractions, and indicator width fractions.
+  Indeterminate progress renders as a short non-percentage segment instead of a fixed 33% fill.
+* **Update**: Added `progress:{id}:indicator` debug selectors and runtime bounds assertions for
+  determinate and indeterminate progress, plus gallery state-row text that shows indicator
+  start/width during manual dogfood.
+* **Update**: Extended the Overlay gallery ContextMenu smoke to cover outside-press dismissal after
+  real right-click opening, in addition to the existing Escape path.
+* **Follow-up**: Add runtime focus-restore assertions after `open_gpui::test` exposes a stable
+  focused selector/element query or the gallery adds explicit debug focus markers.
+* **Verification**: The second behavior-alignment loop passed focused `cargo nextest run -p
+  open-gpui-ui-components progress_state_clamps_values_and_preserves_indeterminate_mode
+  low_state_primitives_render_stable_debug_selectors`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery
+  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, and `cargo run -p
+  xtask -- verify`.
 * **Update**: Executed
   `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md`. The component
   crate default root and prelude now avoid adapter-only GPUI helper exports; those helpers are

@@ -11,6 +11,25 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Began the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState` now
+  exposes `ProgressVisualMode`, determinate indicator fractions, and indeterminate indicator
+  fractions; the GPUI renderer uses a short non-percentage segment for indeterminate progress
+  instead of a fixed 33% left-anchored fill.
+- Done: Component runtime tests now expose `progress:{id}:indicator` selectors and compare rendered
+  indicator bounds for determinate versus indeterminate progress. The gallery progress state row
+  reports indicator start/width for manual dogfood.
+- Done: Overlay gallery ContextMenu smoke now covers both real right-click opening plus Escape
+  dismissal and a second right-click open plus outside-press dismissal.
+- Follow-up: Runtime focus-restore assertions should be added after `open_gpui::test` exposes a
+  stable focused selector/element query or the gallery adds explicit debug focus markers. Current
+  tests already cover resolved focus-restore intent, but not the real focused element after
+  dismissal.
+- Last verified for the second behavior-alignment loop: focused `cargo nextest run -p
+  open-gpui-ui-components progress_state_clamps_values_and_preserves_indeterminate_mode
+  low_state_primitives_render_stable_debug_selectors`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery
+  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, and `cargo run -p
+  xtask -- verify`.
 - Done: Started and executed
   `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md` to align the
   current component product surface with the stricter adapter-first contract.

@@ -11,6 +11,9 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+const INDETERMINATE_INDICATOR_START_FRACTION: f32 = 0.32;
+const INDETERMINATE_INDICATOR_FRACTION: f32 = 0.36;
+
 /// Resolved progress color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProgressColors {
@@ -64,6 +67,18 @@ impl ProgressMetrics {
     }
 }
 
+/// Resolved progress visual mode.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProgressVisualMode {
+    /// A determinate progress bar with a left-anchored fill.
+    Determinate {
+        /// The clamped fill fraction in the `0..=1` range.
+        normalized_value: f32,
+    },
+    /// An indeterminate progress bar with a non-percentage segment.
+    Indeterminate,
+}
+
 /// Resolved progress state used by tests, demos, and rendering.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProgressState {
@@ -102,6 +117,30 @@ impl ProgressState {
     /// Returns whether progress is indeterminate.
     pub const fn indeterminate(self) -> bool {
         self.value_percent.is_none()
+    }
+
+    /// Returns the resolved visual mode.
+    pub const fn visual_mode(self) -> ProgressVisualMode {
+        match self.normalized_value {
+            Some(normalized_value) => ProgressVisualMode::Determinate { normalized_value },
+            None => ProgressVisualMode::Indeterminate,
+        }
+    }
+
+    /// Returns the start fraction for the rendered indicator segment.
+    pub const fn indicator_start_fraction(self) -> f32 {
+        match self.visual_mode() {
+            ProgressVisualMode::Determinate { .. } => 0.0,
+            ProgressVisualMode::Indeterminate => INDETERMINATE_INDICATOR_START_FRACTION,
+        }
+    }
+
+    /// Returns the rendered indicator width fraction.
+    pub const fn indicator_fraction(self) -> f32 {
+        match self.visual_mode() {
+            ProgressVisualMode::Determinate { normalized_value } => normalized_value,
+            ProgressVisualMode::Indeterminate => INDETERMINATE_INDICATOR_FRACTION,
+        }
     }
 
     /// Returns the foundation size.
@@ -184,7 +223,9 @@ impl RenderOnce for Progress {
         let metrics = state.metrics();
         let colors = state.colors();
         let debug_id = self.id.to_string();
-        let fill_width = state.normalized_value().unwrap_or(0.33);
+        let indicator_debug_id = debug_id.clone();
+        let indicator_start = state.indicator_start_fraction();
+        let indicator_width = state.indicator_fraction();
         let label = self.label.clone();
 
         div()
@@ -205,13 +246,15 @@ impl RenderOnce for Progress {
             })
             .child(
                 div()
+                    .debug_selector(move || format!("progress:{indicator_debug_id}:indicator"))
                     .absolute()
                     .top_0()
-                    .left_0()
+                    .left(relative(indicator_start))
                     .h_full()
-                    .w(relative(fill_width))
+                    .w(relative(indicator_width))
                     .rounded(gpui_px_from_ui(metrics.radius()))
-                    .bg(ThemeResolver::resolve(colors.indicator())),
+                    .bg(ThemeResolver::resolve(colors.indicator()))
+                    .when(state.indeterminate(), |this| this.opacity(0.72)),
             )
     }
 }

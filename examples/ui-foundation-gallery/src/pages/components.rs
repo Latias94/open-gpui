@@ -41,6 +41,7 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::KbdState",
     "open_gpui_ui_components::Progress",
     "open_gpui_ui_components::ProgressState",
+    "open_gpui_ui_components::ProgressVisualMode",
     "open_gpui_ui_components::Skeleton",
     "open_gpui_ui_components::SkeletonState",
     "open_gpui_ui_components::Avatar",

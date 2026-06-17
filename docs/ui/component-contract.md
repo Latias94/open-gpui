@@ -171,9 +171,11 @@ role. The current GPUI AccessKit adapter maps the neutral separator role through
 available GPUI role because the bundled AccessKit role enum does not expose a separator role yet.
 `KbdState` is display-only shortcut text with muted surface/text/border intents. `ProgressState`
 owns determinate versus indeterminate progress, clamps determinate values to `0..=100`, exposes a
-normalized `0..=1` value for rendering, and maps to `Role::ProgressIndicator`. `SkeletonState` is a
-non-interactive static loading placeholder with muted surface token intent; animation remains a
-future adapter enhancement, not part of the first resolved-state contract.
+normalized `0..=1` value for determinate rendering, and maps to `Role::ProgressIndicator`.
+Indeterminate progress uses `ProgressVisualMode::Indeterminate` and renders a short non-percentage
+segment instead of a left-anchored fixed fill. `SkeletonState` is a non-interactive static loading
+placeholder with muted surface token intent; animation remains a future adapter enhancement, not
+part of the first resolved-state contract.
 
 `AvatarState` is the identity primitive contract. It resolves display name, fallback initials or
 explicit fallback text, optional renderer-neutral `AvatarSource` metadata, accessible label,

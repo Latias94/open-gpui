@@ -40,7 +40,9 @@ pub use crate::menu::{
 };
 pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
-pub use crate::progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
+pub use crate::progress::{
+    Progress, ProgressColors, ProgressMetrics, ProgressState, ProgressVisualMode,
+};
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
