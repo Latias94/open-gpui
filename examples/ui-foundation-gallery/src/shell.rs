@@ -57,8 +57,11 @@ pub struct GalleryShellSnapshot {
 
 /// Returns the foundation snapshot for a gallery viewport width.
 pub fn foundation_snapshot(width: Pixels, selected_page: GalleryPage) -> GalleryShellSnapshot {
-    let shell_mode = DeviceShellSwitchPolicy::default().mode(width);
-    let density = DeviceAdaptivePolicy::default().classify(width).density();
+    let neutral_width = ui_px_from_gpui(width);
+    let shell_mode = DeviceShellSwitchPolicy::default().mode(neutral_width);
+    let density = DeviceAdaptivePolicy::default()
+        .classify(neutral_width)
+        .density();
 
     GalleryShellSnapshot {
         selected_page,
@@ -1706,16 +1709,20 @@ impl GalleryShell {
                             .gap_3()
                             .rounded_sm()
                             .border_1()
-                            .border_color(if sample.width == snapshot.viewport_width {
-                                rgb(0x1f7a66)
-                            } else {
-                                rgb(0xd6d8ce)
-                            })
-                            .bg(if sample.width == snapshot.viewport_width {
-                                rgb(0xe8f3ef)
-                            } else {
-                                rgb(0xffffff)
-                            })
+                            .border_color(
+                                if gpui_px_from_ui(sample.width) == snapshot.viewport_width {
+                                    rgb(0x1f7a66)
+                                } else {
+                                    rgb(0xd6d8ce)
+                                },
+                            )
+                            .bg(
+                                if gpui_px_from_ui(sample.width) == snapshot.viewport_width {
+                                    rgb(0xe8f3ef)
+                                } else {
+                                    rgb(0xffffff)
+                                },
+                            )
                             .px_4()
                             .py_2()
                             .text_sm()
@@ -1724,7 +1731,7 @@ impl GalleryShell {
                                 div()
                                     .w(px(88.0))
                                     .font_weight(open_gpui::FontWeight::BOLD)
-                                    .child(format_px(sample.width)),
+                                    .child(format_ui_px(sample.width)),
                             )
                             .child(label_pill(shell_mode_label(sample.shell_mode)))
                             .child(label_pill(device_class_label(sample.class)))
@@ -1759,7 +1766,7 @@ impl GalleryShell {
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(format_px(sample.width)),
+                                        .child(format_ui_px(sample.width)),
                                 )
                                 .child(
                                     div()
@@ -4869,6 +4876,10 @@ fn geometry_row(label: &'static str, rect: Rect) -> impl IntoElement {
 
 fn gpui_px_from_ui(value: UiPx) -> Pixels {
     px(value.as_f32())
+}
+
+fn ui_px_from_gpui(value: Pixels) -> UiPx {
+    UiPx::new(value.as_f32())
 }
 
 fn gpui_point_from_ui(value: UiPoint) -> open_gpui::Point<Pixels> {

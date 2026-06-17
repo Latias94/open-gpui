@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 #[test]
 fn ui_core_extraction_blockers_match_allowlist() {
-    let expected = [("adaptive.rs", "Pixels as Px")];
+    let expected: [(&str, &str); 0] = [];
     let mut expected = expected
         .into_iter()
         .map(|(file, token)| SourceBlocker::new(file.to_owned(), token.to_owned()))
@@ -32,12 +32,6 @@ fn ui_core_strict_boundary_blockers_match_allowlist() {
             "Cargo.toml",
             "open_gpui.workspace = true",
         ),
-        BoundaryBlocker::new(
-            "source reference",
-            "adaptive.rs",
-            "use open_gpui::{Pixels as Px, px};",
-        ),
-        BoundaryBlocker::new("adaptive pixels alias", "adaptive.rs", "Pixels as Px"),
         BoundaryBlocker::new(
             "source reference",
             "geometry.rs",

@@ -1,7 +1,6 @@
 //! Adaptive layout vocabulary for the Open GPUI component ecosystem.
 
-use open_gpui::{Pixels as Px, px};
-
+use crate::geometry::{UiPx, ui_px};
 use crate::overlay::OverlayEdges as Edges;
 use crate::sizing::Density;
 
@@ -53,9 +52,9 @@ pub enum PanelAdaptiveClass {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeviceAdaptivePolicy {
     /// The minimum width at which the shell becomes regular.
-    pub regular_min_width: Px,
+    pub regular_min_width: UiPx,
     /// The minimum width at which the shell becomes expanded.
-    pub expanded_min_width: Px,
+    pub expanded_min_width: UiPx,
     /// The fallback hover capability when the input modality is unknown.
     pub default_can_hover_when_unknown: bool,
     /// The fallback pointer type when the input modality is unknown.
@@ -65,8 +64,8 @@ pub struct DeviceAdaptivePolicy {
 impl Default for DeviceAdaptivePolicy {
     fn default() -> Self {
         Self {
-            regular_min_width: px(768.0),
-            expanded_min_width: px(1280.0),
+            regular_min_width: ui_px(768.0),
+            expanded_min_width: ui_px(1280.0),
             default_can_hover_when_unknown: true,
             default_coarse_pointer_when_unknown: false,
         }
@@ -75,13 +74,13 @@ impl Default for DeviceAdaptivePolicy {
 
 impl DeviceAdaptivePolicy {
     /// Sets the regular-shell threshold.
-    pub const fn regular_min_width(mut self, width: Px) -> Self {
+    pub const fn regular_min_width(mut self, width: UiPx) -> Self {
         self.regular_min_width = width;
         self
     }
 
     /// Sets the expanded-shell threshold.
-    pub const fn expanded_min_width(mut self, width: Px) -> Self {
+    pub const fn expanded_min_width(mut self, width: UiPx) -> Self {
         self.expanded_min_width = width;
         self
     }
@@ -99,7 +98,7 @@ impl DeviceAdaptivePolicy {
     }
 
     /// Classifies a width using this policy.
-    pub fn classify(self, width: Px) -> DeviceAdaptiveClass {
+    pub fn classify(self, width: UiPx) -> DeviceAdaptiveClass {
         device_adaptive_class(width, self)
     }
 }
@@ -129,26 +128,26 @@ impl DeviceShellMode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeviceShellSwitchPolicy {
     /// The minimum width at which the desktop shell should be used.
-    pub desktop_min_width: Px,
+    pub desktop_min_width: UiPx,
 }
 
 impl Default for DeviceShellSwitchPolicy {
     fn default() -> Self {
         Self {
-            desktop_min_width: px(960.0),
+            desktop_min_width: ui_px(960.0),
         }
     }
 }
 
 impl DeviceShellSwitchPolicy {
     /// Sets the desktop-shell threshold.
-    pub const fn desktop_min_width(mut self, width: Px) -> Self {
+    pub const fn desktop_min_width(mut self, width: UiPx) -> Self {
         self.desktop_min_width = width;
         self
     }
 
     /// Classifies a width using this policy.
-    pub fn mode(self, width: Px) -> DeviceShellMode {
+    pub fn mode(self, width: UiPx) -> DeviceShellMode {
         device_shell_mode(width, self)
     }
 }
@@ -157,35 +156,35 @@ impl DeviceShellSwitchPolicy {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PanelAdaptivePolicy {
     /// The minimum width at which the panel becomes medium.
-    pub medium_min_width: Px,
+    pub medium_min_width: UiPx,
     /// The minimum width at which the panel becomes wide.
-    pub wide_min_width: Px,
+    pub wide_min_width: UiPx,
 }
 
 impl Default for PanelAdaptivePolicy {
     fn default() -> Self {
         Self {
-            medium_min_width: px(360.0),
-            wide_min_width: px(640.0),
+            medium_min_width: ui_px(360.0),
+            wide_min_width: ui_px(640.0),
         }
     }
 }
 
 impl PanelAdaptivePolicy {
     /// Sets the medium-panel threshold.
-    pub const fn medium_min_width(mut self, width: Px) -> Self {
+    pub const fn medium_min_width(mut self, width: UiPx) -> Self {
         self.medium_min_width = width;
         self
     }
 
     /// Sets the wide-panel threshold.
-    pub const fn wide_min_width(mut self, width: Px) -> Self {
+    pub const fn wide_min_width(mut self, width: UiPx) -> Self {
         self.wide_min_width = width;
         self
     }
 
     /// Classifies a width using this policy.
-    pub fn classify(self, width: Px) -> PanelAdaptiveClass {
+    pub fn classify(self, width: UiPx) -> PanelAdaptiveClass {
         panel_adaptive_class(width, self)
     }
 }
@@ -208,7 +207,7 @@ pub struct DeviceAdaptiveSnapshot {
 }
 
 /// Resolves a coarse device-shell class from viewport width.
-pub fn device_adaptive_class(width: Px, policy: DeviceAdaptivePolicy) -> DeviceAdaptiveClass {
+pub fn device_adaptive_class(width: UiPx, policy: DeviceAdaptivePolicy) -> DeviceAdaptiveClass {
     let regular = policy.regular_min_width.as_f32();
     let expanded = policy.expanded_min_width.as_f32();
     let width = width.as_f32();
@@ -231,7 +230,7 @@ pub fn device_adaptive_class(width: Px, policy: DeviceAdaptivePolicy) -> DeviceA
 }
 
 /// Resolves a binary desktop/mobile shell branch from viewport width.
-pub fn device_shell_mode(width: Px, policy: DeviceShellSwitchPolicy) -> DeviceShellMode {
+pub fn device_shell_mode(width: UiPx, policy: DeviceShellSwitchPolicy) -> DeviceShellMode {
     if width.as_f32() >= policy.desktop_min_width.as_f32() {
         DeviceShellMode::Desktop
     } else {
@@ -240,7 +239,7 @@ pub fn device_shell_mode(width: Px, policy: DeviceShellSwitchPolicy) -> DeviceSh
 }
 
 /// Resolves a coarse panel/container class from container width.
-pub fn panel_adaptive_class(width: Px, policy: PanelAdaptivePolicy) -> PanelAdaptiveClass {
+pub fn panel_adaptive_class(width: UiPx, policy: PanelAdaptivePolicy) -> PanelAdaptiveClass {
     let medium = policy.medium_min_width.as_f32();
     let wide = policy.wide_min_width.as_f32();
     let width = width.as_f32();
@@ -264,7 +263,7 @@ pub fn panel_adaptive_class(width: Px, policy: PanelAdaptivePolicy) -> PanelAdap
 
 /// Returns a bundle of common adaptive signals for a device shell.
 pub fn device_adaptive_snapshot(
-    width: Px,
+    width: UiPx,
     can_hover: bool,
     coarse_pointer: bool,
     safe_area_insets: Edges,
@@ -289,32 +288,32 @@ mod tests {
     #[test]
     fn device_policy_normalizes_threshold_order_via_classification() {
         let policy = DeviceAdaptivePolicy::default()
-            .regular_min_width(px(1280.0))
-            .expanded_min_width(px(768.0));
+            .regular_min_width(ui_px(1280.0))
+            .expanded_min_width(ui_px(768.0));
 
         assert_eq!(
-            device_adaptive_class(px(500.0), policy),
+            device_adaptive_class(ui_px(500.0), policy),
             DeviceAdaptiveClass::Compact
         );
         assert_eq!(
-            device_adaptive_class(px(900.0), policy),
+            device_adaptive_class(ui_px(900.0), policy),
             DeviceAdaptiveClass::Regular
         );
         assert_eq!(
-            device_adaptive_class(px(1400.0), policy),
+            device_adaptive_class(ui_px(1400.0), policy),
             DeviceAdaptiveClass::Expanded
         );
     }
 
     #[test]
     fn device_shell_mode_uses_threshold() {
-        let policy = DeviceShellSwitchPolicy::default().desktop_min_width(px(1000.0));
+        let policy = DeviceShellSwitchPolicy::default().desktop_min_width(ui_px(1000.0));
         assert_eq!(
-            device_shell_mode(px(999.0), policy),
+            device_shell_mode(ui_px(999.0), policy),
             DeviceShellMode::Mobile
         );
         assert_eq!(
-            device_shell_mode(px(1000.0), policy),
+            device_shell_mode(ui_px(1000.0), policy),
             DeviceShellMode::Desktop
         );
     }
@@ -322,19 +321,19 @@ mod tests {
     #[test]
     fn panel_policy_normalizes_threshold_order_via_classification() {
         let policy = PanelAdaptivePolicy::default()
-            .medium_min_width(px(640.0))
-            .wide_min_width(px(360.0));
+            .medium_min_width(ui_px(640.0))
+            .wide_min_width(ui_px(360.0));
 
         assert_eq!(
-            panel_adaptive_class(px(200.0), policy),
+            panel_adaptive_class(ui_px(200.0), policy),
             PanelAdaptiveClass::Compact
         );
         assert_eq!(
-            panel_adaptive_class(px(500.0), policy),
+            panel_adaptive_class(ui_px(500.0), policy),
             PanelAdaptiveClass::Medium
         );
         assert_eq!(
-            panel_adaptive_class(px(700.0), policy),
+            panel_adaptive_class(ui_px(700.0), policy),
             PanelAdaptiveClass::Wide
         );
     }
@@ -343,7 +342,7 @@ mod tests {
     fn snapshot_derives_density_from_class() {
         let zero = Edges::default();
         let snapshot = device_adaptive_snapshot(
-            px(1400.0),
+            ui_px(1400.0),
             true,
             false,
             zero,

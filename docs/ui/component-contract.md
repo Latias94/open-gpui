@@ -37,6 +37,12 @@ The concrete component owns the GPUI adapter. This layer may use:
 The adapter should read from the resolved state rather than duplicating semantic decisions in the
 render body.
 
+UI-core adaptive helpers accept neutral `UiPx` values. GPUI adapters that start from concrete
+window, viewport, or layout `Pixels` should convert to `UiPx` before calling
+`DeviceShellSwitchPolicy`, `DeviceAdaptivePolicy`, `PanelAdaptivePolicy`, or
+`device_adaptive_snapshot`. UI core intentionally does not expose `Pixels` compatibility aliases,
+because keeping those aliases would preserve a renderer dependency in the neutral crate.
+
 ## Overlay Behavior
 
 Overlay component state should use renderer-neutral policy types from `open_gpui_ui_core` before
@@ -318,10 +324,10 @@ Before extraction, keep these blockers explicit:
 - public contract guard tests now treat those runtime/rendering leaks as hard failures, while a
   separate extraction-blocker inventory pins any remaining public-state GPUI geometry usage until
   the extraction-prep series removes or classifies it;
-- overlay placement, `ContextMenuState`, UI-core sizing, and public component metrics now use
-  neutral UI-core geometry. The strict crate gate still has two core-level decisions: adaptive
-  viewport policies use GPUI `Pixels`, and `UiPx` currently has GPUI style-conversion impls as a
-  transitional adapter convenience until the core boundary is split more strictly;
+- overlay placement, `ContextMenuState`, UI-core sizing, adaptive viewport policies, and public
+  component metrics now use neutral UI-core geometry. The strict crate gate still has one core-level
+  source decision: `UiPx` currently has GPUI style-conversion impls as a transitional adapter
+  convenience until the core boundary is split more strictly;
 - `open_gpui_ui_core` now exposes neutral `Role`, `Toggled`, `Orientation`, `AccessibleAction`,
   and `FocusTargetId`; GPUI/AccessKit conversion lives in `open_gpui_ui_components::a11y`;
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
@@ -348,8 +354,8 @@ against GPUI runtime/rendering type leaks. Public component metrics now use neut
 instead of GPUI `Pixels`, and direct GPUI focus/a11y re-exports have been replaced by UI-core
 semantic facades with GPUI adapter mapping in `open_gpui_ui_components::a11y`. Component overlay
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
-state. Extraction remains blocked by adaptive viewport `Pixels`, `UiPx` GPUI conversion impls in
-UI core, and GPUI-owned adapter APIs such as `TextInputController`, externally supplied
+state. Extraction remains blocked by `UiPx` GPUI conversion impls in UI core and GPUI-owned adapter
+APIs such as `TextInputController`, externally supplied
 `ScrollHandle`, `focus_ring_shadow`, and GPUI overlay scheduling helpers. These public adapter APIs
 are now grouped under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
