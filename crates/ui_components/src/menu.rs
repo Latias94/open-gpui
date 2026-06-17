@@ -13,6 +13,7 @@ use open_gpui_ui_core::{
     Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
@@ -970,7 +971,7 @@ impl RenderOnce for Menu {
                     .line_height(metrics.text_size())
                     .focusable()
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
@@ -1072,7 +1073,7 @@ fn menu_content_element(
         .occlude()
         .tab_group()
         .focusable()
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.as_str();
             if key == "escape" {
@@ -1169,7 +1170,7 @@ fn menu_item_elements(
                     } else {
                         colors.foreground()
                     }))
-                    .role(Role::MenuItem)
+                    .ui_role(Role::MenuItem)
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()

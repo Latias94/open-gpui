@@ -13,6 +13,7 @@ use open_gpui_ui_core::{
     Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
@@ -567,7 +568,7 @@ impl RenderOnce for Popover {
                     .line_height(metrics.text_size())
                     .focusable()
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
@@ -660,7 +661,7 @@ fn popover_content_element(
         .occlude()
         .tab_group()
         .focusable()
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
                 cx.stop_propagation();

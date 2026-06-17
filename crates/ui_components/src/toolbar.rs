@@ -11,6 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -757,9 +758,9 @@ impl RenderOnce for Toolbar {
 
             div()
                 .id(id.clone())
-                .role(state.role())
+                .ui_role(state.role())
                 .aria_label(label.clone())
-                .aria_orientation(orientation)
+                .ui_aria_orientation(orientation)
                 .aria_disabled(state.disabled())
                 .flex()
                 .gap(metrics.gap())
@@ -815,14 +816,16 @@ impl RenderOnce for Toolbar {
                         .id(toolbar_item_id(item.value()))
                         .focusable()
                         .tab_stop(item_tab_stop)
-                        .role(item.role().unwrap_or(Role::Button))
+                        .ui_role(item.role().unwrap_or(Role::Button))
                         .aria_label(descriptor.label())
                         .aria_disabled(item_disabled)
                         .when_some(item_position, |this, position| {
                             this.aria_position_in_set(position)
                                 .aria_size_of_set(focusable_set_size)
                         })
-                        .when_some(item.toggled(), |this, toggled| this.aria_toggled(toggled))
+                        .when_some(item.toggled(), |this, toggled| {
+                            this.ui_aria_toggled(toggled)
+                        })
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })

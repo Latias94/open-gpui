@@ -13,6 +13,7 @@ use open_gpui::{
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
@@ -1088,7 +1089,7 @@ impl RenderOnce for TextInput {
             .text_color(text_color)
             .focusable()
             .tab_stop(state.tab_stop_enabled())
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(self.label)
             .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(state.disabled(), |this| {

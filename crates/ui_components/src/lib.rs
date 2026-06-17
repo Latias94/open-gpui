@@ -5,6 +5,7 @@
 //! This crate sits above `open-gpui-ui-core`: it renders styled GPUI elements while consuming the
 //! foundation vocabulary for sizing, tokens, accessibility, and focus.
 
+pub mod a11y;
 pub mod alert_dialog;
 pub mod badge;
 pub mod button;
@@ -40,6 +41,10 @@ pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
 
+pub use a11y::{
+    UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
+    gpui_toggled_from_ui,
+};
 pub use alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,

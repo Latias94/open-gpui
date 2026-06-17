@@ -1,5 +1,9 @@
 //! Convenient re-exports for Open GPUI UI components.
 
+pub use crate::a11y::{
+    UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
+    gpui_toggled_from_ui,
+};
 pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,

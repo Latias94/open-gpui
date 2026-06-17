@@ -41,6 +41,15 @@
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
   open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
+* **Update**: Completed U4 focus and accessibility facades. `open-gpui-ui-core` now owns neutral
+  `Role`, `Toggled`, `Orientation`, `AccessibleAction`, and `FocusTargetId`; it no longer
+  re-exports GPUI `FocusHandle`, `Focusable`, AccessKit roles, or AccessKit actions. Component and
+  gallery render code now crosses into GPUI through `open_gpui_ui_components::a11y` adapter mapping
+  functions and explicit `ui_role`, `ui_aria_toggled`, `ui_aria_orientation`, and
+  `on_ui_a11y_action` methods.
+* **Verification**: U4 currently passes `cargo check -p open-gpui-ui-components` and `cargo check
+  -p open-gpui-ui-foundation-gallery`; full fmt/core/component/gallery nextest gate still needs to
+  run before committing the slice.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

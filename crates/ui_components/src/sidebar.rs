@@ -11,6 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::roving_focus::roving_navigation_target;
@@ -1322,7 +1323,7 @@ impl RenderOnce for Sidebar {
 
                     div()
                         .id(sidebar_section_id(section.value()))
-                        .role(section.role())
+                        .ui_role(section.role())
                         .aria_label(section.label().to_owned())
                         .flex()
                         .flex_col()
@@ -1372,7 +1373,7 @@ impl RenderOnce for Sidebar {
                                 .id(sidebar_item_id(item.value()))
                                 .focusable()
                                 .tab_stop(item_tab_stop)
-                                .role(item.role())
+                                .ui_role(item.role())
                                 .aria_label(item.label().to_owned())
                                 .aria_selected(item_selected)
                                 .aria_disabled(item_disabled)
@@ -1550,7 +1551,7 @@ impl RenderOnce for Sidebar {
 
             div()
                 .id(id.clone())
-                .role(state.role())
+                .ui_role(state.role())
                 .aria_label(label.clone())
                 .aria_disabled(state.disabled())
                 .w(metrics.resolved_width())

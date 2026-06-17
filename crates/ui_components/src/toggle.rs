@@ -9,6 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
 
+use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
@@ -243,9 +244,9 @@ impl RenderOnce for Toggle {
             .line_height(metrics.text_size())
             .focusable()
             .tab_stop(!disabled)
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(label.clone())
-            .aria_toggled(state.toggled())
+            .ui_aria_toggled(state.toggled())
             .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| {

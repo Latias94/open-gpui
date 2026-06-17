@@ -13,6 +13,7 @@ use open_gpui_ui_core::{
     OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
@@ -776,7 +777,7 @@ impl RenderOnce for Select {
                     .line_height(metrics.text_size())
                     .focusable()
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(state.label().to_owned())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)

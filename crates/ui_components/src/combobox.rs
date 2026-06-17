@@ -14,6 +14,7 @@ use open_gpui_ui_core::{
     OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
@@ -945,7 +946,7 @@ impl RenderOnce for Combobox {
                     .items_center()
                     .gap_1()
                     .focusable()
-                    .role(state.input_role())
+                    .ui_role(state.input_role())
                     .aria_label(state.label().to_owned())
                     .aria_expanded(open)
                     .aria_disabled(disabled)
@@ -1028,7 +1029,7 @@ impl RenderOnce for Combobox {
                             .border_1()
                             .border_color(ThemeResolver::resolve(state.colors().popup_border()))
                             .text_color(ThemeResolver::resolve(state.colors().popup_foreground()))
-                            .role(Role::Button)
+                            .ui_role(Role::Button)
                             .focus_visible({
                                 let focus_ring = state.focus_ring();
                                 move |style| style.shadow(focus_ring_shadow(focus_ring))
@@ -1205,7 +1206,7 @@ fn combobox_content_element(
         .text_color(ThemeResolver::resolve(colors.popup_foreground()))
         .shadow_lg()
         .occlude()
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .aria_label(label)
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {

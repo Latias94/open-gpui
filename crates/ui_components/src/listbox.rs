@@ -9,6 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::roving_focus::{first_enabled, last_enabled, next_enabled};
@@ -1049,7 +1050,7 @@ impl RenderOnce for Listbox {
             .focusable()
             .tab_group()
             .tab_stop(!state.disabled() && !state.empty())
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(state.label().to_owned())
             .aria_disabled(state.disabled())
             .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
@@ -1151,7 +1152,7 @@ fn listbox_children(
                 .text_xs()
                 .font_weight(open_gpui::FontWeight::BOLD)
                 .text_color(ThemeResolver::resolve(state.colors().muted_foreground()))
-                .role(group_state.role())
+                .ui_role(group_state.role())
                 .aria_label(group_state.label().to_owned())
                 .child(group_state.label().to_owned())
                 .into_any_element(),
@@ -1219,7 +1220,7 @@ fn listbox_option_elements(
                     } else {
                         colors.foreground()
                     }))
-                    .role(state.role().unwrap_or(Role::ListBoxOption))
+                    .ui_role(state.role().unwrap_or(Role::ListBoxOption))
                     .aria_label(state.label().to_owned())
                     .aria_selected(state.selected())
                     .aria_disabled(disabled)

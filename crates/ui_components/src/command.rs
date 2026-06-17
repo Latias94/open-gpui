@@ -13,6 +13,7 @@ use open_gpui_ui_core::{
     OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::listbox::{
@@ -1355,7 +1356,7 @@ impl RenderOnce for Command {
                         .text_color(ThemeResolver::resolve(colors.foreground()))
                         .focusable()
                         .tab_stop(!disabled)
-                        .role(Role::Button)
+                        .ui_role(Role::Button)
                         .aria_label(trigger_label.clone())
                         .aria_expanded(state.open())
                         .aria_disabled(disabled)
@@ -1597,10 +1598,10 @@ fn command_content_element(
         .text_color(ThemeResolver::resolve(colors.foreground()))
         .shadow_lg()
         .when_some(dialog_state.clone(), |this, dialog_state| {
-            this.occlude().role(dialog_state.role())
+            this.occlude().ui_role(dialog_state.role())
         })
         .when(dialog_state.is_none(), |this| {
-            this.role(state.content_role())
+            this.ui_role(state.content_role())
         })
         .aria_label(label.clone())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
@@ -1668,7 +1669,7 @@ fn command_content_element(
                 div()
                     .id(loading_id)
                     .text_color(ThemeResolver::resolve(colors.muted_foreground()))
-                    .role(loading.role())
+                    .ui_role(loading.role())
                     .aria_label(loading.message().to_owned())
                     .child(loading.message().to_owned()),
             )

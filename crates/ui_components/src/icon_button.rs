@@ -9,6 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
+use crate::a11y::UiA11yElementExt;
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
@@ -226,7 +227,7 @@ impl RenderOnce for IconButton {
             .line_height(metrics.icon_size())
             .focusable()
             .tab_stop(!disabled)
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(label)
             .aria_disabled(disabled)
             .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))

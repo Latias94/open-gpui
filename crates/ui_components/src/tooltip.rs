@@ -12,6 +12,7 @@ use open_gpui_ui_core::{
     OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::overlay::{DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayState};
 use crate::theme::ThemeResolver;
@@ -441,7 +442,7 @@ impl RenderOnce for Tooltip {
             .text_size(metrics.text_size())
             .line_height(metrics.text_size())
             .shadow_lg()
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(accessible_label)
             .children(children)
     }

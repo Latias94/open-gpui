@@ -9,6 +9,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::theme::ThemeResolver;
@@ -275,13 +276,13 @@ impl RenderOnce for Switch {
             .gap_2()
             .focusable()
             .tab_stop(!disabled)
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(
                 label
                     .clone()
                     .unwrap_or_else(|| SharedString::from("Switch")),
             )
-            .aria_toggled(state.toggled())
+            .ui_aria_toggled(state.toggled())
             .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
             .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
             .when(!disabled, |this| this.cursor_pointer())

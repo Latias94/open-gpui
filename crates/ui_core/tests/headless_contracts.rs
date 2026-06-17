@@ -1,11 +1,6 @@
 #[test]
 fn ui_core_extraction_blockers_match_allowlist() {
-    let expected = [
-        ("adaptive.rs", "Pixels as Px"),
-        ("a11y.rs", "pub use open_gpui::{AccessibleAction"),
-        ("focus.rs", "pub use open_gpui::{FocusHandle"),
-        ("prelude.rs", "focus::{FocusHandle"),
-    ];
+    let expected = [("adaptive.rs", "Pixels as Px")];
     let mut expected = expected
         .into_iter()
         .map(|(file, token)| SourceBlocker::new(file.to_owned(), token.to_owned()))
@@ -13,14 +8,11 @@ fn ui_core_extraction_blockers_match_allowlist() {
     expected.sort();
 
     let mut actual = source_blockers(&[
-        "pub use open_gpui::{AccessibleAction",
-        "pub use open_gpui::{FocusHandle",
         "Bounds<Px>",
         "Edges<Px>",
         "Pixels as Px",
         "Point<Px>",
         "Size<Px>",
-        "focus::{FocusHandle",
     ]);
     actual.sort();
 

@@ -7,6 +7,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::theme::ThemeResolver;
 
@@ -224,7 +225,7 @@ impl RenderOnce for Label {
             .flex()
             .items_center()
             .gap_1()
-            .role(state.role())
+            .ui_role(state.role())
             .aria_label(text.clone())
             .text_size(metrics.text_size())
             .line_height(metrics.text_size())

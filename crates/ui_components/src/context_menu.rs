@@ -14,6 +14,7 @@ use open_gpui_ui_core::{
     Role, Sizable, Size, ThemeTokens, UiPoint, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::focus::focus_ring_shadow;
 use crate::menu::{
     MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuMetrics, MenuOpenMode,
@@ -390,7 +391,7 @@ impl RenderOnce for ContextMenu {
             .child(
                 div()
                     .id(hotspot_id)
-                    .role(Role::Button)
+                    .ui_role(Role::Button)
                     .aria_label(label.clone())
                     .focusable()
                     .tab_stop(true)
@@ -464,7 +465,7 @@ fn context_menu_surface(
         .occlude()
         .tab_group()
         .focusable()
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             let key = event.keystroke.key.as_str();
             if key == "escape" {
@@ -561,7 +562,7 @@ fn context_menu_item_elements(
                     } else {
                         colors.foreground()
                     }))
-                    .role(Role::MenuItem)
+                    .ui_role(Role::MenuItem)
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()

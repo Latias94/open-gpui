@@ -11,6 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::roving_focus::{
@@ -672,8 +673,8 @@ impl RenderOnce for RadioGroup {
 
             div()
                 .id(id.clone())
-                .role(state.role())
-                .aria_orientation(orientation)
+                .ui_role(state.role())
+                .ui_aria_orientation(orientation)
                 .aria_label(label.unwrap_or_else(|| SharedString::from("Radio group")))
                 .aria_required(state.required())
                 .aria_disabled(state.disabled())
@@ -700,7 +701,7 @@ impl RenderOnce for RadioGroup {
                         .id(radio_item_id(item.value()))
                         .focusable()
                         .tab_stop(is_tab_stop)
-                        .role(item.role())
+                        .ui_role(item.role())
                         .aria_label(descriptor.label())
                         .aria_selected(is_selected)
                         .aria_disabled(item.disabled())

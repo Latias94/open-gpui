@@ -14,6 +14,7 @@ use open_gpui_ui_core::{
     Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
@@ -814,7 +815,7 @@ impl RenderOnce for HoverCard {
                     .focusable()
                     .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
@@ -942,7 +943,7 @@ fn hover_card_content_element(
         .tab_group()
         .focusable()
         .track_focus(&content_focus)
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .on_hover({
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();

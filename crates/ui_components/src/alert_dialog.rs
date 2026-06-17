@@ -14,6 +14,7 @@ use open_gpui_ui_core::{
     ui_px,
 };
 
+use crate::a11y::UiA11yElementExt;
 use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -898,7 +899,7 @@ impl RenderOnce for AlertDialog {
                     .focusable()
                     .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
@@ -1055,7 +1056,7 @@ fn alert_dialog_layer_element(
                 })
                 .tab_group()
                 .focusable()
-                .role(state.content_role())
+                .ui_role(state.content_role())
                 .aria_label(state.title().to_owned())
                 .on_key_down({
                     let runtime = runtime.clone();
@@ -1142,7 +1143,7 @@ fn alert_dialog_cancel_button(
         .focusable()
         .track_focus(&cancel_focus)
         .tab_stop(cancel.activation_enabled())
-        .role(cancel.role())
+        .ui_role(cancel.role())
         .aria_label(cancel.label().to_owned())
         .aria_disabled(cancel.disabled())
         .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
@@ -1202,7 +1203,7 @@ fn alert_dialog_action_button(
         .focusable()
         .track_focus(&action_focus)
         .tab_stop(action.activation_enabled())
-        .role(action.role())
+        .ui_role(action.role())
         .aria_label(action.label().to_owned())
         .aria_disabled(action.disabled())
         .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))

@@ -48,8 +48,16 @@ status: "active"
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
   open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
-- Next action: Commit U3, then start U4 by replacing direct GPUI focus/a11y re-exports with
-  stable UI-core semantic facades while keeping concrete focus handles in adapter code.
+- Done: Implemented U4 focus and accessibility facades. `open-gpui-ui-core` now defines neutral
+  `Role`, `Toggled`, `Orientation`, `AccessibleAction`, and `FocusTargetId` instead of
+  re-exporting GPUI focus/a11y types. `open-gpui-ui-components::a11y` owns the GPUI/AccessKit
+  adapter mapping, and render code applies neutral roles/states/actions through explicit
+  `ui_*` adapter methods.
+- Last verified: U4 currently passes `cargo check -p open-gpui-ui-components` and `cargo check -p
+  open-gpui-ui-foundation-gallery`; full fmt/core/component/gallery nextest gate still needs to
+  run before commit.
+- Next action: Finish U4 verification, commit it, then start U5 by splitting neutral overlay state
+  from `GpuiOverlayState` adapter scheduling fields.
 
 ## 2026-06-16
 

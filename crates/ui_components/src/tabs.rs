@@ -11,6 +11,7 @@ use open_gpui::{
 };
 use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
+use crate::a11y::UiA11yElementExt;
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
 pub use crate::roving_focus::{
@@ -717,8 +718,8 @@ impl RenderOnce for Tabs {
                 .child(
                     div()
                         .id("tablist")
-                        .role(Role::TabList)
-                        .aria_orientation(orientation)
+                        .ui_role(Role::TabList)
+                        .ui_aria_orientation(orientation)
                         .flex()
                         .flex_none()
                         .gap(metrics.tab_gap())
@@ -748,7 +749,7 @@ impl RenderOnce for Tabs {
                                 .id(tabs_trigger_id(item.value()))
                                 .focusable()
                                 .tab_stop(is_tab_stop)
-                                .role(Role::Tab)
+                                .ui_role(Role::Tab)
                                 .aria_label(descriptor.label())
                                 .aria_selected(is_selected)
                                 .aria_controls(std::iter::once(panel_node_id))
@@ -918,7 +919,7 @@ impl RenderOnce for Tabs {
                 .child(
                     div()
                         .id(panel_id)
-                        .role(Role::TabPanel)
+                        .ui_role(Role::TabPanel)
                         .flex()
                         .flex_1()
                         .min_w(open_gpui::px(0.0))

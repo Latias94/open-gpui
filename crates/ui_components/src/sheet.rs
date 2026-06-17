@@ -14,10 +14,10 @@ use open_gpui_ui_core::{
     UiSize, ui_px,
 };
 
-use crate::geometry::ui_size_from_gpui_size;
-
+use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
+use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
     GpuiOverlayAdapterConfig, GpuiOverlayState, escape_open_change, outside_press_open_change,
 };
@@ -837,7 +837,7 @@ impl RenderOnce for Sheet {
                     .focusable()
                     .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
-                    .role(state.trigger_role())
+                    .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
                     .aria_selected(state.trigger_selected())
                     .aria_expanded(open)
@@ -961,7 +961,7 @@ fn sheet_surface_element(
         })
         .tab_group()
         .focusable()
-        .role(state.content_role())
+        .ui_role(state.content_role())
         .aria_label(state.title().to_owned())
         .on_key_down({
             let runtime = runtime.clone();
@@ -1229,7 +1229,7 @@ fn sheet_close_button(
         .focusable()
         .track_focus(&close_focus)
         .tab_stop(true)
-        .role(Role::Button)
+        .ui_role(Role::Button)
         .aria_label("Close sheet")
         .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
         .cursor_pointer()

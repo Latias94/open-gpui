@@ -2,10 +2,9 @@
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AccessibleAction, Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, ParentElement, Pixels, Render, Role, ScrollHandle,
-    StatefulInteractiveElement, Styled, Toggled, Window, WindowBounds, WindowOptions, anchored,
-    deferred, div, point, px, rgb, size,
+    Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Pixels, Render, ScrollHandle, StatefulInteractiveElement, Styled,
+    Window, WindowBounds, WindowOptions, anchored, deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
@@ -19,11 +18,13 @@ use open_gpui_ui_components::{
     SidebarSection, SidebarSide, SidebarState, Splitter, SplitterPanel, SplitterState, Switch,
     SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController,
     TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
-    Tooltip, TooltipContentKind, TooltipOpenIntent, focus_ring_shadow, init_text_input,
+    Tooltip, TooltipContentKind, TooltipOpenIntent, UiA11yElementExt, focus_ring_shadow,
+    init_text_input,
 };
 use open_gpui_ui_core::{
-    Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
-    Orientation, PanelAdaptiveClass, Rect, Sizable, Size, ThemeTokens, UiPoint, UiPx,
+    AccessibleAction, Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode,
+    DeviceShellSwitchPolicy, Orientation, PanelAdaptiveClass, Rect, Role, Sizable, Size,
+    ThemeTokens, Toggled, UiPoint, UiPx,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -1816,11 +1817,11 @@ impl GalleryShell {
                             .id("gallery-a11y-counter")
                             .focusable()
                             .tab_stop(true)
-                            .role(Role::SpinButton)
+                            .ui_role(Role::SpinButton)
                             .aria_label(format!("Counter {}", a11y.counter))
                             .aria_numeric_value(a11y.counter as f64)
                             .aria_min_numeric_value(0.0)
-                            .on_a11y_action(AccessibleAction::Increment, {
+                            .on_ui_a11y_action(AccessibleAction::Increment, {
                                 let entity = entity.clone();
                                 move |_, _, cx| {
                                     entity
@@ -1828,7 +1829,7 @@ impl GalleryShell {
                                         .ok();
                                 }
                             })
-                            .on_a11y_action(AccessibleAction::Decrement, {
+                            .on_ui_a11y_action(AccessibleAction::Decrement, {
                                 let entity = entity.clone();
                                 move |_, _, cx| {
                                     entity
@@ -1853,7 +1854,7 @@ impl GalleryShell {
                             .id("gallery-a11y-reset")
                             .focusable()
                             .tab_stop(true)
-                            .role(Role::Button)
+                            .ui_role(Role::Button)
                             .aria_label("Reset counter")
                             .px_3()
                             .py_2()
@@ -1873,9 +1874,9 @@ impl GalleryShell {
                             .id("gallery-a11y-switch")
                             .focusable()
                             .tab_stop(true)
-                            .role(Role::Switch)
+                            .ui_role(Role::Switch)
                             .aria_label("Enable foundation switch")
-                            .aria_toggled(a11y.toggled)
+                            .ui_aria_toggled(a11y.toggled)
                             .w(px(224.0))
                             .flex()
                             .items_center()
@@ -1944,7 +1945,7 @@ impl GalleryShell {
             .track_focus(handle)
             .focusable()
             .tab_stop(true)
-            .role(spec.role)
+            .ui_role(spec.role)
             .aria_label(spec.label)
             .cursor_pointer()
             .hover(|style| style.bg(rgb(0xf1f5ee)))
@@ -2446,7 +2447,7 @@ impl GalleryShell {
                     .track_focus(focus_handle)
                     .focusable()
                     .tab_stop(!state.disabled())
-                    .role(Role::Button)
+                    .ui_role(Role::Button)
                     .aria_label(label)
                     .cursor_pointer()
                     .hover(|style| style.bg(rgb(0xf1f5ee)))
