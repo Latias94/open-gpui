@@ -2,6 +2,7 @@
 title: "Open GPUI UI Core Headless Boundary Gate"
 type: refactor
 date: 2026-06-17
+deepened: 2026-06-17
 execution: code
 origin: docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md
 branch: feat/open-gpui-ui-core
@@ -71,9 +72,11 @@ leaving no hidden GPUI dependency in the neutral foundation layer.
   `open-gpui-ui-core` is the gate that makes a future behavior crate meaningful.
 - KTD2. Adaptive layout uses `UiPx`: viewport and container widths enter UI core as neutral logical
   pixels, while GPUI windows convert their concrete `Pixels` values before calling adaptive policy
-  helpers.
-- KTD3. GPUI style conversion is explicit adapter work: render code should call adapter helpers
-  rather than relying on `From<UiPx>` implementations in the neutral crate.
+  helpers. UI core does not keep `Pixels` compatibility aliases because that would preserve the
+  renderer dependency this series is removing.
+- KTD3. GPUI style conversion is explicit adapter work: render code and downstream GPUI
+  applications should call adapter-only helpers rather than relying on `From<UiPx>` implementations
+  in the neutral crate.
 - KTD4. No behavior crate in this series: this plan prepares the boundary and records extraction
   candidates, leaving crate creation and module moves to the next plan.
 - KTD5. The first extraction candidates are deterministic behavior modules: overlay policy,
@@ -158,7 +161,8 @@ they are removed.
 **Approach:** Extend the UI-core guard beyond public geometry blocker tokens. It should inventory
 source references to `open_gpui`, GPUI style conversion impls for `UiPx`, and the package
 dependency in `crates/ui_core/Cargo.toml`. Keep the initial allowlist limited to the current
-`adaptive.rs` import and `geometry.rs` conversion impls so U2 and U3 can shrink it deliberately.
+`adaptive.rs` import, `geometry.rs` conversion impls, and `open_gpui.workspace = true` dependency
+so U2, U3, and U4 can shrink it deliberately.
 Keep component guard coverage focused on public resolved state and adapter-only exports.
 
 **Execution note:** Start with characterization coverage so later units prove the allowlist shrinks
@@ -195,6 +199,7 @@ component resolved-state leaks.
 - Modify `crates/ui_core/src/adaptive.rs`
 - Modify `crates/ui_core/src/prelude.rs` if exports need adjustment
 - Modify `crates/ui_core/tests/headless_contracts.rs`
+- Modify `docs/ui/component-contract.md`
 - Modify `examples/ui-foundation-gallery/src/shell.rs`
 - Modify `examples/ui-foundation-gallery/src/pages/adaptive.rs`
 - Modify `examples/ui-foundation-gallery/tests/foundation_gallery.rs`
@@ -202,8 +207,9 @@ component resolved-state leaks.
 **Approach:** Replace `Pixels as Px` and `px()` defaults with `UiPx` and `ui_px()`. GPUI gallery
 and component code that starts from concrete viewport width should convert to `UiPx` before calling
 `DeviceAdaptivePolicy`, `DeviceShellSwitchPolicy`, `PanelAdaptivePolicy`, or
-`device_adaptive_snapshot`. Keep public adaptive names stable unless implementation shows a
-compatibility alias is required.
+`device_adaptive_snapshot`. Keep public adaptive names stable where possible, but intentionally
+change public adaptive value types to `UiPx` and update in-repo callers rather than adding a UI-core
+`Pixels` shim.
 
 **Patterns to follow:**
 
@@ -219,6 +225,8 @@ compatibility alias is required.
   versus desktop shell behavior.
 - Panel adaptive classification uses `UiPx` and preserves compact, medium, and wide outcomes.
 - The UI-core extraction blocker allowlist no longer includes `Pixels as Px`.
+- Component contract docs describe the adaptive API migration from GPUI `Pixels` inputs to neutral
+  `UiPx` inputs and point GPUI callers at adapter-side conversion helpers.
 
 **Verification:** Adaptive core tests and gallery metadata tests prove the same adaptive behavior
 without GPUI pixel types in UI core.
@@ -236,6 +244,8 @@ adapter conversions.
 
 - Modify `crates/ui_core/src/geometry.rs`
 - Modify `crates/ui_components/src/geometry.rs`
+- Modify `crates/ui_components/src/lib.rs`
+- Modify `crates/ui_components/src/prelude.rs`
 - Modify `crates/ui_components/src/alert_dialog.rs`
 - Modify `crates/ui_components/src/badge.rs`
 - Modify `crates/ui_components/src/button.rs`
@@ -245,11 +255,13 @@ adapter conversions.
 - Modify `crates/ui_components/src/context_menu.rs`
 - Modify `crates/ui_components/src/dialog.rs`
 - Modify `crates/ui_components/src/field.rs`
+- Modify `crates/ui_components/src/focus.rs`
 - Modify `crates/ui_components/src/hover_card.rs`
 - Modify `crates/ui_components/src/icon_button.rs`
 - Modify `crates/ui_components/src/label.rs`
 - Modify `crates/ui_components/src/listbox.rs`
 - Modify `crates/ui_components/src/menu.rs`
+- Modify `crates/ui_components/src/overlay.rs`
 - Modify `crates/ui_components/src/popover.rs`
 - Modify `crates/ui_components/src/radio.rs`
 - Modify `crates/ui_components/src/scroll_area.rs`
@@ -269,9 +281,11 @@ adapter conversions.
 **Approach:** Remove the `From<UiPx>` impls for GPUI `Pixels`, `DefiniteLength`,
 `AbsoluteLength`, and `Length` from UI core. Extend the existing component adapter conversion
 helpers so render code can convert `UiPx`, `UiPoint`, and `UiSize` explicitly before passing them
-to GPUI style APIs. The migration is mechanical but broad: public `*Metrics` and `*State` values
-should stay neutral, while `.h`, `.w`, `.px`, `.py`, `.rounded`, `.text_size`, `.line_height`,
-`.scrollbar_width`, overlay placement, and input style calls become adapter-boundary conversions.
+to GPUI style APIs. Promote the conversion helpers through `open_gpui_ui_components::gpui_adapter`
+as adapter-only public migration surface, not as a headless contract. The migration is mechanical
+but broad: public `*Metrics` and `*State` values should stay neutral, while `.h`, `.w`, `.px`,
+`.py`, `.rounded`, `.text_size`, `.line_height`, `.scrollbar_width`, overlay placement, and input
+style calls become adapter-boundary conversions.
 
 **Patterns to follow:**
 
@@ -296,6 +310,8 @@ should stay neutral, while `.h`, `.w`, `.px`, `.py`, `.rounded`, `.text_size`, `
   neutral.
 - Component render sites compile only after using explicit adapter conversion helpers for neutral
   geometry values.
+- `open_gpui_ui_components::gpui_adapter` exports the intended `UiPx`, `UiPoint`, and `UiSize`
+  conversion helpers for GPUI users that previously relied on implicit UI-core conversion traits.
 - Gallery pages that render neutral geometry continue to compile and display the same metadata.
 
 **Verification:** Component and gallery checks prove no resolved-state behavior changed while the
@@ -408,13 +424,16 @@ state and the deferred crate creation decision.
 - Modify `docs/knowledge/engineering/current-state.md`
 - Modify `docs/knowledge/engineering/log.md`
 - Modify `crates/ui_core/tests/headless_contracts.rs`
+- Modify `crates/ui_components/src/lib.rs`
+- Modify `crates/ui_components/src/prelude.rs`
 - Modify `crates/ui_components/tests/components.rs`
 - Modify `examples/ui-foundation-gallery/tests/foundation_gallery.rs`
 
 **Approach:** Update verification guidance so future UI core changes know that `open_gpui` is not
 allowed in the neutral crate. Keep component docs explicit that GPUI helpers remain public only for
-concrete adapter users. Record the completed boundary work in engineering memory and point the next
-series at actual behavior extraction planning.
+concrete adapter users, including the exported geometry conversion helpers that replace the old
+UI-core conversion traits. Record the completed boundary work in engineering memory and point the
+next series at actual behavior extraction planning.
 
 **Patterns to follow:**
 
@@ -427,6 +446,8 @@ series at actual behavior extraction planning.
 
 - The final core guard has an empty blocker allowlist.
 - The component adapter-only export guard still lists only intentional GPUI helper surfaces.
+- The adapter-only export guard covers public GPUI geometry conversion helpers in the same bucket as
+  `TextInputController`, `GpuiOverlayState`, and `focus_ring_shadow`.
 - The gallery checkpoint test confirms the strict boundary decision and deferred crate creation.
 - Documentation contains no stale statement that adaptive `Pixels as Px` or UI-core `UiPx` GPUI
   conversions are still active blockers.
@@ -469,9 +490,11 @@ tree contains only the intended boundary and documentation changes.
 
 This plan changes a public foundation crate boundary. UI-core users that relied on implicit
 `UiPx` conversion into GPUI style APIs will need to convert through the concrete adapter layer
-instead. The official component crate absorbs that migration internally, so application code using
-official components should see little or no behavioral change. Future crates gain a clearer
-dependency path because they can consume UI core without pulling in the GPUI runtime.
+instead; the intended migration path is the adapter-only helper surface under
+`open_gpui_ui_components::gpui_adapter`. The official component crate absorbs that migration
+internally, so application code using official components should see little or no behavioral
+change. Future crates gain a clearer dependency path because they can consume UI core without
+pulling in the GPUI runtime.
 
 ---
 
@@ -484,6 +507,7 @@ dependency path because they can consume UI core without pulling in the GPUI run
 | UI core still depends on GPUI through an overlooked path | Future extraction starts from a false-clean boundary | Scan both source and `Cargo.toml`, not only public type names. |
 | ADR 0007 becomes a disguised crate-creation plan | The team may start moving modules before the boundary lands | State that this series stops at the design gate and leaves crate creation to a follow-up plan. |
 | Compatibility consumers rely on UI-core GPUI conversions | Downstream code may need migration | Document the change as adapter-boundary cleanup and keep official component APIs stable. |
+| Adapter conversion helpers stay private | Downstream GPUI users may lose the implicit conversion path without a supported replacement | Export the intended helpers through the adapter-only namespace and cover them with public export tests. |
 
 ---
 
@@ -513,6 +537,7 @@ contract.
 - `crates/ui_core/src/overlay.rs`
 - `crates/ui_core/tests/headless_contracts.rs`
 - `crates/ui_components/src/geometry.rs`
+- `crates/ui_components/src/focus.rs`
 - `crates/ui_components/src/roving_focus.rs`
 - `crates/ui_components/src/listbox.rs`
 - `crates/ui_components/src/scroll_area.rs`
