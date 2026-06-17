@@ -800,6 +800,7 @@ impl RenderOnce for Sheet {
         };
         let viewport = window.viewport_size();
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
@@ -816,7 +817,11 @@ impl RenderOnce for Sheet {
         let on_open_change = self.on_open_change;
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("sheet:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -824,6 +829,10 @@ impl RenderOnce for Sheet {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("sheet:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -911,6 +920,7 @@ impl RenderOnce for Sheet {
                             .child(sheet_layer_element(
                                 content,
                                 content_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 viewport,
                                 runtime.clone(),
@@ -927,6 +937,7 @@ impl RenderOnce for Sheet {
 
 fn sheet_surface_element(
     content: SheetContent,
+    debug_id: String,
     state: SheetState,
     geometry: SheetSurfaceGeometry,
     runtime: Entity<SheetRuntime>,
@@ -938,9 +949,11 @@ fn sheet_surface_element(
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
     let escape_change = escape_open_change(state.overlay().policy());
+    let surface_debug_id = debug_id.clone();
 
     div()
         .id("sheet-surface")
+        .debug_selector(move || format!("sheet:{surface_debug_id}:surface"))
         .absolute()
         .left(gpui_px_from_ui(geometry.left))
         .top(gpui_px_from_ui(geometry.top))
@@ -1039,6 +1052,7 @@ fn sheet_surface_element(
                 .when(state.close_affordance().visible(), |this| {
                     this.child(sheet_close_button(
                         &state,
+                        debug_id.clone(),
                         runtime.clone(),
                         close_focus.clone(),
                         on_close.clone(),
@@ -1052,6 +1066,7 @@ fn sheet_surface_element(
 fn sheet_layer_element(
     content: SheetContent,
     content_id: ElementId,
+    debug_id: String,
     state: SheetState,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<SheetRuntime>,
@@ -1066,6 +1081,7 @@ fn sheet_layer_element(
         return modal_sheet_layer_element(
             content,
             content_id,
+            debug_id,
             state,
             viewport,
             geometry,
@@ -1079,6 +1095,10 @@ fn sheet_layer_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("sheet:{debug_id}:layer")
+        })
         .absolute()
         .left(px(0.0))
         .top(px(0.0))
@@ -1087,6 +1107,7 @@ fn sheet_layer_element(
         .child(
             sheet_surface_element(
                 content,
+                debug_id,
                 state,
                 geometry,
                 runtime,
@@ -1102,6 +1123,7 @@ fn sheet_layer_element(
 fn modal_sheet_layer_element(
     content: SheetContent,
     content_id: ElementId,
+    debug_id: String,
     state: SheetState,
     viewport: open_gpui::Size<Pixels>,
     geometry: SheetSurfaceGeometry,
@@ -1115,6 +1137,10 @@ fn modal_sheet_layer_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("sheet:{debug_id}:layer")
+        })
         .absolute()
         .left(px(0.0))
         .top(px(0.0))
@@ -1146,6 +1172,7 @@ fn modal_sheet_layer_element(
         })
         .child(sheet_surface_element(
             content,
+            debug_id,
             state,
             geometry,
             runtime,
@@ -1205,6 +1232,7 @@ fn sheet_surface_geometry(
 
 fn sheet_close_button(
     state: &SheetState,
+    debug_id: String,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
@@ -1217,6 +1245,7 @@ fn sheet_close_button(
 
     div()
         .id("sheet-close")
+        .debug_selector(move || format!("sheet:{debug_id}:close"))
         .w(gpui_px_from_ui(metrics.close_size()))
         .h(gpui_px_from_ui(metrics.close_size()))
         .flex()

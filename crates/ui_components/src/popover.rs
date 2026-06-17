@@ -519,6 +519,7 @@ impl RenderOnce for Popover {
             self.tokens,
         );
         let id = self.id;
+        let debug_id = id.to_string();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let trigger_label = self.trigger_label;
@@ -546,7 +547,11 @@ impl RenderOnce for Popover {
         );
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("popover:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -554,6 +559,10 @@ impl RenderOnce for Popover {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("popover:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -617,6 +626,7 @@ impl RenderOnce for Popover {
                             .child(popover_content_element(
                                 content,
                                 content_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
                                 on_escape_close.clone(),
@@ -632,6 +642,7 @@ impl RenderOnce for Popover {
 fn popover_content_element(
     content: PopoverContent,
     content_id: ElementId,
+    debug_id: String,
     state: PopoverState,
     runtime: open_gpui::Entity<PopoverRuntime>,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -645,6 +656,7 @@ fn popover_content_element(
 
     div()
         .id(content_id)
+        .debug_selector(move || format!("popover:{debug_id}:content"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.content_padding()))

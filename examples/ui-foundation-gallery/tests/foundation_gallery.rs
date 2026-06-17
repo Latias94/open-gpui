@@ -32,12 +32,22 @@ fn set_short_gallery_viewport(cx: &mut VisualTestContext) {
     redraw(cx);
 }
 
-fn open_components_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
-    let (_, cx) =
-        cx.add_window_view(|_, cx| GalleryShell::with_selected_page(GalleryPage::Components, cx));
+fn open_gallery_page(
+    cx: &mut open_gpui::TestAppContext,
+    page: GalleryPage,
+) -> &mut VisualTestContext {
+    let (_, cx) = cx.add_window_view(|_, cx| GalleryShell::with_selected_page(page, cx));
     set_short_gallery_viewport(cx);
     redraw(cx);
     cx
+}
+
+fn open_components_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
+    open_gallery_page(cx, GalleryPage::Components)
+}
+
+fn open_overlay_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
+    open_gallery_page(cx, GalleryPage::Overlay)
 }
 
 fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
@@ -64,7 +74,7 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
         redraw(cx);
     }
 
-    panic!("expected `{selector}` to become visible after scrolling the Components page");
+    panic!("expected `{selector}` to become visible after scrolling the gallery page");
 }
 
 fn scroll_navigation_until_visible(
@@ -118,6 +128,26 @@ fn drag(
     cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
     cx.run_until_parked();
     redraw(cx);
+}
+
+fn click(cx: &mut VisualTestContext, selector: &'static str) {
+    let target = bounds(cx, selector).center();
+    cx.simulate_click(target, Default::default());
+    redraw(cx);
+}
+
+fn click_point(cx: &mut VisualTestContext, point: open_gpui::Point<Pixels>) {
+    cx.simulate_click(point, Default::default());
+    redraw(cx);
+}
+
+fn press_escape(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+}
+
+fn outside_top_left(layer: Bounds<Pixels>) -> open_gpui::Point<Pixels> {
+    point(layer.left() + px(12.0), layer.top() + px(12.0))
 }
 
 #[test]
@@ -1397,6 +1427,150 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::ListBoxOption"));
     assert!(signals.contains(&"Role::EditableComboBox"));
     assert!(signals.contains(&"Role::ProgressIndicator"));
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-popover-control:controlled");
+    click(cx, "gallery:overlay-popover-control:controlled");
+    assert!(
+        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
+            .is_some(),
+        "expected controlled Popover content to open from its real trigger"
+    );
+
+    let popover_content = bounds(cx, "popover:overlay-popover-demo:controlled:content");
+    let outside_target = point(
+        popover_content.right() + px(24.0),
+        popover_content.bottom() + px(24.0),
+    );
+    click_point(cx, outside_target);
+
+    assert!(
+        cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
+            .is_none(),
+        "expected outside press to dismiss the controlled Popover"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-dialog-control:controlled-modal");
+    click(cx, "gallery:overlay-dialog-control:controlled-modal");
+    let dialog_layer = bounds(cx, "dialog:overlay-dialog-demo:controlled-modal:layer");
+    assert!(
+        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
+            .is_some(),
+        "expected controlled Dialog surface to open from its real trigger"
+    );
+
+    click_point(cx, outside_top_left(dialog_layer));
+    assert!(
+        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
+            .is_none(),
+        "expected modal barrier outside press to dismiss the controlled Dialog"
+    );
+
+    click(cx, "gallery:overlay-dialog-control:controlled-modal");
+    assert!(
+        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
+            .is_some(),
+        "expected controlled Dialog surface to reopen after barrier dismissal"
+    );
+    press_escape(cx);
+    assert!(
+        cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
+            .is_none(),
+        "expected Escape to dismiss the controlled Dialog"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-sheet-control:right-non-modal");
+    click(cx, "gallery:overlay-sheet-control:right-non-modal");
+    assert!(
+        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
+            .is_some(),
+        "expected controlled non-modal Sheet surface to open from its real trigger"
+    );
+
+    let outside_target = bounds(cx, "gallery:content").center();
+    click_point(cx, outside_target);
+
+    assert!(
+        cx.debug_bounds("sheet:overlay-sheet-demo:right-non-modal:surface")
+            .is_none(),
+        "expected outside press to dismiss the controlled non-modal Sheet"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_closes_menu_from_escape_and_outside_press(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-menu-control:controlled");
+    click(cx, "gallery:overlay-menu-control:controlled");
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
+            .is_some(),
+        "expected controlled Menu content to open from its real trigger"
+    );
+    press_escape(cx);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
+            .is_none(),
+        "expected Escape to dismiss the controlled Menu"
+    );
+
+    click(cx, "gallery:overlay-menu-control:controlled");
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
+            .is_some(),
+        "expected controlled Menu content to reopen after Escape"
+    );
+    let outside_target = bounds(cx, "gallery:content").center();
+    click_point(cx, outside_target);
+    assert!(
+        cx.debug_bounds("menu:overlay-menu-demo:controlled:content")
+            .is_none(),
+        "expected outside press to dismiss the controlled Menu"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_opens_context_menu_from_control_and_closes_from_escape(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-context-menu-control:controlled");
+    click(cx, "gallery:overlay-context-menu-control:controlled");
+    assert!(
+        cx.debug_bounds("context-menu:overlay-context-menu-demo:controlled:surface")
+            .is_some(),
+        "expected controlled ContextMenu surface to open from the gallery control"
+    );
+
+    press_escape(cx);
+
+    assert!(
+        cx.debug_bounds("context-menu:overlay-context-menu-demo:controlled:surface")
+            .is_none(),
+        "expected Escape to dismiss the controlled ContextMenu"
+    );
 }
 
 #[open_gpui::test]

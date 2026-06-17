@@ -547,6 +547,7 @@ impl RenderOnce for Dialog {
         );
         let viewport = window.viewport_size();
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
@@ -561,7 +562,11 @@ impl RenderOnce for Dialog {
         let overlay_adapter = gpui_overlay_state(state.overlay());
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("dialog:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -569,6 +574,10 @@ impl RenderOnce for Dialog {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("dialog:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -631,6 +640,7 @@ impl RenderOnce for Dialog {
                             .child(dialog_layer_element(
                                 content,
                                 content_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 viewport,
                                 runtime.clone(),
@@ -647,6 +657,7 @@ impl RenderOnce for Dialog {
 fn dialog_layer_element(
     content: DialogContent,
     content_id: ElementId,
+    debug_id: String,
     state: DialogState,
     viewport: open_gpui::Size<Pixels>,
     runtime: open_gpui::Entity<DialogRuntime>,
@@ -663,6 +674,10 @@ fn dialog_layer_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("dialog:{debug_id}:layer")
+        })
         .absolute()
         .left(px(0.0))
         .top(px(0.0))
@@ -686,6 +701,7 @@ fn dialog_layer_element(
         .child(
             div()
                 .id("dialog-surface")
+                .debug_selector(move || format!("dialog:{debug_id}:surface"))
                 .absolute()
                 .left(x)
                 .top(y)

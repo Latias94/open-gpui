@@ -49,6 +49,12 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging. Run the gallery package tests before relying on manual dogfood for those
 paths.
 
+The gallery package also includes Overlay-page runtime smoke coverage for popover, modal dialog,
+non-modal sheet, menu, and context-menu dismissal. The Overlay gallery intentionally keeps
+default-open contract samples visually closed at page load so modal barriers and floating layers do
+not block page scrolling; the metadata rows still report each sample's resolved default-open
+contract.
+
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
 initial focus intent, and placement input without opening a GPUI window.
@@ -110,25 +116,25 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    Tooltip samples, hover `Hover or focus`, tab to `Focus only`, and confirm each reveals
    descriptive tooltip content while `Disabled` remains unfocusable and closed; `Manual delayed`
    should stay visible and report its custom delay policy. In the HoverCard samples, confirm
-   `Profile preview` starts visible and can stay open while pointer or keyboard focus is on the
-   trigger/content, `Focus preview` opens only from keyboard focus, and `Manual card` opens and
-   closes from its gallery control with pass-through or consume outside-press metadata shown in the
-   state row. In the Popover samples, confirm `Default open` starts visible, `Controlled` opens
-   and closes from its gallery control, Escape closes the controlled popover, outside press closes
-   the visible popovers, and the
-   `Consume outside` sample reports a consuming outside-press policy while `Disabled` remains
-   closed. In the Dialog samples, open and close `Controlled modal`, confirm Escape and the modal
-   barrier can close it without activating underlay controls, confirm `Default open` reports a
-   blocking modal layer, confirm `Outside ignored` remains open on outside press, and confirm
-   `Disabled` stays closed. In the AlertDialog samples, open `Delete project`, confirm the
-   destructive action is explicit, cancel receives the default focus, outside press is consumed
-   without dismissing, Escape closes it, and focus returns to the trigger; confirm the safe cancel
-   sample starts open and keeps the underlay blocked until an explicit action closes it. In the
-   Sheet samples, confirm the left modal sheet blocks underlay input and closes by Escape/outside
-   press/close control, the right non-modal sheet reports pass-through outside behavior without a
-   blocking modal barrier, and the
-   bottom sticky sheet is attached to the bottom edge, hides the close affordance, and ignores
-   outside press. In the Menu samples, confirm arrow keys move roving focus over enabled
+   `Profile preview` reports its default-open interactive contract without visually blocking the
+   page at load, `Focus preview` opens only from keyboard focus, and `Manual card` opens and closes
+   from its gallery control with pass-through or consume outside-press metadata shown in the state
+   row. In the Popover samples, confirm `Default open` reports the default-open contract
+  without visually blocking the page at load, `Controlled` opens and closes from its gallery
+  control, Escape closes the controlled popover, outside press closes the visible popovers, and the
+  `Consume outside` sample reports a consuming outside-press policy while `Disabled` remains
+  closed. In the Dialog samples, open and close `Controlled modal`, confirm Escape and the modal
+  barrier can close it without activating underlay controls, confirm `Default open` reports a
+  blocking modal layer without visually blocking the page at load, confirm `Outside ignored`
+  reports the sticky outside policy, and confirm `Disabled` stays closed. In the AlertDialog
+  samples, open `Delete project`, confirm the destructive action is explicit, cancel receives the
+  default focus, outside press is consumed without dismissing, Escape closes it, and focus returns
+  to the trigger; confirm the safe cancel sample reports its default-open and modal-underlay
+  contract without visually blocking the page at load. In the Sheet samples, confirm the left modal
+  sheet reports blocking underlay input, the right non-modal sheet opens from its gallery control
+  and reports pass-through outside behavior without a blocking modal barrier, and the bottom sticky
+  sheet reports bottom-edge attachment, hidden close affordance, and ignored outside press. In the
+  Menu samples, confirm arrow keys move roving focus over enabled
    action items while skipping separators and disabled items, Enter/Space activates the focused
    action and closes the menu, Escape closes the controlled menu, and `Outside ignored` keeps its
    explicit outside policy. In the ContextMenu samples, right-click the hotspot and confirm the

@@ -353,6 +353,7 @@ impl RenderOnce for ContextMenu {
             self.tokens,
         );
         let id = self.id;
+        let debug_id = id.to_string();
         let surface_id: ElementId = (id.clone(), "surface").into();
         let hotspot_id: ElementId = (id.clone(), "hotspot").into();
         let items = self.items;
@@ -368,7 +369,11 @@ impl RenderOnce for ContextMenu {
         let open_change = on_open_change.clone();
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("context-menu:{debug_id}:root")
+            })
             .relative()
             .min_h(px(80.0))
             .min_w(px(220.0))
@@ -393,6 +398,10 @@ impl RenderOnce for ContextMenu {
             .child(
                 div()
                     .id(hotspot_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("context-menu:{debug_id}:hotspot")
+                    })
                     .ui_role(Role::Button)
                     .aria_label(label.clone())
                     .focusable()
@@ -416,6 +425,7 @@ impl RenderOnce for ContextMenu {
                             .child(context_menu_surface(
                                 items,
                                 surface_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
                                 on_escape_close.clone(),
@@ -432,6 +442,7 @@ impl RenderOnce for ContextMenu {
 fn context_menu_surface(
     items: Vec<MenuItem>,
     surface_id: ElementId,
+    debug_id: String,
     state: ContextMenuState,
     runtime: open_gpui::Entity<ContextMenuRuntime>,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -450,6 +461,7 @@ fn context_menu_surface(
 
     div()
         .id(surface_id)
+        .debug_selector(move || format!("context-menu:{debug_id}:surface"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.surface_padding()))

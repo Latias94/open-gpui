@@ -2023,6 +2023,7 @@ impl GalleryShell {
 
         div()
             .id("gallery-overlay-page")
+            .debug_selector(|| "gallery:overlay-page".into())
             .relative()
             .flex()
             .flex_col()
@@ -2561,7 +2562,7 @@ impl GalleryShell {
                             .ok();
                     })
             }
-            "profile-preview" => hover_card.default_open(state.default_open()),
+            "profile-preview" => hover_card.default_open(false),
             _ => hover_card,
         };
 
@@ -2642,12 +2643,15 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_popover_open(open, cx))
                         .ok();
                 }),
-            "default-open" => popover.default_open(state.default_open()),
-            _ => popover.open(state.open()),
+            _ => popover.default_open(false),
         };
 
         div()
             .id(format!("overlay-popover-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-popover-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2664,6 +2668,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-popover-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-popover-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()
@@ -2727,12 +2735,15 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
                         .ok();
                 }),
-            "default-open" => dialog.default_open(state.default_open()),
-            _ => dialog.open(state.open()),
+            _ => dialog.default_open(false),
         };
 
         div()
             .id(format!("overlay-dialog-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-dialog-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2749,6 +2760,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-dialog-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-dialog-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()
@@ -2817,12 +2832,15 @@ impl GalleryShell {
                             .ok();
                     })
             }
-            "safe-cancel" => alert_dialog.default_open(state.default_open()),
-            _ => alert_dialog.open(state.open()),
+            _ => alert_dialog.default_open(false),
         };
 
         div()
             .id(format!("overlay-alert-dialog-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-alert-dialog-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2839,6 +2857,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-alert-dialog-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-alert-dialog-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()
@@ -2910,13 +2932,15 @@ impl GalleryShell {
                     .update(cx, |this, cx| this.set_controlled_sheet_open(open, cx))
                     .ok();
             }),
-            "left-modal" => sheet.default_open(state.default_open()),
-            "bottom-sticky" => sheet.default_open(state.default_open()),
-            _ => sheet.open(state.open()),
+            _ => sheet.default_open(false),
         };
 
         div()
             .id(format!("overlay-sheet-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-sheet-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2933,6 +2957,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-sheet-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-sheet-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()
@@ -2985,13 +3013,17 @@ impl GalleryShell {
                         .ok();
                 }),
             "default-open" => menu
-                .default_open(state.default_open())
+                .default_open(false)
                 .focused_value(state_focused_value(&state).unwrap_or("save")),
-            _ => menu.open(state.open()),
+            _ => menu.default_open(false),
         };
 
         div()
             .id(format!("overlay-menu-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-menu-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -3008,6 +3040,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-menu-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-menu-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()
@@ -3066,12 +3102,15 @@ impl GalleryShell {
                         })
                         .ok();
                 }),
-            "default-open" => context_menu.default_open(state.default_open()),
-            _ => context_menu.open(state.open()),
+            _ => context_menu.default_open(false),
         };
 
         div()
             .id(format!("overlay-context-menu-sample-card:{}", sample_id))
+            .debug_selector({
+                let sample_id = sample_id.to_owned();
+                move || format!("gallery:overlay-context-menu-sample:{sample_id}")
+            })
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -3088,6 +3127,10 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-context-menu-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-context-menu-control:{sample_id}")
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()

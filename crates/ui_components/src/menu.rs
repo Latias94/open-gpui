@@ -921,6 +921,7 @@ impl RenderOnce for Menu {
         );
         let first_focusable_value = first_focusable_descriptor_value(&descriptors);
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
@@ -949,7 +950,11 @@ impl RenderOnce for Menu {
         );
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("menu:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -957,6 +962,10 @@ impl RenderOnce for Menu {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("menu:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -1023,6 +1032,7 @@ impl RenderOnce for Menu {
                             .child(menu_content_element(
                                 items,
                                 content_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
                                 on_escape_close.clone(),
@@ -1039,6 +1049,7 @@ impl RenderOnce for Menu {
 fn menu_content_element(
     items: Vec<MenuItem>,
     content_id: ElementId,
+    debug_id: String,
     state: MenuState,
     runtime: open_gpui::Entity<MenuRuntime>,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
@@ -1057,6 +1068,10 @@ fn menu_content_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("menu:{debug_id}:content")
+        })
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.surface_padding()))

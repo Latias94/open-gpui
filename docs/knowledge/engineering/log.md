@@ -1,6 +1,18 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added a gallery-level Overlay interaction smoke gate. The new runtime tests drive
+  controlled Popover outside dismissal, modal Dialog barrier and Escape dismissal, non-modal Sheet
+  outside dismissal, Menu Escape/outside dismissal, and ContextMenu controlled open/Escape dismissal
+  through `open_gpui::test`.
+* **Decision**: Overlay gallery default-open contract samples now render visually closed at page
+  load so floating overlays and modal barriers do not block page scrolling or later samples. The
+  state rows still expose the resolved default-open contracts for metadata verification.
+* **Verification**: Overlay smoke work passed `cargo fmt -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-foundation-gallery
+  overlay_gallery_smoke`, `cargo nextest run -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only CRLF warnings.
 * **Update**: Added a gallery-level Components interaction smoke gate. The gallery tests now render
   the full Components page and drive short-viewport page scrolling/navigation reset, Select popup
   outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and Splitter

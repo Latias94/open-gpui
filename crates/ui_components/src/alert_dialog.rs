@@ -861,6 +861,7 @@ impl RenderOnce for AlertDialog {
         };
         let viewport = window.viewport_size();
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_label = self.trigger_label;
@@ -878,7 +879,11 @@ impl RenderOnce for AlertDialog {
         let on_open_change = self.on_open_change;
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("alert-dialog:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -886,6 +891,10 @@ impl RenderOnce for AlertDialog {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("alert-dialog:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -970,6 +979,7 @@ impl RenderOnce for AlertDialog {
                             .snap_to_window()
                             .child(alert_dialog_layer_element(
                                 content_id.clone(),
+                                debug_id.clone(),
                                 state.clone(),
                                 viewport,
                                 runtime.clone(),
@@ -988,6 +998,7 @@ impl RenderOnce for AlertDialog {
 
 fn alert_dialog_layer_element(
     content_id: ElementId,
+    debug_id: String,
     state: AlertDialogState,
     viewport: open_gpui::Size<Pixels>,
     runtime: Entity<AlertDialogRuntime>,
@@ -1006,6 +1017,10 @@ fn alert_dialog_layer_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("alert-dialog:{debug_id}:layer")
+        })
         .absolute()
         .left(px(0.0))
         .top(px(0.0))
@@ -1036,6 +1051,7 @@ fn alert_dialog_layer_element(
         .child(
             div()
                 .id("alert-dialog-surface")
+                .debug_selector(move || format!("alert-dialog:{debug_id}:surface"))
                 .absolute()
                 .left(x)
                 .top(y)
