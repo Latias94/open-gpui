@@ -69,6 +69,26 @@
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery`.
+* **Update**: Started U6 adapter-only API classification. `FocusRing` now uses neutral `UiPx` for
+  public width metadata, while `focus_ring_shadow` remains the GPUI `BoxShadow` adapter helper.
+  Added `open_gpui_ui_components::gpui_adapter` as the explicit grouping for concrete GPUI helper
+  exports such as `TextInputController`, text-input initialization, `focus_ring_shadow`,
+  `GpuiOverlayState`, and overlay scheduling helpers.
+* **Verification**: U6 focused checks passed `cargo check -p open-gpui-ui-components`, `cargo test
+  -p open-gpui-ui-components adapter_only_public_surfaces_match_allowlist -- --nocapture`, `cargo
+  test -p open-gpui-ui-components gpui_adapter_exports_group_runtime_specific_surfaces --
+  --nocapture`, and `cargo test -p open-gpui-ui-components
+  focus_ring_preserves_token_intent_without_layout_shift -- --nocapture`.
+* **Review**: U6 read-only review subagent `u6_adapter_classification_review` did not return
+  findings before timeout and was interrupted. Local self-review found and fixed an accidental
+  wildcard public re-export in the prelude adapter grouping, then added
+  `public_reexports_stay_explicit_without_wildcards`.
+* **Verification**: U6 final gate passed `cargo fmt -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-core`, `cargo check -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run
+  -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-foundation-gallery`, and `git
+  diff --check` with only existing CRLF warnings.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

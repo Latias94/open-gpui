@@ -41,6 +41,19 @@ pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
 
+/// GPUI-specific adapter APIs that are intentionally outside renderer-neutral component state.
+///
+/// These exports remain public for applications that use the concrete GPUI components, but a
+/// future headless crate should not depend on them as component contracts.
+pub mod gpui_adapter {
+    pub use crate::focus::focus_ring_shadow;
+    pub use crate::overlay::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
+        GpuiOverlayState, default_deferred_priority, gpui_anchor, point_anchor_placement,
+    };
+    pub use crate::text_input::{TextInputController, init as init_text_input};
+}
+
 pub use a11y::{
     UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
     gpui_toggled_from_ui,

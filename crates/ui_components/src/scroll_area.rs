@@ -225,7 +225,10 @@ impl ScrollArea {
         self.axis(ScrollAreaAxis::Both)
     }
 
-    /// Uses an externally owned scroll handle.
+    /// Uses an externally owned GPUI scroll handle.
+    ///
+    /// This is an adapter-only escape hatch for applications that need direct offset control.
+    /// The handle is not stored in [`ScrollAreaState`].
     pub fn scroll_handle(mut self, scroll_handle: &ScrollHandle) -> Self {
         self.scroll_handle = Some(scroll_handle.clone());
         self

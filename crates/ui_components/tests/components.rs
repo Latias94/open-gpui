@@ -4,10 +4,10 @@ use open_gpui::{
 };
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
-    BadgeVariant, Button, ButtonVariant, Checkbox, ColorState, Combobox, ComboboxGroup,
-    ComboboxOpenMode, ComboboxOption, Command, CommandGroup, CommandItem, CommandOpenMode,
-    ContextMenu, DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode,
-    Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard,
+    BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
+    ComboboxGroup, ComboboxOpenMode, ComboboxOption, Command, CommandGroup, CommandItem,
+    CommandOpenMode, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog,
+    DialogOpenMode, Field, FocusRing, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard,
     HoverCardContentKind, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
     Label, Listbox, ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
@@ -1481,8 +1481,11 @@ fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
         ("focus.rs", "BoxShadow"),
         ("focus.rs", "focus_ring_shadow"),
+        ("lib.rs", "GpuiOverlayState"),
         ("lib.rs", "TextInputController"),
         ("lib.rs", "focus_ring_shadow"),
+        ("overlay.rs", "GpuiOverlayState"),
+        ("prelude.rs", "GpuiOverlayState"),
         ("prelude.rs", "TextInputController"),
         ("prelude.rs", "focus_ring_shadow"),
         ("scroll_area.rs", "ScrollHandle"),
@@ -1500,6 +1503,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
         "BoxShadow",
         "Entity<TextInputController>",
         "EntityInputHandler",
+        "GpuiOverlayState",
         "ScrollHandle",
         "TextInputController",
         "focus_ring_shadow",
@@ -1509,6 +1513,66 @@ fn adapter_only_public_surfaces_match_allowlist() {
     assert_eq!(
         actual, expected,
         "adapter-only public surfaces changed; update this inventory as U6 classifies or narrows GPUI-specific APIs"
+    );
+}
+
+#[test]
+fn gpui_adapter_exports_group_runtime_specific_surfaces() {
+    use open_gpui_ui_components::{self as root, prelude};
+
+    let root_overlay = root::gpui_adapter::GpuiOverlayAdapterConfig::new(
+        OverlayLayerKind::Tooltip,
+        OverlayPresence::open(),
+    )
+    .state();
+    let prelude_overlay = prelude::gpui_adapter::GpuiOverlayAdapterConfig::new(
+        OverlayLayerKind::Tooltip,
+        OverlayPresence::open(),
+    )
+    .state();
+
+    let _root_init: fn(&mut open_gpui::App) = root::gpui_adapter::init_text_input;
+    let _prelude_init: fn(&mut open_gpui::App) = prelude::gpui_adapter::init_text_input;
+    let _root_controller: Option<root::gpui_adapter::TextInputController> = None;
+    let _prelude_controller: Option<prelude::gpui_adapter::TextInputController> = None;
+
+    assert_eq!(
+        root_overlay.deferred_priority(),
+        root::gpui_adapter::default_deferred_priority(OverlayLayerKind::Tooltip)
+    );
+    assert_eq!(
+        prelude_overlay.snap_margin(),
+        prelude::gpui_adapter::DEFAULT_OVERLAY_SAFE_MARGIN
+    );
+    assert_eq!(
+        root::gpui_adapter::focus_ring_shadow(FocusRing::from_color(ColorIntent::new(
+            semantic::FOCUS_RING,
+            0x2f80ed,
+        )))[0]
+            .spread_radius,
+        px(2.0)
+    );
+}
+
+#[test]
+fn public_reexports_stay_explicit_without_wildcards() {
+    let mut wildcard_exports = Vec::new();
+    for file_name in ["lib.rs", "prelude.rs"] {
+        let source =
+            std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+                .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+
+        for (line_number, line) in source.lines().enumerate() {
+            if line.contains("pub use ") && line.contains("::*") {
+                wildcard_exports.push(format!("{file_name}:{}", line_number + 1));
+            }
+        }
+    }
+
+    assert_eq!(
+        wildcard_exports,
+        Vec::<String>::new(),
+        "public re-exports must stay explicit, including adapter-only groupings"
     );
 }
 
@@ -3094,7 +3158,7 @@ fn focus_ring_preserves_token_intent_without_layout_shift() {
     assert_eq!(ring.color().token(), semantic::FOCUS_RING);
     assert_eq!(ring.width(), DEFAULT_FOCUS_RING_WIDTH);
     assert!(!ring.changes_layout());
-    assert_eq!(shadow[0].spread_radius, DEFAULT_FOCUS_RING_WIDTH);
+    assert_eq!(shadow[0].spread_radius, px(2.0));
     assert_eq!(shadow[0].blur_radius, px(0.0));
     assert!(!shadow[0].inset);
 }

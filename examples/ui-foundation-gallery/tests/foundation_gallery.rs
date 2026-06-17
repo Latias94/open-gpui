@@ -110,7 +110,10 @@ fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
     assert!(component_contract.contains(
         "ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint."
     ));
-    assert!(component_contract.contains("TextInputController` is GPUI adapter code"));
+    assert!(component_contract.contains("open_gpui_ui_components::gpui_adapter"));
+    assert!(component_contract.contains("TextInputController"));
+    assert!(component_contract.contains("ScrollHandle"));
+    assert!(component_contract.contains("focus_ring_shadow"));
 }
 
 #[test]

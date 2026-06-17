@@ -170,6 +170,9 @@ impl TextInputMetrics {
 ///
 /// The controller owns editing state and implements GPUI's platform text input handler. It is kept
 /// separate from `TextInputState` so resolved component state remains renderer-neutral.
+///
+/// This is a GPUI adapter-only API. A future headless text model should not depend on
+/// `EntityInputHandler`, `FocusHandle`, shaped lines, or GPUI window/layout types exposed here.
 #[derive(Debug)]
 pub struct TextInputController {
     focus_handle: FocusHandle,
@@ -966,7 +969,9 @@ impl TextInput {
         }
     }
 
-    /// Binds this input to an editable controller entity.
+    /// Binds this input to an editable GPUI controller entity.
+    ///
+    /// The controller is adapter-owned and intentionally stays out of [`TextInputState`].
     pub fn controller(mut self, controller: Entity<TextInputController>) -> Self {
         self.controller = Some(controller);
         self

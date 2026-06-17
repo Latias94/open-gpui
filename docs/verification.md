@@ -62,6 +62,12 @@ Public component metrics and accessibility state now use neutral UI-core vocabul
 GPUI `Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the
 guard inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional
 adapter convenience until the strict crate boundary is split.
+`adapter_only_public_surfaces_match_allowlist` and
+`gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
+surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
+`GpuiOverlayState`, and related adapter scheduling helpers must stay classified instead of drifting
+into resolved state. `FocusRing` itself uses neutral `UiPx`; only `focus_ring_shadow` returns a
+GPUI `BoxShadow`.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

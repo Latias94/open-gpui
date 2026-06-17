@@ -1,23 +1,25 @@
 //! Layout-stable focus ring primitive.
 
-use open_gpui::{BoxShadow, Pixels, point, px};
+use open_gpui::{BoxShadow, point, px};
+use open_gpui_ui_core::{UiPx, ui_px};
 
 use crate::color::ColorIntent;
+use crate::geometry::gpui_px_from_ui;
 use crate::theme::ThemeResolver;
 
 /// Default outer focus ring width.
-pub const DEFAULT_FOCUS_RING_WIDTH: Pixels = px(2.0);
+pub const DEFAULT_FOCUS_RING_WIDTH: UiPx = ui_px(2.0);
 
 /// Resolved focus ring metadata for interactive components.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FocusRing {
     color: ColorIntent,
-    width: Pixels,
+    width: UiPx,
 }
 
 impl FocusRing {
     /// Creates a focus ring from a color intent and paint width.
-    pub const fn new(color: ColorIntent, width: Pixels) -> Self {
+    pub const fn new(color: ColorIntent, width: UiPx) -> Self {
         Self { color, width }
     }
 
@@ -32,7 +34,7 @@ impl FocusRing {
     }
 
     /// Returns the outer focus ring width.
-    pub const fn width(self) -> Pixels {
+    pub const fn width(self) -> UiPx {
         self.width
     }
 
@@ -43,12 +45,15 @@ impl FocusRing {
 }
 
 /// Converts a focus ring into a GPUI box shadow for render adapters.
+///
+/// This is an adapter-only helper: resolved component state should expose [`FocusRing`] and leave
+/// concrete `BoxShadow` painting to the GPUI renderer boundary.
 pub fn focus_ring_shadow(ring: FocusRing) -> Vec<BoxShadow> {
     vec![BoxShadow {
         color: ThemeResolver::resolve(ring.color).into(),
         offset: point(px(0.0), px(0.0)),
         blur_radius: px(0.0),
-        spread_radius: ring.width,
+        spread_radius: gpui_px_from_ui(ring.width),
         inset: false,
     }]
 }
@@ -66,7 +71,7 @@ mod tests {
         let shadow = focus_ring_shadow(ring);
 
         assert_eq!(shadow.len(), 1);
-        assert_eq!(shadow[0].spread_radius, DEFAULT_FOCUS_RING_WIDTH);
+        assert_eq!(shadow[0].spread_radius, px(2.0));
         assert_eq!(shadow[0].blur_radius, px(0.0));
         assert!(!shadow[0].inset);
     }

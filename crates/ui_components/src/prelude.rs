@@ -1,5 +1,14 @@
 //! Convenient re-exports for Open GPUI UI components.
 
+/// GPUI-specific adapter APIs that are intentionally outside renderer-neutral component state.
+pub mod gpui_adapter {
+    pub use crate::gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
+        GpuiOverlayState, TextInputController, default_deferred_priority, focus_ring_shadow,
+        gpui_anchor, init_text_input, point_anchor_placement,
+    };
+}
+
 pub use crate::a11y::{
     UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
     gpui_toggled_from_ui,

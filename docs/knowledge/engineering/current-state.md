@@ -67,8 +67,21 @@ status: "active"
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
   -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery`.
-- Next action: Commit U5, then start U6 by classifying GPUI-specific text input, scroll handle,
-  focus-ring, and rendering helper APIs as adapter-only surfaces.
+- Done: Started U6 adapter-only API classification. `FocusRing` now exposes neutral `UiPx` width,
+  while `focus_ring_shadow` remains the GPUI `BoxShadow` adapter helper. `TextInputController`,
+  text-input initialization, `focus_ring_shadow`, `GpuiOverlayState`, and GPUI overlay scheduling
+  helpers are grouped under `open_gpui_ui_components::gpui_adapter`; externally supplied
+  `ScrollHandle` remains documented as a `ScrollArea` adapter escape hatch.
+- Review: U6 read-only review subagent `u6_adapter_classification_review` did not return findings
+  before timeout and was interrupted; local self-review removed an accidental wildcard public
+  re-export and added a guard for explicit re-exports.
+- Last verified: U6 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run
+  -p open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
+- Next action: Commit U6, then update ADR 0006/U7 checkpoint with the final extraction readiness
+  decision.
 
 ## 2026-06-16
 
