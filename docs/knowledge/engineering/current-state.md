@@ -11,6 +11,15 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Unified gallery sample debug selectors so the Components and Overlay pages derive stable
+  selector strings from sample-owned helpers instead of repeating family prefixes inline in the
+  shell and tests. The Components gallery smoke now derives the official sample selector list from
+  the sample builders and checks the visible catalog against the rendered page.
+- Last verified for the selector unification pass: `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo check -p open-gpui --tests`, `cargo check -p
+  open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo run -p xtask -- verify`.
+
 - Done: Began the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState` now
   exposes `ProgressVisualMode`, determinate indicator fractions, and indeterminate indicator
   fractions; the GPUI renderer uses a short non-percentage segment for indeterminate progress

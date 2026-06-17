@@ -880,12 +880,12 @@ impl VisualTestContext {
     }
 
     /// debug_bounds returns the bounds of the element with the given selector.
-    pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
+    pub fn debug_bounds(&mut self, selector: &str) -> Option<Bounds<Pixels>> {
         self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
     /// Returns whether the element with the given debug selector owns the current focus.
-    pub fn debug_selector_is_focused(&mut self, selector: &'static str) -> bool {
+    pub fn debug_selector_is_focused(&mut self, selector: &str) -> bool {
         self.update(|window, _| {
             let Some(focus_id) = window.rendered_frame.debug_focus_handles.get(selector) else {
                 return false;

@@ -1,6 +1,14 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Unified gallery sample debug selectors so the Components and Overlay pages derive
+  stable selector strings from sample-owned helpers instead of repeating family prefixes inline in
+  the shell and tests. The Components gallery smoke now derives the official sample selector list
+  from the sample builders and checks the visible catalog against the rendered page.
+* **Verification**: The selector unification pass passed `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo check -p open-gpui --tests`, `cargo check -p
+  open-gpui-ui-components --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery`,
+  `cargo nextest run -p open-gpui-ui-components`, and `cargo run -p xtask -- verify`.
 * **Update**: Started the second behavior-alignment loop after commit `ea9ffbc`. `ProgressState`
   now exposes `ProgressVisualMode`, indicator start fractions, and indicator width fractions.
   Indeterminate progress renders as a short non-percentage segment instead of a fixed 33% fill.

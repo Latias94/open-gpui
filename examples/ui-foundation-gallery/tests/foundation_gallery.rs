@@ -59,87 +59,116 @@ fn open_overlay_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestCo
     open_gallery_page(cx, GalleryPage::Overlay)
 }
 
-fn official_component_sample_selectors() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("Button", "gallery:component-button-sample:default"),
-        ("Badge", "gallery:component-badge-sample:default"),
-        ("IconButton", "gallery:component-icon-button-sample:search"),
-        ("Switch", "gallery:component-switch-sample:off"),
-        ("Checkbox", "gallery:component-checkbox-sample:unchecked"),
+macro_rules! first_selector {
+    ($samples:expr) => {{
+        $samples
+            .into_iter()
+            .next()
+            .expect("expected at least one official sample")
+            .debug_selector()
+    }};
+}
+
+fn official_component_sample_selectors() -> Vec<(&'static str, String)> {
+    let tokens = ThemeTokens::default();
+    vec![
+        (
+            "Button",
+            first_selector!(pages::components::button_samples(tokens)),
+        ),
+        (
+            "Badge",
+            first_selector!(pages::components::badge_samples(tokens)),
+        ),
+        (
+            "IconButton",
+            first_selector!(pages::components::icon_button_samples(tokens)),
+        ),
+        (
+            "Switch",
+            first_selector!(pages::components::switch_samples(tokens)),
+        ),
+        (
+            "Checkbox",
+            first_selector!(pages::components::checkbox_samples(tokens)),
+        ),
         (
             "RadioGroup",
-            "gallery:component-radio-sample:persona-radios",
+            first_selector!(pages::components::radio_group_samples(tokens)),
         ),
-        ("Toggle", "gallery:component-toggle-sample:ghost-off"),
-        ("Toolbar", "gallery:component-toolbar-sample:editor-toolbar"),
+        (
+            "Toggle",
+            first_selector!(pages::components::toggle_samples(tokens)),
+        ),
+        (
+            "Toolbar",
+            first_selector!(pages::components::toolbar_samples(tokens)),
+        ),
         (
             "Sidebar",
-            "gallery:component-sidebar-sample:workspace-sidebar",
+            first_selector!(pages::components::sidebar_samples(tokens)),
         ),
         (
             "Listbox",
-            "gallery:component-listbox-sample:assignee-listbox",
+            first_selector!(pages::components::listbox_samples(tokens)),
         ),
-        ("Select", "gallery:component-select-sample:priority-select"),
+        (
+            "Select",
+            first_selector!(pages::components::select_samples(tokens)),
+        ),
         (
             "Combobox",
-            "gallery:component-combobox-sample:framework-combobox",
+            first_selector!(pages::components::combobox_samples(tokens)),
         ),
         (
             "Command",
-            "gallery:component-command-sample:workspace-command",
+            first_selector!(pages::components::command_samples(tokens)),
         ),
-        ("Label", "gallery:component-label-sample:email"),
-        ("TextInput", "gallery:component-text-input-sample:default"),
-        ("Field", "gallery:component-field-sample:email"),
-        ("Tabs", "gallery:component-tabs-sample:overview-tabs"),
+        (
+            "Label",
+            first_selector!(pages::components::label_samples(tokens)),
+        ),
+        (
+            "TextInput",
+            first_selector!(pages::components::text_input_samples(tokens)),
+        ),
+        (
+            "Field",
+            first_selector!(pages::components::field_samples(tokens)),
+        ),
+        (
+            "Tabs",
+            first_selector!(pages::components::tabs_samples(tokens)),
+        ),
         (
             "ScrollArea",
-            "gallery:component-scroll-area-sample:activity-log",
+            first_selector!(pages::components::scroll_area_samples(tokens)),
         ),
         (
             "Splitter",
-            "gallery:component-splitter-sample:workspace-split",
+            first_selector!(pages::components::splitter_samples(tokens)),
         ),
         (
             "Separator",
-            "gallery:component-separator-sample:section-rule",
+            first_selector!(pages::components::separator_samples(tokens)),
         ),
-        ("Kbd", "gallery:component-kbd-sample:command-palette"),
-        ("Progress", "gallery:component-progress-sample:sync"),
-        ("Skeleton", "gallery:component-skeleton-sample:body-line"),
-        ("Avatar", "gallery:component-avatar-sample:ada"),
+        (
+            "Kbd",
+            first_selector!(pages::components::kbd_samples(tokens)),
+        ),
+        (
+            "Progress",
+            first_selector!(pages::components::progress_samples(tokens)),
+        ),
+        (
+            "Skeleton",
+            first_selector!(pages::components::skeleton_samples(tokens)),
+        ),
+        (
+            "Avatar",
+            first_selector!(pages::components::avatar_samples(tokens)),
+        ),
     ]
-}
-
-fn official_component_selector_family(name: &str) -> &'static str {
-    match name {
-        "Button" => "component-button-sample",
-        "Badge" => "component-badge-sample",
-        "IconButton" => "component-icon-button-sample",
-        "Switch" => "component-switch-sample",
-        "Checkbox" => "component-checkbox-sample",
-        "RadioGroup" => "component-radio-sample",
-        "Toggle" => "component-toggle-sample",
-        "Toolbar" => "component-toolbar-sample",
-        "Sidebar" => "component-sidebar-sample",
-        "Listbox" => "component-listbox-sample",
-        "Select" => "component-select-sample",
-        "Combobox" => "component-combobox-sample",
-        "Command" => "component-command-sample",
-        "Label" => "component-label-sample",
-        "TextInput" => "component-text-input-sample",
-        "Field" => "component-field-sample",
-        "Tabs" => "component-tabs-sample",
-        "ScrollArea" => "component-scroll-area-sample",
-        "Splitter" => "component-splitter-sample",
-        "Separator" => "component-separator-sample",
-        "Kbd" => "component-kbd-sample",
-        "Progress" => "component-progress-sample",
-        "Skeleton" => "component-skeleton-sample",
-        "Avatar" => "component-avatar-sample",
-        _ => panic!("missing official component selector family for {name}"),
-    }
 }
 
 fn shell_snapshot(
@@ -1409,19 +1438,13 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
 
     assert_eq!(sample_names, official_names);
 
-    let selectors = official_component_sample_selectors()
+    let selectors = official_component_sample_selectors();
+    let selector_values = selectors
         .iter()
-        .map(|(_, selector)| *selector)
+        .map(|(_, selector)| selector.as_str())
         .collect::<Vec<_>>();
-    let unique_selectors = selectors.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(unique_selectors.len(), selectors.len());
-    for (name, selector) in official_component_sample_selectors() {
-        let expected_prefix = format!("gallery:{}:", official_component_selector_family(name));
-        assert!(
-            selector.starts_with(&expected_prefix),
-            "official {name} sample selector `{selector}` must start with `{expected_prefix}`"
-        );
-    }
+    let unique_selectors = selector_values.iter().copied().collect::<BTreeSet<_>>();
+    assert_eq!(unique_selectors.len(), selector_values.len());
 
     let signals = pages::components::SIGNALS;
     let mut missing = Vec::new();
@@ -1952,7 +1975,7 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
     );
     for (name, selector) in official_component_sample_selectors() {
         assert!(
-            cx.debug_bounds(selector).is_some(),
+            cx.debug_bounds(selector.as_str()).is_some(),
             "expected Components page to render official {name} sample `{selector}`"
         );
     }

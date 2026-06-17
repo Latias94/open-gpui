@@ -995,6 +995,42 @@ pub struct CommandSample {
     pub state: CommandState,
 }
 
+macro_rules! impl_component_sample_selectors {
+    ($ty:ident, $selector_family:literal) => {
+        impl $ty {
+            /// Returns the stable debug selector used by the gallery shell and tests.
+            pub fn debug_selector(&self) -> String {
+                format!("gallery:{}:{}", $selector_family, self.id)
+            }
+        }
+    };
+}
+
+impl_component_sample_selectors!(ButtonSample, "component-button-sample");
+impl_component_sample_selectors!(BadgeSample, "component-badge-sample");
+impl_component_sample_selectors!(IconButtonSample, "component-icon-button-sample");
+impl_component_sample_selectors!(SwitchSample, "component-switch-sample");
+impl_component_sample_selectors!(CheckboxSample, "component-checkbox-sample");
+impl_component_sample_selectors!(RadioGroupSample, "component-radio-sample");
+impl_component_sample_selectors!(ToggleSample, "component-toggle-sample");
+impl_component_sample_selectors!(ToolbarSample, "component-toolbar-sample");
+impl_component_sample_selectors!(SidebarSample, "component-sidebar-sample");
+impl_component_sample_selectors!(ListboxSample, "component-listbox-sample");
+impl_component_sample_selectors!(SelectSample, "component-select-sample");
+impl_component_sample_selectors!(ComboboxSample, "component-combobox-sample");
+impl_component_sample_selectors!(CommandSample, "component-command-sample");
+impl_component_sample_selectors!(LabelSample, "component-label-sample");
+impl_component_sample_selectors!(TextInputSample, "component-text-input-sample");
+impl_component_sample_selectors!(FieldSample, "component-field-sample");
+impl_component_sample_selectors!(TabsSample, "component-tabs-sample");
+impl_component_sample_selectors!(ScrollAreaSample, "component-scroll-area-sample");
+impl_component_sample_selectors!(SplitterSample, "component-splitter-sample");
+impl_component_sample_selectors!(SeparatorSample, "component-separator-sample");
+impl_component_sample_selectors!(KbdSample, "component-kbd-sample");
+impl_component_sample_selectors!(ProgressSample, "component-progress-sample");
+impl_component_sample_selectors!(SkeletonSample, "component-skeleton-sample");
+impl_component_sample_selectors!(AvatarSample, "component-avatar-sample");
+
 /// Returns button samples backed by real component state.
 pub fn button_samples(tokens: ThemeTokens) -> [ButtonSample; 6] {
     [

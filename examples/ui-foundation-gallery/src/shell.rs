@@ -811,8 +811,8 @@ impl GalleryShell {
                             div()
                                 .id(format!("component-sidebar-sample:{}", sample.id))
                                 .debug_selector({
-                                    let sample_id = sample.id;
-                                    move || format!("gallery:component-sidebar-sample:{sample_id}")
+                                    let debug_selector = sample.debug_selector();
+                                    move || debug_selector
                                 })
                                 .w(px(360.0))
                                 .flex()
@@ -909,8 +909,8 @@ impl GalleryShell {
                             div()
                                 .id(format!("component-toolbar-sample:{}", sample.id))
                                 .debug_selector({
-                                    let sample_id = sample.id;
-                                    move || format!("gallery:component-toolbar-sample:{sample_id}")
+                                    let debug_selector = sample.debug_selector();
+                                    move || debug_selector
                                 })
                                 .w(px(420.0))
                                 .flex()
@@ -982,12 +982,11 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let state = sample.state;
                                     div()
                                         .id(format!("component-button-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!("gallery:component-button-sample:{sample_id}")
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(180.0))
                                         .flex()
                                         .flex_col()
@@ -1026,6 +1025,7 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         splitter_samples.into_iter().map(|sample| {
+                            let debug_selector = sample.debug_selector();
                             let state = sample.state.clone();
                             let splitter = sample.panels.into_iter().fold(
                                 Splitter::new(format!("component-splitter:{}", sample.id))
@@ -1061,10 +1061,7 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-splitter-sample:{}", sample.id))
-                                .debug_selector({
-                                    let sample_id = sample.id;
-                                    move || format!("gallery:component-splitter-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .w(px(520.0))
                                 .flex()
                                 .flex_col()
@@ -1124,6 +1121,7 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         scroll_area_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                             let title = sample.title;
                             let summary = sample.summary;
                             let items = sample.items;
@@ -1183,9 +1181,7 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-scroll-area-sample:{}", sample_id))
-                                .debug_selector(move || {
-                                    format!("gallery:component-scroll-area-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .w(px(360.0))
                                 .flex()
                                 .flex_col()
@@ -1237,12 +1233,11 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         badge_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                             let state = sample.state;
                             div()
                                 .id(format!("component-badge-sample:{sample_id}"))
-                                .debug_selector(move || {
-                                    format!("gallery:component-badge-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .min_w(px(160.0))
                                 .flex()
                                 .flex_col()
@@ -1283,12 +1278,11 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let state = sample.state;
                                     div()
                                         .id(format!("component-switch-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!("gallery:component-switch-sample:{sample_id}")
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(200.0))
                                         .flex()
                                         .flex_col()
@@ -1328,14 +1322,11 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let state = sample.state;
                                     div()
                                         .id(format!("component-checkbox-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!(
-                                                "gallery:component-checkbox-sample:{sample_id}"
-                                            )
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(220.0))
                                         .flex()
                                         .flex_col()
@@ -1370,6 +1361,7 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         radio_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                             let state = sample.state.clone();
                             let mut radio =
                                 RadioGroup::new(format!("component-radio:{}", sample.id))
@@ -1388,9 +1380,7 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-radio-sample:{sample_id}"))
-                                .debug_selector(move || {
-                                    format!("gallery:component-radio-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .min_w(px(240.0))
                                 .flex()
                                 .flex_col()
@@ -1419,12 +1409,11 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         toggle_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                             let state = sample.state;
                             div()
                                 .id(format!("component-toggle-sample:{sample_id}"))
-                                .debug_selector(move || {
-                                    format!("gallery:component-toggle-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .min_w(px(180.0))
                                 .flex()
                                 .flex_col()
@@ -1463,12 +1452,11 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         icon_button_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                             let state = sample.state;
                             div()
                                 .id(format!("component-icon-button-sample:{sample_id}"))
-                                .debug_selector(move || {
-                                    format!("gallery:component-icon-button-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .min_w(px(170.0))
                                 .flex()
                                 .flex_col()
@@ -1514,12 +1502,11 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let state = sample.state.clone();
                                     div()
                                         .id(format!("component-label-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!("gallery:component-label-sample:{sample_id}")
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(220.0))
                                         .flex()
                                         .flex_col()
@@ -1556,17 +1543,14 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let state = sample.state.clone();
                                     let controller = sample
                                         .controller_driven
                                         .then(|| self.editable_text_input.clone());
                                     div()
                                         .id(format!("component-text-input-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!(
-                                                "gallery:component-text-input-sample:{sample_id}"
-                                            )
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(240.0))
                                         .flex()
                                         .flex_col()
@@ -1615,13 +1599,12 @@ impl GalleryShell {
                                 .into_iter()
                                 .map(|sample| {
                                     let sample_id = sample.id;
+                                    let debug_selector = sample.debug_selector();
                                     let field_state = sample.state.clone();
                                     let input_state = sample.input_state.clone();
                                     div()
                                         .id(format!("component-field-sample:{sample_id}"))
-                                        .debug_selector(move || {
-                                            format!("gallery:component-field-sample:{sample_id}")
-                                        })
+                                        .debug_selector(move || debug_selector)
                                         .min_w(px(280.0))
                                         .flex()
                                         .flex_col()
@@ -1664,9 +1647,11 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         tabs_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
+                            let debug_selector = sample.debug_selector();
                             let state = sample.state.clone();
                             let tabs = sample.items.into_iter().fold(
-                                Tabs::new(format!("component-tabs:{}", sample.id))
+                                Tabs::new(format!("component-tabs:{}", sample_id))
                                     .orientation(sample.orientation)
                                     .activation_mode(sample.activation_mode)
                                     .with_size(sample.size)
@@ -1677,7 +1662,7 @@ impl GalleryShell {
                                         TabsItem::new(
                                             format!(
                                                 "component-tabs-item:{}:{}",
-                                                sample.id, item.value
+                                                sample_id, item.value
                                             ),
                                             item.label,
                                             div()
@@ -1704,10 +1689,7 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-tabs-sample:{}", sample.id))
-                                .debug_selector({
-                                    let sample_id = sample.id;
-                                    move || format!("gallery:component-tabs-sample:{sample_id}")
-                                })
+                                .debug_selector(move || debug_selector)
                                 .min_w(px(360.0))
                                 .flex()
                                 .flex_col()
@@ -2573,6 +2555,7 @@ impl GalleryShell {
     ) -> impl IntoElement {
         let state = sample.state.clone();
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let tooltip_text = sample.tooltip_text;
         let focused =
@@ -2589,6 +2572,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-tooltip-sample:{}", sample_id))
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2672,6 +2656,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let content_text = sample.content_text;
         let forced_open = state.open() && !state.disabled();
@@ -2705,6 +2690,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-hover-card-sample-card:{}", sample_id))
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2760,6 +2746,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let content_text = sample.content_text;
         let shell = cx.entity().downgrade();
@@ -2785,10 +2772,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-popover-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-popover-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2850,6 +2834,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let title = sample.title;
         let content_text = sample.content_text;
@@ -2877,10 +2862,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-dialog-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-dialog-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -2944,6 +2926,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let shell = cx.entity().downgrade();
         let alert_dialog = AlertDialog::new(
             format!("overlay-alert-dialog-demo:{}", sample_id),
@@ -2974,10 +2957,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-alert-dialog-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-alert-dialog-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -3045,6 +3025,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let shell = cx.entity().downgrade();
         let sheet = Sheet::new(
             format!("overlay-sheet-demo:{}", sample_id),
@@ -3074,10 +3055,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-sheet-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-sheet-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -3133,6 +3111,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let shell = cx.entity().downgrade();
         let menu = Menu::new(format!("overlay-menu-demo:{}", sample_id), label)
@@ -3157,10 +3136,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-menu-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-menu-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -3220,6 +3196,7 @@ impl GalleryShell {
             sample.state.clone()
         };
         let sample_id = sample.id;
+        let debug_selector = sample.debug_selector();
         let label = sample.label;
         let shell = cx.entity().downgrade();
         let context_menu =
@@ -3244,10 +3221,7 @@ impl GalleryShell {
 
         div()
             .id(format!("overlay-context-menu-sample-card:{}", sample_id))
-            .debug_selector({
-                let sample_id = sample_id.to_owned();
-                move || format!("gallery:overlay-context-menu-sample:{sample_id}")
-            })
+            .debug_selector(move || debug_selector)
             .min_w(px(0.0))
             .flex()
             .flex_col()
@@ -4109,6 +4083,7 @@ fn component_primitive_samples_section(
                 .flex_wrap()
                 .children(separators.into_iter().map(move |sample| {
                     let state = sample.state;
+                    let debug_selector = sample.debug_selector();
                     let separator = Separator::new(format!("component-separator:{}", sample.id))
                         .orientation(sample.orientation)
                         .decorative(sample.decorative)
@@ -4117,10 +4092,7 @@ fn component_primitive_samples_section(
 
                     div()
                         .id(format!("component-separator-sample:{}", sample.id))
-                        .debug_selector({
-                            let sample_id = sample.id;
-                            move || format!("gallery:component-separator-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(220.0))
                         .min_h(px(132.0))
                         .flex()
@@ -4173,13 +4145,11 @@ fn component_primitive_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(kbds.into_iter().map(move |sample| {
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state;
                     div()
                         .id(format!("component-kbd-sample:{}", sample.id))
-                        .debug_selector({
-                            let sample_id = sample.id;
-                            move || format!("gallery:component-kbd-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .min_w(px(170.0))
                         .flex()
                         .flex_col()
@@ -4205,6 +4175,7 @@ fn component_primitive_samples_section(
                 .flex_wrap()
                 .children(progress.into_iter().map(move |sample| {
                     let state = sample.state;
+                    let debug_selector = sample.debug_selector();
                     let progress =
                         Progress::new(format!("component-progress:{}", sample.id), sample.label)
                             .with_size(sample.size)
@@ -4216,10 +4187,7 @@ fn component_primitive_samples_section(
 
                     div()
                         .id(format!("component-progress-sample:{}", sample.id))
-                        .debug_selector({
-                            let sample_id = sample.id;
-                            move || format!("gallery:component-progress-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(280.0))
                         .flex()
                         .flex_col()
@@ -4246,12 +4214,10 @@ fn component_primitive_samples_section(
                 .flex_wrap()
                 .children(skeletons.into_iter().map(move |sample| {
                     let state = sample.state;
+                    let debug_selector = sample.debug_selector();
                     div()
                         .id(format!("component-skeleton-sample:{}", sample.id))
-                        .debug_selector({
-                            let sample_id = sample.id;
-                            move || format!("gallery:component-skeleton-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .min_w(px(250.0))
                         .flex()
                         .flex_col()
@@ -4282,6 +4248,7 @@ fn component_primitive_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(avatars.into_iter().map(move |sample| {
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     let avatar =
                         Avatar::new(format!("component-avatar:{}", sample.id), sample.name)
@@ -4299,10 +4266,7 @@ fn component_primitive_samples_section(
 
                     div()
                         .id(format!("component-avatar-sample:{}", sample.id))
-                        .debug_selector({
-                            let sample_id = sample.id;
-                            move || format!("gallery:component-avatar-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .min_w(px(220.0))
                         .flex()
                         .flex_col()
@@ -4362,6 +4326,7 @@ fn component_listbox_samples_section(
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
                     let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     let mut listbox =
                         Listbox::new(format!("component-listbox:{}", sample.id), sample.title)
@@ -4383,9 +4348,7 @@ fn component_listbox_samples_section(
 
                     div()
                         .id(format!("component-listbox-sample:{sample_id}"))
-                        .debug_selector(move || {
-                            format!("gallery:component-listbox-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(320.0))
                         .flex()
                         .flex_col()
@@ -4442,6 +4405,7 @@ fn component_select_samples_section(
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
                     let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     let mut select =
                         Select::new(format!("component-select:{}", sample.id), sample.title)
@@ -4467,9 +4431,7 @@ fn component_select_samples_section(
 
                     div()
                         .id(format!("component-select-sample:{sample_id}"))
-                        .debug_selector(move || {
-                            format!("gallery:component-select-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(340.0))
                         .flex()
                         .flex_col()
@@ -4530,6 +4492,7 @@ fn component_combobox_samples_section(
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
                     let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     let mut combobox =
                         Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
@@ -4556,9 +4519,7 @@ fn component_combobox_samples_section(
 
                     div()
                         .id(format!("component-combobox-sample:{sample_id}"))
-                        .debug_selector(move || {
-                            format!("gallery:component-combobox-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(360.0))
                         .flex()
                         .flex_col()
@@ -4619,6 +4580,7 @@ fn component_command_samples_section(
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
                     let sample_id = sample.id;
+                    let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), sample.title)
@@ -4653,9 +4615,7 @@ fn component_command_samples_section(
 
                     div()
                         .id(format!("component-command-sample:{sample_id}"))
-                        .debug_selector(move || {
-                            format!("gallery:component-command-sample:{sample_id}")
-                        })
+                        .debug_selector(move || debug_selector)
                         .w(px(420.0))
                         .flex()
                         .flex_col()

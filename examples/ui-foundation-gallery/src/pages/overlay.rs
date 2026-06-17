@@ -169,6 +169,13 @@ pub struct TooltipSample {
     pub state: TooltipState,
 }
 
+impl TooltipSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-tooltip-sample:{}", self.id)
+    }
+}
+
 /// Returns deterministic tooltip samples for gallery dogfood.
 pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
     [
@@ -248,6 +255,13 @@ pub struct HoverCardSample {
     pub state: HoverCardState,
 }
 
+impl HoverCardSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-hover-card-sample:{}", self.id)
+    }
+}
+
 /// Returns deterministic hover card samples for gallery dogfood.
 pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
     [
@@ -314,6 +328,13 @@ pub struct PopoverSample {
     pub content_text: &'static str,
     /// Resolved popover state.
     pub state: PopoverState,
+}
+
+impl PopoverSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-popover-sample:{}", self.id)
+    }
 }
 
 /// Returns deterministic popover samples for gallery dogfood.
@@ -391,6 +412,13 @@ pub struct DialogSample {
     pub content_text: &'static str,
     /// Resolved dialog state.
     pub state: DialogState,
+}
+
+impl DialogSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-dialog-sample:{}", self.id)
+    }
 }
 
 /// Returns deterministic dialog samples for gallery dogfood.
@@ -480,6 +508,13 @@ pub struct AlertDialogSample {
     pub state: AlertDialogState,
 }
 
+impl AlertDialogSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-alert-dialog-sample:{}", self.id)
+    }
+}
+
 /// Returns deterministic alert dialog samples for gallery dogfood.
 pub fn alert_dialog_samples(tokens: ThemeTokens) -> [AlertDialogSample; 2] {
     [
@@ -536,6 +571,13 @@ pub struct SheetSample {
     pub content_text: &'static str,
     /// Resolved sheet state.
     pub state: SheetState,
+}
+
+impl SheetSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-sheet-sample:{}", self.id)
+    }
 }
 
 /// Returns deterministic sheet samples for gallery dogfood.
@@ -608,6 +650,13 @@ pub struct MenuSample {
     pub state: MenuState,
 }
 
+impl MenuSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-menu-sample:{}", self.id)
+    }
+}
+
 /// Returns deterministic menu samples for gallery dogfood.
 pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
     [
@@ -669,6 +718,13 @@ pub struct ContextMenuSample {
     pub label: &'static str,
     /// Resolved context-menu state.
     pub state: ContextMenuState,
+}
+
+impl ContextMenuSample {
+    /// Returns the stable debug selector used by the gallery shell and tests.
+    pub fn debug_selector(&self) -> String {
+        format!("gallery:overlay-context-menu-sample:{}", self.id)
+    }
 }
 
 /// Returns deterministic context-menu samples for gallery dogfood.
