@@ -7,19 +7,20 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, anchored, deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Badge, BadgeState, Button, ButtonState,
-    Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode,
-    ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode,
-    CommandState, ContextMenu, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field,
-    FieldState, FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton,
-    IconButtonState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
-    MenuItem, Popover, PopoverOpenMode, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis,
-    ScrollAreaState, Select, SelectOpenMode, SelectState, Sheet, SheetModalMode, SheetOpenMode,
-    SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide, SidebarState, Splitter,
-    SplitterPanel, SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
-    TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState, Toolbar,
-    ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind, TooltipOpenIntent,
-    UiA11yElementExt, focus_ring_shadow,
+    AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Avatar, AvatarState, Badge, BadgeState,
+    Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup,
+    ComboboxOpenMode, ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem,
+    CommandOpenMode, CommandState, ContextMenu, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog,
+    DialogOpenMode, Field, FieldState, FocusRing, HoverCard, HoverCardOpenIntent,
+    HoverCardOpenMode, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox,
+    ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover, PopoverOpenMode, Progress,
+    ProgressState, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select,
+    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, SheetModalMode, SheetOpenMode,
+    SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide, SidebarState, Skeleton,
+    SkeletonState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState, Tabs,
+    TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
+    Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipOpenIntent, UiA11yElementExt, focus_ring_shadow,
     gpui_adapter::{gpui_point_from_ui, gpui_px_from_ui},
     init_text_input,
 };
@@ -700,6 +701,11 @@ impl GalleryShell {
         let command_samples = pages::components::command_samples(snapshot.tokens);
         let badge_samples = pages::components::badge_samples(snapshot.tokens);
         let icon_button_samples = pages::components::icon_button_samples(snapshot.tokens);
+        let separator_samples = pages::components::separator_samples(snapshot.tokens);
+        let kbd_samples = pages::components::kbd_samples(snapshot.tokens);
+        let progress_samples = pages::components::progress_samples(snapshot.tokens);
+        let skeleton_samples = pages::components::skeleton_samples(snapshot.tokens);
+        let avatar_samples = pages::components::avatar_samples(snapshot.tokens);
         let scroll_area_samples = pages::components::scroll_area_samples(snapshot.tokens);
         let splitter_samples = pages::components::splitter_samples(snapshot.tokens);
 
@@ -728,6 +734,14 @@ impl GalleryShell {
                             .children(component_catalog_cards),
                     ),
             )
+            .child(component_primitive_samples_section(
+                separator_samples,
+                kbd_samples,
+                progress_samples,
+                skeleton_samples,
+                avatar_samples,
+                snapshot.tokens,
+            ))
             .child(
                 div()
                     .flex()
@@ -3538,6 +3552,120 @@ fn component_badge_state_row(state: BadgeState) -> impl IntoElement {
         ))
 }
 
+fn component_separator_state_row(state: SeparatorState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {} / {}",
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            if state.decorative() {
+                "decorative"
+            } else {
+                "semantic"
+            },
+            size_label(state.size())
+        ))
+        .child(format!(
+            "role {} / thickness {}",
+            state
+                .role()
+                .map(|role| format!("{role:?}"))
+                .unwrap_or_else(|| "none".to_owned()),
+            format_px(state.metrics().thickness())
+        ))
+}
+
+fn component_kbd_state_row(state: KbdState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!("{} / {}", state.label(), size_label(state.size())))
+        .child(format!(
+            "min {} px {}",
+            format_px(state.metrics().min_width()),
+            format_px(state.metrics().padding_x())
+        ))
+}
+
+fn component_progress_state_row(state: ProgressState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {}",
+            state.role(),
+            size_label(state.size()),
+            if state.indeterminate() {
+                "indeterminate".to_owned()
+            } else {
+                format!("{:.0}%", state.value_percent().unwrap_or(0.0))
+            }
+        ))
+        .child(format!(
+            "h {} radius {}",
+            format_px(state.metrics().height()),
+            format_px(state.metrics().radius())
+        ))
+}
+
+fn component_skeleton_state_row(state: SkeletonState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / {}",
+            size_label(state.size()),
+            if state.subtle() { "subtle" } else { "default" }
+        ))
+        .child(format!(
+            "{} x {} / radius {}",
+            format_px(state.metrics().width()),
+            format_px(state.metrics().height()),
+            format_px(state.metrics().radius())
+        ))
+}
+
+fn component_avatar_state_row(state: &AvatarState) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{} / fallback {} / {}",
+            size_label(state.size()),
+            state.fallback(),
+            if state.has_source() {
+                "source"
+            } else {
+                "fallback"
+            }
+        ))
+        .child(format!(
+            "{:?} / aria {} / box {}",
+            state.role(),
+            state.accessible_label(),
+            format_px(state.metrics().diameter())
+        ))
+}
+
 fn component_icon_button_state_row(
     accessible_label: &'static str,
     state: IconButtonState,
@@ -3904,6 +4032,263 @@ fn component_splitter_state_row(state: &SplitterState) -> impl IntoElement {
             format_px(state.metrics().handle_thickness()),
             format_px(state.metrics().handle_hit_size())
         ))
+}
+
+fn component_primitive_samples_section(
+    separators: [pages::components::SeparatorSample; 3],
+    kbds: [pages::components::KbdSample; 3],
+    progress: [pages::components::ProgressSample; 3],
+    skeletons: [pages::components::SkeletonSample; 3],
+    avatars: [pages::components::AvatarSample; 4],
+    tokens: ThemeTokens,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(
+            div()
+                .text_sm()
+                .font_weight(open_gpui::FontWeight::BOLD)
+                .child("Low-state primitives"),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(separators.into_iter().map(move |sample| {
+                    let state = sample.state;
+                    let separator = Separator::new(format!("component-separator:{}", sample.id))
+                        .orientation(sample.orientation)
+                        .decorative(sample.decorative)
+                        .with_size(sample.size)
+                        .tokens(tokens);
+
+                    div()
+                        .id(format!("component-separator-sample:{}", sample.id))
+                        .debug_selector({
+                            let sample_id = sample.id;
+                            move || format!("gallery:component-separator-sample:{sample_id}")
+                        })
+                        .w(px(220.0))
+                        .min_h(px(132.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(sample.title),
+                                )
+                                .child(label_pill(match sample.orientation {
+                                    Orientation::Horizontal => "horizontal",
+                                    Orientation::Vertical => "vertical",
+                                })),
+                        )
+                        .child(
+                            div()
+                                .h(px(46.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xe2e4dc))
+                                .bg(rgb(0xfcfcf8))
+                                .child(if sample.orientation == Orientation::Vertical {
+                                    div().h_full().child(separator).into_any_element()
+                                } else {
+                                    div().w_full().child(separator).into_any_element()
+                                }),
+                        )
+                        .child(component_separator_state_row(state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(kbds.into_iter().map(move |sample| {
+                    let state = sample.state;
+                    div()
+                        .id(format!("component-kbd-sample:{}", sample.id))
+                        .debug_selector({
+                            let sample_id = sample.id;
+                            move || format!("gallery:component-kbd-sample:{sample_id}")
+                        })
+                        .min_w(px(170.0))
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            Kbd::new(format!("component-kbd:{}", sample.id), sample.label)
+                                .with_size(sample.size)
+                                .tokens(tokens),
+                        )
+                        .child(component_kbd_state_row(state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(progress.into_iter().map(move |sample| {
+                    let state = sample.state;
+                    let progress =
+                        Progress::new(format!("component-progress:{}", sample.id), sample.label)
+                            .with_size(sample.size)
+                            .tokens(tokens);
+                    let progress = match sample.value_percent {
+                        Some(value) => progress.value(value),
+                        None => progress.indeterminate(),
+                    };
+
+                    div()
+                        .id(format!("component-progress-sample:{}", sample.id))
+                        .debug_selector({
+                            let sample_id = sample.id;
+                            move || format!("gallery:component-progress-sample:{sample_id}")
+                        })
+                        .w(px(280.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child(sample.label),
+                        )
+                        .child(progress)
+                        .child(component_progress_state_row(state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(skeletons.into_iter().map(move |sample| {
+                    let state = sample.state;
+                    div()
+                        .id(format!("component-skeleton-sample:{}", sample.id))
+                        .debug_selector({
+                            let sample_id = sample.id;
+                            move || format!("gallery:component-skeleton-sample:{sample_id}")
+                        })
+                        .min_w(px(250.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child(sample.title),
+                        )
+                        .child(
+                            Skeleton::new(format!("component-skeleton:{}", sample.id))
+                                .subtle(sample.subtle)
+                                .with_size(sample.size)
+                                .tokens(tokens),
+                        )
+                        .child(component_skeleton_state_row(state))
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_3()
+                .flex_wrap()
+                .children(avatars.into_iter().map(move |sample| {
+                    let state = sample.state.clone();
+                    let avatar =
+                        Avatar::new(format!("component-avatar:{}", sample.id), sample.name)
+                            .accessible_label(sample.accessible_label)
+                            .with_size(sample.size)
+                            .tokens(tokens);
+                    let avatar = match sample.source {
+                        Some(source) => avatar.source(source),
+                        None => avatar,
+                    };
+                    let avatar = match sample.fallback {
+                        Some(fallback) => avatar.fallback(fallback),
+                        None => avatar,
+                    };
+
+                    div()
+                        .id(format!("component-avatar-sample:{}", sample.id))
+                        .debug_selector({
+                            let sample_id = sample.id;
+                            move || format!("gallery:component-avatar-sample:{sample_id}")
+                        })
+                        .min_w(px(220.0))
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .bg(rgb(0xffffff))
+                        .p_3()
+                        .child(
+                            div().flex().items_center().gap_3().child(avatar).child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(open_gpui::FontWeight::BOLD)
+                                            .child(if sample.name.trim().is_empty() {
+                                                "Empty name"
+                                            } else {
+                                                sample.name
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x5a6472))
+                                            .child(sample.accessible_label),
+                                    ),
+                            ),
+                        )
+                        .child(component_avatar_state_row(&state))
+                })),
+        )
 }
 
 fn component_listbox_samples_section(

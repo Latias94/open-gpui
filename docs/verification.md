@@ -79,8 +79,9 @@ The components package also includes low-state primitive coverage for Separator,
 Skeleton, and Avatar. Those tests verify resolved state branches, explicit root/prelude exports,
 theme color intents, stable rendered debug selectors, decorative separator semantics, progress
 clamping, indeterminate progress, Avatar fallback initials, explicit accessible labels, size
-metrics, and source metadata staying outside image-loading ownership before the gallery samples are
-wired.
+metrics, and source metadata staying outside image-loading ownership. The gallery metadata and
+short-viewport smoke tests also verify those primitives are listed as official catalog entries and
+render visible samples with stable debug selectors.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -179,13 +180,17 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    press or Escape.
 6. Open `Components`, or start there directly with
    `cargo run -p open-gpui-ui-foundation-gallery -- --page components`, and confirm Button, Badge,
-   IconButton, ScrollArea, Splitter, Switch, Checkbox, RadioGroup, Toggle, Label, TextInput, Field,
-   Tabs, Toolbar, Sidebar, Listbox, Select, Combobox, and Command samples render with enabled,
-   disabled, selected, checked, unchecked, indeterminate,
+   IconButton, Separator, Kbd, Progress, Skeleton, Avatar, ScrollArea, Splitter, Switch, Checkbox,
+   RadioGroup, Toggle, Label, TextInput, Field, Tabs, Toolbar, Sidebar, Listbox, Select, Combobox,
+   and Command samples render with enabled, disabled, selected, checked, unchecked, indeterminate,
    pressed, invalid, required, read-only, placeholder, value, help, error, control-association,
-   roving-focus, popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge samples should
-   remain display-only. The IconButton samples should be square controls with visible focus and
-   explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
+   decorative, semantic, indeterminate-progress, fallback-initial, source-metadata, roving-focus,
+   popup, overflow-axis, scroll-reset, and resize-constraint states. The Badge, Kbd, and Skeleton
+   samples should remain display-only. The Separator samples should distinguish semantic and
+   decorative roles. The Progress samples should cover determinate and indeterminate values. The
+   Avatar samples should show derived fallback initials, explicit fallback text, explicit
+   accessible labels, and source metadata without owning image loading. The IconButton samples
+   should be square controls with visible focus and explicit accessible labels. The ScrollArea samples should cover vertical overflow, horizontal overflow,
    and two-axis overflow; wheel or trackpad scrolling should stay inside each constrained viewport
    while the state readout reports the expected axis and reset policy. Scroll each constrained
    ScrollArea once, then continue scrolling the same viewport after the content has moved; it should
@@ -234,10 +239,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    panic during that navigation is a
    regression in the accessibility repair gate. The Components page also serves as a conformance
    surface: confirm the visible component catalog distinguishes official components from
-   adapter-only helpers, internal anatomy, and deferred primitives, then confirm the visible gate
-   cards for explicit crate exports, gallery metadata, ScrollArea redraw persistence, Splitter
-   runtime constraints, Tabs overflow, and explicit accessible metadata on icon-only and
-   label-association samples.
+   adapter-only helpers and internal anatomy, and confirms Separator, Kbd, Progress, Skeleton, and
+   Avatar are official entries with state types, then confirm the visible gate cards for explicit
+   crate exports, gallery metadata, ScrollArea redraw persistence, Splitter runtime constraints,
+   Tabs overflow, and explicit accessible metadata on icon-only and label-association samples.
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 

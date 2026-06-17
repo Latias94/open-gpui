@@ -1,6 +1,16 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Completed U5 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
+  Promoted `Separator`, `Kbd`, `Progress`, `Skeleton`, and `Avatar` from deferred catalog entries
+  to official Components gallery entries, added visible gallery sample factories/sections for each
+  primitive, exposed stable `gallery:component-*-sample:{id}` debug selectors, and extended
+  metadata/smoke coverage for catalog status, resolved state rows, and short-viewport scrolling.
+* **Verification**: U5 passed `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata
+  components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation`, and the full
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` with 42 passing tests.
 * **Update**: Completed U4 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
   Added the `Avatar` primitive to `open-gpui-ui-components` with a resolved-state-first contract
   for display name, fallback initials or explicit fallback text, renderer-neutral source metadata,

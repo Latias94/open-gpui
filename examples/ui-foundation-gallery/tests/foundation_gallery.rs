@@ -905,6 +905,11 @@ fn components_page_samples_expose_component_metadata() {
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
     let icon_buttons = pages::components::icon_button_samples(tokens);
+    let separators = pages::components::separator_samples(tokens);
+    let kbds = pages::components::kbd_samples(tokens);
+    let progress = pages::components::progress_samples(tokens);
+    let skeletons = pages::components::skeleton_samples(tokens);
+    let avatars = pages::components::avatar_samples(tokens);
     let switches = pages::components::switch_samples(tokens);
     let checkboxes = pages::components::checkbox_samples(tokens);
     let radio_groups = pages::components::radio_group_samples(tokens);
@@ -948,6 +953,11 @@ fn components_page_samples_expose_component_metadata() {
             "Tabs",
             "ScrollArea",
             "Splitter",
+            "Separator",
+            "Kbd",
+            "Progress",
+            "Skeleton",
+            "Avatar",
         ]
     );
     assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
@@ -970,8 +980,8 @@ fn components_page_samples_expose_component_metadata() {
         ["Separator", "Kbd", "Progress", "Skeleton", "Avatar"]
             .iter()
             .all(|name| catalog.iter().any(|entry| entry.name == *name
-                && entry.status == pages::components::ComponentCatalogStatus::Deferred
-                && entry.coverage == "planned primitive batch"))
+                && entry.status == pages::components::ComponentCatalogStatus::Official
+                && entry.coverage == "exports / gallery / state tests"))
     );
 
     assert_eq!(gates.len(), 6);
@@ -1011,6 +1021,43 @@ fn components_page_samples_expose_component_metadata() {
     );
     assert_eq!(badges[3].state.variant(), BadgeVariant::Outline);
     assert_eq!(badges[3].state.size(), Size::Small);
+
+    assert_eq!(separators.len(), 3);
+    assert_eq!(separators[0].id, "section-rule");
+    assert_eq!(separators[0].state.role(), Some(Role::Separator));
+    assert_eq!(separators[1].state.orientation(), Orientation::Vertical);
+    assert_eq!(separators[1].state.metrics().thickness(), ui_px(2.0));
+    assert!(separators[2].state.decorative());
+    assert_eq!(separators[2].state.role(), None);
+
+    assert_eq!(kbds.len(), 3);
+    assert_eq!(kbds[0].id, "command-palette");
+    assert_eq!(kbds[0].state.label(), "Ctrl+K");
+    assert!(kbds[0].state.display_only());
+    assert_eq!(kbds[2].state.size(), Size::Large);
+
+    assert_eq!(progress.len(), 3);
+    assert_eq!(progress[0].state.role(), Role::ProgressIndicator);
+    assert_eq!(progress[0].state.value_percent(), Some(64.0));
+    assert_eq!(progress[1].state.normalized_value(), Some(1.0));
+    assert!(progress[2].state.indeterminate());
+
+    assert_eq!(skeletons.len(), 3);
+    assert_eq!(skeletons[0].id, "body-line");
+    assert!(skeletons[0].state.display_only());
+    assert!(skeletons[1].state.subtle());
+    assert_eq!(skeletons[2].state.size(), Size::Large);
+
+    assert_eq!(avatars.len(), 4);
+    assert_eq!(avatars[0].state.fallback(), "AL");
+    assert_eq!(avatars[1].state.fallback(), "ME");
+    assert_eq!(avatars[1].state.accessible_label(), "Current user");
+    assert!(avatars[2].state.has_source());
+    assert_eq!(
+        avatars[2].state.source().map(|source| source.uri()),
+        Some("asset://avatars/katherine.png")
+    );
+    assert_eq!(avatars[3].state.fallback(), "?");
 
     assert_eq!(icon_buttons.len(), 4);
     assert_eq!(icon_buttons[0].accessible_label, "Search");
@@ -1703,8 +1750,20 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
     );
     assert!(
         cx.debug_bounds("component-catalog:Avatar").is_some(),
-        "expected Components page to show deferred planned primitives"
+        "expected Components page to show official primitive entries"
     );
+    for selector in [
+        "gallery:component-separator-sample:section-rule",
+        "gallery:component-kbd-sample:command-palette",
+        "gallery:component-progress-sample:sync",
+        "gallery:component-skeleton-sample:body-line",
+        "gallery:component-avatar-sample:ada",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "expected Components page to render primitive sample `{selector}`"
+        );
+    }
 
     let tabs_sample = scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
     let page_scroll = bounds(cx, "gallery:page-scroll");

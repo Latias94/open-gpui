@@ -1,16 +1,17 @@
 //! Component consumer samples for the foundation gallery.
 
 use open_gpui_ui_components::{
-    Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant, Checkbox, CheckboxState,
-    ComboboxGroupDescriptor, ComboboxOpenMode, ComboboxOptionDescriptor, ComboboxState,
-    CommandGroupDescriptor, CommandItemDescriptor, CommandOpenMode, CommandState, Field,
-    FieldState, IconButton, IconButtonState, Label, LabelState, ListboxGroupDescriptor,
-    ListboxOptionDescriptor, ListboxState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis,
-    ScrollAreaState, ScrollResetPolicy, SelectOpenMode, SelectState, SidebarCollapseMode,
+    Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
+    Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOpenMode, ComboboxOptionDescriptor,
+    ComboboxState, CommandGroupDescriptor, CommandItemDescriptor, CommandOpenMode, CommandState,
+    Field, FieldState, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState,
+    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress, ProgressState,
+    RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
+    SelectOpenMode, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
-    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
-    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, Switch, SwitchState,
+    TabsActivationMode, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
+    ToggleState, ToggleVariant, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -34,6 +35,16 @@ pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_components::Badge",
     "open_gpui_ui_components::BadgeState",
     "open_gpui_ui_components::BadgeVariant",
+    "open_gpui_ui_components::Separator",
+    "open_gpui_ui_components::SeparatorState",
+    "open_gpui_ui_components::Kbd",
+    "open_gpui_ui_components::KbdState",
+    "open_gpui_ui_components::Progress",
+    "open_gpui_ui_components::ProgressState",
+    "open_gpui_ui_components::Skeleton",
+    "open_gpui_ui_components::SkeletonState",
+    "open_gpui_ui_components::Avatar",
+    "open_gpui_ui_components::AvatarState",
     "open_gpui_ui_components::IconButton",
     "open_gpui_ui_components::IconButtonState",
     "open_gpui_ui_components::Switch",
@@ -313,38 +324,38 @@ pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
     },
     ComponentCatalogEntry {
         name: "Separator",
-        status: ComponentCatalogStatus::Deferred,
+        status: ComponentCatalogStatus::Official,
         family: "layout",
         state: Some("SeparatorState"),
-        coverage: "planned primitive batch",
+        coverage: "exports / gallery / state tests",
     },
     ComponentCatalogEntry {
         name: "Kbd",
-        status: ComponentCatalogStatus::Deferred,
+        status: ComponentCatalogStatus::Official,
         family: "display",
         state: Some("KbdState"),
-        coverage: "planned primitive batch",
+        coverage: "exports / gallery / state tests",
     },
     ComponentCatalogEntry {
         name: "Progress",
-        status: ComponentCatalogStatus::Deferred,
+        status: ComponentCatalogStatus::Official,
         family: "status",
         state: Some("ProgressState"),
-        coverage: "planned primitive batch",
+        coverage: "exports / gallery / state tests",
     },
     ComponentCatalogEntry {
         name: "Skeleton",
-        status: ComponentCatalogStatus::Deferred,
+        status: ComponentCatalogStatus::Official,
         family: "status",
         state: Some("SkeletonState"),
-        coverage: "planned primitive batch",
+        coverage: "exports / gallery / state tests",
     },
     ComponentCatalogEntry {
         name: "Avatar",
-        status: ComponentCatalogStatus::Deferred,
+        status: ComponentCatalogStatus::Official,
         family: "identity",
         state: Some("AvatarState"),
-        coverage: "planned primitive batch",
+        coverage: "exports / gallery / state tests",
     },
 ];
 
@@ -457,6 +468,85 @@ pub struct IconButtonSample {
     pub accessible_label: &'static str,
     /// Resolved state.
     pub state: IconButtonState,
+}
+
+/// One separator sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SeparatorSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Semantic orientation.
+    pub orientation: Orientation,
+    /// Whether the separator is decorative.
+    pub decorative: bool,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: SeparatorState,
+}
+
+/// One keyboard shortcut sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KbdSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible shortcut label.
+    pub label: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: KbdState,
+}
+
+/// One progress sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProgressSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Accessible progress label.
+    pub label: &'static str,
+    /// Determinate value, or `None` for indeterminate progress.
+    pub value_percent: Option<f32>,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: ProgressState,
+}
+
+/// One skeleton sample in the gallery.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SkeletonSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Visible sample title.
+    pub title: &'static str,
+    /// Whether the skeleton uses lower emphasis.
+    pub subtle: bool,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: SkeletonState,
+}
+
+/// One avatar sample in the gallery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AvatarSample {
+    /// Stable sample id.
+    pub id: &'static str,
+    /// Display name.
+    pub name: &'static str,
+    /// Optional source URI metadata.
+    pub source: Option<&'static str>,
+    /// Explicit fallback text.
+    pub fallback: Option<&'static str>,
+    /// Explicit accessible label.
+    pub accessible_label: &'static str,
+    /// Foundation size used by the sample.
+    pub size: Size,
+    /// Resolved state.
+    pub state: AvatarState,
 }
 
 /// One switch sample in the gallery.
@@ -1043,6 +1133,162 @@ pub fn icon_button_samples(tokens: ThemeTokens) -> [IconButtonSample; 4] {
                 .state(),
         },
     )
+}
+
+/// Returns separator samples backed by real component state.
+pub fn separator_samples(tokens: ThemeTokens) -> [SeparatorSample; 3] {
+    [
+        (
+            "section-rule",
+            "Section rule",
+            Orientation::Horizontal,
+            false,
+            Size::Medium,
+        ),
+        (
+            "panel-divider",
+            "Panel divider",
+            Orientation::Vertical,
+            false,
+            Size::Large,
+        ),
+        (
+            "decorative-rule",
+            "Decorative rule",
+            Orientation::Horizontal,
+            true,
+            Size::Small,
+        ),
+    ]
+    .map(
+        |(id, title, orientation, decorative, size)| SeparatorSample {
+            id,
+            title,
+            orientation,
+            decorative,
+            size,
+            state: Separator::new(id)
+                .orientation(orientation)
+                .decorative(decorative)
+                .with_size(size)
+                .tokens(tokens)
+                .state(),
+        },
+    )
+}
+
+/// Returns keyboard shortcut samples backed by real component state.
+pub fn kbd_samples(tokens: ThemeTokens) -> [KbdSample; 3] {
+    [
+        ("command-palette", "Ctrl+K", Size::Medium),
+        ("save", "Ctrl+S", Size::Small),
+        ("confirm", "Enter", Size::Large),
+    ]
+    .map(|(id, label, size)| KbdSample {
+        id,
+        label,
+        size,
+        state: Kbd::new(id, label).with_size(size).tokens(tokens).state(),
+    })
+}
+
+/// Returns progress samples backed by real component state.
+pub fn progress_samples(tokens: ThemeTokens) -> [ProgressSample; 3] {
+    [
+        ("sync", "Sync progress", Some(64.0), Size::Medium),
+        ("complete", "Complete progress", Some(100.0), Size::Large),
+        ("indexing", "Indexing", None, Size::Small),
+    ]
+    .map(|(id, label, value_percent, size)| {
+        let progress = Progress::new(id, label).with_size(size).tokens(tokens);
+        let progress = match value_percent {
+            Some(value) => progress.value(value),
+            None => progress.indeterminate(),
+        };
+
+        ProgressSample {
+            id,
+            label,
+            value_percent,
+            size,
+            state: progress.state(),
+        }
+    })
+}
+
+/// Returns skeleton samples backed by real component state.
+pub fn skeleton_samples(tokens: ThemeTokens) -> [SkeletonSample; 3] {
+    [
+        ("body-line", "Body line", false, Size::Medium),
+        ("compact-line", "Compact line", true, Size::Small),
+        ("headline", "Headline", false, Size::Large),
+    ]
+    .map(|(id, title, subtle, size)| SkeletonSample {
+        id,
+        title,
+        subtle,
+        size,
+        state: Skeleton::new(id)
+            .subtle(subtle)
+            .with_size(size)
+            .tokens(tokens)
+            .state(),
+    })
+}
+
+/// Returns avatar samples backed by real component state.
+pub fn avatar_samples(tokens: ThemeTokens) -> [AvatarSample; 4] {
+    [
+        (
+            "ada",
+            "Ada Lovelace",
+            None,
+            None,
+            "Ada Lovelace",
+            Size::Medium,
+        ),
+        (
+            "current-user",
+            "Grace Hopper",
+            None,
+            Some("ME"),
+            "Current user",
+            Size::Large,
+        ),
+        (
+            "source-user",
+            "Katherine Johnson",
+            Some("asset://avatars/katherine.png"),
+            None,
+            "Katherine profile photo",
+            Size::Small,
+        ),
+        ("empty", "  ", None, None, "Anonymous avatar", Size::Small),
+    ]
+    .map(|(id, name, source, fallback, accessible_label, size)| {
+        let avatar = Avatar::new(id, name)
+            .accessible_label(accessible_label)
+            .with_size(size)
+            .tokens(tokens);
+        let avatar = match source {
+            Some(source) => avatar.source(source),
+            None => avatar,
+        };
+        let avatar = match fallback {
+            Some(fallback) => avatar.fallback(fallback),
+            None => avatar,
+        };
+
+        AvatarSample {
+            id,
+            name,
+            source,
+            fallback,
+            accessible_label,
+            size,
+            state: avatar.state(),
+        }
+    })
 }
 
 /// Returns switch samples backed by real component state.

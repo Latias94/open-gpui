@@ -31,12 +31,17 @@ status: "active"
   debug selector, component tests, and contract/verification documentation. Image loading, cache
   state, retry policy, fallback delay timers, and AvatarGroup layout remain outside the first
   primitive contract.
-- Last verified for U4: `cargo fmt -p open-gpui-ui-components`, `cargo check -p
-  open-gpui-ui-components`, focused `cargo nextest run -p open-gpui-ui-components avatar`, and
-  full `cargo nextest run -p open-gpui-ui-components` passed with 138 tests.
-- Next action: Start U5 from the component completion plan: wire Separator, Kbd, Progress,
-  Skeleton, and Avatar into the Components gallery catalog/samples, expose stable sample ids and
-  resolved-state metadata, then run gallery/component verification.
+- Done: U5 promoted `Separator`, `Kbd`, `Progress`, `Skeleton`, and `Avatar` to official
+  Components gallery catalog entries, added visible sample factories and rendered gallery sections
+  for each primitive, exposed stable `gallery:component-*-sample:{id}` debug selectors, and extended
+  metadata/smoke tests to prove resolved-state rows and short-viewport scrolling still work.
+- Last verified for U5: `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata
+  components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation`, and full `cargo
+  nextest run -p open-gpui-ui-foundation-gallery` passed with 42 tests.
+- Next action: Start U6 from the component completion plan: run the broader release gate, refresh
+  verification/memory as needed, perform a final review pass, and commit the series closeout.
 - Done: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
 - Decision: The next component series should define the official-component completion checklist and
