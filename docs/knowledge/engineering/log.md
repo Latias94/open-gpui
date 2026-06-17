@@ -1,6 +1,18 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added Tabs runtime keyboard automation and fixed rendered `Tabs` state hydration.
+  `Tabs::render` now seeds its runtime from the builder-selected value on first render and tracks
+  per-tab focus handles on the actual trigger elements, so Manual keyboard navigation can move
+  focus before Enter activation.
+* **Verification**: The focused Tabs runtime smoke first failed on the missing selected seed, then
+  passed after the runtime seed/focus-handle fix with `cargo nextest run -p
+  open-gpui-ui-components
+  tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads`.
+* **Review**: `/root/tabs_runtime_review` found no blocking issues and confirmed the selected seed
+  only initializes runtime state, per-tab focus handles are bound to real triggers, and the smoke
+  covers seed, disabled click, Manual focus-only arrows, Enter payload, and Home+Enter payload.
+  Remaining non-blocking gap: Tabs runtime smoke does not yet cover Space activation.
 * **Update**: Added Toolbar runtime keyboard automation. `Toolbar` now exposes stable runtime debug
   selectors for the root and items, and `open-gpui-ui-components` has a real rendered Toolbar smoke
   that clicks the first action item, moves roving focus with arrow/Home keys, skips disabled and

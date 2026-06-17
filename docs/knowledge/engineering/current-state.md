@@ -36,6 +36,13 @@ status: "active"
   scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,
   vertical Tabs rail scrolling, Splitter pointer dragging, and long Sidebar internal navigation
   scrolling through runtime events.
+- Done: Added Tabs runtime keyboard automation in `open-gpui-ui-components` and fixed the rendered
+  `Tabs` runtime to honor the builder-selected seed on first render plus bind per-tab focus handles
+  to actual trigger elements. The smoke rejects disabled tab clicks, keeps Manual arrow navigation
+  focus-only, and verifies Enter/Home activation payloads and selected panel swaps.
+- Last verified for the Tabs runtime smoke: red first on missing selected seed, then green with
+  `cargo nextest run -p open-gpui-ui-components
+  tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads`.
 - Done: Added stable runtime debug selectors for `Sidebar` root/items plus gallery Sidebar/Toolbar
   sample cards so shell-navigation interaction smoke tests can target real rendered nodes.
 - Last verified for the Sidebar internal-scroll smoke: `cargo fmt -p open-gpui-ui-components -p

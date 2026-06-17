@@ -636,7 +636,7 @@ impl RenderOnce for Tabs {
             id,
             orientation,
             activation_mode,
-            selected_value: _selected_value,
+            selected_value,
             size,
             tokens,
             items,
@@ -648,7 +648,12 @@ impl RenderOnce for Tabs {
         window.with_id(id.clone(), |window| {
             let descriptors: Vec<TabsItemDescriptor> =
                 items.iter().map(TabsItem::descriptor).collect();
-            let runtime = window.use_keyed_state("runtime", cx, |_, _| TabsRuntime::default());
+            let selected_seed = selected_value.clone();
+            let runtime = window.use_keyed_state("runtime", cx, |_, _| TabsRuntime {
+                selected_value: selected_seed.clone(),
+                focused_value: selected_seed,
+                focus_handles: BTreeMap::new(),
+            });
             let runtime_snapshot = {
                 let runtime = runtime.read(cx);
                 (
@@ -705,6 +710,14 @@ impl RenderOnce for Tabs {
             let metrics = state.metrics();
             let focus_ring = FocusRing::from_color(colors.focus_ring());
             let is_vertical = matches!(orientation, Orientation::Vertical);
+            let focus_handles = {
+                let runtime = runtime.read(cx);
+                state
+                    .items()
+                    .iter()
+                    .map(|item| runtime.focus_handles.get(item.value()).cloned())
+                    .collect::<Vec<_>>()
+            };
 
             div()
                 .id(id.clone())
@@ -750,6 +763,7 @@ impl RenderOnce for Tabs {
                             let item_index = index;
                             let is_selected = item.selected();
                             let is_tab_stop = item.tab_stop();
+                            let focus_handle = focus_handles[index].clone();
 
                             div()
                                 .id(tabs_trigger_id(item.value()))
@@ -760,6 +774,9 @@ impl RenderOnce for Tabs {
                                 })
                                 .focusable()
                                 .tab_stop(is_tab_stop)
+                                .when_some(focus_handle, |this, focus_handle| {
+                                    this.track_focus(&focus_handle)
+                                })
                                 .ui_role(Role::Tab)
                                 .aria_label(descriptor.label())
                                 .aria_selected(is_selected)

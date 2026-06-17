@@ -16,8 +16,8 @@ use open_gpui_ui_components::{
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
     SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
     SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
-    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
-    TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
+    Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState,
+    TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
     ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
     ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
     active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
@@ -1200,6 +1200,149 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
     assert!(
         tab_after.top() < tab_before.top(),
         "expected constrained vertical tablist to scroll; before={tab_before:?} after={tab_after:?}"
+    );
+}
+
+#[open_gpui::test]
+fn tabs_runtime_manual_keyboard_activation_preserves_selected_seed_and_payloads(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<TabsSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                Tabs::new("runtime-tabs")
+                    .activation_mode(TabsActivationMode::Manual)
+                    .selected("details")
+                    .item(TabsItem::new(
+                        "overview",
+                        "Overview",
+                        div()
+                            .debug_selector(|| "tabs-panel:overview".to_string())
+                            .child("Overview panel"),
+                    ))
+                    .item(
+                        TabsItem::new(
+                            "billing",
+                            "Billing",
+                            div()
+                                .debug_selector(|| "tabs-panel:billing".to_string())
+                                .child("Billing panel"),
+                        )
+                        .disabled(true),
+                    )
+                    .item(TabsItem::new(
+                        "details",
+                        "Details",
+                        div()
+                            .debug_selector(|| "tabs-panel:details".to_string())
+                            .child("Details panel"),
+                    ))
+                    .item(TabsItem::new(
+                        "history",
+                        "History",
+                        div()
+                            .debug_selector(|| "tabs-panel:history".to_string())
+                            .child("History panel"),
+                    ))
+                    .on_selection_change(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("tabs-panel:details").is_some(),
+        "expected seeded selected tab to render the Details panel"
+    );
+
+    let disabled_billing = cx
+        .debug_bounds("tabs:runtime-tabs:trigger:billing")
+        .expect("disabled Billing tab trigger should be rendered");
+    cx.simulate_click(disabled_billing.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        selections.borrow().is_empty(),
+        "disabled tab click should not emit a selection change"
+    );
+    assert!(
+        cx.debug_bounds("tabs-panel:details").is_some(),
+        "disabled tab click should keep the current selected panel"
+    );
+
+    let overview = cx
+        .debug_bounds("tabs:runtime-tabs:trigger:overview")
+        .expect("Overview tab trigger should be rendered");
+    cx.simulate_click(overview.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_click = selections.borrow().clone();
+    assert_eq!(after_click.len(), 1);
+    assert_eq!(after_click[0].index(), 0);
+    assert_eq!(after_click[0].value(), "overview");
+    assert_eq!(after_click[0].label(), "Overview");
+    assert!(
+        cx.debug_bounds("tabs-panel:overview").is_some(),
+        "enabled tab click should render the selected panel"
+    );
+
+    cx.simulate_keystrokes("right");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        selections.borrow().len(),
+        1,
+        "manual activation should move roving focus without selecting on arrow key"
+    );
+    assert!(
+        cx.debug_bounds("tabs-panel:overview").is_some(),
+        "manual activation should keep the selected panel until Enter or Space"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_enter = selections.borrow().clone();
+    assert_eq!(after_enter.len(), 2);
+    assert_eq!(after_enter[1].index(), 2);
+    assert_eq!(after_enter[1].value(), "details");
+    assert_eq!(after_enter[1].label(), "Details");
+    assert!(
+        cx.debug_bounds("tabs-panel:details").is_some(),
+        "Enter should activate the focused tab after keyboard navigation skips disabled tabs"
+    );
+
+    cx.simulate_keystrokes("home enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_home = selections.borrow().clone();
+    assert_eq!(after_home.len(), 3);
+    assert_eq!(after_home[2].index(), 0);
+    assert_eq!(after_home[2].value(), "overview");
+    assert_eq!(after_home[2].label(), "Overview");
+    assert!(
+        cx.debug_bounds("tabs-panel:overview").is_some(),
+        "Home plus Enter should activate the first enabled tab in manual mode"
     );
 }
 

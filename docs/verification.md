@@ -52,9 +52,11 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
-The components package includes runtime smoke coverage for Toolbar keyboard navigation. The focused
-Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
-separator items, and activates the focused item with Enter.
+The components package includes runtime smoke coverage for Tabs and Toolbar keyboard navigation.
+The focused Tabs test renders real tabs, preserves the builder-selected seed on the first frame,
+rejects disabled tab clicks, keeps manual arrow navigation as focus-only, and activates focused
+tabs with Enter. The focused Toolbar test renders real toolbar items, moves roving focus with
+arrow/Home keys, skips disabled and separator items, and activates the focused item with Enter.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
