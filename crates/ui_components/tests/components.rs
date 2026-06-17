@@ -9,23 +9,23 @@ use open_gpui_ui_components::{
     CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH,
     DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field, FocusRing,
     GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Label, Listbox,
+    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
     ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
     ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
-    Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
-    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, SelectSelection, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
-    SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
-    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
-    SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
-    TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputController, ThemeColor,
-    ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar, ToolbarItem,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
-    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
-    init_text_input, last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
-    outside_press_open_change, point_anchor_placement, sidebar_navigation_target,
-    toolbar_navigation_target,
+    Popover, PopoverOpenMode, Progress, RadioGroup, RadioGroupState, RadioItem,
+    RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState,
+    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
+    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
+    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
+    SplitterState, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
+    TabsState, TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
+    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
+    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
+    TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority, escape_open_change,
+    first_enabled, focus_ring_shadow, gpui_anchor, init_text_input, last_enabled,
+    listbox_navigation_target, menu_navigation_target, next_enabled, outside_press_open_change,
+    point_anchor_placement, sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1985,6 +1985,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
+    let root_separator = root::Separator::new("separator");
+    let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
+    let root_progress = root::Progress::new("progress", "Progress");
+    let root_skeleton = root::Skeleton::new("skeleton");
     let prelude_button = prelude::Button::new("save", "Save");
     let prelude_alert_dialog = prelude::AlertDialog::new(
         "delete",
@@ -2004,6 +2008,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
+    let prelude_separator = prelude::Separator::new("separator");
+    let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
+    let prelude_progress = prelude::Progress::new("progress", "Progress");
+    let prelude_skeleton = prelude::Skeleton::new("skeleton");
 
     let _ = (
         root_button.state(),
@@ -2019,6 +2027,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
+        root_separator.state(),
+        root_kbd.state(),
+        root_progress.state(),
+        root_skeleton.state(),
         prelude_button.state(),
         prelude_alert_dialog.state(),
         prelude_sheet.state(),
@@ -2032,6 +2044,10 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        prelude_separator.state(),
+        prelude_kbd.state(),
+        prelude_progress.state(),
+        prelude_skeleton.state(),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
         prelude::DEFAULT_OVERLAY_SAFE_MARGIN,
@@ -3882,6 +3898,124 @@ fn disabled_icon_button_blocks_activation_metadata() {
 }
 
 #[test]
+fn separator_state_exposes_orientation_role_and_decorative_mode() {
+    let horizontal = Separator::new("section-separator").state();
+    let vertical = Separator::new("panel-separator").vertical().large().state();
+    let decorative = Separator::new("decorative-separator")
+        .decorative(true)
+        .state();
+
+    assert_eq!(horizontal.orientation(), Orientation::Horizontal);
+    assert_eq!(horizontal.role(), Some(Role::Separator));
+    assert_eq!(horizontal.metrics().thickness(), ui_px(1.0));
+    assert_eq!(horizontal.colors().line().token(), semantic::BORDER);
+
+    assert_eq!(vertical.orientation(), Orientation::Vertical);
+    assert_eq!(vertical.role(), Some(Role::Separator));
+    assert_eq!(vertical.metrics().thickness(), ui_px(2.0));
+
+    assert!(decorative.decorative());
+    assert_eq!(decorative.role(), None);
+}
+
+#[test]
+fn kbd_state_is_display_only_with_muted_token_intents() {
+    let tokens = custom_tokens();
+    let state = Kbd::new("command-shortcut", "Ctrl+K")
+        .small()
+        .tokens(tokens)
+        .state();
+
+    assert_eq!(state.label(), "Ctrl+K");
+    assert_eq!(state.size(), Size::Small);
+    assert!(state.display_only());
+    assert_eq!(state.metrics().min_width(), ui_px(20.0));
+    assert_eq!(state.colors().background().token(), tokens.surface_muted);
+    assert_eq!(state.colors().foreground().token(), tokens.text_muted);
+    assert_eq!(state.colors().border().token(), tokens.border);
+}
+
+#[test]
+fn progress_state_clamps_values_and_preserves_indeterminate_mode() {
+    let full = Progress::new("upload-progress", "Upload")
+        .value(142.0)
+        .large()
+        .state();
+    let empty = Progress::new("empty-progress", "Empty")
+        .value(f32::NAN)
+        .state();
+    let indeterminate = Progress::new("pending-progress", "Pending")
+        .indeterminate()
+        .state();
+
+    assert_eq!(full.role(), Role::ProgressIndicator);
+    assert_eq!(full.value_percent(), Some(100.0));
+    assert_eq!(full.normalized_value(), Some(1.0));
+    assert_eq!(full.metrics().height(), ui_px(10.0));
+    assert_eq!(full.colors().track().token(), semantic::SURFACE_MUTED);
+    assert_eq!(full.colors().indicator().token(), semantic::ACCENT);
+
+    assert_eq!(empty.value_percent(), Some(0.0));
+    assert_eq!(empty.normalized_value(), Some(0.0));
+    assert!(indeterminate.indeterminate());
+    assert_eq!(indeterminate.value_percent(), None);
+    assert_eq!(indeterminate.normalized_value(), None);
+}
+
+#[test]
+fn skeleton_state_is_noninteractive_placeholder_with_stable_metrics() {
+    let tokens = custom_tokens();
+    let state = Skeleton::new("loading-line")
+        .subtle(true)
+        .large()
+        .tokens(tokens)
+        .state();
+
+    assert_eq!(state.size(), Size::Large);
+    assert!(state.subtle());
+    assert!(state.display_only());
+    assert_eq!(state.metrics().width(), ui_px(224.0));
+    assert_eq!(state.metrics().height(), ui_px(20.0));
+    assert_eq!(state.colors().background().token(), tokens.surface_muted);
+}
+
+#[open_gpui::test]
+fn low_state_primitives_render_stable_debug_selectors(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(Separator::new("runtime-separator"))
+                .child(Kbd::new("runtime-kbd", "Ctrl+K"))
+                .child(Progress::new("runtime-progress", "Loading").value(40.0))
+                .child(Skeleton::new("runtime-skeleton"))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    for selector in [
+        "separator:runtime-separator:root",
+        "kbd:runtime-kbd:root",
+        "progress:runtime-progress:root",
+        "skeleton:runtime-skeleton:root",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "{selector} should be rendered"
+        );
+    }
+}
+
+#[test]
 fn button_accepts_custom_token_bundle() {
     let tokens = custom_tokens();
     let state = Button::new("outline", "Outline")
@@ -4057,6 +4191,24 @@ fn default_theme_resolves_all_current_component_color_intents() {
         Label::new("disabled-label", "Disabled")
             .disabled(true)
             .state(),
+    ];
+    let separators = [
+        Separator::new("separator").state(),
+        Separator::new("vertical-separator").vertical().state(),
+    ];
+    let kbds = [
+        Kbd::new("kbd", "Ctrl+K").state(),
+        Kbd::new("large-kbd", "Enter").large().state(),
+    ];
+    let progress = [
+        Progress::new("progress", "Progress").value(50.0).state(),
+        Progress::new("indeterminate-progress", "Progress")
+            .indeterminate()
+            .state(),
+    ];
+    let skeletons = [
+        Skeleton::new("skeleton").state(),
+        Skeleton::new("subtle-skeleton").subtle(true).state(),
     ];
     let menus = [
         Menu::new("menu", "Menu")
@@ -4246,6 +4398,34 @@ fn default_theme_resolves_all_current_component_color_intents() {
     for state in labels {
         let colors = state.colors();
         for intent in [colors.text(), colors.required_marker()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in separators {
+        let colors = state.colors();
+        for intent in [colors.line()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in kbds {
+        let colors = state.colors();
+        for intent in [colors.background(), colors.foreground(), colors.border()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in progress {
+        let colors = state.colors();
+        for intent in [colors.track(), colors.indicator()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in skeletons {
+        let colors = state.colors();
+        for intent in [colors.background()] {
             assert_theme_has_exact_color(theme, intent);
         }
     }

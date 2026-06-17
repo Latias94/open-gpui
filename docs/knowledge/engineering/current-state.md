@@ -20,12 +20,17 @@ status: "active"
   `TextInput` now has a controller-backed rendered input smoke; `Combobox` now has filtered
   keyboard open/select coverage; dialog-backed `Command` now opens, filters, selects, closes on
   Escape, and closes on outside press without leaving modal content mounted.
-- Last verified for U2: `cargo fmt -p open-gpui-ui-components`, `cargo check -p
-  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components` passed with 127
-  tests.
-- Next action: Start U3 from the component completion plan: add the low-state primitive batch
-  (`Separator`, `Kbd`, `Progress`, `Skeleton`, `Avatar`) with resolved state, stable debug
-  selectors, gallery samples, component catalog entries, and focused state/render tests.
+- Done: U3 added low-state primitive components `Separator`, `Kbd`, `Progress`, and `Skeleton`.
+  Each has resolved state, metrics, token intents, explicit root/prelude exports, stable rendered
+  debug selectors, and focused component tests. `Role::Separator` is now part of UI core; the
+  current GPUI adapter maps it to the nearest available AccessKit role because the bundled
+  AccessKit enum does not expose a separator role.
+- Last verified for U3: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo check
+  -p open-gpui-ui-core -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-core -p
+  open-gpui-ui-components` passed with 157 tests.
+- Next action: Start U4 from the component completion plan: add the `Avatar` primitive with
+  fallback initials, accessible label metadata, size/color state, exports, tests, and contract
+  documentation. Gallery sample/catalog wiring remains scheduled for U5.
 - Done: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
 - Decision: The next component series should define the official-component completion checklist and

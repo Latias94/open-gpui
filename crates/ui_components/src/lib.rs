@@ -20,18 +20,22 @@ pub mod focus;
 mod geometry;
 pub mod hover_card;
 pub mod icon_button;
+pub mod kbd;
 pub mod label;
 pub mod listbox;
 pub mod menu;
 pub mod overlay;
 pub mod popover;
 pub mod prelude;
+pub mod progress;
 pub mod radio;
 pub mod roving_focus;
 pub mod scroll_area;
 pub mod select;
+pub mod separator;
 pub mod sheet;
 pub mod sidebar;
+pub mod skeleton;
 pub mod splitter;
 pub mod switch;
 pub mod tabs;
@@ -85,6 +89,7 @@ pub use hover_card::{
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
 };
 pub use icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
+pub use kbd::{Kbd, KbdColors, KbdMetrics, KbdState};
 pub use label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use listbox::{
     Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
@@ -101,6 +106,7 @@ pub use overlay::{
     gpui_anchor, outside_press_open_change, point_anchor_placement,
 };
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
+pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
 pub use radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
@@ -112,6 +118,7 @@ pub use scroll_area::{
 pub use select::{
     Select, SelectColors, SelectMetrics, SelectOpenMode, SelectSelection, SelectState,
 };
+pub use separator::{Separator, SeparatorColors, SeparatorMetrics, SeparatorState};
 pub use sheet::{
     Sheet, SheetCloseAffordance, SheetColors, SheetMetrics, SheetModalMode, SheetOpenMode,
     SheetSide, SheetState,
@@ -122,6 +129,7 @@ pub use sidebar::{
     SidebarSectionState, SidebarSelection, SidebarSide, SidebarState, SidebarVariant,
     sidebar_navigation_target,
 };
+pub use skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
 pub use splitter::{
     Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
     SplitterPanelState, SplitterState,

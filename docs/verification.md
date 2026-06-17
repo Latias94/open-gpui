@@ -75,6 +75,11 @@ arrow navigation as focus-only, and activates focused tabs with Enter and Space.
 Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
 separator items, and activates the focused item with Enter.
 
+The components package also includes low-state primitive coverage for Separator, Kbd, Progress, and
+Skeleton. Those tests verify resolved state branches, explicit root/prelude exports, theme color
+intents, stable rendered debug selectors, decorative separator semantics, progress clamping, and
+indeterminate progress before the gallery samples are wired.
+
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
 navigation rail to deep pages, and confirms switching away and back resets the page scroll position.

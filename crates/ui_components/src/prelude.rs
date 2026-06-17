@@ -40,6 +40,7 @@ pub use crate::hover_card::{
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
 };
 pub use crate::icon_button::{IconButton, IconButtonColors, IconButtonMetrics, IconButtonState};
+pub use crate::kbd::{Kbd, KbdColors, KbdMetrics, KbdState};
 pub use crate::label::{Label, LabelColors, LabelMetrics, LabelState};
 pub use crate::listbox::{
     Listbox, ListboxColors, ListboxGroup, ListboxGroupDescriptor, ListboxGroupState,
@@ -56,6 +57,7 @@ pub use crate::overlay::{
     gpui_anchor, outside_press_open_change, point_anchor_placement,
 };
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
+pub use crate::progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
 pub use crate::radio::{
     RadioGroup, RadioGroupColors, RadioGroupMetrics, RadioGroupState, RadioItem,
     RadioItemDescriptor, RadioItemState, RadioSelection,
@@ -69,6 +71,7 @@ pub use crate::scroll_area::{
 pub use crate::select::{
     Select, SelectColors, SelectMetrics, SelectOpenMode, SelectSelection, SelectState,
 };
+pub use crate::separator::{Separator, SeparatorColors, SeparatorMetrics, SeparatorState};
 pub use crate::sheet::{
     Sheet, SheetCloseAffordance, SheetColors, SheetMetrics, SheetModalMode, SheetOpenMode,
     SheetSide, SheetState,
@@ -79,6 +82,7 @@ pub use crate::sidebar::{
     SidebarSectionState, SidebarSelection, SidebarSide, SidebarState, SidebarVariant,
     sidebar_navigation_target,
 };
+pub use crate::skeleton::{Skeleton, SkeletonColors, SkeletonMetrics, SkeletonState};
 pub use crate::splitter::{
     Splitter, SplitterHandleState, SplitterMetrics, SplitterPanel, SplitterPanelDescriptor,
     SplitterPanelState, SplitterState,

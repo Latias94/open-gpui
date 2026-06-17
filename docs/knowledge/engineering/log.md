@@ -15,6 +15,14 @@
 * **Verification**: U2 passed `cargo fmt -p open-gpui-ui-components`, `cargo check -p
   open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components` with 127 passing
   tests.
+* **Update**: Completed U3 of the component completion plan. Added `Separator`, `Kbd`, `Progress`,
+  and `Skeleton` to `open-gpui-ui-components` with resolved state, metrics, token intents, explicit
+  root/prelude exports, stable rendered debug selectors, and focused tests. Added neutral
+  `Role::Separator` to UI core; the current GPUI adapter maps it to the nearest available
+  AccessKit role until the bundled AccessKit role enum exposes a separator role.
+* **Verification**: U3 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo
+  check -p open-gpui-ui-core -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-core -p open-gpui-ui-components` with 157 passing tests.
 * **Update**: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`. The plan keeps ADR 0008's
   current-crate product boundary, defines an official-component completion checklist, targets

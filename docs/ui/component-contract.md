@@ -163,6 +163,18 @@ official command slice is a local surface contract, not a global command registr
 fuzzy ranking, multi-select command chips, virtualized result sets, and app-wide indexing remain
 follow-up work.
 
+`SeparatorState`, `KbdState`, `ProgressState`, and `SkeletonState` are low-state primitives. They
+still expose resolved state, metrics, token intents, and stable rendered debug selectors rather
+than relying on ad hoc styled `div()` call sites. `SeparatorState` owns orientation and decorative
+mode; semantic separators use the neutral `Role::Separator`, while decorative separators expose no
+role. The current GPUI AccessKit adapter maps the neutral separator role through the nearest
+available GPUI role because the bundled AccessKit role enum does not expose a separator role yet.
+`KbdState` is display-only shortcut text with muted surface/text/border intents. `ProgressState`
+owns determinate versus indeterminate progress, clamps determinate values to `0..=100`, exposes a
+normalized `0..=1` value for rendering, and maps to `Role::ProgressIndicator`. `SkeletonState` is a
+non-interactive static loading placeholder with muted surface token intent; animation remains a
+future adapter enhancement, not part of the first resolved-state contract.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

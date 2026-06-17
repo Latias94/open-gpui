@@ -11,10 +11,14 @@ use crate::color::{ColorIntent, ColorState};
 use crate::dialog::DialogColors;
 use crate::field::FieldColors;
 use crate::hover_card::HoverCardColors;
+use crate::kbd::KbdColors;
 use crate::label::LabelColors;
 use crate::popover::PopoverColors;
+use crate::progress::ProgressColors;
 use crate::radio::RadioGroupColors;
+use crate::separator::SeparatorColors;
 use crate::sheet::SheetColors;
+use crate::skeleton::SkeletonColors;
 use crate::switch::SwitchColors;
 use crate::text_input::TextInputColors;
 use crate::tooltip::TooltipColors;
@@ -527,6 +531,33 @@ impl ThemeResolver {
                 ColorState::Required,
                 DEFAULT_DESTRUCTIVE,
             ),
+        }
+    }
+
+    pub(crate) const fn separator_colors(tokens: ThemeTokens) -> SeparatorColors {
+        SeparatorColors {
+            line: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+        }
+    }
+
+    pub(crate) const fn kbd_colors(tokens: ThemeTokens) -> KbdColors {
+        KbdColors {
+            background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+            foreground: ColorIntent::new(tokens.text_muted, DEFAULT_TEXT_MUTED),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
+        }
+    }
+
+    pub(crate) const fn progress_colors(tokens: ThemeTokens) -> ProgressColors {
+        ProgressColors {
+            track: ColorIntent::new(tokens.surface_muted, 0xdfe6dc),
+            indicator: ColorIntent::new(tokens.accent, DEFAULT_ACCENT),
+        }
+    }
+
+    pub(crate) const fn skeleton_colors(tokens: ThemeTokens) -> SkeletonColors {
+        SkeletonColors {
+            background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
         }
     }
 

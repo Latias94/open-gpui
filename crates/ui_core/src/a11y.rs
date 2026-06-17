@@ -43,6 +43,8 @@ pub enum Role {
     Window,
     /// A progress indicator.
     ProgressIndicator,
+    /// A separator between sections or groups.
+    Separator,
     /// A numeric spin button.
     SpinButton,
     /// A tab list container.
