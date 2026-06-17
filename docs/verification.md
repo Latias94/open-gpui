@@ -43,6 +43,12 @@ cargo nextest run -p open-gpui-ui-components
 cargo nextest run -p open-gpui-ui-foundation-gallery
 ```
 
+The gallery package includes Components-page runtime smoke coverage for regressions that state-only
+tests can miss: short-viewport page scrolling and navigation reset, Select popup outside dismissal,
+nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal plus vertical
+Splitter pointer dragging. Run the gallery package tests before relying on manual dogfood for those
+paths.
+
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
 initial focus intent, and placement input without opening a GPUI window.

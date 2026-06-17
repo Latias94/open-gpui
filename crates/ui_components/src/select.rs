@@ -722,6 +722,7 @@ impl RenderOnce for Select {
             self.tokens,
         );
         let id = self.id;
+        let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let content_id: ElementId = (id.clone(), "content").into();
         let listbox_id: ElementId = (id.clone(), "listbox").into();
@@ -748,7 +749,11 @@ impl RenderOnce for Select {
         );
 
         div()
-            .id(id)
+            .id(id.clone())
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("select:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -756,6 +761,10 @@ impl RenderOnce for Select {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("select:{debug_id}:trigger")
+                    })
                     .min_w(gpui_px_from_ui(metrics.min_width()))
                     .max_w(gpui_px_from_ui(metrics.max_width()))
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
@@ -919,6 +928,10 @@ fn select_content_element(
 
     div()
         .id(content_id)
+        .debug_selector({
+            let viewport_id = scroll_viewport_id.clone();
+            move || format!("select:{viewport_id}:content")
+        })
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .p(gpui_px_from_ui(metrics.content_padding()))

@@ -280,6 +280,7 @@ impl Render for GalleryShell {
 
         div()
             .id("ui-foundation-gallery")
+            .debug_selector(|| "gallery:shell".into())
             .size_full()
             .flex()
             .bg(rgb(0xf6f7f2))
@@ -311,6 +312,7 @@ impl GalleryShell {
     ) -> impl IntoElement {
         div()
             .id("gallery-navigation")
+            .debug_selector(|| "gallery:navigation".into())
             .w(px(268.0))
             .h_full()
             .flex_none()
@@ -345,6 +347,7 @@ impl GalleryShell {
             .child(
                 div()
                     .id("gallery-navigation-scroll")
+                    .debug_selector(|| "gallery:navigation-scroll".into())
                     .flex_1()
                     .min_h(px(0.0))
                     .flex()
@@ -356,6 +359,9 @@ impl GalleryShell {
                         let selected = section.page == selected_page;
                         div()
                             .id(section.id)
+                            .debug_selector(move || {
+                                format!("gallery:navigation-item:{}", section.id)
+                            })
                             .flex()
                             .flex_col()
                             .gap_1()
@@ -405,6 +411,7 @@ impl GalleryShell {
 
         div()
             .id("gallery-content")
+            .debug_selector(|| "gallery:content".into())
             .flex_1()
             .min_w(px(0.0))
             .size_full()
@@ -444,6 +451,7 @@ impl GalleryShell {
             .child(
                 div()
                     .id("gallery-page-scroll")
+                    .debug_selector(|| "gallery:page-scroll".into())
                     .flex_1()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
@@ -596,6 +604,10 @@ impl GalleryShell {
         let conformance_gate_cards = conformance_gates.iter().map(|gate| {
             div()
                 .id(format!("component-gate:{}", gate.id))
+                .debug_selector({
+                    let gate_id = gate.id;
+                    move || format!("component-gate:{gate_id}")
+                })
                 .min_w(px(220.0))
                 .flex()
                 .flex_col()
@@ -642,6 +654,7 @@ impl GalleryShell {
 
         div()
             .id("gallery-components-page")
+            .debug_selector(|| "gallery:components-page".into())
             .flex()
             .flex_col()
             .gap_5()
@@ -951,6 +964,10 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-splitter-sample:{}", sample.id))
+                                .debug_selector({
+                                    let sample_id = sample.id;
+                                    move || format!("gallery:component-splitter-sample:{sample_id}")
+                                })
                                 .w(px(520.0))
                                 .flex()
                                 .flex_col()
@@ -1032,6 +1049,11 @@ impl GalleryShell {
                                                 "component-scroll-area-item:{}:{}",
                                                 sample_id, index
                                             ))
+                                            .debug_selector(move || {
+                                                format!(
+                                                    "gallery:component-scroll-area-item:{sample_id}:{index}"
+                                                )
+                                            })
                                             .when(horizontal, |this| {
                                                 this.w(px(132.0)).min_h(px(88.0))
                                             })
@@ -1064,6 +1086,9 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-scroll-area-sample:{}", sample_id))
+                                .debug_selector(move || {
+                                    format!("gallery:component-scroll-area-sample:{sample_id}")
+                                })
                                 .w(px(360.0))
                                 .flex()
                                 .flex_col()
@@ -1542,6 +1567,10 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-tabs-sample:{}", sample.id))
+                                .debug_selector({
+                                    let sample_id = sample.id;
+                                    move || format!("gallery:component-tabs-sample:{sample_id}")
+                                })
                                 .min_w(px(360.0))
                                 .flex()
                                 .flex_col()

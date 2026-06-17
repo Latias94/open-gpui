@@ -11,6 +11,16 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Added a gallery-level Components interaction smoke gate. `open-gpui-ui-foundation-gallery`
+  now renders the full Components page in `open_gpui::test` and drives short-viewport page
+  scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,
+  vertical Tabs rail scrolling, and Splitter pointer dragging through runtime events.
+- Last verified for the gallery smoke gate: `cargo fmt -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+- Next automation direction: broaden the gallery smoke gate only when new UI families land. The
+  next useful additions are overlay-page modal/sheet/menu dismissal smoke and a compact-shell
+  navigation smoke, not screenshot coverage by default.
 - Done: Hardened the Components gallery interaction dogfood surface after manual feedback. Vertical
   Tabs triggers now opt out of flex shrink so constrained vertical tablists can overflow and scroll;
   the gallery vertical Tabs sample now has enough items to dogfood that behavior, and the vertical

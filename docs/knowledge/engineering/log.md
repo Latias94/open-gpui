@@ -1,6 +1,13 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added a gallery-level Components interaction smoke gate. The gallery tests now render
+  the full Components page and drive short-viewport page scrolling/navigation reset, Select popup
+  outside dismissal, nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and Splitter
+  pointer dragging through `open_gpui::test` runtime events.
+* **Verification**: The gallery smoke gate passed `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`. `docs/verification.md` now names these automated smoke paths
+  before the remaining manual dogfood checklist.
 * **Update**: Hardened the Components gallery interaction dogfood surface after manual feedback:
   vertical Tabs triggers now remain non-shrinking in constrained tablists, the gallery vertical Tabs
   sample has enough items to force overflow, and the vertical Splitter sample starts expanded so

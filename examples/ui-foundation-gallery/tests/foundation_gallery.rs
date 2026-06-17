@@ -1,4 +1,6 @@
-use open_gpui::px;
+use open_gpui::{
+    Bounds, MouseButton, Pixels, ScrollDelta, ScrollWheelEvent, VisualTestContext, point, px, size,
+};
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
     CommandOpenMode, DEFAULT_OVERLAY_SAFE_MARGIN, DialogOpenMode, HoverCardOpenIntent,
@@ -14,9 +16,109 @@ use open_gpui_ui_core::{
     Toggled, semantic, ui_px,
 };
 use open_gpui_ui_foundation_gallery::{
-    DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, density_label, device_class_label,
-    foundation_snapshot, pages, panel_class_label, shell_mode_label, size_label,
+    DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, density_label,
+    device_class_label, foundation_snapshot, pages, panel_class_label, shell_mode_label,
+    size_label,
 };
+
+fn redraw(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+}
+
+fn set_short_gallery_viewport(cx: &mut VisualTestContext) {
+    cx.simulate_resize(size(px(1040.0), px(520.0)));
+    redraw(cx);
+}
+
+fn open_components_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestContext {
+    let (_, cx) =
+        cx.add_window_view(|_, cx| GalleryShell::with_selected_page(GalleryPage::Components, cx));
+    set_short_gallery_viewport(cx);
+    redraw(cx);
+    cx
+}
+
+fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+    cx.debug_bounds(selector)
+        .unwrap_or_else(|| panic!("expected debug selector `{selector}` to be rendered"))
+}
+
+fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, "gallery:page-scroll");
+    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
+
+    for _ in 0..48 {
+        if let Some(target) = cx.debug_bounds(selector) {
+            if scroll_bounds.contains(&target.center()) {
+                return target;
+            }
+        }
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: scroll_position,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-220.0))),
+            ..Default::default()
+        });
+        redraw(cx);
+    }
+
+    panic!("expected `{selector}` to become visible after scrolling the Components page");
+}
+
+fn scroll_navigation_until_visible(
+    cx: &mut VisualTestContext,
+    selector: &'static str,
+) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, "gallery:navigation-scroll");
+    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
+
+    for _ in 0..12 {
+        if let Some(target) = cx.debug_bounds(selector) {
+            if scroll_bounds.contains(&target.center()) {
+                return target;
+            }
+        }
+
+        cx.simulate_event(ScrollWheelEvent {
+            position: scroll_position,
+            delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
+            ..Default::default()
+        });
+        redraw(cx);
+    }
+
+    panic!("expected `{selector}` to become visible after scrolling gallery navigation");
+}
+
+fn drag(
+    cx: &mut VisualTestContext,
+    start: open_gpui::Point<Pixels>,
+    end: open_gpui::Point<Pixels>,
+) {
+    cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.1,
+            start.y + (end.y - start.y) * 0.1,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(
+        point(
+            start.x + (end.x - start.x) * 0.35,
+            start.y + (end.y - start.y) * 0.35,
+        ),
+        MouseButton::Left,
+        Default::default(),
+    );
+    cx.simulate_mouse_move(end, MouseButton::Left, Default::default());
+    cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+    cx.run_until_parked();
+    redraw(cx);
+}
 
 #[test]
 fn gallery_sections_cover_the_foundation_slices() {
@@ -1295,4 +1397,141 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
     assert!(signals.contains(&"Role::ListBoxOption"));
     assert!(signals.contains(&"Role::EditableComboBox"));
     assert!(signals.contains(&"Role::ProgressIndicator"));
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    let tabs_sample = scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    let page_scroll = bounds(cx, "gallery:page-scroll");
+
+    assert!(
+        page_scroll.contains(&tabs_sample.center()),
+        "expected full Components page to scroll until the vertical Tabs sample is visible"
+    );
+    let tokens_navigation = bounds(cx, "gallery:navigation-item:tokens").center();
+    cx.simulate_click(tokens_navigation, Default::default());
+    redraw(cx);
+    let components_navigation =
+        scroll_navigation_until_visible(cx, "gallery:navigation-item:components").center();
+    cx.simulate_click(components_navigation, Default::default());
+    redraw(cx);
+
+    let reset_page_scroll = bounds(cx, "gallery:page-scroll");
+    if let Some(tabs_after_reset) = cx.debug_bounds("gallery:component-tabs-sample:workspace-tabs")
+    {
+        assert!(
+            !reset_page_scroll.contains(&tabs_after_reset.center()),
+            "expected switching away and back to Components to reset page scroll so deep Tabs sample is no longer visible; tabs={tabs_after_reset:?} page={reset_page_scroll:?}"
+        );
+    }
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_closes_select_popup_from_outside_press(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "select:component-select:status-select:trigger");
+    let select_trigger = bounds(cx, "select:component-select:status-select:trigger").center();
+    cx.simulate_click(select_trigger, Default::default());
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("select:Status:select-content-scroll:content")
+            .is_some(),
+        "expected status Select popup content to open from the gallery trigger"
+    );
+
+    let outside_target = bounds(cx, "gallery:content").center();
+    cx.simulate_click(outside_target, Default::default());
+    redraw(cx);
+
+    assert!(
+        cx.debug_bounds("select:Status:select-content-scroll:content")
+            .is_none(),
+        "expected outside press in the gallery to dismiss the Select popup"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-scroll-area-sample:data-grid");
+    let grid_before = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
+    let grid_viewport = bounds(cx, "scroll-area:component-scroll-area:data-grid");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: grid_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(-72.0), px(0.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+    let grid_after_x = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
+    assert!(
+        grid_after_x.left() < grid_before.left(),
+        "expected the gallery data-grid ScrollArea to scroll horizontally inside its viewport; before={grid_before:?} after={grid_after_x:?}"
+    );
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: grid_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-48.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+    let grid_after_y = bounds(cx, "gallery:component-scroll-area-item:data-grid:2");
+    assert!(
+        grid_after_y.top() < grid_after_x.top(),
+        "expected the gallery data-grid ScrollArea to scroll vertically inside its viewport; before={grid_after_x:?} after={grid_after_y:?}"
+    );
+}
+
+#[open_gpui::test]
+fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-splitter-sample:details-split");
+    let top_before = bounds(cx, "splitter-panel:summary");
+    let bottom_before = bounds(cx, "splitter-panel:details");
+    let handle = bounds(cx, "splitter:component-splitter:details-split:handle:0").center();
+
+    drag(cx, handle, point(handle.x, handle.y + px(68.0)));
+
+    let top_after = bounds(cx, "splitter-panel:summary");
+    let bottom_after = bounds(cx, "splitter-panel:details");
+    assert!(
+        top_after.size.height > top_before.size.height
+            && bottom_after.size.height < bottom_before.size.height,
+        "expected full-page vertical Splitter sample to resize via pointer drag; before=({top_before:?}, {bottom_before:?}) after=({top_after:?}, {bottom_after:?})"
+    );
+
+    scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
+    let tablist = bounds(cx, "tabs:component-tabs:workspace-tabs:tablist");
+    let tab_before = bounds(
+        cx,
+        "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    cx.simulate_event(ScrollWheelEvent {
+        position: tablist.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-72.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+    let tab_after = bounds(
+        cx,
+        "tabs:component-tabs:workspace-tabs:trigger:component-tabs-item:workspace-tabs:billing",
+    );
+    assert!(
+        tab_after.top() < tab_before.top(),
+        "expected full-page vertical Tabs sample to scroll its tab rail; before={tab_before:?} after={tab_after:?}"
+    );
 }
