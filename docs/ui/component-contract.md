@@ -68,6 +68,12 @@ policy. It does not own global overlay ordering, callback storage, or window sub
 behavior can be tested without a GPUI window before an adapter wires concrete events and focus
 handles.
 
+Interactive overlay adapters should bind persistent trigger/content focus handles in keyed runtime
+state instead of allocating them from rebuilt `RenderOnce` values. Resolved state declares
+`InitialFocusIntent` and `FocusRestoreIntent`; the adapter must apply those intents when opening or
+dismissing concrete GPUI layers. Non-modal pass-through dismissal may need deferred trigger focus
+restoration so later underlay mouse events do not overwrite the restored focus.
+
 `TooltipState` is the first descriptive overlay component contract. It records content kind,
 disabled/open state, hover/focus/manual open intent, placement preference, delay policy, resolved
 metrics, token intents, and tooltip layer state. The first slice is intentionally non-interactive:
@@ -79,8 +85,10 @@ the descriptive tooltip contract as-is.
 uncontrolled open mode, default-open state, trigger expanded/selected intent, placement preference,
 outside-press policy, initial focus intent, focus restore intent, resolved metrics, token intents,
 and non-modal dismissible layer state. The GPUI adapter owns the concrete trigger/content elements,
-`deferred`/`anchored` rendering, outside-press subscription, and focus handles. Nested popovers,
-modal popover variants, and full focus-scope coordination remain follow-up work.
+`deferred`/`anchored` rendering, outside-press subscription, and focus handles. Popover defaults to
+the non-modal overlay initial-focus policy (`InitialFocusIntent::None`); callers must opt in when
+content should receive focus. Nested popovers, modal popover variants, and full focus-scope
+coordination remain follow-up work.
 
 `DialogState` is the first modal overlay contract. It records controlled versus uncontrolled open
 mode, default-open state, title and description metadata, Escape policy, outside-press policy,

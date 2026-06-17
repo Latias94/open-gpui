@@ -20,8 +20,8 @@ use crate::button::ButtonVariant;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change,
+    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -1315,13 +1315,6 @@ fn alert_dialog_initial_focus_handle(
         Some(AlertDialogActionKind::Action) => Some(runtime.read(cx).action_focus.clone()),
         None => None,
     }
-}
-
-fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
-    matches!(
-        intent,
-        FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)
-    )
 }
 
 #[cfg(test)]

@@ -277,6 +277,11 @@ fn click_point(cx: &mut VisualTestContext, point: open_gpui::Point<Pixels>) {
     redraw(cx);
 }
 
+fn settle(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    redraw(cx);
+}
+
 fn visible_outside_point(
     container: Bounds<Pixels>,
     excluded: Bounds<Pixels>,
@@ -300,7 +305,7 @@ fn visible_outside_point(
 
 fn press_escape(cx: &mut VisualTestContext) {
     cx.simulate_keystrokes("escape");
-    redraw(cx);
+    settle(cx);
 }
 
 fn outside_top_left(layer: Bounds<Pixels>) -> open_gpui::Point<Pixels> {
@@ -1751,12 +1756,17 @@ fn components_page_conformance_gates_reference_core_and_gallery_contracts() {
 fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui::TestAppContext) {
     let cx = open_overlay_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:overlay-popover-control:controlled");
-    click(cx, "gallery:overlay-popover-control:controlled");
+    scroll_page_until_visible(cx, "popover:overlay-popover-demo:controlled:trigger");
+    click(cx, "popover:overlay-popover-demo:controlled:trigger");
+    settle(cx);
     assert!(
         cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
             .is_some(),
         "expected controlled Popover content to open from its real trigger"
+    );
+    assert!(
+        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
+        "expected controlled Popover trigger to remain focused while opened by default policy"
     );
 
     let popover_content = bounds(cx, "popover:overlay-popover-demo:controlled:content");
@@ -1765,11 +1775,16 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
         popover_content.bottom() + px(24.0),
     );
     click_point(cx, outside_target);
+    settle(cx);
 
     assert!(
         cx.debug_bounds("popover:overlay-popover-demo:controlled:content")
             .is_none(),
         "expected outside press to dismiss the controlled Popover"
+    );
+    assert!(
+        cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
+        "expected outside-dismissed Popover to restore focus to its trigger"
     );
 }
 
@@ -1779,23 +1794,34 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
 ) {
     let cx = open_overlay_gallery(cx);
 
-    scroll_page_until_visible(cx, "gallery:overlay-dialog-control:controlled-modal");
-    click(cx, "gallery:overlay-dialog-control:controlled-modal");
+    scroll_page_until_visible(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
+    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
+    settle(cx);
     let dialog_layer = bounds(cx, "dialog:overlay-dialog-demo:controlled-modal:layer");
     assert!(
         cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
             .is_some(),
         "expected controlled Dialog surface to open from its real trigger"
     );
+    assert!(
+        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:surface"),
+        "expected opened Dialog to move focus to its first focusable surface"
+    );
 
     click_point(cx, outside_top_left(dialog_layer));
+    settle(cx);
     assert!(
         cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
             .is_none(),
         "expected modal barrier outside press to dismiss the controlled Dialog"
     );
+    assert!(
+        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
+        "expected barrier-dismissed Dialog to restore focus to its trigger"
+    );
 
-    click(cx, "gallery:overlay-dialog-control:controlled-modal");
+    click(cx, "dialog:overlay-dialog-demo:controlled-modal:trigger");
+    settle(cx);
     assert!(
         cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
             .is_some(),
@@ -1806,6 +1832,10 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
         cx.debug_bounds("dialog:overlay-dialog-demo:controlled-modal:surface")
             .is_none(),
         "expected Escape to dismiss the controlled Dialog"
+    );
+    assert!(
+        cx.debug_selector_is_focused("dialog:overlay-dialog-demo:controlled-modal:trigger"),
+        "expected Escape-dismissed Dialog to restore focus to its trigger"
     );
 }
 

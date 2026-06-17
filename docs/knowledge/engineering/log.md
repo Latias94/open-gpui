@@ -9,14 +9,23 @@
   start/width during manual dogfood.
 * **Update**: Extended the Overlay gallery ContextMenu smoke to cover outside-press dismissal after
   real right-click opening, in addition to the existing Escape path.
-* **Follow-up**: Add runtime focus-restore assertions after `open_gpui::test` exposes a stable
-  focused selector/element query or the gallery adds explicit debug focus markers.
+* **Update**: Added focused debug selector observability to `open_gpui::VisualTestContext`.
+  Tests can now call `debug_selector_is_focused` or `focused_debug_selector` after a draw to assert
+  the actual rendered focus owner for any focusable element with a debug selector.
+* **Update**: Aligned Popover and Dialog GPUI adapters with their neutral overlay contracts.
+  Popover/Dialog triggers now use persistent focus handles, Dialog moves focus to its surface by
+  default, dismissals restore focus to the trigger according to `FocusRestoreIntent`, and Popover's
+  default initial focus now follows the non-modal overlay default of `InitialFocusIntent::None`.
+* **Update**: Strengthened Overlay gallery smoke so controlled Popover and Dialog are opened via
+  their real component triggers and assert focus restoration after outside press, modal barrier
+  dismissal, and Escape dismissal.
 * **Verification**: The second behavior-alignment loop passed focused `cargo nextest run -p
   open-gpui-ui-components progress_state_clamps_values_and_preserves_indeterminate_mode
   low_state_primitives_render_stable_debug_selectors`, focused `cargo nextest run -p
   open-gpui-ui-foundation-gallery
-  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, and `cargo run -p
-  xtask -- verify`.
+  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, focused focus-restore
+  checks for `open-gpui`, `open-gpui-ui-components`, and `open-gpui-ui-foundation-gallery`, and
+  `cargo run -p xtask -- verify`.
 * **Update**: Executed
   `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md`. The component
   crate default root and prelude now avoid adapter-only GPUI helper exports; those helpers are

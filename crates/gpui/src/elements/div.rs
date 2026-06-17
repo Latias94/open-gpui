@@ -2203,6 +2203,12 @@ impl Interactivity {
                         .next_frame
                         .debug_bounds
                         .insert(debug_selector.clone(), bounds);
+                    if let Some(focus_handle) = &self.tracked_focus_handle {
+                        window
+                            .next_frame
+                            .debug_focus_handles
+                            .insert(debug_selector.clone(), focus_handle.id);
+                    }
                 }
 
                 self.paint_hover_group_handler(window, cx);

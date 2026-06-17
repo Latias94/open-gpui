@@ -808,6 +808,8 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) debug_focus_handles: FxHashMap<String, FocusId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -855,6 +857,8 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_focus_handles: FxHashMap::default(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -883,6 +887,7 @@ impl Frame {
         #[cfg(any(test, feature = "test-support"))]
         {
             self.debug_bounds.clear();
+            self.debug_focus_handles.clear();
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]

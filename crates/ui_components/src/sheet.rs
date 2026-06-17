@@ -20,8 +20,8 @@ use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::geometry::ui_size_from_gpui_size;
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, OverlayResolvedState, escape_open_change,
+    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -1329,13 +1329,6 @@ fn sheet_close_is_initial_focus_target(state: &SheetState, intent: &InitialFocus
         InitialFocusIntent::Target(target) => close_target(target),
         InitialFocusIntent::TargetOrFirstFocusable(_) => true,
     }
-}
-
-fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
-    matches!(
-        intent,
-        FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)
-    )
 }
 
 fn children_from_content(content: SheetContent) -> Vec<AnyElement> {

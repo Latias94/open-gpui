@@ -92,7 +92,9 @@ compact viewport policy, verifies the derived mobile shell and compact density, 
 navigation rail to deep pages, and confirms switching away and back resets the page scroll position.
 
 The gallery package also includes Overlay-page runtime smoke coverage for popover, modal dialog,
-non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape dismissal. The
+non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape dismissal. Popover
+and Dialog smokes open the real component trigger, assert Dialog initial focus, and assert focus
+restoration to the trigger after outside press, modal barrier dismissal, and Escape dismissal. The
 Overlay gallery intentionally keeps default-open contract samples visually closed at page load so
 modal barriers and floating layers do not block page scrolling; the metadata rows still report each
 sample's resolved default-open contract.
@@ -103,6 +105,9 @@ initial focus intent, and placement input without opening a GPUI window.
 The `open-gpui-ui-components` overlay helper tests should cover the GPUI adapter mapping for
 deferred priority, snap margin, anchor conversion, outside-press open-change, and Escape
 open-change without introducing a global overlay runtime.
+For GPUI runtime focus assertions, `VisualTestContext::debug_selector_is_focused` and
+`VisualTestContext::focused_debug_selector` are the preferred test hooks. They use test-only
+debug-selector-to-focus-handle data and keep focus checks independent from component internals.
 The `open-gpui-ui-components` public contract tests should also keep
 `public_resolved_state_contracts_avoid_gpui_runtime_types` passing. That test is the hard
 headless-readiness guard for public resolved-state structs: it prevents `Window`, `App`,

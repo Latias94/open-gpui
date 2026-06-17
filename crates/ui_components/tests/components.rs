@@ -359,10 +359,7 @@ fn popover_state_records_interactive_overlay_policy() {
         OutsidePressPolicy::DismissAndPassThrough
     );
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::Trigger);
-    assert_eq!(
-        state.initial_focus_intent(),
-        &InitialFocusIntent::FirstFocusable
-    );
+    assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert!(state.overlay().wants_outside_press_handler());
     assert!(state.overlay().layer_state().hit_testable());
     assert_eq!(state.colors().background().token(), semantic::SURFACE);
@@ -447,6 +444,84 @@ fn dialog_state_models_disabled_default_open_and_policy_overrides() {
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn dialog_runtime_respects_escape_policy_and_restores_trigger_focus(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        escape_policy: Rc<RefCell<EscapeKeyPolicy>>,
+        open_events: Rc<RefCell<Vec<bool>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let escape_policy = *self.escape_policy.borrow();
+            let open_events = self.open_events.clone();
+
+            div().size_full().child(
+                Dialog::new("runtime-dialog", "Open dialog", "Runtime dialog", "Body")
+                    .escape_key_policy(escape_policy)
+                    .on_open_change(move |open, _, _| {
+                        open_events.borrow_mut().push(open);
+                    }),
+            )
+        }
+    }
+
+    let escape_policy = Rc::new(RefCell::new(EscapeKeyPolicy::Ignore));
+    let open_events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        escape_policy: escape_policy.clone(),
+        open_events: open_events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let trigger = cx
+        .debug_bounds("dialog:runtime-dialog:trigger")
+        .expect("dialog trigger should expose a stable debug selector");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_selector_is_focused("dialog:runtime-dialog:surface"),
+        "opened dialog should move focus to the surface"
+    );
+
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert!(
+        cx.debug_bounds("dialog:runtime-dialog:surface").is_some(),
+        "EscapeKeyPolicy::Ignore should keep dialog content mounted"
+    );
+
+    *escape_policy.borrow_mut() = EscapeKeyPolicy::Dismiss;
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("dialog:runtime-dialog:surface").is_none(),
+        "EscapeKeyPolicy::Dismiss should close dialog content"
+    );
+    assert!(
+        cx.debug_selector_is_focused("dialog:runtime-dialog:trigger"),
+        "Escape dismissal should restore focus to the dialog trigger"
+    );
+    assert_eq!(open_events.borrow().as_slice(), &[true, false]);
 }
 
 #[test]

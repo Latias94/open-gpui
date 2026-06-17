@@ -20,16 +20,24 @@ status: "active"
   reports indicator start/width for manual dogfood.
 - Done: Overlay gallery ContextMenu smoke now covers both real right-click opening plus Escape
   dismissal and a second right-click open plus outside-press dismissal.
-- Follow-up: Runtime focus-restore assertions should be added after `open_gpui::test` exposes a
-  stable focused selector/element query or the gallery adds explicit debug focus markers. Current
-  tests already cover resolved focus-restore intent, but not the real focused element after
-  dismissal.
+- Done: `open_gpui::VisualTestContext` now exposes `debug_selector_is_focused` and
+  `focused_debug_selector`, backed by test-only selector-to-focus-handle data recorded during GPUI
+  painting. This gives runtime smoke tests a stable way to assert the actual focused element.
+- Done: Popover and Dialog GPUI adapters now bind persistent trigger/content or trigger/surface
+  focus handles, apply the neutral overlay focus-restore intent on dismissal, and keep Popover's
+  default initial-focus intent aligned with the non-modal overlay default (`None`). Dialog opening
+  now moves focus to its surface by default, while Popover keeps focus on its trigger unless a
+  caller explicitly requests content focus.
+- Done: Overlay gallery smoke now opens the controlled Popover and Dialog through their real
+  component triggers, asserts Dialog initial focus, and verifies Popover/Dialog focus restoration
+  after outside press, modal barrier dismissal, and Escape dismissal.
 - Last verified for the second behavior-alignment loop: focused `cargo nextest run -p
   open-gpui-ui-components progress_state_clamps_values_and_preserves_indeterminate_mode
   low_state_primitives_render_stable_debug_selectors`, focused `cargo nextest run -p
   open-gpui-ui-foundation-gallery
-  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, and `cargo run -p
-  xtask -- verify`.
+  overlay_gallery_smoke_opens_context_menu_from_right_click_and_dismisses`, focused focus-restore
+  commands for `open-gpui`, `open-gpui-ui-components`, and `open-gpui-ui-foundation-gallery`, and
+  `cargo run -p xtask -- verify`.
 - Done: Started and executed
   `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md` to align the
   current component product surface with the stricter adapter-first contract.

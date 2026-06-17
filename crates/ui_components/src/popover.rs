@@ -5,8 +5,9 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    AnyElement, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
+    AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
+    Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
@@ -18,8 +19,8 @@ use crate::a11y::UiA11yElementExt;
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, gpui_overlay_state,
-    outside_press_open_change,
+    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, OverlayResolvedState, escape_open_change,
+    focus_restore_requests_trigger, gpui_overlay_state, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -346,9 +347,11 @@ enum PopoverContent {
     Element(AnyElement),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PopoverRuntime {
     open: bool,
+    trigger_focus: FocusHandle,
+    content_focus: FocusHandle,
 }
 
 impl Popover {
@@ -369,7 +372,7 @@ impl Popover {
             placement_side: OverlayPlacementSide::Bottom,
             placement_alignment: OverlayPlacementAlignment::Start,
             outside_press_policy: OutsidePressPolicy::DismissAndPassThrough,
-            initial_focus_intent: InitialFocusIntent::FirstFocusable,
+            initial_focus_intent: InitialFocusIntent::None,
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
             on_escape_close: None,
@@ -394,7 +397,7 @@ impl Popover {
             placement_side: OverlayPlacementSide::Bottom,
             placement_alignment: OverlayPlacementAlignment::Start,
             outside_press_policy: OutsidePressPolicy::DismissAndPassThrough,
-            initial_focus_intent: InitialFocusIntent::FirstFocusable,
+            initial_focus_intent: InitialFocusIntent::None,
             focus_restore_intent: FocusRestoreIntent::Trigger,
             tokens: ThemeTokens::default(),
             on_escape_close: None,
@@ -493,8 +496,10 @@ impl Sizable for Popover {
 
 impl RenderOnce for Popover {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| PopoverRuntime {
+        let runtime = window.use_keyed_state(self.id.clone(), cx, |_, cx| PopoverRuntime {
             open: self.default_open,
+            trigger_focus: cx.focus_handle(),
+            content_focus: cx.focus_handle(),
         });
         let runtime_open = runtime.read(cx).open;
         let controlled_open = self.open;
@@ -531,6 +536,8 @@ impl RenderOnce for Popover {
         let focus_ring = state.focus_ring();
         let disabled = state.disabled();
         let open = state.open();
+        let trigger_focus = runtime.read(cx).trigger_focus.clone();
+        let content_focus = runtime.read(cx).content_focus.clone();
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
@@ -577,6 +584,7 @@ impl RenderOnce for Popover {
                     .text_size(gpui_px_from_ui(metrics.text_size()))
                     .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
+                    .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
                     .ui_role(state.trigger_role())
                     .aria_label(trigger_label.clone())
@@ -587,11 +595,21 @@ impl RenderOnce for Popover {
                     .when(open, |this| {
                         let runtime = runtime.clone();
                         let on_escape_close = on_escape_close.clone();
+                        let focus_restore = state.focus_restore_intent().clone();
+                        let escape_policy = state.overlay().policy().clone();
                         this.on_key_down(move |event: &KeyDownEvent, window, cx| {
-                            if event.keystroke.key.as_str() == "escape" {
+                            if event.keystroke.key.as_str() == "escape"
+                                && escape_open_change(&escape_policy).is_some()
+                            {
                                 cx.stop_propagation();
                                 window.prevent_default();
-                                close_popover(runtime.clone(), on_escape_close.clone(), window, cx);
+                                close_popover(
+                                    runtime.clone(),
+                                    focus_restore.clone(),
+                                    on_escape_close.clone(),
+                                    window,
+                                    cx,
+                                );
                             }
                         })
                     })
@@ -599,6 +617,7 @@ impl RenderOnce for Popover {
                     .when(!disabled, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
+                        let initial_focus = state.initial_focus_intent().clone();
                         this.cursor_pointer()
                             .hover(move |style| {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
@@ -609,6 +628,12 @@ impl RenderOnce for Popover {
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
                                 });
+                                if next_open
+                                    && let Some(focus) =
+                                        popover_initial_focus_handle(&runtime, &initial_focus, cx)
+                                {
+                                    window.defer(cx, move |window, cx| focus.focus(window, cx));
+                                }
                                 if let Some(on_open_change) = on_open_change.as_ref() {
                                     on_open_change(next_open, window, cx);
                                 }
@@ -629,6 +654,7 @@ impl RenderOnce for Popover {
                                 debug_id.clone(),
                                 state.clone(),
                                 runtime.clone(),
+                                content_focus.clone(),
                                 on_escape_close.clone(),
                                 on_open_change.clone(),
                             )),
@@ -644,7 +670,8 @@ fn popover_content_element(
     content_id: ElementId,
     debug_id: String,
     state: PopoverState,
-    runtime: open_gpui::Entity<PopoverRuntime>,
+    runtime: Entity<PopoverRuntime>,
+    content_focus: FocusHandle,
     on_escape_close: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
 ) -> impl IntoElement {
@@ -653,6 +680,7 @@ fn popover_content_element(
     let outside_change = outside_press_open_change(state.overlay().policy());
     let escape_runtime = runtime.clone();
     let escape_open_change = on_escape_close.clone();
+    let escape_focus_restore = state.focus_restore_intent().clone();
 
     div()
         .id(content_id)
@@ -674,6 +702,7 @@ fn popover_content_element(
         .occlude()
         .tab_group()
         .focusable()
+        .track_focus(&content_focus)
         .ui_role(state.content_role())
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key.as_str() == "escape" {
@@ -681,6 +710,7 @@ fn popover_content_element(
                 window.prevent_default();
                 close_popover(
                     escape_runtime.clone(),
+                    escape_focus_restore.clone(),
                     escape_open_change.clone(),
                     window,
                     cx,
@@ -690,24 +720,51 @@ fn popover_content_element(
         .when(outside_change.is_some(), |this| {
             let runtime = runtime.clone();
             let on_open_change = on_open_change.clone();
+            let focus_restore = state.focus_restore_intent().clone();
             this.on_mouse_down_out(move |_, window, cx| {
-                close_popover(runtime.clone(), on_open_change.clone(), window, cx);
+                close_popover(
+                    runtime.clone(),
+                    focus_restore.clone(),
+                    on_open_change.clone(),
+                    window,
+                    cx,
+                );
             })
         })
         .children(children_from_content(content))
 }
 
 fn close_popover(
-    runtime: open_gpui::Entity<PopoverRuntime>,
+    runtime: Entity<PopoverRuntime>,
+    focus_restore: FocusRestoreIntent,
     on_open_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
     window: &mut Window,
     cx: &mut App,
 ) {
+    let trigger_focus = runtime.read(cx).trigger_focus.clone();
     runtime.update(cx, |runtime, _| {
         runtime.open = false;
     });
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
+    }
+    if focus_restore_requests_trigger(&focus_restore) {
+        window.defer(cx, move |window, cx| trigger_focus.focus(window, cx));
+    }
+}
+
+fn popover_initial_focus_handle(
+    runtime: &Entity<PopoverRuntime>,
+    intent: &InitialFocusIntent,
+    cx: &App,
+) -> Option<FocusHandle> {
+    match intent {
+        InitialFocusIntent::None => None,
+        InitialFocusIntent::FirstFocusable => Some(runtime.read(cx).content_focus.clone()),
+        InitialFocusIntent::Target(_) => None,
+        InitialFocusIntent::TargetOrFirstFocusable(_) => {
+            Some(runtime.read(cx).content_focus.clone())
+        }
     }
 }
 

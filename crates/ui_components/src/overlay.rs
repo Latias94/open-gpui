@@ -329,6 +329,13 @@ pub const fn outside_press_open_change(policy: &OverlayLayerPolicy) -> Option<Ov
     }
 }
 
+pub(crate) const fn focus_restore_requests_trigger(intent: &FocusRestoreIntent) -> bool {
+    matches!(
+        intent,
+        FocusRestoreIntent::Trigger | FocusRestoreIntent::TriggerOrFallback(_)
+    )
+}
+
 /// Returns the default GPUI deferred priority for an overlay kind.
 pub const fn default_deferred_priority(kind: OverlayLayerKind) -> usize {
     match kind {
