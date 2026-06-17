@@ -178,10 +178,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
 7. Re-run `cargo nextest run -p open-gpui-ui-components` and `cargo nextest run -p
    open-gpui-ui-foundation-gallery` if a manual check exposes a component or gallery regression.
 
-For headless-readiness checkpoint work, additionally review `docs/adr/0006-open-gpui-ui-headless-
-extraction-checkpoint.md` after the automated component tests pass. The checkpoint should continue
-to identify which behavior is neutral, which behavior remains GPUI adapter-owned, and why a
-standalone `open-gpui-ui-headless` crate is or is not ready.
+For headless-readiness checkpoint work, additionally review
+`docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md` and
+`docs/adr/0007-open-gpui-ui-headless-boundary-design.md` after the automated component tests pass.
+The checkpoint should continue to identify which behavior is neutral, which behavior remains GPUI
+adapter-owned, and why a standalone `open-gpui-ui-headless` crate is or is not ready.
 
 CI runs a three-platform matrix for pushes to `master` / `main`, pull requests, and manual workflow
 dispatches:

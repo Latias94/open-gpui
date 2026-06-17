@@ -1,6 +1,23 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Completed the strict UI-core headless boundary plan through the design checkpoint.
+  Adaptive policy uses neutral `UiPx`; UI-core `UiPx` no longer implements GPUI style conversions;
+  `open-gpui-ui-components::gpui_adapter` exports explicit `gpui_px_from_ui`,
+  `gpui_point_from_ui`, and `gpui_size_from_ui`; and `open-gpui-ui-core` dropped its `open_gpui`
+  manifest dependency.
+* **Decision**: `open-gpui-ui-headless` remains deferred even though the strict UI-core boundary is
+  clean. The next work should be a narrow behavior extraction plan that moves one family at a time,
+  starting with overlay policy, roving focus, listbox navigation/typeahead, scroll viewport intent,
+  or splitter constraints.
+* **Update**: Added ADR 0007 as the post-boundary extraction design gate. Its ownership matrix
+  keeps `TextInputController`, `ScrollHandle`, `focus_ring_shadow`, `GpuiOverlayState`, GPUI
+  geometry conversion helpers, concrete focus handles, GPUI render trees, and AccessKit node wiring
+  adapter-owned.
+* **Verification**: The strict boundary slice passed `cargo check -p open-gpui-ui-core`, `cargo
+  check -p open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, focused
+  nextest for UI-core boundary guards, component adapter export guards, and the gallery headless
+  checkpoint test. `git diff --check` passed with only CRLF warnings.
 * **Update**: Wrote the extraction-prep plan at
   `docs/plans/2026-06-17-001-refactor-ui-headless-extraction-prep-plan.md`. It keeps
   `open-gpui-ui-headless` deferred and breaks the next series into guard inventory, neutral

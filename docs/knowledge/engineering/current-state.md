@@ -11,6 +11,25 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Completed the strict UI-core headless boundary plan through the design checkpoint.
+  `open-gpui-ui-core` no longer depends on `open_gpui`, its strict boundary guard has an empty
+  blocker set, adaptive policy uses neutral `UiPx`, and GPUI geometry/style conversion now lives in
+  `open_gpui_ui_components::gpui_adapter`.
+- Done: Added ADR 0007 at
+  `docs/adr/0007-open-gpui-ui-headless-boundary-design.md`. It is a design gate, not crate
+  creation. It names overlay policy, roving focus, listbox navigation/typeahead, scroll viewport
+  intent, and splitter constraints as first extraction candidates while keeping
+  `TextInputController`, `ScrollHandle`, `focus_ring_shadow`, `GpuiOverlayState`, AccessKit node
+  wiring, concrete focus handles, GPUI render trees, and adapter geometry conversions in the GPUI
+  adapter layer.
+- Last verified for the strict boundary slice: `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, focused nextest for
+  `ui_core_extraction_blockers_match_allowlist`, `ui_core_strict_boundary_blockers_match_allowlist`,
+  component adapter export/boundary guards, and the gallery headless checkpoint test. `git diff
+  --check` passed with only existing CRLF warnings.
+- Next action: Plan the actual behavior-crate extraction as a narrow follow-up. Move one behavior
+  family at a time, keep compatibility re-exports deliberate, and require the future behavior crate
+  to have no `open_gpui` dependency.
 - Done: Wrote the next extraction-prep plan at
   `docs/plans/2026-06-17-001-refactor-ui-headless-extraction-prep-plan.md`. The plan keeps
   `open-gpui-ui-headless` deferred and targets the blockers recorded by ADR 0006: public GPUI

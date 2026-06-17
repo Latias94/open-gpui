@@ -317,7 +317,7 @@ behavior already exists in overlay policy resolution, roving focus, listbox coll
 scroll viewport intent, and splitter resize constraints. The first extraction candidate should
 therefore be a small behavior package, not a full shadcn/Radix-style component taxonomy.
 
-Before extraction, keep these blockers explicit:
+Before extraction, keep these boundary rules explicit:
 
 - public resolved-state structs must continue to avoid GPUI runtime/rendering types, concrete
   element ids, focus handles, scroll handles, and callbacks;
@@ -347,7 +347,8 @@ JSON schema. Single-line editable text input now uses GPUI's `EntityInputHandler
 multiline input, password masking, undo/redo, and completion remains out of scope. `Field` still
 stays separate from the editing controller and remains composition-only. `focus_ring_shadow` is
 GPUI-adapter code and should stay out of a future headless crate if `FocusRing` is extracted.
-ADR 0006 keeps `open-gpui-ui-headless` deferred after the extraction-prep checkpoint.
+ADR 0006 keeps `open-gpui-ui-headless` deferred after the strict boundary checkpoint, and
+ADR 0007 records the post-boundary extraction design without creating the behavior crate.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
 against GPUI runtime/rendering type leaks. Public component metrics now use neutral `UiPx`

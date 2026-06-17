@@ -9,55 +9,55 @@ ADR 0005 chose an adapter-first, headless-ready component architecture and defer
 `open-gpui-ui-headless` crate until repeated behavior contracts existed and the public boundary was
 clean enough to move.
 
-The overlay, shell, layout, and choice/search series now provide meaningful extraction evidence:
+The current component stack now has that boundary evidence:
 
+- `open_gpui_ui_core` has no `open_gpui` manifest dependency, no source references to
+  `open_gpui`, and no GPUI style conversion impls for neutral geometry.
 - `open_gpui_ui_core::overlay` owns renderer-neutral overlay policy, presence, dismissal,
   focus-intent, stack ordering, placement vocabulary, and `OverlayResolvedState`.
+- `open_gpui_ui_core` owns neutral geometry, accessibility, and focus facades:
+  `UiPx`, `UiPoint`, `UiSize`, `UiRect`, `UiEdges`, `Role`, `Toggled`, `Orientation`,
+  `AccessibleAction`, and `FocusTargetId`.
 - `TooltipState`, `PopoverState`, `DialogState`, `MenuState`, `ContextMenuState`,
   `AlertDialogState`, `SheetState`, `HoverCardState`, `SelectState`, `ComboboxState`, and
   `CommandState` expose neutral overlay state instead of `GpuiOverlayState`.
 - `ToolbarState`, `SidebarState`, `TabsState`, `RadioGroupState`, `MenuState`, and `ListboxState`
-  reuse the same roving-focus and disabled-skip helper vocabulary.
+  reuse roving-focus and disabled-skip helper vocabulary.
 - `ListboxState`, `SelectState`, `ComboboxState`, and `CommandState` share grouped item anatomy,
   selected versus active value semantics, disabled option handling, empty states, and scroll
   viewport metadata.
 - `ScrollAreaState` and `SplitterState` prove that runtime-sensitive GPUI handles and pointer
   interaction can stay in adapters while viewport intent and resize constraints remain testable.
-- `open_gpui_ui_core` now owns neutral geometry, accessibility, and focus facades:
-  `UiPx`, `UiPoint`, `UiSize`, `UiRect`, `UiEdges`, `Role`, `Toggled`, `Orientation`,
-  `AccessibleAction`, and `FocusTargetId`.
-- Component tests now include structural guards that public resolved-state structs avoid GPUI
-  runtime/rendering types such as `Window`, `App`, `Context`, `RenderOnce`, `IntoElement`,
-  `ElementId`, `Entity`, focus handles, scroll handles, and callbacks.
+- Component tests guard public resolved-state structs against GPUI runtime/rendering types such as
+  `Window`, `App`, `Context`, `RenderOnce`, `IntoElement`, `ElementId`, `Entity`, focus handles,
+  scroll handles, and callbacks.
 - Adapter-only public surfaces are explicitly inventoried: `TextInputController`, externally
-  supplied `ScrollHandle`, `focus_ring_shadow`, `GpuiOverlayState`, and GPUI overlay scheduling
-  helpers.
+  supplied `ScrollHandle`, `focus_ring_shadow`, `GpuiOverlayState`, GPUI geometry conversion
+  helpers, and GPUI overlay scheduling helpers.
 
-This is enough evidence to start a focused extraction design, but not enough to create or publish
-`open-gpui-ui-headless` in the current branch.
+This is enough evidence to start a focused behavior-extraction design, but not enough to create or
+publish a new crate in the current branch.
 
 ## Decision
 
 Do **not** create `open-gpui-ui-headless` yet.
 
-The extraction-prep series cleared the component resolved-state blockers, but a strict crate
-boundary still has two unresolved core-level decisions:
+The strict UI-core boundary is clean, so the old core-boundary blockers are no longer active. The
+remaining decision is sequencing: the next change should be a narrow extraction plan that moves one
+behavior family at a time, keeps GPUI adapter APIs behind `open_gpui_ui_components::gpui_adapter`,
+and proves each move with existing tests before any package is published.
 
-1. `open_gpui_ui_core::adaptive` still exposes adaptive viewport policy through GPUI `Pixels`.
-2. `UiPx` still carries GPUI style-conversion impls as an adapter convenience.
-
-Keep the reusable behavior in the current crates until those two boundary questions are resolved.
-The next correct step is a narrow extraction plan or ADR, not a crate in this branch. That plan
-should start from the pure behavior modules and leave GPUI adapter APIs behind.
+ADR 0007 records that design gate. It identifies the first extraction candidates and the adapter
+surfaces that must not move.
 
 Likely first extraction candidates:
 
 - overlay policy, presence, dismissal, stack ordering, focus-intent, and placement vocabulary;
-- neutral geometry values once GPUI conversion impls are moved behind the adapter boundary;
 - roving-focus navigation helpers;
 - listbox collection navigation, selected/active item resolution, disabled skip behavior, and
   typeahead target helpers;
-- scroll viewport intent and splitter resize constraint solvers.
+- scroll viewport intent;
+- splitter resize constraint solvers.
 
 Do not extract:
 
@@ -68,48 +68,42 @@ Do not extract:
 - barrier rendering and hit-test blocking;
 - theme resolution into GPUI colors;
 - AccessKit relationship wiring that depends on concrete element IDs;
-- `TextInputController`, which is a concrete GPUI `EntityInputHandler` adapter rather than a
-  framework-neutral text editing core.
-
-No ADR 0007 is added in this checkpoint because the strict crate gate is not fully clear. ADR 0007
-should be written with the actual extraction design once the adaptive and `UiPx` conversion
-boundary decisions are made.
+- `ScrollHandle`;
+- `TextInputController`;
+- `focus_ring_shadow`;
+- GPUI geometry conversion helpers.
 
 ## Rationale
 
 The current component catalog has enough reusable behavior to justify extraction planning. The
-important shift since the original checkpoint is that public component state is now mostly neutral:
-geometry, metrics, focus/a11y semantics, and overlay state no longer require GPUI runtime types.
+important shift since the original checkpoint is that public component state and UI-core contracts
+are now renderer-neutral: geometry, metrics, focus/a11y semantics, overlay state, adaptive policy,
+and strict core dependencies no longer require GPUI runtime types.
 
-However, creating a crate now would either:
-
-- pull GPUI dependencies through `adaptive`/`UiPx` conversion convenience APIs, which defeats the
-  point of a headless crate; or
-- require hurried API surgery in the same change that creates the crate, which makes the boundary
-  harder to review.
-
-Keeping the contracts in place lets the next plan extract behavior deliberately while preserving the
-working GPUI component stack.
+Creating a crate in this same series would still mix two different changes: boundary cleanup and
+module relocation. Keeping the crate deferred lets reviewers evaluate the next move by behavior
+family, not by a broad package split.
 
 ## Consequences
 
 Positive:
 
-- Public component resolved state is now guarded against GPUI runtime/render leaks.
+- Public component resolved state is guarded against GPUI runtime/render leaks.
+- UI core is now a clean dependency for future behavior crates or non-GPUI adapters.
 - GPUI adapter APIs are named and grouped rather than hidden inside neutral-looking contracts.
 - Future extraction can focus on moving pure modules instead of untangling every component first.
 
 Negative:
 
-- Other UI frameworks still cannot consume a standalone Open GPUI headless package.
-- `open_gpui_ui_core` still carries a small GPUI dependency surface through adaptive viewport
-  pixels and `UiPx` style conversions.
-- Crate users can still import GPUI adapter helpers from the compatibility root/prelude exports,
-  so docs and tests must keep the adapter-only classification visible.
+- Other UI frameworks still cannot consume a standalone Open GPUI behavior package.
+- Crate users can still import GPUI adapter helpers from compatibility root/prelude exports, so
+  docs and tests must keep the adapter-only classification visible.
+- The next extraction plan must be careful not to move adapter-owned runtime responsibilities along
+  with neutral policy/state.
 
 ## Extraction Gate
 
-Revisit `open-gpui-ui-headless` when all of the following are true:
+Revisit crate creation when all of the following are true:
 
 1. At least two component families outside simple buttons share the same behavior helpers.
    Completed for overlay, roving focus, listbox/choice navigation, scroll viewport intent, and
@@ -119,17 +113,16 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
    `public_resolved_state_contracts_avoid_gpui_runtime_types`.
 3. Public component geometry, metrics, and overlay state avoid GPUI geometry aliases. Completed for
    component public state and guarded by `public_contract_extraction_blockers_match_allowlist`.
-4. UI-core public contracts either avoid GPUI geometry or classify it intentionally. Partially
-   complete: the only current allowlisted blocker is adaptive viewport `Pixels as Px`.
-5. GPUI conversion impls for neutral values are moved out of the future headless dependency path.
-   Not complete: `UiPx` still has GPUI style-conversion impls in UI core for the current adapter
-   stack.
+4. UI-core public contracts and package metadata avoid GPUI dependencies. Completed and guarded by
+   `ui_core_strict_boundary_blockers_match_allowlist`.
+5. GPUI conversions for neutral values live in the adapter layer. Completed through
+   `open_gpui_ui_components::gpui_adapter`.
 6. Focus scope, dismissible layer ordering, and focus restoration have window-free tests. Partially
    complete: outside-press and focus-restore ordering are covered; full focus-trap traversal remains
    deferred until nested overlays require it.
 7. Adapter-only public APIs are inventoried and kept out of resolved state. Completed for
    `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-   `GpuiOverlayState`, and overlay scheduling helpers.
+   `GpuiOverlayState`, GPUI geometry conversion helpers, and overlay scheduling helpers.
 
 ## Follow-Up Work
 
@@ -141,9 +134,11 @@ Revisit `open-gpui-ui-headless` when all of the following are true:
 - Completed 2026-06-16: added window-free overlay stack ordering tests for outside press and focus
   restoration through `resolve_outside_press` and `resolve_focus_restore`.
 - Completed 2026-06-17: neutral geometry values, public component metrics, focus/a11y facades,
-  neutral `OverlayResolvedState`, and adapter-only API classification landed.
-- Next: write a focused extraction design for a small behavior crate. It should first decide how to
-  move or classify adaptive viewport `Pixels` and `UiPx` GPUI conversions, then extract only pure
-  behavior modules.
+  neutral `OverlayResolvedState`, adapter-only API classification, neutral adaptive policy, and
+  adapter-owned GPUI geometry conversions landed.
+- Completed 2026-06-17: `open_gpui_ui_core` dropped its `open_gpui` dependency and the strict
+  boundary blocker inventory became empty.
+- Next: implement the ADR 0007 extraction design with a narrow plan that moves one behavior family
+  at a time and leaves GPUI adapter APIs behind.
 - Keep `docs/ui/component-contract.md` and `docs/verification.md` current whenever a component
   state type adds new behavior metadata or a public adapter-only surface changes.

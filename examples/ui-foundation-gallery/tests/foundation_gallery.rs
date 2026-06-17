@@ -95,21 +95,34 @@ fn package_manifest_stays_foundation_scoped() {
 fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
     let workspace_manifest = include_str!("../../../Cargo.toml");
     let adr = include_str!("../../../docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md");
+    let design = include_str!("../../../docs/adr/0007-open-gpui-ui-headless-boundary-design.md");
     let component_contract = include_str!("../../../docs/ui/component-contract.md");
 
     assert!(!workspace_manifest.contains("open-gpui-ui-headless"));
     assert!(!workspace_manifest.contains("open_gpui_ui_headless"));
     assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
-    assert!(adr.contains("extraction-prep series cleared the component resolved-state blockers"));
+    assert!(adr.contains("The strict UI-core boundary is clean"));
     assert!(adr.contains("ListboxState"));
     assert!(adr.contains("ComboboxState"));
     assert!(adr.contains("CommandState"));
     assert!(adr.contains("GpuiOverlayState"));
     assert!(adr.contains("TextInputController"));
-    assert!(adr.contains("adaptive viewport `Pixels as Px`"));
-    assert!(adr.contains("UiPx` still has GPUI style-conversion impls"));
+    assert!(adr.contains("ADR 0007 records that design gate."));
+    assert!(!adr.contains("adaptive viewport `Pixels as Px`"));
+    assert!(!adr.contains("UiPx` still has GPUI style-conversion impls"));
+    assert!(design.contains("This ADR is a design gate only."));
+    assert!(design.contains("It does not create `open-gpui-ui-headless`"));
+    assert!(design.contains("overlay policy and placement vocabulary"));
+    assert!(design.contains("roving-focus navigation helpers"));
+    assert!(design.contains("listbox navigation and typeahead target resolution"));
+    assert!(design.contains("scroll viewport intent"));
+    assert!(design.contains("splitter resize constraints"));
+    assert!(design.contains("AccessKit node wiring"));
+    assert!(design.contains("TextInputController"));
+    assert!(design.contains("focus_ring_shadow"));
+    assert!(design.contains("Interaction Ownership Matrix"));
     assert!(component_contract.contains(
-        "ADR 0006 keeps `open-gpui-ui-headless` deferred after the extraction-prep checkpoint."
+        "ADR 0007 records the post-boundary extraction design without creating the behavior crate."
     ));
     assert!(component_contract.contains("open_gpui_ui_components::gpui_adapter"));
     assert!(component_contract.contains("TextInputController"));
