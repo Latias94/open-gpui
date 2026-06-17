@@ -1,5 +1,6 @@
 //! Text input component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::ops::Range;
 
 use open_gpui::prelude::*;
@@ -1078,19 +1079,19 @@ impl RenderOnce for TextInput {
         let text_color = ThemeResolver::resolve(text_color_intent);
         div()
             .id(self.id)
-            .min_h(metrics.height())
+            .min_h(gpui_px_from_ui(metrics.height()))
             .w_full()
             .min_w(px(0.0))
             .flex()
             .items_center()
-            .rounded(metrics.radius())
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
             .border_color(ThemeResolver::resolve(colors.border()))
             .bg(ThemeResolver::resolve(colors.background()))
-            .px(metrics.padding_x())
-            .py(metrics.padding_y())
-            .text_size(metrics.text_size())
-            .line_height(metrics.text_size())
+            .px(gpui_px_from_ui(metrics.padding_x()))
+            .py(gpui_px_from_ui(metrics.padding_y()))
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
             .text_color(text_color)
             .focusable()
             .tab_stop(state.tab_stop_enabled())
@@ -1216,7 +1217,7 @@ impl RenderOnce for TextInput {
                                     .into(),
                                 selection_color: rgba(0x2f80ed33).into(),
                                 caret_color: text_color.into(),
-                                text_size: metrics.text_size().into(),
+                                text_size: gpui_px_from_ui(metrics.text_size()).into(),
                             }),
                     )
                     .when(!state.controller_driven(), |this| {

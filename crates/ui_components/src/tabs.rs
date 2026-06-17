@@ -1,5 +1,6 @@
 //! Tabs component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -708,7 +709,7 @@ impl RenderOnce for Tabs {
                 .id(id.clone())
                 .w_full()
                 .flex()
-                .rounded(metrics.radius())
+                .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
                 .border_color(ThemeResolver::resolve(colors.shell_border()))
                 .bg(ThemeResolver::resolve(colors.shell_background()))
@@ -722,7 +723,7 @@ impl RenderOnce for Tabs {
                         .ui_aria_orientation(orientation)
                         .flex()
                         .flex_none()
-                        .gap(metrics.tab_gap())
+                        .gap(gpui_px_from_ui(metrics.tab_gap()))
                         .p_1()
                         .border_color(ThemeResolver::resolve(colors.shell_border()))
                         .when(is_vertical, |this| {
@@ -755,13 +756,13 @@ impl RenderOnce for Tabs {
                                 .aria_controls(std::iter::once(panel_node_id))
                                 .aria_position_in_set(item_index + 1)
                                 .aria_size_of_set(state.items().len())
-                                .min_h(metrics.tab_min_height())
-                                .px(metrics.tab_padding_x())
-                                .py(metrics.tab_padding_y())
+                                .min_h(gpui_px_from_ui(metrics.tab_min_height()))
+                                .px(gpui_px_from_ui(metrics.tab_padding_x()))
+                                .py(gpui_px_from_ui(metrics.tab_padding_y()))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(metrics.radius())
+                                .rounded(gpui_px_from_ui(metrics.radius()))
                                 .border_1()
                                 .border_color(ThemeResolver::resolve(if is_selected {
                                     colors.tab_border_selected()
@@ -773,8 +774,8 @@ impl RenderOnce for Tabs {
                                 } else {
                                     colors.tab_background()
                                 }))
-                                .text_size(metrics.text_size())
-                                .line_height(metrics.text_size())
+                                .text_size(gpui_px_from_ui(metrics.text_size()))
+                                .line_height(gpui_px_from_ui(metrics.text_size()))
                                 .text_color(ThemeResolver::resolve(if is_selected {
                                     colors.tab_text()
                                 } else {
@@ -925,8 +926,8 @@ impl RenderOnce for Tabs {
                         .min_w(open_gpui::px(0.0))
                         .border_color(ThemeResolver::resolve(colors.shell_border()))
                         .bg(ThemeResolver::resolve(colors.panel_background()))
-                        .px(metrics.panel_padding())
-                        .py(metrics.panel_padding())
+                        .px(gpui_px_from_ui(metrics.panel_padding()))
+                        .py(gpui_px_from_ui(metrics.panel_padding()))
                         .when(is_vertical, |this| this.min_w(open_gpui::px(0.0)))
                         .when(!is_vertical, |this| this.border_t_1())
                         .when_some(selected_tab_node_id, |this, tab_node_id| {

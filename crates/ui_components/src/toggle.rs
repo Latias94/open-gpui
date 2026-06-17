@@ -1,5 +1,6 @@
 //! Toggle component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -228,20 +229,20 @@ impl RenderOnce for Toggle {
 
         div()
             .id(self.id)
-            .min_h(metrics.height())
-            .px(metrics.padding_x())
-            .py(metrics.padding_y())
+            .min_h(gpui_px_from_ui(metrics.height()))
+            .px(gpui_px_from_ui(metrics.padding_x()))
+            .py(gpui_px_from_ui(metrics.padding_y()))
             .flex()
             .items_center()
             .justify_center()
             .gap_2()
-            .rounded(metrics.radius())
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
             .border_color(ThemeResolver::resolve(colors.border()))
             .bg(ThemeResolver::resolve(colors.background()))
             .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(metrics.text_size())
-            .line_height(metrics.text_size())
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
             .tab_stop(!disabled)
             .ui_role(state.role())

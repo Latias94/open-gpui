@@ -1,5 +1,6 @@
 //! Alert dialog component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -885,19 +886,19 @@ impl RenderOnce for AlertDialog {
             .child(
                 div()
                     .id(trigger_id)
-                    .min_h(metrics.trigger_height())
-                    .px(metrics.trigger_padding_x())
-                    .py(metrics.trigger_padding_y())
+                    .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                    .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                    .py(gpui_px_from_ui(metrics.trigger_padding_y()))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(metrics.radius())
+                    .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
                     .border_color(ThemeResolver::resolve(colors.trigger_border()))
                     .bg(ThemeResolver::resolve(colors.trigger_background()))
                     .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
-                    .text_size(metrics.text_size())
-                    .line_height(metrics.text_size())
+                    .text_size(gpui_px_from_ui(metrics.text_size()))
+                    .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
                     .track_focus(&trigger_focus)
                     .tab_stop(!disabled)
@@ -1000,7 +1001,7 @@ fn alert_dialog_layer_element(
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
     let escape_change = escape_open_change(state.overlay().policy());
-    let x = ((viewport.width - metrics.width().into()) / 2.0).max(px(12.0));
+    let x = ((viewport.width - gpui_px_from_ui(metrics.width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
     div()
@@ -1038,19 +1039,19 @@ fn alert_dialog_layer_element(
                 .absolute()
                 .left(x)
                 .top(y)
-                .w(metrics.width())
-                .max_w(metrics.max_width())
-                .p(metrics.padding())
+                .w(gpui_px_from_ui(metrics.width()))
+                .max_w(gpui_px_from_ui(metrics.max_width()))
+                .p(gpui_px_from_ui(metrics.padding()))
                 .flex()
                 .flex_col()
                 .gap_3()
-                .rounded(metrics.radius())
+                .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
                 .border_color(ThemeResolver::resolve(colors.border()))
                 .bg(ThemeResolver::resolve(colors.surface()))
                 .text_color(ThemeResolver::resolve(colors.foreground()))
-                .text_size(metrics.text_size())
-                .line_height(metrics.text_size())
+                .text_size(gpui_px_from_ui(metrics.text_size()))
+                .line_height(gpui_px_from_ui(metrics.text_size()))
                 .shadow_lg()
                 .occlude()
                 .on_any_mouse_down(|_, _, cx| {
@@ -1080,7 +1081,7 @@ fn alert_dialog_layer_element(
                 })
                 .child(
                     div()
-                        .text_size(metrics.title_size())
+                        .text_size(gpui_px_from_ui(metrics.title_size()))
                         .font_weight(open_gpui::FontWeight::BOLD)
                         .line_height(px(24.0))
                         .child(state.title().to_owned()),
@@ -1095,7 +1096,7 @@ fn alert_dialog_layer_element(
                         .flex()
                         .items_center()
                         .justify_end()
-                        .gap(metrics.action_gap())
+                        .gap(gpui_px_from_ui(metrics.action_gap()))
                         .child(alert_dialog_cancel_button(
                             &state,
                             runtime.clone(),
@@ -1129,19 +1130,19 @@ fn alert_dialog_cancel_button(
 
     div()
         .id("alert-dialog-cancel")
-        .min_h(metrics.action_height())
-        .px(metrics.action_padding_x())
-        .py(metrics.action_padding_y())
+        .min_h(gpui_px_from_ui(metrics.action_height()))
+        .px(gpui_px_from_ui(metrics.action_padding_x()))
+        .py(gpui_px_from_ui(metrics.action_padding_y()))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(metrics.radius())
+        .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.cancel_border()))
         .bg(ThemeResolver::resolve(colors.cancel_background()))
         .text_color(ThemeResolver::resolve(colors.cancel_foreground()))
-        .text_size(metrics.text_size())
-        .line_height(metrics.text_size())
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
         .track_focus(&cancel_focus)
         .tab_stop(cancel.activation_enabled())
@@ -1189,19 +1190,19 @@ fn alert_dialog_action_button(
 
     div()
         .id("alert-dialog-action")
-        .min_h(metrics.action_height())
-        .px(metrics.action_padding_x())
-        .py(metrics.action_padding_y())
+        .min_h(gpui_px_from_ui(metrics.action_height()))
+        .px(gpui_px_from_ui(metrics.action_padding_x()))
+        .py(gpui_px_from_ui(metrics.action_padding_y()))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(metrics.radius())
+        .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.action_border()))
         .bg(ThemeResolver::resolve(colors.action_background()))
         .text_color(ThemeResolver::resolve(colors.action_foreground()))
-        .text_size(metrics.text_size())
-        .line_height(metrics.text_size())
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
         .track_focus(&action_focus)
         .tab_stop(action.activation_enabled())

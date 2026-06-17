@@ -59,20 +59,17 @@ public-state blockers are currently empty: resolved overlay contracts expose `Ov
 `GpuiOverlayState` stays in the GPUI adapter helper surface for deferred priority and snap margin.
 Public component metrics and accessibility state now use neutral UI-core vocabulary; adding public
 GPUI `Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the
-guard inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional
-adapter convenience until the strict crate boundary is split.
-The `open-gpui-ui-core` public-contract blocker allowlist is currently empty. Adaptive policies now
-accept neutral `UiPx` thresholds and inputs instead of GPUI `Pixels`; GPUI callers should convert
-their concrete window or viewport width before invoking UI-core adaptive helpers. The companion
-strict-boundary inventory still watches UI-core source references to `open_gpui`, `UiPx` conversion
-impls for GPUI style types, and the `open_gpui.workspace = true` manifest dependency so the
-boundary can shrink deliberately through the strict adapter migration.
+guard inventory. `open-gpui-ui-core` is now renderer-neutral: it has no `open_gpui` dependency,
+no UI-core source references to `open_gpui`, and no `UiPx` conversion impls for GPUI style types.
+Adaptive policies accept neutral `UiPx` thresholds and inputs instead of GPUI `Pixels`; GPUI
+callers should convert their concrete window or viewport width at the adapter boundary before
+invoking UI-core adaptive helpers. The companion strict-boundary inventory must stay empty.
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
 surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-`GpuiOverlayState`, and related adapter scheduling helpers must stay classified instead of drifting
-into resolved state. `FocusRing` itself uses neutral `UiPx`; only `focus_ring_shadow` returns a
-GPUI `BoxShadow`.
+`GpuiOverlayState`, the adapter geometry conversions, and related adapter scheduling helpers must
+stay classified instead of drifting into resolved state. `FocusRing` itself uses neutral `UiPx`;
+only `focus_ring_shadow` returns a GPUI `BoxShadow`.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

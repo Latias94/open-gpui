@@ -1,5 +1,6 @@
 //! Switch component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -298,24 +299,24 @@ impl RenderOnce for Switch {
             .child(
                 div()
                     .relative()
-                    .w(metrics.track_width())
-                    .h(metrics.track_height())
-                    .rounded(metrics.track_height())
+                    .w(gpui_px_from_ui(metrics.track_width()))
+                    .h(gpui_px_from_ui(metrics.track_height()))
+                    .rounded(gpui_px_from_ui(metrics.track_height()))
                     .border_1()
                     .border_color(ThemeResolver::resolve(colors.border()))
                     .bg(ThemeResolver::resolve(colors.track()))
                     .child(
                         div()
                             .absolute()
-                            .left(if state.checked() {
+                            .left(gpui_px_from_ui(if state.checked() {
                                 metrics.checked_thumb_x()
                             } else {
                                 metrics.thumb_offset()
-                            })
-                            .top(metrics.thumb_offset())
-                            .w(metrics.thumb_size())
-                            .h(metrics.thumb_size())
-                            .rounded(metrics.thumb_size())
+                            }))
+                            .top(gpui_px_from_ui(metrics.thumb_offset()))
+                            .w(gpui_px_from_ui(metrics.thumb_size()))
+                            .h(gpui_px_from_ui(metrics.thumb_size()))
+                            .rounded(gpui_px_from_ui(metrics.thumb_size()))
                             .bg(ThemeResolver::resolve(colors.thumb()))
                             .shadow_sm(),
                     ),
@@ -323,8 +324,8 @@ impl RenderOnce for Switch {
             .when_some(label, |this, label| {
                 this.child(
                     div()
-                        .text_size(metrics.label_text_size())
-                        .line_height(metrics.track_height())
+                        .text_size(gpui_px_from_ui(metrics.label_text_size()))
+                        .line_height(gpui_px_from_ui(metrics.track_height()))
                         .text_color(ThemeResolver::resolve(colors.label()))
                         .child(label),
                 )

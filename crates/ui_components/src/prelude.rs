@@ -5,7 +5,8 @@ pub mod gpui_adapter {
     pub use crate::gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         GpuiOverlayState, TextInputController, default_deferred_priority, focus_ring_shadow,
-        gpui_anchor, init_text_input, point_anchor_placement,
+        gpui_anchor, gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui, init_text_input,
+        point_anchor_placement,
     };
 }
 

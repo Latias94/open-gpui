@@ -47,6 +47,7 @@ pub mod tooltip;
 /// future headless crate should not depend on them as component contracts.
 pub mod gpui_adapter {
     pub use crate::focus::focus_ring_shadow;
+    pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
         GpuiOverlayState, default_deferred_priority, gpui_anchor, point_anchor_placement,

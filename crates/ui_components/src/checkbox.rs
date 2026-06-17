@@ -1,5 +1,6 @@
 //! Checkbox component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -404,12 +405,12 @@ impl RenderOnce for Checkbox {
             )
             .child(
                 div()
-                    .w(metrics.box_size())
-                    .h(metrics.box_size())
+                    .w(gpui_px_from_ui(metrics.box_size()))
+                    .h(gpui_px_from_ui(metrics.box_size()))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(metrics.box_radius())
+                    .rounded(gpui_px_from_ui(metrics.box_radius()))
                     .border_1()
                     .border_color(ThemeResolver::resolve(colors.border()))
                     .bg(ThemeResolver::resolve(colors.background()))
@@ -417,15 +418,15 @@ impl RenderOnce for Checkbox {
                     .child({
                         let indicator = if state.indeterminate() {
                             div()
-                                .w(metrics.indicator_size())
-                                .h(metrics.mixed_bar_height())
-                                .rounded(metrics.mixed_bar_height())
+                                .w(gpui_px_from_ui(metrics.indicator_size()))
+                                .h(gpui_px_from_ui(metrics.mixed_bar_height()))
+                                .rounded(gpui_px_from_ui(metrics.mixed_bar_height()))
                                 .bg(ThemeResolver::resolve(colors.indicator()))
                         } else if state.checked() {
                             div()
-                                .w(metrics.indicator_size())
-                                .h(metrics.indicator_size())
-                                .rounded(metrics.indicator_size())
+                                .w(gpui_px_from_ui(metrics.indicator_size()))
+                                .h(gpui_px_from_ui(metrics.indicator_size()))
+                                .rounded(gpui_px_from_ui(metrics.indicator_size()))
                                 .bg(ThemeResolver::resolve(colors.indicator()))
                         } else {
                             div().w(open_gpui::px(0.0)).h(open_gpui::px(0.0))
@@ -436,8 +437,8 @@ impl RenderOnce for Checkbox {
             .when_some(label, |this, label| {
                 this.child(
                     div()
-                        .text_size(metrics.label_text_size())
-                        .line_height(metrics.box_size())
+                        .text_size(gpui_px_from_ui(metrics.label_text_size()))
+                        .line_height(gpui_px_from_ui(metrics.box_size()))
                         .text_color(ThemeResolver::resolve(colors.label()))
                         .child(label),
                 )

@@ -1,5 +1,6 @@
 //! Icon button component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -211,20 +212,20 @@ impl RenderOnce for IconButton {
 
         div()
             .id(self.id)
-            .w(metrics.size())
-            .h(metrics.size())
-            .min_w(metrics.size())
-            .min_h(metrics.size())
+            .w(gpui_px_from_ui(metrics.size()))
+            .h(gpui_px_from_ui(metrics.size()))
+            .min_w(gpui_px_from_ui(metrics.size()))
+            .min_h(gpui_px_from_ui(metrics.size()))
             .flex()
             .items_center()
             .justify_center()
-            .rounded(metrics.radius())
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
             .border_color(ThemeResolver::resolve(colors.border()))
             .bg(ThemeResolver::resolve(colors.background()))
             .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(metrics.icon_size())
-            .line_height(metrics.icon_size())
+            .text_size(gpui_px_from_ui(metrics.icon_size()))
+            .line_height(gpui_px_from_ui(metrics.icon_size()))
             .focusable()
             .tab_stop(!disabled)
             .ui_role(state.role())

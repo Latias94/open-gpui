@@ -325,9 +325,9 @@ Before extraction, keep these blockers explicit:
   separate extraction-blocker inventory pins any remaining public-state GPUI geometry usage until
   the extraction-prep series removes or classifies it;
 - overlay placement, `ContextMenuState`, UI-core sizing, adaptive viewport policies, and public
-  component metrics now use neutral UI-core geometry. The strict crate gate still has one core-level
-  source decision: `UiPx` currently has GPUI style-conversion impls as a transitional adapter
-  convenience until the core boundary is split more strictly;
+  component metrics now use neutral UI-core geometry. The strict crate gate is closed:
+  `open-gpui-ui-core` has no `open_gpui` dependency, source reference, or `UiPx` GPUI
+  style-conversion impl;
 - `open_gpui_ui_core` now exposes neutral `Role`, `Toggled`, `Orientation`, `AccessibleAction`,
   and `FocusTargetId`; GPUI/AccessKit conversion lives in `open_gpui_ui_components::a11y`;
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
@@ -354,10 +354,11 @@ against GPUI runtime/rendering type leaks. Public component metrics now use neut
 instead of GPUI `Pixels`, and direct GPUI focus/a11y re-exports have been replaced by UI-core
 semantic facades with GPUI adapter mapping in `open_gpui_ui_components::a11y`. Component overlay
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
-state. Extraction remains blocked by `UiPx` GPUI conversion impls in UI core and GPUI-owned adapter
-APIs such as `TextInputController`, externally supplied
-`ScrollHandle`, `focus_ring_shadow`, and GPUI overlay scheduling helpers. These public adapter APIs
-are now grouped under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
+state. Extraction is no longer blocked by UI-core GPUI dependencies or `UiPx` style conversion
+impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as
+`TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`, adapter geometry
+conversion helpers, and GPUI overlay scheduling helpers. These public adapter APIs are now grouped
+under `open_gpui_ui_components::gpui_adapter`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.

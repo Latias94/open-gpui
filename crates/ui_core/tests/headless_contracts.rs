@@ -26,63 +26,7 @@ fn ui_core_extraction_blockers_match_allowlist() {
 
 #[test]
 fn ui_core_strict_boundary_blockers_match_allowlist() {
-    let expected = [
-        BoundaryBlocker::new(
-            "cargo dependency",
-            "Cargo.toml",
-            "open_gpui.workspace = true",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::Pixels {",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "open_gpui::px(value.as_f32())",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::DefiniteLength {",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "open_gpui::Pixels::from(value).into()",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::AbsoluteLength {",
-        ),
-        BoundaryBlocker::new(
-            "source reference",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::Length {",
-        ),
-        BoundaryBlocker::new(
-            "ui px gpui conversion impl",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::Pixels {",
-        ),
-        BoundaryBlocker::new(
-            "ui px gpui conversion impl",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::DefiniteLength {",
-        ),
-        BoundaryBlocker::new(
-            "ui px gpui conversion impl",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::AbsoluteLength {",
-        ),
-        BoundaryBlocker::new(
-            "ui px gpui conversion impl",
-            "geometry.rs",
-            "impl From<UiPx> for open_gpui::Length {",
-        ),
-    ];
+    let expected: [BoundaryBlocker; 0] = [];
     let expected = expected.into_iter().collect::<BTreeSet<_>>();
     let actual = strict_boundary_blockers()
         .into_iter()

@@ -1,5 +1,6 @@
 //! Menu component and shared menu state.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -956,19 +957,19 @@ impl RenderOnce for Menu {
             .child(
                 div()
                     .id(trigger_id)
-                    .min_h(metrics.trigger_height())
-                    .px(metrics.trigger_padding_x())
-                    .py(metrics.trigger_padding_y())
+                    .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                    .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                    .py(gpui_px_from_ui(metrics.trigger_padding_y()))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(metrics.radius())
+                    .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
                     .border_color(ThemeResolver::resolve(colors.trigger_border()))
                     .bg(ThemeResolver::resolve(colors.trigger_background()))
                     .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
-                    .text_size(metrics.text_size())
-                    .line_height(metrics.text_size())
+                    .text_size(gpui_px_from_ui(metrics.text_size()))
+                    .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
                     .tab_stop(!disabled)
                     .ui_role(state.trigger_role())
@@ -1056,19 +1057,19 @@ fn menu_content_element(
 
     div()
         .id(content_id)
-        .min_w(metrics.min_width())
-        .max_w(metrics.max_width())
-        .p(metrics.surface_padding())
+        .min_w(gpui_px_from_ui(metrics.min_width()))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .p(gpui_px_from_ui(metrics.surface_padding()))
         .flex()
         .flex_col()
         .gap_1()
-        .rounded(metrics.radius())
+        .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.border()))
         .bg(ThemeResolver::resolve(colors.surface()))
         .text_color(ThemeResolver::resolve(colors.foreground()))
-        .text_size(metrics.text_size())
-        .line_height(metrics.text_size())
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
         .occlude()
         .tab_group()
@@ -1140,7 +1141,7 @@ fn menu_item_elements(
         .map(|(item, item_state)| match item_state.kind() {
             MenuItemKind::Separator => div()
                 .id(format!("menu-separator:{}", item_state.index()))
-                .h(metrics.separator_height())
+                .h(gpui_px_from_ui(metrics.separator_height()))
                 .my_1()
                 .bg(ThemeResolver::resolve(colors.separator()))
                 .into_any_element(),
@@ -1154,12 +1155,12 @@ fn menu_item_elements(
                 let disabled = item_state.disabled();
                 div()
                     .id(format!("menu-item:{}", item_state.value()))
-                    .min_h(metrics.item_height())
-                    .px(metrics.item_padding_x())
-                    .py(metrics.item_padding_y())
+                    .min_h(gpui_px_from_ui(metrics.item_height()))
+                    .px(gpui_px_from_ui(metrics.item_padding_x()))
+                    .py(gpui_px_from_ui(metrics.item_padding_y()))
                     .flex()
                     .items_center()
-                    .rounded(metrics.radius())
+                    .rounded(gpui_px_from_ui(metrics.radius()))
                     .bg(ThemeResolver::resolve(if focused {
                         colors.item_focus_background()
                     } else {

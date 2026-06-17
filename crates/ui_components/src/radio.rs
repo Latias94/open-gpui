@@ -1,5 +1,6 @@
 //! Radio group component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -679,7 +680,7 @@ impl RenderOnce for RadioGroup {
                 .aria_required(state.required())
                 .aria_disabled(state.disabled())
                 .flex()
-                .gap(metrics.item_gap())
+                .gap(gpui_px_from_ui(metrics.item_gap()))
                 .when(is_vertical, |this| this.flex_col())
                 .when(!is_vertical, |this| this.flex_row().flex_wrap())
                 .children(state.items().iter().enumerate().map(|(index, item)| {
@@ -713,11 +714,11 @@ impl RenderOnce for RadioGroup {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .px(metrics.item_padding_x())
-                        .py(metrics.item_padding_y())
-                        .rounded(metrics.radius())
-                        .text_size(metrics.label_text_size())
-                        .line_height(metrics.label_text_size())
+                        .px(gpui_px_from_ui(metrics.item_padding_x()))
+                        .py(gpui_px_from_ui(metrics.item_padding_y()))
+                        .rounded(gpui_px_from_ui(metrics.radius()))
+                        .text_size(gpui_px_from_ui(metrics.label_text_size()))
+                        .line_height(gpui_px_from_ui(metrics.label_text_size()))
                         .text_color(ThemeResolver::resolve(if item.disabled() {
                             colors.label_muted()
                         } else {
@@ -830,12 +831,12 @@ impl RenderOnce for RadioGroup {
                         })
                         .child(
                             div()
-                                .w(metrics.control_size())
-                                .h(metrics.control_size())
+                                .w(gpui_px_from_ui(metrics.control_size()))
+                                .h(gpui_px_from_ui(metrics.control_size()))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(metrics.control_size())
+                                .rounded(gpui_px_from_ui(metrics.control_size()))
                                 .border_1()
                                 .border_color(ThemeResolver::resolve(if is_selected {
                                     colors.control_border_selected()
@@ -849,9 +850,9 @@ impl RenderOnce for RadioGroup {
                                 }))
                                 .child(if is_selected {
                                     div()
-                                        .w(metrics.indicator_size())
-                                        .h(metrics.indicator_size())
-                                        .rounded(metrics.indicator_size())
+                                        .w(gpui_px_from_ui(metrics.indicator_size()))
+                                        .h(gpui_px_from_ui(metrics.indicator_size()))
+                                        .rounded(gpui_px_from_ui(metrics.indicator_size()))
                                         .bg(ThemeResolver::resolve(colors.indicator()))
                                 } else {
                                     div().w(px(0.0)).h(px(0.0))

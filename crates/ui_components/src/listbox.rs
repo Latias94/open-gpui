@@ -1,5 +1,6 @@
 //! Listbox component and shared collection navigation state.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -1027,26 +1028,26 @@ impl RenderOnce for Listbox {
 
         div()
             .id(id)
-            .min_w(metrics.min_width())
+            .min_w(gpui_px_from_ui(metrics.min_width()))
             .when(!self.embedded, |this| {
-                this.max_h(metrics.max_height())
+                this.max_h(gpui_px_from_ui(metrics.max_height()))
                     .overflow_y_scroll()
-                    .scrollbar_width(ui_px(8.0))
+                    .scrollbar_width(gpui_px_from_ui(ui_px(8.0)))
             })
             .when(self.embedded, |this| this.w_full())
-            .p(metrics.surface_padding())
+            .p(gpui_px_from_ui(metrics.surface_padding()))
             .flex()
             .flex_col()
             .gap_1()
-            .rounded(metrics.radius())
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .when(!self.embedded, |this| {
                 this.border_1()
                     .border_color(ThemeResolver::resolve(colors.border()))
                     .bg(ThemeResolver::resolve(colors.surface()))
             })
             .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(metrics.text_size())
-            .line_height(metrics.text_size())
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
             .focusable()
             .tab_group()
             .tab_stop(!state.disabled() && !state.empty())
@@ -1116,8 +1117,8 @@ fn listbox_children(
     if state.empty() {
         return vec![
             div()
-                .px(state.metrics().option_padding_x())
-                .py(state.metrics().option_padding_y())
+                .px(gpui_px_from_ui(state.metrics().option_padding_x()))
+                .py(gpui_px_from_ui(state.metrics().option_padding_y()))
                 .text_color(ThemeResolver::resolve(state.colors().muted_foreground()))
                 .child(state.empty_label().to_owned())
                 .into_any_element(),
@@ -1146,7 +1147,7 @@ fn listbox_children(
         children.push(
             div()
                 .id(format!("listbox-group-label:{}", group_state.value()))
-                .px(state.metrics().group_padding_x())
+                .px(gpui_px_from_ui(state.metrics().group_padding_x()))
                 .pt_2()
                 .pb_1()
                 .text_xs()
@@ -1193,7 +1194,7 @@ fn listbox_option_elements(
         .map(|(option, state)| match state.kind() {
             ListboxOptionKind::Separator => div()
                 .id(format!("listbox-separator:{}", state.index()))
-                .h(metrics.separator_height())
+                .h(gpui_px_from_ui(metrics.separator_height()))
                 .my_1()
                 .bg(ThemeResolver::resolve(colors.separator()))
                 .into_any_element(),
@@ -1205,12 +1206,12 @@ fn listbox_option_elements(
                 let disabled = state.disabled();
                 div()
                     .id(format!("listbox-option:{}", state.value()))
-                    .min_h(metrics.option_height())
-                    .px(metrics.option_padding_x())
-                    .py(metrics.option_padding_y())
+                    .min_h(gpui_px_from_ui(metrics.option_height()))
+                    .px(gpui_px_from_ui(metrics.option_padding_x()))
+                    .py(gpui_px_from_ui(metrics.option_padding_y()))
                     .flex()
                     .items_center()
-                    .rounded(metrics.radius())
+                    .rounded(gpui_px_from_ui(metrics.radius()))
                     .bg(ThemeResolver::resolve(option_background(
                         state.clone(),
                         colors,

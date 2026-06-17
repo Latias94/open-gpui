@@ -1,5 +1,6 @@
 //! Scroll area component.
 
+use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, ScrollHandle, Styled,
@@ -302,7 +303,7 @@ impl RenderOnce for ScrollArea {
             .min_w(px(0.0))
             .min_h(px(0.0))
             .overflow_hidden()
-            .scrollbar_width(state.metrics().scrollbar_width())
+            .scrollbar_width(gpui_px_from_ui(state.metrics().scrollbar_width()))
             .track_scroll(&scroll_handle)
             .when(state.scrolls_x(), |this| this.overflow_x_scroll())
             .when(state.scrolls_y(), |this| this.overflow_y_scroll())

@@ -79,30 +79,6 @@ impl Div<f32> for UiPx {
     }
 }
 
-impl From<UiPx> for open_gpui::Pixels {
-    fn from(value: UiPx) -> Self {
-        open_gpui::px(value.as_f32())
-    }
-}
-
-impl From<UiPx> for open_gpui::DefiniteLength {
-    fn from(value: UiPx) -> Self {
-        open_gpui::Pixels::from(value).into()
-    }
-}
-
-impl From<UiPx> for open_gpui::AbsoluteLength {
-    fn from(value: UiPx) -> Self {
-        open_gpui::Pixels::from(value).into()
-    }
-}
-
-impl From<UiPx> for open_gpui::Length {
-    fn from(value: UiPx) -> Self {
-        open_gpui::Pixels::from(value).into()
-    }
-}
-
 /// Creates a renderer-neutral logical pixel scalar.
 pub const fn ui_px(value: f32) -> UiPx {
     UiPx::new(value)

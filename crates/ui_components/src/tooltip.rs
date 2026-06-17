@@ -1,5 +1,6 @@
 //! Tooltip component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::time::Duration;
 
 use open_gpui::prelude::*;
@@ -430,16 +431,16 @@ impl RenderOnce for Tooltip {
 
         div()
             .id(id)
-            .max_w(metrics.max_width())
-            .px(metrics.padding_x())
-            .py(metrics.padding_y())
-            .rounded(metrics.radius())
+            .max_w(gpui_px_from_ui(metrics.max_width()))
+            .px(gpui_px_from_ui(metrics.padding_x()))
+            .py(gpui_px_from_ui(metrics.padding_y()))
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .border_1()
             .border_color(ThemeResolver::resolve(colors.border()))
             .bg(ThemeResolver::resolve(colors.background()))
             .text_color(ThemeResolver::resolve(colors.foreground()))
-            .text_size(metrics.text_size())
-            .line_height(metrics.text_size())
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
             .shadow_lg()
             .ui_role(state.role())
             .aria_label(accessible_label)

@@ -1,5 +1,6 @@
 //! Label component.
 
+use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
     ElementId, IntoElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
@@ -227,8 +228,8 @@ impl RenderOnce for Label {
             .gap_1()
             .ui_role(state.role())
             .aria_label(text.clone())
-            .text_size(metrics.text_size())
-            .line_height(metrics.text_size())
+            .text_size(gpui_px_from_ui(metrics.text_size()))
+            .line_height(gpui_px_from_ui(metrics.text_size()))
             .text_color(ThemeResolver::resolve(colors.text()))
             .when(state.disabled(), |this| this.opacity(0.56))
             .child(text)
@@ -236,8 +237,8 @@ impl RenderOnce for Label {
                 this.child(
                     div()
                         .text_color(ThemeResolver::resolve(colors.required_marker()))
-                        .text_size(metrics.marker_size())
-                        .line_height(metrics.text_size())
+                        .text_size(gpui_px_from_ui(metrics.marker_size()))
+                        .line_height(gpui_px_from_ui(metrics.text_size()))
                         .child("*"),
                 )
             })

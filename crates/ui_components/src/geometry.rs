@@ -1,6 +1,6 @@
-//! Internal GPUI adapter conversions for UI-core geometry.
+//! GPUI adapter conversions for UI-core geometry.
 
-use open_gpui::{Pixels, Point, Size, point, px};
+use open_gpui::{Pixels, Point, Size, point, px, size};
 use open_gpui_ui_core::{UiPoint, UiPx, UiSize};
 
 pub(crate) fn ui_px_from_gpui(value: Pixels) -> UiPx {
@@ -19,10 +19,17 @@ pub(crate) fn ui_size_from_gpui_size(value: Size<Pixels>) -> UiSize {
     ui_size_from_gpui(value.width, value.height)
 }
 
-pub(crate) fn gpui_px_from_ui(value: UiPx) -> Pixels {
+/// Converts a renderer-neutral logical pixel scalar to GPUI pixels.
+pub fn gpui_px_from_ui(value: UiPx) -> Pixels {
     px(value.as_f32())
 }
 
-pub(crate) fn gpui_point_from_ui(value: UiPoint) -> Point<Pixels> {
+/// Converts a renderer-neutral point to a GPUI point.
+pub fn gpui_point_from_ui(value: UiPoint) -> Point<Pixels> {
     point(gpui_px_from_ui(value.x), gpui_px_from_ui(value.y))
+}
+
+/// Converts a renderer-neutral size to a GPUI size.
+pub fn gpui_size_from_ui(value: UiSize) -> Size<Pixels> {
+    size(gpui_px_from_ui(value.width), gpui_px_from_ui(value.height))
 }

@@ -1,5 +1,6 @@
 //! Combobox component built from editable text input, overlay, and listbox state.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -940,8 +941,8 @@ impl RenderOnce for Combobox {
             .child(
                 div()
                     .id(input_row_id)
-                    .min_w(metrics.popup_min_width())
-                    .max_w(metrics.popup_max_width())
+                    .min_w(gpui_px_from_ui(metrics.popup_min_width()))
+                    .max_w(gpui_px_from_ui(metrics.popup_max_width()))
                     .flex()
                     .items_center()
                     .gap_1()
@@ -1025,7 +1026,7 @@ impl RenderOnce for Combobox {
                             .id(toggle_id)
                             .px_2()
                             .py_1()
-                            .rounded(state.input().metrics().radius())
+                            .rounded(gpui_px_from_ui(state.input().metrics().radius()))
                             .border_1()
                             .border_color(ThemeResolver::resolve(state.colors().popup_border()))
                             .text_color(ThemeResolver::resolve(state.colors().popup_foreground()))
@@ -1193,13 +1194,13 @@ fn combobox_content_element(
 
     div()
         .id(content_id)
-        .min_w(metrics.popup_min_width())
-        .max_w(metrics.popup_max_width())
-        .p(metrics.popup_padding())
-        .h(metrics.popup_max_height())
+        .min_w(gpui_px_from_ui(metrics.popup_min_width()))
+        .max_w(gpui_px_from_ui(metrics.popup_max_width()))
+        .p(gpui_px_from_ui(metrics.popup_padding()))
+        .h(gpui_px_from_ui(metrics.popup_max_height()))
         .flex()
         .flex_col()
-        .rounded(metrics.popup_radius())
+        .rounded(gpui_px_from_ui(metrics.popup_radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.popup_border()))
         .bg(ThemeResolver::resolve(colors.popup_background()))

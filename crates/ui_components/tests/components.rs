@@ -29,7 +29,8 @@ use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
     OutsidePressPolicy, OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens, Toggled, TokenKey, rect, semantic, ui_point, ui_px, ui_size,
+    Sizable, Size, ThemeTokens, Toggled, TokenKey, UiPoint, UiPx, UiSize, rect, semantic, ui_point,
+    ui_px, ui_size,
 };
 use std::time::Duration;
 
@@ -1535,6 +1536,16 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     let _prelude_init: fn(&mut open_gpui::App) = prelude::gpui_adapter::init_text_input;
     let _root_controller: Option<root::gpui_adapter::TextInputController> = None;
     let _prelude_controller: Option<prelude::gpui_adapter::TextInputController> = None;
+    let _root_px: fn(UiPx) -> open_gpui::Pixels = root::gpui_adapter::gpui_px_from_ui;
+    let _prelude_px: fn(UiPx) -> open_gpui::Pixels = prelude::gpui_adapter::gpui_px_from_ui;
+    let _root_point: fn(UiPoint) -> open_gpui::Point<open_gpui::Pixels> =
+        root::gpui_adapter::gpui_point_from_ui;
+    let _prelude_point: fn(UiPoint) -> open_gpui::Point<open_gpui::Pixels> =
+        prelude::gpui_adapter::gpui_point_from_ui;
+    let _root_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
+        root::gpui_adapter::gpui_size_from_ui;
+    let _prelude_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
+        prelude::gpui_adapter::gpui_size_from_ui;
 
     assert_eq!(
         root_overlay.deferred_priority(),

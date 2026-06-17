@@ -1,5 +1,6 @@
 //! Sidebar component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -1306,8 +1307,8 @@ impl RenderOnce for Sidebar {
             let sections_content = div()
                 .flex()
                 .flex_col()
-                .gap(metrics.section_gap())
-                .p(metrics.padding())
+                .gap(gpui_px_from_ui(metrics.section_gap()))
+                .p(gpui_px_from_ui(metrics.padding()))
                 .children(section_states.into_iter().map(|section| {
                     let section_items = item_states
                         .iter()
@@ -1327,13 +1328,13 @@ impl RenderOnce for Sidebar {
                         .aria_label(section.label().to_owned())
                         .flex()
                         .flex_col()
-                        .gap(metrics.item_gap())
+                        .gap(gpui_px_from_ui(metrics.item_gap()))
                         .when(!icon_collapsed, |this| {
                             this.child(
                                 div()
-                                    .px(metrics.item_padding_x())
+                                    .px(gpui_px_from_ui(metrics.item_padding_x()))
                                     .text_xs()
-                                    .line_height(metrics.text_size())
+                                    .line_height(gpui_px_from_ui(metrics.text_size()))
                                     .text_color(ThemeResolver::resolve(colors.muted_foreground()))
                                     .child(section.label().to_owned()),
                             )
@@ -1384,25 +1385,25 @@ impl RenderOnce for Sidebar {
                                 .when_some(focus_handle, |this, focus_handle| {
                                     this.track_focus(&focus_handle)
                                 })
-                                .min_h(metrics.item_height())
-                                .px(if item_text_visible {
+                                .min_h(gpui_px_from_ui(metrics.item_height()))
+                                .px(gpui_px_from_ui(if item_text_visible {
                                     metrics.item_padding_x()
                                 } else {
                                     ui_px(0.0)
-                                })
-                                .py(metrics.item_padding_y())
+                                }))
+                                .py(gpui_px_from_ui(metrics.item_padding_y()))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .gap_2()
-                                .rounded(metrics.radius())
+                                .rounded(gpui_px_from_ui(metrics.radius()))
                                 .bg(ThemeResolver::resolve(if item_selected {
                                     colors.item_selected_background()
                                 } else {
                                     colors.item_background()
                                 }))
-                                .text_size(metrics.text_size())
-                                .line_height(metrics.text_size())
+                                .text_size(gpui_px_from_ui(metrics.text_size()))
+                                .line_height(gpui_px_from_ui(metrics.text_size()))
                                 .text_color(ThemeResolver::resolve(if item_disabled {
                                     colors.item_disabled_foreground()
                                 } else {
@@ -1497,9 +1498,9 @@ impl RenderOnce for Sidebar {
                                 })
                                 .child(
                                     div()
-                                        .min_w(metrics.icon_size())
-                                        .text_size(metrics.icon_size())
-                                        .line_height(metrics.icon_size())
+                                        .min_w(gpui_px_from_ui(metrics.icon_size()))
+                                        .text_size(gpui_px_from_ui(metrics.icon_size()))
+                                        .line_height(gpui_px_from_ui(metrics.icon_size()))
                                         .flex()
                                         .items_center()
                                         .justify_center()
@@ -1516,12 +1517,12 @@ impl RenderOnce for Sidebar {
                                     .when_some(item_badge, |this, badge| {
                                         this.child(
                                             div()
-                                                .min_h(metrics.badge_min_height())
-                                                .px(ui_px(7.0))
+                                                .min_h(gpui_px_from_ui(metrics.badge_min_height()))
+                                                .px(gpui_px_from_ui(ui_px(7.0)))
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .rounded(ui_px(999.0))
+                                                .rounded(gpui_px_from_ui(ui_px(999.0)))
                                                 .bg(ThemeResolver::resolve(
                                                     colors.badge_background(),
                                                 ))
@@ -1554,7 +1555,7 @@ impl RenderOnce for Sidebar {
                 .ui_role(state.role())
                 .aria_label(label.clone())
                 .aria_disabled(state.disabled())
-                .w(metrics.resolved_width())
+                .w(gpui_px_from_ui(metrics.resolved_width()))
                 .h_full()
                 .flex_none()
                 .flex()
@@ -1575,7 +1576,7 @@ impl RenderOnce for Sidebar {
                     |this| this.border_l_1(),
                 )
                 .when(variant != SidebarVariant::Docked, |this| {
-                    this.border_1().rounded(metrics.radius())
+                    this.border_1().rounded(gpui_px_from_ui(metrics.radius()))
                 })
                 .when(!state.offcanvas_collapsed(), |this| {
                     this.child(

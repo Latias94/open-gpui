@@ -19,12 +19,14 @@ use open_gpui_ui_components::{
     SplitterPanel, SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem,
     TabsState, TextInput, TextInputController, TextInputState, Toggle, ToggleState, Toolbar,
     ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip, TooltipContentKind, TooltipOpenIntent,
-    UiA11yElementExt, focus_ring_shadow, init_text_input,
+    UiA11yElementExt, focus_ring_shadow,
+    gpui_adapter::{gpui_point_from_ui, gpui_px_from_ui},
+    init_text_input,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode,
     DeviceShellSwitchPolicy, Orientation, PanelAdaptiveClass, Rect, Role, Sizable, Size,
-    ThemeTokens, Toggled, UiPoint, UiPx,
+    ThemeTokens, Toggled, UiPx,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -3131,7 +3133,7 @@ impl GalleryShell {
             }))
     }
 
-    fn render_metric(&self, label: &'static str, value: impl Into<Pixels>) -> impl IntoElement {
+    fn render_metric(&self, label: &'static str, value: impl DisplayPx) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -4874,25 +4876,32 @@ fn geometry_row(label: &'static str, rect: Rect) -> impl IntoElement {
         ))
 }
 
-fn gpui_px_from_ui(value: UiPx) -> Pixels {
-    px(value.as_f32())
-}
-
 fn ui_px_from_gpui(value: Pixels) -> UiPx {
     UiPx::new(value.as_f32())
-}
-
-fn gpui_point_from_ui(value: UiPoint) -> open_gpui::Point<Pixels> {
-    point(gpui_px_from_ui(value.x), gpui_px_from_ui(value.y))
 }
 
 fn format_ui_px(value: UiPx) -> String {
     format!("{:.0}px", value.as_f32())
 }
 
-fn format_px(value: impl Into<Pixels>) -> String {
-    let value = value.into();
-    format!("{:.0}px", value.as_f32())
+trait DisplayPx {
+    fn display_px(self) -> f32;
+}
+
+impl DisplayPx for Pixels {
+    fn display_px(self) -> f32 {
+        self.as_f32()
+    }
+}
+
+impl DisplayPx for UiPx {
+    fn display_px(self) -> f32 {
+        self.as_f32()
+    }
+}
+
+fn format_px(value: impl DisplayPx) -> String {
+    format!("{:.0}px", value.display_px())
 }
 
 fn bool_label(value: bool) -> &'static str {

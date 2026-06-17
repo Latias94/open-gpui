@@ -1,5 +1,6 @@
 //! Field component.
 
+use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
@@ -344,15 +345,15 @@ impl RenderOnce for Field {
             .id(self.id)
             .flex()
             .flex_col()
-            .gap(metrics.gap())
+            .gap(gpui_px_from_ui(metrics.gap()))
             .when(state.disabled(), |this| this.opacity(0.64))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_1()
-                    .text_size(metrics.label_text_size())
-                    .line_height(metrics.label_text_size())
+                    .text_size(gpui_px_from_ui(metrics.label_text_size()))
+                    .line_height(gpui_px_from_ui(metrics.label_text_size()))
                     .text_color(ThemeResolver::resolve(colors.label()))
                     .child(self.label)
                     .when(state.required(), |this| {
@@ -368,7 +369,7 @@ impl RenderOnce for Field {
                 this.child(
                     div()
                         .id(format!("{}:message", state.control_id()))
-                        .text_size(metrics.message_text_size())
+                        .text_size(gpui_px_from_ui(metrics.message_text_size()))
                         .line_height(open_gpui::px(18.0))
                         .text_color(ThemeResolver::resolve(colors.message()))
                         .child(message.text().to_string()),

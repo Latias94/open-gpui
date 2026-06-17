@@ -1,5 +1,6 @@
 //! Popover component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -553,19 +554,19 @@ impl RenderOnce for Popover {
             .child(
                 div()
                     .id(trigger_id)
-                    .min_h(metrics.trigger_height())
-                    .px(metrics.trigger_padding_x())
-                    .py(metrics.trigger_padding_y())
+                    .min_h(gpui_px_from_ui(metrics.trigger_height()))
+                    .px(gpui_px_from_ui(metrics.trigger_padding_x()))
+                    .py(gpui_px_from_ui(metrics.trigger_padding_y()))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(metrics.radius())
+                    .rounded(gpui_px_from_ui(metrics.radius()))
                     .border_1()
                     .border_color(ThemeResolver::resolve(colors.trigger_border()))
                     .bg(ThemeResolver::resolve(colors.trigger_background()))
                     .text_color(ThemeResolver::resolve(colors.trigger_foreground()))
-                    .text_size(metrics.text_size())
-                    .line_height(metrics.text_size())
+                    .text_size(gpui_px_from_ui(metrics.text_size()))
+                    .line_height(gpui_px_from_ui(metrics.text_size()))
                     .focusable()
                     .tab_stop(!disabled)
                     .ui_role(state.trigger_role())
@@ -644,19 +645,19 @@ fn popover_content_element(
 
     div()
         .id(content_id)
-        .min_w(metrics.min_width())
-        .max_w(metrics.max_width())
-        .p(metrics.content_padding())
+        .min_w(gpui_px_from_ui(metrics.min_width()))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .p(gpui_px_from_ui(metrics.content_padding()))
         .flex()
         .flex_col()
         .gap_2()
-        .rounded(metrics.radius())
+        .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.border()))
         .bg(ThemeResolver::resolve(colors.background()))
         .text_color(ThemeResolver::resolve(colors.foreground()))
-        .text_size(metrics.text_size())
-        .line_height(metrics.text_size())
+        .text_size(gpui_px_from_ui(metrics.text_size()))
+        .line_height(gpui_px_from_ui(metrics.text_size()))
         .shadow_lg()
         .occlude()
         .tab_group()

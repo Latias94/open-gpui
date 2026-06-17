@@ -1,5 +1,6 @@
 //! Toolbar component.
 
+use crate::geometry::gpui_px_from_ui;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -763,9 +764,9 @@ impl RenderOnce for Toolbar {
                 .ui_aria_orientation(orientation)
                 .aria_disabled(state.disabled())
                 .flex()
-                .gap(metrics.gap())
-                .p(metrics.padding())
-                .rounded(metrics.radius())
+                .gap(gpui_px_from_ui(metrics.gap()))
+                .p(gpui_px_from_ui(metrics.padding()))
+                .rounded(gpui_px_from_ui(metrics.radius()))
                 .border_1()
                 .border_color(ThemeResolver::resolve(colors.border()))
                 .bg(ThemeResolver::resolve(colors.background()))
@@ -803,11 +804,12 @@ impl RenderOnce for Toolbar {
                             .flex_none()
                             .bg(ThemeResolver::resolve(colors.border()))
                             .when(is_vertical, |this| {
-                                this.w_full().h(metrics.separator_thickness())
+                                this.w_full()
+                                    .h(gpui_px_from_ui(metrics.separator_thickness()))
                             })
                             .when(!is_vertical, |this| {
-                                this.w(metrics.separator_thickness())
-                                    .h(metrics.separator_length())
+                                this.w(gpui_px_from_ui(metrics.separator_thickness()))
+                                    .h(gpui_px_from_ui(metrics.separator_length()))
                             })
                             .into_any_element();
                     }
@@ -829,14 +831,14 @@ impl RenderOnce for Toolbar {
                         .when_some(focus_handle, |this, focus_handle| {
                             this.track_focus(&focus_handle)
                         })
-                        .min_h(metrics.item().height())
-                        .px(metrics.item().padding_x())
-                        .py(metrics.item().padding_y())
+                        .min_h(gpui_px_from_ui(metrics.item().height()))
+                        .px(gpui_px_from_ui(metrics.item().padding_x()))
+                        .py(gpui_px_from_ui(metrics.item().padding_y()))
                         .flex()
                         .items_center()
                         .justify_center()
                         .gap_2()
-                        .rounded(metrics.item().radius())
+                        .rounded(gpui_px_from_ui(metrics.item().radius()))
                         .border_1()
                         .border_color(ThemeResolver::resolve(colors.border()))
                         .bg(ThemeResolver::resolve(toolbar_item_background(
@@ -845,8 +847,8 @@ impl RenderOnce for Toolbar {
                             item_kind,
                             item_pressed,
                         )))
-                        .text_size(metrics.item().text_size())
-                        .line_height(metrics.item().text_size())
+                        .text_size(gpui_px_from_ui(metrics.item().text_size()))
+                        .line_height(gpui_px_from_ui(metrics.item().text_size()))
                         .text_color(ThemeResolver::resolve(colors.foreground()))
                         .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
                         .when(!item_disabled, |this| {

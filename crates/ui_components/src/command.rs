@@ -1,5 +1,6 @@
 //! Command palette component built from search input, grouped command items, and listbox state.
 
+use crate::geometry::gpui_px_from_ui;
 use std::rc::Rc;
 
 use open_gpui::prelude::*;
@@ -1347,10 +1348,10 @@ impl RenderOnce for Command {
                 this.child(
                     div()
                         .id(trigger_id)
-                        .min_h(state.size().button_h())
-                        .px(state.size().button_px())
-                        .py(state.size().button_py())
-                        .rounded(metrics.radius())
+                        .min_h(gpui_px_from_ui(state.size().button_h()))
+                        .px(gpui_px_from_ui(state.size().button_px()))
+                        .py(gpui_px_from_ui(state.size().button_py()))
+                        .rounded(gpui_px_from_ui(metrics.radius()))
                         .border_1()
                         .border_color(ThemeResolver::resolve(colors.border()))
                         .bg(ThemeResolver::resolve(colors.surface()))
@@ -1440,7 +1441,7 @@ fn command_dialog_layer_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let outside_change = outside_press_open_change(dialog_state.overlay().policy());
-    let x = ((viewport.width - metrics.max_width().into()) / 2.0).max(px(12.0));
+    let x = ((viewport.width - gpui_px_from_ui(metrics.max_width())) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
     div()
@@ -1586,13 +1587,13 @@ fn command_content_element(
 
     div()
         .id(content_id)
-        .min_w(metrics.min_width())
-        .max_w(metrics.max_width())
-        .p(metrics.padding())
+        .min_w(gpui_px_from_ui(metrics.min_width()))
+        .max_w(gpui_px_from_ui(metrics.max_width()))
+        .p(gpui_px_from_ui(metrics.padding()))
         .flex()
         .flex_col()
         .gap_2()
-        .rounded(metrics.radius())
+        .rounded(gpui_px_from_ui(metrics.radius()))
         .border_1()
         .border_color(ThemeResolver::resolve(colors.border()))
         .bg(ThemeResolver::resolve(colors.surface()))
@@ -1675,7 +1676,7 @@ fn command_content_element(
                     .child(loading.message().to_owned()),
             )
         })
-        .h(metrics.max_height())
+        .h(gpui_px_from_ui(metrics.max_height()))
         .child(
             ScrollArea::new(scroll_viewport_id, listbox)
                 .vertical()

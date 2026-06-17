@@ -1,5 +1,6 @@
 //! Splitter component.
 
+use crate::geometry::gpui_px_from_ui;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, Context, CursorStyle, DefiniteLength, DragMoveEvent, ElementId, Empty, Entity,
@@ -535,7 +536,7 @@ impl RenderOnce for Splitter {
             .min_h(px(0.0))
             .flex()
             .overflow_hidden()
-            .rounded(metrics.radius())
+            .rounded(gpui_px_from_ui(metrics.radius()))
             .when(is_vertical, |this| this.flex_col())
             .when(!is_vertical, |this| this.flex_row())
             .on_drag_move(move |event: &DragMoveEvent<SplitterDrag>, window, cx| {
@@ -674,20 +675,20 @@ fn render_handle(
             )
         })
         .when(is_vertical, |this| {
-            this.w_full().h(metrics.handle_hit_size())
+            this.w_full().h(gpui_px_from_ui(metrics.handle_hit_size()))
         })
         .when(!is_vertical, |this| {
-            this.h_full().w(metrics.handle_hit_size())
+            this.h_full().w(gpui_px_from_ui(metrics.handle_hit_size()))
         })
         .child(
             div()
                 .rounded_sm()
                 .bg(rgb(0xc8cdc2))
                 .when(is_vertical, |this| {
-                    this.w_full().h(metrics.handle_thickness())
+                    this.w_full().h(gpui_px_from_ui(metrics.handle_thickness()))
                 })
                 .when(!is_vertical, |this| {
-                    this.h_full().w(metrics.handle_thickness())
+                    this.h_full().w(gpui_px_from_ui(metrics.handle_thickness()))
                 }),
         )
         .into_any_element()
