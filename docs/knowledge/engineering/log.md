@@ -1,6 +1,16 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added Toolbar runtime keyboard automation. `Toolbar` now exposes stable runtime debug
+  selectors for the root and items, and `open-gpui-ui-components` has a real rendered Toolbar smoke
+  that clicks the first action item, moves roving focus with arrow/Home keys, skips disabled and
+  separator items, and verifies Enter activation payloads.
+* **Review**: `/root/toolbar_keyboard_review` flagged that the initial Toolbar smoke only moved from
+  `bold` to `italic` and therefore did not prove disabled/separator skipping. The test now starts
+  from `undo`, moves right across disabled `redo` plus the separator, and activates `bold`.
+* **Verification**: Focused Toolbar runtime smoke passed with `cargo fmt -p
+  open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components
+  toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items`.
 * **Update**: Added a gallery-level Sidebar internal-scroll smoke. `Sidebar` now exposes stable
   runtime debug selectors for the root and items, the gallery Sidebar/Toolbar cards expose gallery
   sample selectors, and the Components smoke scrolls the long Sidebar viewport while asserting the

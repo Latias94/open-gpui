@@ -52,6 +52,10 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
+The components package includes runtime smoke coverage for Toolbar keyboard navigation. The focused
+Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
+separator items, and activates the focused item with Enter.
+
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
 navigation rail to deep pages, and confirms switching away and back resets the page scroll position.
@@ -172,8 +176,10 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    sample should keep its tab rail scrollable inside the constrained gallery card. The Toolbar
    samples should expose horizontal and vertical command groups; use arrow keys plus Home/End to
    confirm roving focus skips disabled items and separators, and use Enter/Space to activate
-   action/toggle items. The Sidebar samples should expose expanded, icon-collapsed, and long
-   scrollable navigation; icon collapse should hide visible labels while keeping item labels
+   action/toggle items. The component runtime smoke now verifies the rendered Toolbar keyboard path
+   for disabled-item/separator skipping and activation payloads. The Sidebar samples should expose
+   expanded, icon-collapsed, and long scrollable navigation; icon collapse should hide visible labels
+   while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
    frame. The gallery smoke now verifies the long sidebar's internal viewport moves relative to its
    sample card. The Listbox samples should expose

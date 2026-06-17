@@ -41,6 +41,13 @@ status: "active"
 - Last verified for the Sidebar internal-scroll smoke: `cargo fmt -p open-gpui-ui-components -p
   open-gpui-ui-foundation-gallery` and `cargo nextest run -p open-gpui-ui-foundation-gallery
   components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`.
+- Done: Added stable runtime debug selectors for `Toolbar` root/items plus a rendered Toolbar
+  keyboard smoke in `open-gpui-ui-components`. The smoke clicks the first action item, moves roving
+  focus with arrow/Home keys, skips disabled and separator items, and asserts Enter activation
+  payloads.
+- Last verified for the Toolbar keyboard smoke: `cargo fmt -p open-gpui-ui-components` and `cargo
+  nextest run -p open-gpui-ui-components
+  toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items`.
 - Done: Added a compact shell/navigation runtime smoke. The gallery test now clicks the compact
   viewport switch, resizes to the compact viewport, asserts the mobile shell plus compact density
   snapshot, scrolls the left navigation rail to deep pages, and confirms switching away and back to

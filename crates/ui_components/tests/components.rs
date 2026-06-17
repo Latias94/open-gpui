@@ -18,12 +18,12 @@ use open_gpui_ui_components::{
     SidebarState, SidebarVariant, Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState,
     Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsState, TextInput,
     TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle,
-    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
-    Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
-    default_deferred_priority, escape_open_change, first_enabled, focus_ring_shadow, gpui_anchor,
-    last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
-    outside_press_open_change, point_anchor_placement, sidebar_navigation_target,
-    toolbar_navigation_target,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection,
+    ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent,
+    active_index_from_str_keys, default_deferred_priority, escape_open_change, first_enabled,
+    focus_ring_shadow, gpui_anchor, last_enabled, listbox_navigation_target,
+    menu_navigation_target, next_enabled, outside_press_open_change, point_anchor_placement,
+    sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -32,6 +32,8 @@ use open_gpui_ui_core::{
     Sizable, Size, ThemeTokens, Toggled, TokenKey, UiPoint, UiPx, UiSize, rect, semantic, ui_point,
     ui_px, ui_size,
 };
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Duration;
 
 const TEST_SURFACE: TokenKey = TokenKey::new("test.surface");
@@ -1199,6 +1201,80 @@ fn tabs_vertical_tablist_scrolls_when_constrained(cx: &mut open_gpui::TestAppCon
         tab_after.top() < tab_before.top(),
         "expected constrained vertical tablist to scroll; before={tab_before:?} after={tab_after:?}"
     );
+}
+
+#[open_gpui::test]
+fn toolbar_runtime_keyboard_navigation_skips_disabled_and_separator_items(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        selections: Rc<RefCell<Vec<ToolbarSelection>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selections = self.selections.clone();
+
+            div().size_full().child(
+                Toolbar::new("keyboard-toolbar", "Keyboard toolbar")
+                    .small()
+                    .focused("bold")
+                    .item(ToolbarItem::icon("undo", "U", "Undo"))
+                    .item(ToolbarItem::icon("redo", "R", "Redo").disabled(true))
+                    .item(ToolbarItem::separator("history-separator"))
+                    .item(ToolbarItem::toggle_icon("bold", "B", "Bold").pressed(true))
+                    .item(ToolbarItem::toggle_icon("italic", "I", "Italic"))
+                    .on_select(move |selection, _, _| {
+                        selections.borrow_mut().push(selection);
+                    }),
+            )
+        }
+    }
+
+    let selections = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        selections: selections.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let undo = cx
+        .debug_bounds("toolbar:keyboard-toolbar:item:undo")
+        .expect("undo toolbar item should be rendered");
+    cx.simulate_click(undo.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.simulate_keystrokes("right enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_right = selections.borrow().clone();
+    assert_eq!(after_right.len(), 2);
+    assert_eq!(after_right[0].value(), "undo");
+    assert_eq!(after_right[0].kind(), ToolbarItemKind::Action);
+    assert_eq!(after_right[1].value(), "bold");
+    assert_eq!(after_right[1].kind(), ToolbarItemKind::Toggle);
+
+    cx.simulate_keystrokes("right enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_second_right = selections.borrow().clone();
+    assert_eq!(after_second_right.len(), 3);
+    assert_eq!(after_second_right[2].value(), "italic");
+    assert_eq!(after_second_right[2].kind(), ToolbarItemKind::Toggle);
+
+    cx.simulate_keystrokes("home enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let after_home = selections.borrow().clone();
+    assert_eq!(after_home.len(), 4);
+    assert_eq!(after_home[3].value(), "undo");
+    assert_eq!(after_home[3].kind(), ToolbarItemKind::Action);
 }
 
 #[open_gpui::test]

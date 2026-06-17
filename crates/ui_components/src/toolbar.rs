@@ -711,6 +711,7 @@ impl RenderOnce for Toolbar {
         } = self;
 
         window.with_id(id.clone(), |window| {
+            let debug_id = id.to_string();
             let descriptors: Vec<ToolbarItemDescriptor> =
                 items.iter().map(ToolbarItem::descriptor).collect();
             let focused_seed = focused_value.clone();
@@ -759,6 +760,10 @@ impl RenderOnce for Toolbar {
 
             div()
                 .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("toolbar:{debug_id}")
+                })
                 .ui_role(state.role())
                 .aria_label(label.clone())
                 .ui_aria_orientation(orientation)
@@ -791,6 +796,7 @@ impl RenderOnce for Toolbar {
                     let item_disabled = item.disabled();
                     let item_tab_stop = item.tab_stop();
                     let item_pressed = item.pressed();
+                    let item_value = item.value().to_owned();
                     let item_position = if item.focusable() {
                         focusable_position += 1;
                         Some(focusable_position)
@@ -801,6 +807,11 @@ impl RenderOnce for Toolbar {
                     if item.kind() == ToolbarItemKind::Separator {
                         return div()
                             .id(toolbar_item_id(item.value()))
+                            .debug_selector({
+                                let debug_id = debug_id.clone();
+                                let item_value = item_value.clone();
+                                move || format!("toolbar:{debug_id}:item:{item_value}")
+                            })
                             .flex_none()
                             .bg(ThemeResolver::resolve(colors.border()))
                             .when(is_vertical, |this| {
@@ -816,6 +827,11 @@ impl RenderOnce for Toolbar {
 
                     div()
                         .id(toolbar_item_id(item.value()))
+                        .debug_selector({
+                            let debug_id = debug_id.clone();
+                            let item_value = item_value.clone();
+                            move || format!("toolbar:{debug_id}:item:{item_value}")
+                        })
                         .focusable()
                         .tab_stop(item_tab_stop)
                         .ui_role(item.role().unwrap_or(Role::Button))
