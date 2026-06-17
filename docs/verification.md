@@ -49,8 +49,8 @@ cargo nextest run -p open-gpui-ui-foundation-gallery
 The gallery package includes Components-page runtime smoke coverage for regressions that state-only
 tests can miss: short-viewport page scrolling and navigation reset, Select popup outside dismissal,
 nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal plus vertical
-Splitter pointer dragging. Run the gallery package tests before relying on manual dogfood for those
-paths.
+Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
+tests before relying on manual dogfood for those paths.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -175,7 +175,8 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    action/toggle items. The Sidebar samples should expose expanded, icon-collapsed, and long
    scrollable navigation; icon collapse should hide visible labels while keeping item labels
    explicit, disabled items should be skipped, and the long sidebar should scroll inside its sample
-   frame without making the full Components page unscrollable. The Listbox samples should expose
+   frame. The gallery smoke now verifies the long sidebar's internal viewport moves relative to its
+   sample card. The Listbox samples should expose
    grouped options, disabled option skipping, selected and active descendant metadata, empty-state
    behavior, and keyboard navigation/activation with Up/Down/Home/End plus Enter/Space. The Select
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label

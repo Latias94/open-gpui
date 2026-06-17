@@ -1,6 +1,14 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added a gallery-level Sidebar internal-scroll smoke. `Sidebar` now exposes stable
+  runtime debug selectors for the root and items, the gallery Sidebar/Toolbar cards expose gallery
+  sample selectors, and the Components smoke scrolls the long Sidebar viewport while asserting the
+  bottom navigation item moves relative to its sample card.
+* **Verification**: Focused Sidebar gallery smoke passed with `cargo fmt -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery` and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery
+  components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`.
 * **Update**: Promoted the UI foundation/component runtime gates into the default `xtask verify`
   path. The gate now runs `cargo nextest run -p open-gpui-ui-core`, `cargo nextest run -p
   open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery` after the

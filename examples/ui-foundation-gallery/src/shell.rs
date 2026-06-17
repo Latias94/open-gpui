@@ -725,6 +725,10 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-sidebar-sample:{}", sample.id))
+                                .debug_selector({
+                                    let sample_id = sample.id;
+                                    move || format!("gallery:component-sidebar-sample:{sample_id}")
+                                })
                                 .w(px(360.0))
                                 .flex()
                                 .flex_col()
@@ -819,6 +823,10 @@ impl GalleryShell {
 
                             div()
                                 .id(format!("component-toolbar-sample:{}", sample.id))
+                                .debug_selector({
+                                    let sample_id = sample.id;
+                                    move || format!("gallery:component-toolbar-sample:{sample_id}")
+                                })
                                 .w(px(420.0))
                                 .flex()
                                 .flex_col()

@@ -1787,6 +1787,34 @@ fn components_gallery_smoke_scroll_area_samples_scroll_inside_page(
 }
 
 #[open_gpui::test]
+fn components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_components_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:component-sidebar-sample:long-sidebar");
+    let sample_before = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
+    let segments_before = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
+    let sidebar_viewport = bounds(cx, "scroll-area:component-sidebar:long-sidebar-scroll");
+
+    cx.simulate_event(ScrollWheelEvent {
+        position: sidebar_viewport.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-96.0))),
+        ..Default::default()
+    });
+    redraw(cx);
+
+    let sample_after = bounds(cx, "gallery:component-sidebar-sample:long-sidebar");
+    let segments_after = bounds(cx, "sidebar:component-sidebar:long-sidebar:item:segments");
+    let segments_offset_before = segments_before.top() - sample_before.top();
+    let segments_offset_after = segments_after.top() - sample_after.top();
+    assert!(
+        segments_offset_after < segments_offset_before,
+        "expected long Sidebar sample to scroll its internal navigation viewport; sample before/after=({sample_before:?}, {sample_after:?}) segments before/after=({segments_before:?}, {segments_after:?})"
+    );
+}
+
+#[open_gpui::test]
 fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition(
     cx: &mut open_gpui::TestAppContext,
 ) {

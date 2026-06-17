@@ -1253,6 +1253,7 @@ impl RenderOnce for Sidebar {
         } = self;
 
         window.with_id(id.clone(), |window| {
+            let debug_id = id.to_string();
             let descriptors: Vec<SidebarSectionDescriptor> =
                 sections.iter().map(SidebarSection::descriptor).collect();
             let item_models: Vec<SidebarItem> = sections
@@ -1321,6 +1322,7 @@ impl RenderOnce for Sidebar {
                     let runtime = runtime.clone();
                     let disabled_items = disabled_items.clone();
                     let item_states_for_section = item_states.clone();
+                    let section_debug_id = debug_id.clone();
 
                     div()
                         .id(sidebar_section_id(section.value()))
@@ -1372,6 +1374,11 @@ impl RenderOnce for Sidebar {
 
                             div()
                                 .id(sidebar_item_id(item.value()))
+                                .debug_selector({
+                                    let debug_id = section_debug_id.clone();
+                                    let item_value = item.value().to_owned();
+                                    move || format!("sidebar:{debug_id}:item:{item_value}")
+                                })
                                 .focusable()
                                 .tab_stop(item_tab_stop)
                                 .ui_role(item.role())
@@ -1552,6 +1559,10 @@ impl RenderOnce for Sidebar {
 
             div()
                 .id(id.clone())
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("sidebar:{debug_id}")
+                })
                 .ui_role(state.role())
                 .aria_label(label.clone())
                 .aria_disabled(state.disabled())

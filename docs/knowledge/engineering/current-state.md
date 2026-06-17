@@ -34,7 +34,13 @@ status: "active"
 - Done: Added a gallery-level Components interaction smoke gate. `open-gpui-ui-foundation-gallery`
   now renders the full Components page in `open_gpui::test` and drives short-viewport page
   scrolling/navigation reset, Select popup outside dismissal, nested ScrollArea wheel scrolling,
-  vertical Tabs rail scrolling, and Splitter pointer dragging through runtime events.
+  vertical Tabs rail scrolling, Splitter pointer dragging, and long Sidebar internal navigation
+  scrolling through runtime events.
+- Done: Added stable runtime debug selectors for `Sidebar` root/items plus gallery Sidebar/Toolbar
+  sample cards so shell-navigation interaction smoke tests can target real rendered nodes.
+- Last verified for the Sidebar internal-scroll smoke: `cargo fmt -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery` and `cargo nextest run -p open-gpui-ui-foundation-gallery
+  components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`.
 - Done: Added a compact shell/navigation runtime smoke. The gallery test now clicks the compact
   viewport switch, resizes to the compact viewport, asserts the mobile shell plus compact density
   snapshot, scrolls the left navigation rail to deep pages, and confirms switching away and back to
