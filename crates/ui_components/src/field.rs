@@ -5,7 +5,7 @@ use open_gpui::{
     AnyElement, ElementId, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
     div,
 };
-use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::theme::ThemeResolver;
@@ -61,9 +61,9 @@ impl FieldColors {
 /// Resolved field metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FieldMetrics {
-    label_text_size: open_gpui::Pixels,
-    message_text_size: open_gpui::Pixels,
-    gap: open_gpui::Pixels,
+    label_text_size: UiPx,
+    message_text_size: UiPx,
+    gap: UiPx,
 }
 
 impl FieldMetrics {
@@ -71,23 +71,23 @@ impl FieldMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             label_text_size: size.control_text_px(),
-            message_text_size: open_gpui::px(12.0),
-            gap: open_gpui::px(6.0),
+            message_text_size: ui_px(12.0),
+            gap: ui_px(6.0),
         }
     }
 
     /// Returns the label text size.
-    pub const fn label_text_size(self) -> open_gpui::Pixels {
+    pub const fn label_text_size(self) -> UiPx {
         self.label_text_size
     }
 
     /// Returns the message text size.
-    pub const fn message_text_size(self) -> open_gpui::Pixels {
+    pub const fn message_text_size(self) -> UiPx {
         self.message_text_size
     }
 
     /// Returns the vertical gap.
-    pub const fn gap(self) -> open_gpui::Pixels {
+    pub const fn gap(self) -> UiPx {
         self.gap
     }
 }

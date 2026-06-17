@@ -5,11 +5,11 @@ use std::time::Duration;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use open_gpui_ui_core::{
     InitialFocusIntent, OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::color::ColorIntent;
@@ -124,11 +124,11 @@ impl TooltipColors {
 /// Resolved tooltip metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TooltipMetrics {
-    padding_x: open_gpui::Pixels,
-    padding_y: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
+    padding_x: UiPx,
+    padding_y: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
+    max_width: UiPx,
 }
 
 impl TooltipMetrics {
@@ -136,35 +136,35 @@ impl TooltipMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             padding_x: size.button_px(),
-            padding_y: px(6.0),
+            padding_y: ui_px(6.0),
             radius: size.control_radius(),
             text_size: size.control_text_px(),
-            max_width: px(320.0),
+            max_width: ui_px(320.0),
         }
     }
 
     /// Returns horizontal padding.
-    pub const fn padding_x(self) -> open_gpui::Pixels {
+    pub const fn padding_x(self) -> UiPx {
         self.padding_x
     }
 
     /// Returns vertical padding.
-    pub const fn padding_y(self) -> open_gpui::Pixels {
+    pub const fn padding_y(self) -> UiPx {
         self.padding_y
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns max content width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 }

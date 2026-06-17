@@ -5,9 +5,9 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -16,67 +16,67 @@ use crate::theme::ThemeResolver;
 /// Resolved checkbox metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CheckboxMetrics {
-    box_size: open_gpui::Pixels,
-    box_radius: open_gpui::Pixels,
-    indicator_size: open_gpui::Pixels,
-    mixed_bar_height: open_gpui::Pixels,
-    label_gap: open_gpui::Pixels,
-    label_text_size: open_gpui::Pixels,
+    box_size: UiPx,
+    box_radius: UiPx,
+    indicator_size: UiPx,
+    mixed_bar_height: UiPx,
+    label_gap: UiPx,
+    label_text_size: UiPx,
 }
 
 impl CheckboxMetrics {
     /// Resolves metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         let box_size = match size {
-            Size::XSmall => px(16.0),
-            Size::Small => px(18.0),
-            Size::Medium => px(20.0),
-            Size::Large => px(22.0),
+            Size::XSmall => ui_px(16.0),
+            Size::Small => ui_px(18.0),
+            Size::Medium => ui_px(20.0),
+            Size::Large => ui_px(22.0),
         };
         let indicator_size = match size {
-            Size::XSmall => px(8.0),
-            Size::Small => px(9.0),
-            Size::Medium => px(10.0),
-            Size::Large => px(11.0),
+            Size::XSmall => ui_px(8.0),
+            Size::Small => ui_px(9.0),
+            Size::Medium => ui_px(10.0),
+            Size::Large => ui_px(11.0),
         };
 
         Self {
             box_size,
-            box_radius: px(4.0),
+            box_radius: ui_px(4.0),
             indicator_size,
-            mixed_bar_height: px(2.0),
-            label_gap: px(8.0),
+            mixed_bar_height: ui_px(2.0),
+            label_gap: ui_px(8.0),
             label_text_size: size.control_text_px(),
         }
     }
 
     /// Returns the checkbox box size.
-    pub const fn box_size(self) -> open_gpui::Pixels {
+    pub const fn box_size(self) -> UiPx {
         self.box_size
     }
 
     /// Returns the corner radius.
-    pub const fn box_radius(self) -> open_gpui::Pixels {
+    pub const fn box_radius(self) -> UiPx {
         self.box_radius
     }
 
     /// Returns the indicator size.
-    pub const fn indicator_size(self) -> open_gpui::Pixels {
+    pub const fn indicator_size(self) -> UiPx {
         self.indicator_size
     }
 
     /// Returns the mixed-state bar height.
-    pub const fn mixed_bar_height(self) -> open_gpui::Pixels {
+    pub const fn mixed_bar_height(self) -> UiPx {
         self.mixed_bar_height
     }
 
     /// Returns the gap between the box and the label.
-    pub const fn label_gap(self) -> open_gpui::Pixels {
+    pub const fn label_gap(self) -> UiPx {
         self.label_gap
     }
 
     /// Returns the label text size.
-    pub const fn label_text_size(self) -> open_gpui::Pixels {
+    pub const fn label_text_size(self) -> UiPx {
         self.label_text_size
     }
 }
@@ -427,7 +427,7 @@ impl RenderOnce for Checkbox {
                                 .rounded(metrics.indicator_size())
                                 .bg(ThemeResolver::resolve(colors.indicator()))
                         } else {
-                            div().w(px(0.0)).h(px(0.0))
+                            div().w(open_gpui::px(0.0)).h(open_gpui::px(0.0))
                         };
                         indicator
                     }),

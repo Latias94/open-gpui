@@ -16,6 +16,7 @@ pub mod context_menu;
 pub mod dialog;
 pub mod field;
 pub mod focus;
+mod geometry;
 pub mod hover_card;
 pub mod icon_button;
 pub mod label;

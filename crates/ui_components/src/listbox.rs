@@ -5,9 +5,9 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, IntoElement, KeyDownEvent, ParentElement,
-    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -221,82 +221,82 @@ impl ListboxColors {
 /// Resolved listbox metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ListboxMetrics {
-    surface_padding: open_gpui::Pixels,
-    option_height: open_gpui::Pixels,
-    option_padding_x: open_gpui::Pixels,
-    option_padding_y: open_gpui::Pixels,
-    group_padding_x: open_gpui::Pixels,
-    separator_height: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    min_width: open_gpui::Pixels,
-    max_height: open_gpui::Pixels,
+    surface_padding: UiPx,
+    option_height: UiPx,
+    option_padding_x: UiPx,
+    option_padding_y: UiPx,
+    group_padding_x: UiPx,
+    separator_height: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
+    min_width: UiPx,
+    max_height: UiPx,
 }
 
 impl ListboxMetrics {
     /// Resolves listbox metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         Self {
-            surface_padding: px(6.0),
+            surface_padding: ui_px(6.0),
             option_height: size.button_h(),
             option_padding_x: size.button_px(),
-            option_padding_y: px(6.0),
+            option_padding_y: ui_px(6.0),
             group_padding_x: size.button_px(),
-            separator_height: px(1.0),
+            separator_height: ui_px(1.0),
             radius: size.control_radius(),
             text_size: size.control_text_px(),
-            min_width: px(220.0),
-            max_height: px(240.0),
+            min_width: ui_px(220.0),
+            max_height: ui_px(240.0),
         }
     }
 
     /// Returns listbox surface padding.
-    pub const fn surface_padding(self) -> open_gpui::Pixels {
+    pub const fn surface_padding(self) -> UiPx {
         self.surface_padding
     }
 
     /// Returns option row height.
-    pub const fn option_height(self) -> open_gpui::Pixels {
+    pub const fn option_height(self) -> UiPx {
         self.option_height
     }
 
     /// Returns option horizontal padding.
-    pub const fn option_padding_x(self) -> open_gpui::Pixels {
+    pub const fn option_padding_x(self) -> UiPx {
         self.option_padding_x
     }
 
     /// Returns option vertical padding.
-    pub const fn option_padding_y(self) -> open_gpui::Pixels {
+    pub const fn option_padding_y(self) -> UiPx {
         self.option_padding_y
     }
 
     /// Returns group label horizontal padding.
-    pub const fn group_padding_x(self) -> open_gpui::Pixels {
+    pub const fn group_padding_x(self) -> UiPx {
         self.group_padding_x
     }
 
     /// Returns separator height.
-    pub const fn separator_height(self) -> open_gpui::Pixels {
+    pub const fn separator_height(self) -> UiPx {
         self.separator_height
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns minimum listbox width.
-    pub const fn min_width(self) -> open_gpui::Pixels {
+    pub const fn min_width(self) -> UiPx {
         self.min_width
     }
 
     /// Returns maximum listbox height.
-    pub const fn max_height(self) -> open_gpui::Pixels {
+    pub const fn max_height(self) -> UiPx {
         self.max_height
     }
 }
@@ -1030,7 +1030,7 @@ impl RenderOnce for Listbox {
             .when(!self.embedded, |this| {
                 this.max_h(metrics.max_height())
                     .overflow_y_scroll()
-                    .scrollbar_width(px(8.0))
+                    .scrollbar_width(ui_px(8.0))
             })
             .when(self.embedded, |this| this.w_full())
             .p(metrics.surface_padding())

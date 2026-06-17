@@ -3123,7 +3123,7 @@ impl GalleryShell {
             }))
     }
 
-    fn render_metric(&self, label: &'static str, value: Pixels) -> impl IntoElement {
+    fn render_metric(&self, label: &'static str, value: impl Into<Pixels>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -4878,7 +4878,8 @@ fn format_ui_px(value: UiPx) -> String {
     format!("{:.0}px", value.as_f32())
 }
 
-fn format_px(value: Pixels) -> String {
+fn format_px(value: impl Into<Pixels>) -> String {
+    let value = value.into();
     format!("{:.0}px", value.as_f32())
 }
 

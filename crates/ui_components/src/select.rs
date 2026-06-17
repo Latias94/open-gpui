@@ -5,12 +5,12 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayAnchorInput,
     OverlayLayerKind, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens, rect,
+    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, rect, ui_point, ui_px, ui_size,
 };
 
 use crate::color::{ColorIntent, ColorState};
@@ -21,7 +21,7 @@ use crate::listbox::{
 };
 use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    outside_press_open_change, ui_point_from_gpui, ui_px_from_gpui, ui_size_from_gpui,
+    outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
 use crate::theme::ThemeResolver;
@@ -103,15 +103,15 @@ impl SelectColors {
 /// Resolved select metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectMetrics {
-    trigger_height: open_gpui::Pixels,
-    trigger_padding_x: open_gpui::Pixels,
-    trigger_padding_y: open_gpui::Pixels,
-    content_padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    min_width: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
-    max_height: open_gpui::Pixels,
+    trigger_height: UiPx,
+    trigger_padding_x: UiPx,
+    trigger_padding_y: UiPx,
+    content_padding: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    max_height: UiPx,
 }
 
 impl SelectMetrics {
@@ -121,62 +121,62 @@ impl SelectMetrics {
             trigger_height: size.button_h(),
             trigger_padding_x: size.button_px(),
             trigger_padding_y: size.button_py(),
-            content_padding: px(4.0),
+            content_padding: ui_px(4.0),
             radius: size.control_radius(),
             text_size: size.control_text_px(),
-            min_width: px(220.0),
-            max_width: px(360.0),
+            min_width: ui_px(220.0),
+            max_width: ui_px(360.0),
             max_height: match size {
-                Size::XSmall => px(180.0),
-                Size::Small => px(220.0),
-                Size::Medium => px(260.0),
-                Size::Large => px(320.0),
+                Size::XSmall => ui_px(180.0),
+                Size::Small => ui_px(220.0),
+                Size::Medium => ui_px(260.0),
+                Size::Large => ui_px(320.0),
             },
         }
     }
 
     /// Returns trigger height.
-    pub const fn trigger_height(self) -> open_gpui::Pixels {
+    pub const fn trigger_height(self) -> UiPx {
         self.trigger_height
     }
 
     /// Returns trigger horizontal padding.
-    pub const fn trigger_padding_x(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_x(self) -> UiPx {
         self.trigger_padding_x
     }
 
     /// Returns trigger vertical padding.
-    pub const fn trigger_padding_y(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_y(self) -> UiPx {
         self.trigger_padding_y
     }
 
     /// Returns content padding.
-    pub const fn content_padding(self) -> open_gpui::Pixels {
+    pub const fn content_padding(self) -> UiPx {
         self.content_padding
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns minimum content width.
-    pub const fn min_width(self) -> open_gpui::Pixels {
+    pub const fn min_width(self) -> UiPx {
         self.min_width
     }
 
     /// Returns maximum content width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 
     /// Returns maximum content height.
-    pub const fn max_height(self) -> open_gpui::Pixels {
+    pub const fn max_height(self) -> UiPx {
         self.max_height
     }
 }
@@ -734,14 +734,14 @@ impl RenderOnce for Select {
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 OverlayAnchorInput::from_layout_bounds(rect(
-                    ui_point_from_gpui(point(px(0.0), px(0.0))),
-                    ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                    ui_point(ui_px(0.0), ui_px(0.0)),
+                    ui_size(metrics.min_width(), metrics.trigger_height()),
                 )),
-                ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                ui_size(metrics.min_width(), metrics.trigger_height()),
             )
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
-            .with_offset(ui_px_from_gpui(px(4.0))),
+            .with_offset(ui_px(4.0)),
             state.overlay().snap_margin(),
         );
 

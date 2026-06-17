@@ -6,20 +6,19 @@ use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Task, Window, anchored, deferred, div, point, px,
+    Task, Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens,
+    Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    escape_open_change, outside_press_open_change, ui_point_from_gpui, ui_px_from_gpui,
-    ui_size_from_gpui,
+    escape_open_change, outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -176,17 +175,17 @@ impl HoverCardColors {
 /// Resolved hover card metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HoverCardMetrics {
-    trigger_height: open_gpui::Pixels,
-    trigger_padding_x: open_gpui::Pixels,
-    trigger_padding_y: open_gpui::Pixels,
-    content_padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    title_size: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    min_width: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
-    max_height: open_gpui::Pixels,
-    offset: open_gpui::Pixels,
+    trigger_height: UiPx,
+    trigger_padding_x: UiPx,
+    trigger_padding_y: UiPx,
+    content_padding: UiPx,
+    radius: UiPx,
+    title_size: UiPx,
+    text_size: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    max_height: UiPx,
+    offset: UiPx,
 }
 
 impl HoverCardMetrics {
@@ -198,67 +197,67 @@ impl HoverCardMetrics {
             trigger_padding_y: size.button_py(),
             content_padding: size.button_px(),
             radius: size.control_radius(),
-            title_size: px(15.0),
+            title_size: ui_px(15.0),
             text_size: size.control_text_px(),
-            min_width: px(240.0),
-            max_width: px(360.0),
-            max_height: px(280.0),
-            offset: px(8.0),
+            min_width: ui_px(240.0),
+            max_width: ui_px(360.0),
+            max_height: ui_px(280.0),
+            offset: ui_px(8.0),
         }
     }
 
     /// Returns trigger height.
-    pub const fn trigger_height(self) -> open_gpui::Pixels {
+    pub const fn trigger_height(self) -> UiPx {
         self.trigger_height
     }
 
     /// Returns trigger horizontal padding.
-    pub const fn trigger_padding_x(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_x(self) -> UiPx {
         self.trigger_padding_x
     }
 
     /// Returns trigger vertical padding.
-    pub const fn trigger_padding_y(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_y(self) -> UiPx {
         self.trigger_padding_y
     }
 
     /// Returns content padding.
-    pub const fn content_padding(self) -> open_gpui::Pixels {
+    pub const fn content_padding(self) -> UiPx {
         self.content_padding
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns title text size.
-    pub const fn title_size(self) -> open_gpui::Pixels {
+    pub const fn title_size(self) -> UiPx {
         self.title_size
     }
 
     /// Returns body text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns minimum content width.
-    pub const fn min_width(self) -> open_gpui::Pixels {
+    pub const fn min_width(self) -> UiPx {
         self.min_width
     }
 
     /// Returns maximum content width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 
     /// Returns maximum content height.
-    pub const fn max_height(self) -> open_gpui::Pixels {
+    pub const fn max_height(self) -> UiPx {
         self.max_height
     }
 
     /// Returns trigger-to-content placement offset.
-    pub const fn offset(self) -> open_gpui::Pixels {
+    pub const fn offset(self) -> UiPx {
         self.offset
     }
 }
@@ -779,14 +778,14 @@ impl RenderOnce for HoverCard {
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    ui_point_from_gpui(point(px(0.0), px(0.0))),
-                    ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                    ui_point(ui_px(0.0), ui_px(0.0)),
+                    ui_size(metrics.min_width(), metrics.trigger_height()),
                 )),
-                ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                ui_size(metrics.min_width(), metrics.trigger_height()),
             )
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
-            .with_offset(ui_px_from_gpui(metrics.offset())),
+            .with_offset(metrics.offset()),
             state.overlay().snap_margin(),
         );
 

@@ -6,7 +6,7 @@ use open_gpui::{
     IntoElement, ParentElement, Pixels, Point, Render, RenderOnce, Styled, Window, div, px,
     relative, rgb,
 };
-use open_gpui_ui_core::{Orientation, Sizable, Size};
+use open_gpui_ui_core::{Orientation, Sizable, Size, UiPx, ui_px};
 
 const EPSILON: f32 = 0.000_1;
 
@@ -70,9 +70,9 @@ impl SplitterPanelDescriptor {
 /// Resolved splitter metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SplitterMetrics {
-    handle_thickness: open_gpui::Pixels,
-    handle_hit_size: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
+    handle_thickness: UiPx,
+    handle_hit_size: UiPx,
+    radius: UiPx,
 }
 
 impl SplitterMetrics {
@@ -80,31 +80,31 @@ impl SplitterMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             handle_thickness: match size {
-                Size::XSmall | Size::Small => px(1.0),
-                Size::Medium | Size::Large => px(2.0),
+                Size::XSmall | Size::Small => ui_px(1.0),
+                Size::Medium | Size::Large => ui_px(2.0),
             },
             handle_hit_size: match size {
-                Size::XSmall => px(8.0),
-                Size::Small => px(10.0),
-                Size::Medium => px(12.0),
-                Size::Large => px(14.0),
+                Size::XSmall => ui_px(8.0),
+                Size::Small => ui_px(10.0),
+                Size::Medium => ui_px(12.0),
+                Size::Large => ui_px(14.0),
             },
             radius: size.control_radius(),
         }
     }
 
     /// Returns the painted handle thickness.
-    pub const fn handle_thickness(self) -> open_gpui::Pixels {
+    pub const fn handle_thickness(self) -> UiPx {
         self.handle_thickness
     }
 
     /// Returns the pointer hit size reserved for the handle.
-    pub const fn handle_hit_size(self) -> open_gpui::Pixels {
+    pub const fn handle_hit_size(self) -> UiPx {
         self.handle_hit_size
     }
 
     /// Returns the splitter corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 }

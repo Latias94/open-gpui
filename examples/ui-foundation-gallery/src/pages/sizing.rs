@@ -1,7 +1,6 @@
 //! Sizing and density foundation page metadata.
 
-use open_gpui::Pixels;
-use open_gpui_ui_core::{Density, Size};
+use open_gpui_ui_core::{Density, Size, UiPx};
 
 /// Page title.
 pub const TITLE: &str = "Sizing & Density";
@@ -24,13 +23,13 @@ pub struct SizeSample {
     /// Stable label for the size.
     pub label: &'static str,
     /// Default button height.
-    pub button_h: Pixels,
+    pub button_h: UiPx,
     /// Default input height.
-    pub input_h: Pixels,
+    pub input_h: UiPx,
     /// Default icon button size.
-    pub icon_button_size: Pixels,
+    pub icon_button_size: UiPx,
     /// Default control radius.
-    pub radius: Pixels,
+    pub radius: UiPx,
 }
 
 impl SizeSample {

@@ -7,9 +7,9 @@ use open_gpui::prelude::FluentBuilder;
 use open_gpui::{
     App, ClickEvent, Context, ElementId, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    Window, div,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::button::{ButtonColors, ButtonMetrics, ButtonVariant};
 use crate::color::ColorIntent;
@@ -137,11 +137,11 @@ pub type ToolbarColors = ButtonColors;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ToolbarMetrics {
     item: ButtonMetrics,
-    gap: open_gpui::Pixels,
-    separator_length: open_gpui::Pixels,
-    separator_thickness: open_gpui::Pixels,
-    padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
+    gap: UiPx,
+    separator_length: UiPx,
+    separator_thickness: UiPx,
+    padding: UiPx,
+    radius: UiPx,
 }
 
 impl ToolbarMetrics {
@@ -149,10 +149,10 @@ impl ToolbarMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             item: ButtonMetrics::from_size(size),
-            gap: px(4.0),
+            gap: ui_px(4.0),
             separator_length: size.button_h(),
-            separator_thickness: px(1.0),
-            padding: px(4.0),
+            separator_thickness: ui_px(1.0),
+            padding: ui_px(4.0),
             radius: size.control_radius(),
         }
     }
@@ -163,27 +163,27 @@ impl ToolbarMetrics {
     }
 
     /// Returns the gap between toolbar items.
-    pub const fn gap(self) -> open_gpui::Pixels {
+    pub const fn gap(self) -> UiPx {
         self.gap
     }
 
     /// Returns the visual separator length.
-    pub const fn separator_length(self) -> open_gpui::Pixels {
+    pub const fn separator_length(self) -> UiPx {
         self.separator_length
     }
 
     /// Returns the visual separator thickness.
-    pub const fn separator_thickness(self) -> open_gpui::Pixels {
+    pub const fn separator_thickness(self) -> UiPx {
         self.separator_thickness
     }
 
     /// Returns toolbar padding.
-    pub const fn padding(self) -> open_gpui::Pixels {
+    pub const fn padding(self) -> UiPx {
         self.padding
     }
 
     /// Returns the toolbar corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 }

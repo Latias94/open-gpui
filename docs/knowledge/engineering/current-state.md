@@ -37,8 +37,19 @@ status: "active"
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery`.
-- Next action: Commit U2, then start U3 by migrating public component metrics off GPUI `Pixels` or
-  classifying any remaining metrics as adapter-only.
+- Done: Implemented U3 neutral component metrics. `Size` helpers and public component `*Metrics`
+  now return `UiPx` instead of GPUI `Pixels`, gallery sizing samples use `UiPx`, and the component
+  extraction-blocker allowlist shrank to the remaining `GpuiOverlayState` public-state blockers.
+  `UiPx` has GPUI style-conversion impls in UI core as a transitional convenience for the current
+  adapter-first crates; a later strict headless boundary should move that conversion out with the
+  overlay/focus split.
+- Last verified: U3 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
+- Next action: Commit U3, then start U4 by replacing direct GPUI focus/a11y re-exports with
+  stable UI-core semantic facades while keeping concrete focus handles in adapter code.
 
 ## 2026-06-16
 

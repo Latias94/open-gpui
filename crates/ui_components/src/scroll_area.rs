@@ -5,7 +5,7 @@ use open_gpui::{
     AnyElement, App, ElementId, IntoElement, ParentElement, RenderOnce, ScrollHandle, Styled,
     Window, div, point, px,
 };
-use open_gpui_ui_core::{Sizable, Size};
+use open_gpui_ui_core::{Sizable, Size, UiPx, ui_px};
 
 /// Scroll direction enabled by a [`ScrollArea`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -63,7 +63,7 @@ impl ScrollResetPolicy {
 /// Resolved scroll area metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScrollAreaMetrics {
-    scrollbar_width: open_gpui::Pixels,
+    scrollbar_width: UiPx,
 }
 
 impl ScrollAreaMetrics {
@@ -71,16 +71,16 @@ impl ScrollAreaMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             scrollbar_width: match size {
-                Size::XSmall => px(6.0),
-                Size::Small => px(8.0),
-                Size::Medium => px(10.0),
-                Size::Large => px(12.0),
+                Size::XSmall => ui_px(6.0),
+                Size::Small => ui_px(8.0),
+                Size::Medium => ui_px(10.0),
+                Size::Large => ui_px(12.0),
             },
         }
     }
 
     /// Returns the layout space reserved for the scrollbar.
-    pub const fn scrollbar_width(self) -> open_gpui::Pixels {
+    pub const fn scrollbar_width(self) -> UiPx {
         self.scrollbar_width
     }
 }

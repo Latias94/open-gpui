@@ -9,7 +9,7 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div, px,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -338,19 +338,19 @@ impl SidebarColors {
 /// Resolved sidebar metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SidebarMetrics {
-    expanded_width: open_gpui::Pixels,
-    collapsed_width: open_gpui::Pixels,
-    resolved_width: open_gpui::Pixels,
-    padding: open_gpui::Pixels,
-    section_gap: open_gpui::Pixels,
-    item_gap: open_gpui::Pixels,
-    item_height: open_gpui::Pixels,
-    item_padding_x: open_gpui::Pixels,
-    item_padding_y: open_gpui::Pixels,
-    icon_size: open_gpui::Pixels,
-    badge_min_height: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
+    expanded_width: UiPx,
+    collapsed_width: UiPx,
+    resolved_width: UiPx,
+    padding: UiPx,
+    section_gap: UiPx,
+    item_gap: UiPx,
+    item_height: UiPx,
+    item_padding_x: UiPx,
+    item_padding_y: UiPx,
+    icon_size: UiPx,
+    badge_min_height: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
 }
 
 impl SidebarMetrics {
@@ -361,19 +361,19 @@ impl SidebarMetrics {
         collapsed: bool,
     ) -> Self {
         let expanded_width = match size {
-            Size::XSmall => px(216.0),
-            Size::Small => px(232.0),
-            Size::Medium => px(248.0),
-            Size::Large => px(272.0),
+            Size::XSmall => ui_px(216.0),
+            Size::Small => ui_px(232.0),
+            Size::Medium => ui_px(248.0),
+            Size::Large => ui_px(272.0),
         };
         let collapsed_width = match size {
-            Size::XSmall => px(44.0),
-            Size::Small => px(48.0),
-            Size::Medium => px(52.0),
-            Size::Large => px(56.0),
+            Size::XSmall => ui_px(44.0),
+            Size::Small => ui_px(48.0),
+            Size::Medium => ui_px(52.0),
+            Size::Large => ui_px(56.0),
         };
         let resolved_width = match (collapse_mode, collapsed) {
-            (SidebarCollapseMode::Offcanvas, true) => px(0.0),
+            (SidebarCollapseMode::Offcanvas, true) => ui_px(0.0),
             (SidebarCollapseMode::Icon, true) => collapsed_width,
             _ => expanded_width,
         };
@@ -383,20 +383,20 @@ impl SidebarMetrics {
             collapsed_width,
             resolved_width,
             padding: match size {
-                Size::XSmall | Size::Small => px(8.0),
-                Size::Medium | Size::Large => px(10.0),
+                Size::XSmall | Size::Small => ui_px(8.0),
+                Size::Medium | Size::Large => ui_px(10.0),
             },
-            section_gap: px(12.0),
-            item_gap: px(4.0),
+            section_gap: ui_px(12.0),
+            item_gap: ui_px(4.0),
             item_height: size.button_h(),
             item_padding_x: size.button_px(),
             item_padding_y: size.button_py(),
             icon_size: size.icon_size(),
             badge_min_height: match size {
-                Size::XSmall => px(16.0),
-                Size::Small => px(18.0),
-                Size::Medium => px(20.0),
-                Size::Large => px(22.0),
+                Size::XSmall => ui_px(16.0),
+                Size::Small => ui_px(18.0),
+                Size::Medium => ui_px(20.0),
+                Size::Large => ui_px(22.0),
             },
             radius: size.control_radius(),
             text_size: size.control_text_px(),
@@ -404,67 +404,67 @@ impl SidebarMetrics {
     }
 
     /// Returns the expanded width.
-    pub const fn expanded_width(self) -> open_gpui::Pixels {
+    pub const fn expanded_width(self) -> UiPx {
         self.expanded_width
     }
 
     /// Returns the icon-collapsed width.
-    pub const fn collapsed_width(self) -> open_gpui::Pixels {
+    pub const fn collapsed_width(self) -> UiPx {
         self.collapsed_width
     }
 
     /// Returns the effective layout width.
-    pub const fn resolved_width(self) -> open_gpui::Pixels {
+    pub const fn resolved_width(self) -> UiPx {
         self.resolved_width
     }
 
     /// Returns sidebar padding.
-    pub const fn padding(self) -> open_gpui::Pixels {
+    pub const fn padding(self) -> UiPx {
         self.padding
     }
 
     /// Returns the gap between sections.
-    pub const fn section_gap(self) -> open_gpui::Pixels {
+    pub const fn section_gap(self) -> UiPx {
         self.section_gap
     }
 
     /// Returns the gap between items.
-    pub const fn item_gap(self) -> open_gpui::Pixels {
+    pub const fn item_gap(self) -> UiPx {
         self.item_gap
     }
 
     /// Returns item height.
-    pub const fn item_height(self) -> open_gpui::Pixels {
+    pub const fn item_height(self) -> UiPx {
         self.item_height
     }
 
     /// Returns item horizontal padding.
-    pub const fn item_padding_x(self) -> open_gpui::Pixels {
+    pub const fn item_padding_x(self) -> UiPx {
         self.item_padding_x
     }
 
     /// Returns item vertical padding.
-    pub const fn item_padding_y(self) -> open_gpui::Pixels {
+    pub const fn item_padding_y(self) -> UiPx {
         self.item_padding_y
     }
 
     /// Returns icon glyph size.
-    pub const fn icon_size(self) -> open_gpui::Pixels {
+    pub const fn icon_size(self) -> UiPx {
         self.icon_size
     }
 
     /// Returns badge minimum height.
-    pub const fn badge_min_height(self) -> open_gpui::Pixels {
+    pub const fn badge_min_height(self) -> UiPx {
         self.badge_min_height
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 }
@@ -1387,7 +1387,7 @@ impl RenderOnce for Sidebar {
                                 .px(if item_text_visible {
                                     metrics.item_padding_x()
                                 } else {
-                                    px(0.0)
+                                    ui_px(0.0)
                                 })
                                 .py(metrics.item_padding_y())
                                 .flex()
@@ -1516,11 +1516,11 @@ impl RenderOnce for Sidebar {
                                         this.child(
                                             div()
                                                 .min_h(metrics.badge_min_height())
-                                                .px(px(7.0))
+                                                .px(ui_px(7.0))
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .rounded(px(999.0))
+                                                .rounded(ui_px(999.0))
                                                 .bg(ThemeResolver::resolve(
                                                     colors.badge_background(),
                                                 ))

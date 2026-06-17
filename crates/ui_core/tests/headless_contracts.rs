@@ -5,7 +5,6 @@ fn ui_core_extraction_blockers_match_allowlist() {
         ("a11y.rs", "pub use open_gpui::{AccessibleAction"),
         ("focus.rs", "pub use open_gpui::{FocusHandle"),
         ("prelude.rs", "focus::{FocusHandle"),
-        ("sizing.rs", "Pixels as Px"),
     ];
     let mut expected = expected
         .into_iter()

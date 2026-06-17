@@ -11,7 +11,7 @@ use open_gpui::{
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide,
-    Role, Sizable, Size, ThemeTokens, UiPoint,
+    Role, Sizable, Size, ThemeTokens, UiPoint, ui_px, ui_size,
 };
 
 use crate::focus::focus_ring_shadow;
@@ -21,7 +21,7 @@ use crate::menu::{
 };
 use crate::overlay::{
     GpuiOverlayPlacement, GpuiOverlayState, gpui_point_from_ui, outside_press_open_change,
-    ui_point_from_gpui, ui_px_from_gpui, ui_size_from_gpui,
+    ui_point_from_gpui,
 };
 use crate::theme::ThemeResolver;
 
@@ -76,11 +76,11 @@ impl ContextMenuState {
         );
         let placement_input = OverlayPlacementInput::new(
             OverlayAnchorInput::from_point(anchor_point),
-            ui_size_from_gpui(menu.metrics().min_width(), menu.metrics().item_height()),
+            ui_size(menu.metrics().min_width(), menu.metrics().item_height()),
         )
         .with_side(OverlayPlacementSide::Bottom)
         .with_alignment(OverlayPlacementAlignment::Start)
-        .with_offset(ui_px_from_gpui(px(0.0)));
+        .with_offset(ui_px(0.0));
 
         Self {
             size,

@@ -311,11 +311,12 @@ Before extraction, keep these blockers explicit:
   element ids, focus handles, scroll handles, and callbacks;
 - public contract guard tests now treat those runtime/rendering leaks as hard failures, while a
   separate extraction-blocker inventory pins the remaining `GpuiOverlayState`, direct focus/a11y
-  re-export, sizing/adaptive `Pixels` usage, and adapter metric blockers until the extraction-prep
-  series removes or classifies them;
-- overlay placement and `ContextMenuState` already use neutral geometry. Public component metrics
-  and UI-core sizing/adaptive policies still need the same treatment before another UI framework
-  can consume the contracts without GPUI geometry;
+  re-export, and adaptive `Pixels` usage until the extraction-prep series removes or classifies
+  them;
+- overlay placement, `ContextMenuState`, UI-core sizing, and public component metrics now use
+  neutral UI-core geometry. Adaptive viewport policies still use GPUI `Pixels`, and `UiPx`
+  currently has GPUI style-conversion impls as a transitional adapter convenience until the core
+  boundary is split more strictly;
 - `GpuiOverlayState` should be split so neutral overlay policy/presence/focus data is not coupled
   to adapter-only deferred priority and snap margins;
 - `open_gpui_ui_core` should stop re-exporting GPUI focus/a11y types directly before it becomes a
@@ -335,9 +336,10 @@ GPUI-adapter code and should stay out of a future headless crate if `FocusRing` 
 ADR 0006 keeps `open-gpui-ui-headless` deferred after the shell/layout/choice/search checkpoint.
 The project now has repeated reusable behavior across overlay, roving focus, listbox navigation,
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
-against GPUI runtime/rendering type leaks. Extraction remains blocked by GPUI metric geometry,
-direct GPUI focus/a11y re-exports, adapter-facing `GpuiOverlayState`, and the GPUI-backed
-`TextInputController`. Shared roving-focus helpers now live in
+against GPUI runtime/rendering type leaks. Public component metrics now use neutral `UiPx`
+instead of GPUI `Pixels`. Extraction remains blocked by direct GPUI focus/a11y re-exports,
+adapter-facing `GpuiOverlayState`, adaptive viewport `Pixels`, `UiPx` GPUI conversion impls in
+UI core, and the GPUI-backed `TextInputController`. Shared roving-focus helpers now live in
 `open_gpui_ui_components::roving_focus`, with `Tabs` preserving compatibility re-exports.
 `open_gpui_ui_core` now owns `UiPx`, `UiPoint`, `UiSize`, `UiRect`, and `UiEdges`, and
 `ContextMenuState` stores a neutral point anchor plus renderer-neutral `OverlayPlacementInput`.

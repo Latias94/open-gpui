@@ -536,7 +536,7 @@ fn sheet_state_records_side_modal_mode_size_and_close_affordance() {
     );
     assert!(state.outside_press_policy().resolve().dismisses());
     assert_eq!(state.colors().surface().token(), semantic::SURFACE);
-    assert!(state.metrics().surface_size() > px(0.0));
+    assert!(state.metrics().surface_size() > ui_px(0.0));
 }
 
 #[test]
@@ -767,7 +767,7 @@ fn button_size_helpers_apply_foundation_size_metrics() {
     let state = Button::new("large", "Large").large().state();
 
     assert_eq!(state.size(), Size::Large);
-    assert_eq!(state.metrics().height(), px(36.0));
+    assert_eq!(state.metrics().height(), ui_px(36.0));
     assert_eq!(state.metrics().text_size(), Size::Large.control_text_px());
 }
 
@@ -866,7 +866,7 @@ fn scroll_area_state_exposes_axis_metrics_and_reset_policy() {
     assert_eq!(state.reset_policy(), ScrollResetPolicy::ResetOnKeyChange);
     assert_eq!(state.reset_policy().as_str(), "reset-on-key-change");
     assert_eq!(state.reset_key(), Some("components"));
-    assert_eq!(state.metrics().scrollbar_width(), px(8.0));
+    assert_eq!(state.metrics().scrollbar_width(), ui_px(8.0));
     assert!(state.should_reset_for_key_change(Some("tokens")));
     assert!(!state.should_reset_for_key_change(Some("components")));
     assert!(!state.should_reset_for_key_change(None));
@@ -891,7 +891,7 @@ fn scroll_area_builder_state_keeps_gpui_handle_out_of_resolved_state() {
     assert!(state.scrolls_x());
     assert!(!state.scrolls_y());
     assert_eq!(state.size(), Size::Large);
-    assert_eq!(state.metrics().scrollbar_width(), px(12.0));
+    assert_eq!(state.metrics().scrollbar_width(), ui_px(12.0));
     assert_eq!(state.reset_key(), Some("settings"));
     assert!(state.should_reset_for_key_change(Some("overview")));
     assert_eq!(preserved.reset_policy(), ScrollResetPolicy::Preserve);
@@ -1062,7 +1062,7 @@ fn splitter_state_normalizes_panel_fractions_and_constraints() {
     assert_eq!(state.handles().len(), 2);
     assert_eq!(state.handles()[0].before_id(), "nav");
     assert_eq!(state.handles()[0].after_id(), "main");
-    assert_eq!(state.metrics().handle_hit_size(), px(12.0));
+    assert_eq!(state.metrics().handle_hit_size(), ui_px(12.0));
 }
 
 #[test]
@@ -1451,41 +1451,16 @@ fn public_resolved_state_contracts_avoid_gpui_runtime_types() {
 fn public_contract_extraction_blockers_match_allowlist() {
     const BLOCKER_TOKENS: &[&str] = &["GpuiOverlayState", "open_gpui::Pixels", "Point<Pixels>"];
     let expected = [
-        ("alert_dialog.rs", "AlertDialogMetrics", "open_gpui::Pixels"),
         ("alert_dialog.rs", "AlertDialogState", "GpuiOverlayState"),
-        ("badge.rs", "BadgeMetrics", "open_gpui::Pixels"),
-        ("button.rs", "ButtonMetrics", "open_gpui::Pixels"),
-        ("checkbox.rs", "CheckboxMetrics", "open_gpui::Pixels"),
-        ("combobox.rs", "ComboboxMetrics", "open_gpui::Pixels"),
         ("combobox.rs", "ComboboxState", "GpuiOverlayState"),
         ("command.rs", "CommandDialogState", "GpuiOverlayState"),
-        ("command.rs", "CommandMetrics", "open_gpui::Pixels"),
         ("command.rs", "CommandState", "GpuiOverlayState"),
-        ("dialog.rs", "DialogMetrics", "open_gpui::Pixels"),
         ("dialog.rs", "DialogState", "GpuiOverlayState"),
-        ("field.rs", "FieldMetrics", "open_gpui::Pixels"),
-        ("hover_card.rs", "HoverCardMetrics", "open_gpui::Pixels"),
         ("hover_card.rs", "HoverCardState", "GpuiOverlayState"),
-        ("icon_button.rs", "IconButtonMetrics", "open_gpui::Pixels"),
-        ("label.rs", "LabelMetrics", "open_gpui::Pixels"),
-        ("listbox.rs", "ListboxMetrics", "open_gpui::Pixels"),
-        ("menu.rs", "MenuMetrics", "open_gpui::Pixels"),
         ("menu.rs", "MenuState", "GpuiOverlayState"),
-        ("popover.rs", "PopoverMetrics", "open_gpui::Pixels"),
         ("popover.rs", "PopoverState", "GpuiOverlayState"),
-        ("radio.rs", "RadioGroupMetrics", "open_gpui::Pixels"),
-        ("scroll_area.rs", "ScrollAreaMetrics", "open_gpui::Pixels"),
-        ("select.rs", "SelectMetrics", "open_gpui::Pixels"),
         ("select.rs", "SelectState", "GpuiOverlayState"),
-        ("sheet.rs", "SheetMetrics", "open_gpui::Pixels"),
         ("sheet.rs", "SheetState", "GpuiOverlayState"),
-        ("sidebar.rs", "SidebarMetrics", "open_gpui::Pixels"),
-        ("splitter.rs", "SplitterMetrics", "open_gpui::Pixels"),
-        ("switch.rs", "SwitchMetrics", "open_gpui::Pixels"),
-        ("tabs.rs", "TabsMetrics", "open_gpui::Pixels"),
-        ("text_input.rs", "TextInputMetrics", "open_gpui::Pixels"),
-        ("toolbar.rs", "ToolbarMetrics", "open_gpui::Pixels"),
-        ("tooltip.rs", "TooltipMetrics", "open_gpui::Pixels"),
         ("tooltip.rs", "TooltipState", "GpuiOverlayState"),
     ];
     let mut expected = expected
@@ -1875,7 +1850,7 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
 
     assert!(state.collapsed());
     assert!(state.offcanvas_collapsed());
-    assert_eq!(state.metrics().resolved_width(), px(0.0));
+    assert_eq!(state.metrics().resolved_width(), ui_px(0.0));
     assert_eq!(state.selected_value(), None);
     assert_eq!(state.focused_value(), None);
     assert_eq!(state.tab_stop_value(), None);
@@ -2947,10 +2922,10 @@ fn switch_size_metrics_are_deterministic() {
     let metrics = state.metrics();
 
     assert_eq!(state.size(), Size::Small);
-    assert_eq!(metrics.track_width(), px(32.0));
-    assert_eq!(metrics.track_height(), px(18.0));
-    assert_eq!(metrics.thumb_size(), px(14.0));
-    assert_eq!(metrics.checked_thumb_x(), px(16.0));
+    assert_eq!(metrics.track_width(), ui_px(32.0));
+    assert_eq!(metrics.track_height(), ui_px(18.0));
+    assert_eq!(metrics.thumb_size(), ui_px(14.0));
+    assert_eq!(metrics.checked_thumb_x(), ui_px(16.0));
 }
 
 #[test]
@@ -3133,7 +3108,7 @@ fn text_input_size_helpers_apply_input_metrics() {
     let state = TextInput::new("query", "Search").large().state();
 
     assert_eq!(state.size(), Size::Large);
-    assert_eq!(state.metrics().height(), px(36.0));
+    assert_eq!(state.metrics().height(), ui_px(36.0));
     assert_eq!(state.metrics().text_size(), Size::Large.control_text_px());
 }
 

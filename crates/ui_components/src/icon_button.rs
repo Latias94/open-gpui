@@ -7,7 +7,7 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -19,9 +19,9 @@ pub type IconButtonColors = ButtonColors;
 /// Resolved icon button metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IconButtonMetrics {
-    size: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    icon_size: open_gpui::Pixels,
+    size: UiPx,
+    radius: UiPx,
+    icon_size: UiPx,
 }
 
 impl IconButtonMetrics {
@@ -35,17 +35,17 @@ impl IconButtonMetrics {
     }
 
     /// Returns square control size.
-    pub const fn size(self) -> open_gpui::Pixels {
+    pub const fn size(self) -> UiPx {
         self.size
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns icon glyph size.
-    pub const fn icon_size(self) -> open_gpui::Pixels {
+    pub const fn icon_size(self) -> UiPx {
         self.icon_size
     }
 }

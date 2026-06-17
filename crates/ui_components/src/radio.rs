@@ -9,7 +9,7 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div, px,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -61,74 +61,74 @@ impl RadioItemDescriptor {
 /// Resolved radio group metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RadioGroupMetrics {
-    item_gap: open_gpui::Pixels,
-    control_size: open_gpui::Pixels,
-    indicator_size: open_gpui::Pixels,
-    label_text_size: open_gpui::Pixels,
-    item_padding_x: open_gpui::Pixels,
-    item_padding_y: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
+    item_gap: UiPx,
+    control_size: UiPx,
+    indicator_size: UiPx,
+    label_text_size: UiPx,
+    item_padding_x: UiPx,
+    item_padding_y: UiPx,
+    radius: UiPx,
 }
 
 impl RadioGroupMetrics {
     /// Resolves metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         let control_size = match size {
-            Size::XSmall => px(16.0),
-            Size::Small => px(18.0),
-            Size::Medium => px(20.0),
-            Size::Large => px(22.0),
+            Size::XSmall => ui_px(16.0),
+            Size::Small => ui_px(18.0),
+            Size::Medium => ui_px(20.0),
+            Size::Large => ui_px(22.0),
         };
         let indicator_size = match size {
-            Size::XSmall => px(6.0),
-            Size::Small => px(7.0),
-            Size::Medium => px(8.0),
-            Size::Large => px(9.0),
+            Size::XSmall => ui_px(6.0),
+            Size::Small => ui_px(7.0),
+            Size::Medium => ui_px(8.0),
+            Size::Large => ui_px(9.0),
         };
 
         Self {
-            item_gap: px(8.0),
+            item_gap: ui_px(8.0),
             control_size,
             indicator_size,
             label_text_size: size.control_text_px(),
-            item_padding_x: px(2.0),
-            item_padding_y: px(2.0),
+            item_padding_x: ui_px(2.0),
+            item_padding_y: ui_px(2.0),
             radius: size.control_radius(),
         }
     }
 
     /// Returns the gap between radio items.
-    pub const fn item_gap(self) -> open_gpui::Pixels {
+    pub const fn item_gap(self) -> UiPx {
         self.item_gap
     }
 
     /// Returns the outer radio control size.
-    pub const fn control_size(self) -> open_gpui::Pixels {
+    pub const fn control_size(self) -> UiPx {
         self.control_size
     }
 
     /// Returns the selected indicator size.
-    pub const fn indicator_size(self) -> open_gpui::Pixels {
+    pub const fn indicator_size(self) -> UiPx {
         self.indicator_size
     }
 
     /// Returns the label text size.
-    pub const fn label_text_size(self) -> open_gpui::Pixels {
+    pub const fn label_text_size(self) -> UiPx {
         self.label_text_size
     }
 
     /// Returns item horizontal padding.
-    pub const fn item_padding_x(self) -> open_gpui::Pixels {
+    pub const fn item_padding_x(self) -> UiPx {
         self.item_padding_x
     }
 
     /// Returns item vertical padding.
-    pub const fn item_padding_y(self) -> open_gpui::Pixels {
+    pub const fn item_padding_y(self) -> UiPx {
         self.item_padding_y
     }
 
     /// Returns the item focus radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 }

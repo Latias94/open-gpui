@@ -146,8 +146,8 @@ fn sizing_page_samples_expose_core_metrics() {
     let densities = pages::sizing::DENSITY_SAMPLES;
 
     assert_eq!(sizes[0].label, "xs");
-    assert_eq!(sizes[2].button_h, px(32.0));
-    assert_eq!(sizes[3].icon_button_size, px(36.0));
+    assert_eq!(sizes[2].button_h, ui_px(32.0));
+    assert_eq!(sizes[3].icon_button_size, ui_px(36.0));
     assert_eq!(densities[0].default_size, Size::Small);
     assert_eq!(densities[2].default_size, Size::Large);
 }
@@ -934,7 +934,10 @@ fn components_page_samples_expose_component_metadata() {
         scroll_areas[0].state.reset_policy(),
         ScrollResetPolicy::Preserve
     );
-    assert_eq!(scroll_areas[0].state.metrics().scrollbar_width(), px(10.0));
+    assert_eq!(
+        scroll_areas[0].state.metrics().scrollbar_width(),
+        ui_px(10.0)
+    );
     assert_eq!(scroll_areas[1].state.axis(), ScrollAreaAxis::Horizontal);
     assert_eq!(scroll_areas[1].state.reset_key(), None);
     assert_eq!(scroll_areas[2].state.axis(), ScrollAreaAxis::Both);

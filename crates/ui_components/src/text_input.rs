@@ -10,7 +10,7 @@ use open_gpui::{
     PaintQuad, ParentElement, Pixels, Point, RenderOnce, ShapedLine, SharedString, Style, Styled,
     TextRun, UTF16Selection, Window, actions, div, fill, point, px, relative, rgba,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::color::ColorIntent;
@@ -120,11 +120,11 @@ impl TextInputColors {
 /// Resolved text input metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextInputMetrics {
-    height: open_gpui::Pixels,
-    padding_x: open_gpui::Pixels,
-    padding_y: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
+    height: UiPx,
+    padding_x: UiPx,
+    padding_y: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
 }
 
 impl TextInputMetrics {
@@ -140,27 +140,27 @@ impl TextInputMetrics {
     }
 
     /// Returns the input height.
-    pub const fn height(self) -> open_gpui::Pixels {
+    pub const fn height(self) -> UiPx {
         self.height
     }
 
     /// Returns horizontal padding.
-    pub const fn padding_x(self) -> open_gpui::Pixels {
+    pub const fn padding_x(self) -> UiPx {
         self.padding_x
     }
 
     /// Returns vertical padding.
-    pub const fn padding_y(self) -> open_gpui::Pixels {
+    pub const fn padding_y(self) -> UiPx {
         self.padding_y
     }
 
     /// Returns the corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns the text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 }
@@ -1074,7 +1074,7 @@ impl RenderOnce for TextInput {
             .id(self.id)
             .min_h(metrics.height())
             .w_full()
-            .min_w(open_gpui::px(0.0))
+            .min_w(px(0.0))
             .flex()
             .items_center()
             .rounded(metrics.radius())
@@ -1196,7 +1196,7 @@ impl RenderOnce for TextInput {
             })
             .child(
                 div()
-                    .min_w(open_gpui::px(0.0))
+                    .min_w(px(0.0))
                     .w_full()
                     .truncate()
                     .children(
@@ -1210,7 +1210,7 @@ impl RenderOnce for TextInput {
                                     .into(),
                                 selection_color: rgba(0x2f80ed33).into(),
                                 caret_color: text_color.into(),
-                                text_size: metrics.text_size(),
+                                text_size: metrics.text_size().into(),
                             }),
                     )
                     .when(!state.controller_driven(), |this| {

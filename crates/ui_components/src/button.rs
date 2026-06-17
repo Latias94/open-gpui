@@ -7,7 +7,7 @@ use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
     StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -82,11 +82,11 @@ impl ButtonColors {
 /// Resolved button metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ButtonMetrics {
-    height: open_gpui::Pixels,
-    padding_x: open_gpui::Pixels,
-    padding_y: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
+    height: UiPx,
+    padding_x: UiPx,
+    padding_y: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
 }
 
 impl ButtonMetrics {
@@ -102,27 +102,27 @@ impl ButtonMetrics {
     }
 
     /// Returns the button height.
-    pub const fn height(self) -> open_gpui::Pixels {
+    pub const fn height(self) -> UiPx {
         self.height
     }
 
     /// Returns horizontal padding.
-    pub const fn padding_x(self) -> open_gpui::Pixels {
+    pub const fn padding_x(self) -> UiPx {
         self.padding_x
     }
 
     /// Returns vertical padding.
-    pub const fn padding_y(self) -> open_gpui::Pixels {
+    pub const fn padding_y(self) -> UiPx {
         self.padding_y
     }
 
     /// Returns the corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns the text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 }

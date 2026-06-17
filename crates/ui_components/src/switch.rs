@@ -5,9 +5,9 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, Toggled, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -16,59 +16,59 @@ use crate::theme::ThemeResolver;
 /// Resolved switch metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SwitchMetrics {
-    track_width: open_gpui::Pixels,
-    track_height: open_gpui::Pixels,
-    thumb_size: open_gpui::Pixels,
-    thumb_offset: open_gpui::Pixels,
-    label_text_size: open_gpui::Pixels,
+    track_width: UiPx,
+    track_height: UiPx,
+    thumb_size: UiPx,
+    thumb_offset: UiPx,
+    label_text_size: UiPx,
 }
 
 impl SwitchMetrics {
     /// Resolves metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         let (track_width, track_height, thumb_size) = match size {
-            Size::XSmall => (px(28.0), px(16.0), px(12.0)),
-            Size::Small => (px(32.0), px(18.0), px(14.0)),
-            Size::Medium => (px(36.0), px(20.0), px(16.0)),
-            Size::Large => (px(40.0), px(22.0), px(18.0)),
+            Size::XSmall => (ui_px(28.0), ui_px(16.0), ui_px(12.0)),
+            Size::Small => (ui_px(32.0), ui_px(18.0), ui_px(14.0)),
+            Size::Medium => (ui_px(36.0), ui_px(20.0), ui_px(16.0)),
+            Size::Large => (ui_px(40.0), ui_px(22.0), ui_px(18.0)),
         };
 
         Self {
             track_width,
             track_height,
             thumb_size,
-            thumb_offset: px(2.0),
+            thumb_offset: ui_px(2.0),
             label_text_size: size.control_text_px(),
         }
     }
 
     /// Returns the track width.
-    pub const fn track_width(self) -> open_gpui::Pixels {
+    pub const fn track_width(self) -> UiPx {
         self.track_width
     }
 
     /// Returns the track height.
-    pub const fn track_height(self) -> open_gpui::Pixels {
+    pub const fn track_height(self) -> UiPx {
         self.track_height
     }
 
     /// Returns the thumb size.
-    pub const fn thumb_size(self) -> open_gpui::Pixels {
+    pub const fn thumb_size(self) -> UiPx {
         self.thumb_size
     }
 
     /// Returns the thumb offset inside the track.
-    pub const fn thumb_offset(self) -> open_gpui::Pixels {
+    pub const fn thumb_offset(self) -> UiPx {
         self.thumb_offset
     }
 
     /// Returns the checked thumb x position.
-    pub fn checked_thumb_x(self) -> open_gpui::Pixels {
+    pub fn checked_thumb_x(self) -> UiPx {
         self.track_width - self.thumb_size - self.thumb_offset
     }
 
     /// Returns the label text size.
-    pub const fn label_text_size(self) -> open_gpui::Pixels {
+    pub const fn label_text_size(self) -> UiPx {
         self.label_text_size
     }
 }

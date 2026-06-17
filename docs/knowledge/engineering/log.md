@@ -28,6 +28,19 @@
   open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
   open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
   open-gpui-ui-foundation-gallery` passed for U2.
+* **Update**: Completed U3 neutral component metrics. UI-core `Size` helpers now return `UiPx`,
+  all public component `*Metrics` use `UiPx` for layout scalars, gallery sizing samples consume
+  `UiPx`, and component/gallery tests now assert neutral metric values directly.
+* **Decision**: Kept `UiPx -> open_gpui` style conversion impls in `ui_core::geometry` for this
+  adapter-first phase because GPUI `Styled` APIs accept `Into<Length>`/`Into<AbsoluteLength>` at
+  render sites. This is a transitional convenience, not the final strict headless crate boundary;
+  a later U4/U5 cleanup should move renderer conversion fully into adapter code when focus/a11y and
+  overlay state are split.
+* **Verification**: U3 passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core`, `cargo check -p
+  open-gpui-ui-components`, `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`, and `git diff --check` with only existing CRLF warnings.
 
 ## 2026-06-16
 * **Decision**: Completed U8 of the UI shell, choice, and headless-readiness series by updating ADR

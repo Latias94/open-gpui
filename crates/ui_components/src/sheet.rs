@@ -5,13 +5,16 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
-    Window, anchored, deferred, div, point, px,
+    KeyDownEvent, ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement,
+    Styled, Window, anchored, deferred, div, point, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx,
+    UiSize, ui_px,
 };
+
+use crate::geometry::ui_size_from_gpui_size;
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -213,16 +216,16 @@ impl SheetColors {
 /// Resolved sheet metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SheetMetrics {
-    trigger_height: open_gpui::Pixels,
-    trigger_padding_x: open_gpui::Pixels,
-    trigger_padding_y: open_gpui::Pixels,
-    padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    title_size: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    surface_size: open_gpui::Pixels,
-    inset: open_gpui::Pixels,
-    close_size: open_gpui::Pixels,
+    trigger_height: UiPx,
+    trigger_padding_x: UiPx,
+    trigger_padding_y: UiPx,
+    padding: UiPx,
+    radius: UiPx,
+    title_size: UiPx,
+    text_size: UiPx,
+    surface_size: UiPx,
+    inset: UiPx,
+    close_size: UiPx,
 }
 
 impl SheetMetrics {
@@ -234,61 +237,61 @@ impl SheetMetrics {
             trigger_padding_y: size.button_py(),
             padding: size.button_px(),
             radius: size.control_radius(),
-            title_size: px(16.0),
+            title_size: ui_px(16.0),
             text_size: size.control_text_px(),
-            surface_size: px(360.0),
-            inset: px(12.0),
+            surface_size: ui_px(360.0),
+            inset: ui_px(12.0),
             close_size: size.icon_button_size(),
         }
     }
 
     /// Returns trigger height.
-    pub const fn trigger_height(self) -> open_gpui::Pixels {
+    pub const fn trigger_height(self) -> UiPx {
         self.trigger_height
     }
 
     /// Returns trigger horizontal padding.
-    pub const fn trigger_padding_x(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_x(self) -> UiPx {
         self.trigger_padding_x
     }
 
     /// Returns trigger vertical padding.
-    pub const fn trigger_padding_y(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_y(self) -> UiPx {
         self.trigger_padding_y
     }
 
     /// Returns surface padding.
-    pub const fn padding(self) -> open_gpui::Pixels {
+    pub const fn padding(self) -> UiPx {
         self.padding
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns title text size.
-    pub const fn title_size(self) -> open_gpui::Pixels {
+    pub const fn title_size(self) -> UiPx {
         self.title_size
     }
 
     /// Returns body text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns preferred sheet main-axis size.
-    pub const fn surface_size(self) -> open_gpui::Pixels {
+    pub const fn surface_size(self) -> UiPx {
         self.surface_size
     }
 
     /// Returns viewport inset used around edge-attached surfaces.
-    pub const fn inset(self) -> open_gpui::Pixels {
+    pub const fn inset(self) -> UiPx {
         self.inset
     }
 
     /// Returns close affordance square size.
-    pub const fn close_size(self) -> open_gpui::Pixels {
+    pub const fn close_size(self) -> UiPx {
         self.close_size
     }
 }
@@ -1047,14 +1050,14 @@ fn sheet_layer_element(
     content: SheetContent,
     content_id: ElementId,
     state: SheetState,
-    viewport: open_gpui::Size<open_gpui::Pixels>,
+    viewport: open_gpui::Size<Pixels>,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
     on_close: Option<SheetCloseHandler>,
     on_open_change: Option<SheetOpenChangeHandler>,
 ) -> impl IntoElement {
     let metrics = state.metrics();
-    let geometry = sheet_surface_geometry(state.side(), metrics, viewport);
+    let geometry = sheet_surface_geometry(state.side(), metrics, ui_size_from_gpui_size(viewport));
 
     if state.modal_mode() == SheetModalMode::Modal {
         return modal_sheet_layer_element(
@@ -1097,7 +1100,7 @@ fn modal_sheet_layer_element(
     content: SheetContent,
     content_id: ElementId,
     state: SheetState,
-    viewport: open_gpui::Size<open_gpui::Pixels>,
+    viewport: open_gpui::Size<Pixels>,
     geometry: SheetSurfaceGeometry,
     runtime: Entity<SheetRuntime>,
     close_focus: FocusHandle,
@@ -1151,16 +1154,16 @@ fn modal_sheet_layer_element(
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SheetSurfaceGeometry {
-    left: open_gpui::Pixels,
-    top: open_gpui::Pixels,
-    width: open_gpui::Pixels,
-    height: open_gpui::Pixels,
+    left: UiPx,
+    top: UiPx,
+    width: UiPx,
+    height: UiPx,
 }
 
 fn sheet_surface_geometry(
     side: SheetSide,
     metrics: SheetMetrics,
-    viewport: open_gpui::Size<open_gpui::Pixels>,
+    viewport: UiSize,
 ) -> SheetSurfaceGeometry {
     let inset = metrics.inset();
     match side {

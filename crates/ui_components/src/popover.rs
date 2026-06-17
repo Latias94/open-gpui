@@ -5,19 +5,19 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     AnyElement, App, ClickEvent, ElementId, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
 };
 use open_gpui_ui_core::{
     FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Role,
-    Sizable, Size, ThemeTokens,
+    Sizable, Size, ThemeTokens, UiPx, ui_point, ui_px, ui_size,
 };
 
 use crate::color::ColorIntent;
 use crate::focus::{FocusRing, focus_ring_shadow};
 use crate::overlay::{
     DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    outside_press_open_change, ui_point_from_gpui, ui_px_from_gpui, ui_size_from_gpui,
+    outside_press_open_change,
 };
 use crate::theme::ThemeResolver;
 
@@ -89,14 +89,14 @@ impl PopoverColors {
 /// Resolved popover metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PopoverMetrics {
-    trigger_height: open_gpui::Pixels,
-    trigger_padding_x: open_gpui::Pixels,
-    trigger_padding_y: open_gpui::Pixels,
-    content_padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    min_width: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
+    trigger_height: UiPx,
+    trigger_padding_x: UiPx,
+    trigger_padding_y: UiPx,
+    content_padding: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
 }
 
 impl PopoverMetrics {
@@ -109,48 +109,48 @@ impl PopoverMetrics {
             content_padding: size.button_px(),
             radius: size.control_radius(),
             text_size: size.control_text_px(),
-            min_width: px(220.0),
-            max_width: px(360.0),
+            min_width: ui_px(220.0),
+            max_width: ui_px(360.0),
         }
     }
 
     /// Returns trigger height.
-    pub const fn trigger_height(self) -> open_gpui::Pixels {
+    pub const fn trigger_height(self) -> UiPx {
         self.trigger_height
     }
 
     /// Returns trigger horizontal padding.
-    pub const fn trigger_padding_x(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_x(self) -> UiPx {
         self.trigger_padding_x
     }
 
     /// Returns trigger vertical padding.
-    pub const fn trigger_padding_y(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_y(self) -> UiPx {
         self.trigger_padding_y
     }
 
     /// Returns content padding.
-    pub const fn content_padding(self) -> open_gpui::Pixels {
+    pub const fn content_padding(self) -> UiPx {
         self.content_padding
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns minimum content width.
-    pub const fn min_width(self) -> open_gpui::Pixels {
+    pub const fn min_width(self) -> UiPx {
         self.min_width
     }
 
     /// Returns maximum content width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 }
@@ -532,14 +532,14 @@ impl RenderOnce for Popover {
         let placement = GpuiOverlayPlacement::resolve(
             OverlayPlacementInput::new(
                 open_gpui_ui_core::OverlayAnchorInput::from_layout_bounds(open_gpui_ui_core::rect(
-                    ui_point_from_gpui(point(px(0.0), px(0.0))),
-                    ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                    ui_point(ui_px(0.0), ui_px(0.0)),
+                    ui_size(metrics.min_width(), metrics.trigger_height()),
                 )),
-                ui_size_from_gpui(metrics.min_width(), metrics.trigger_height()),
+                ui_size(metrics.min_width(), metrics.trigger_height()),
             )
             .with_side(state.placement_side())
             .with_alignment(state.placement_alignment())
-            .with_offset(ui_px_from_gpui(px(6.0))),
+            .with_offset(ui_px(6.0)),
             state.overlay().snap_margin(),
         );
 

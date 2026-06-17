@@ -5,7 +5,7 @@ use open_gpui::{
     ElementId, IntoElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
     div,
 };
-use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::theme::ThemeResolver;
@@ -32,9 +32,9 @@ impl LabelColors {
 /// Resolved label metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelMetrics {
-    text_size: open_gpui::Pixels,
-    gap: open_gpui::Pixels,
-    marker_size: open_gpui::Pixels,
+    text_size: UiPx,
+    gap: UiPx,
+    marker_size: UiPx,
 }
 
 impl LabelMetrics {
@@ -42,23 +42,23 @@ impl LabelMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             text_size: size.control_text_px(),
-            gap: open_gpui::px(4.0),
-            marker_size: open_gpui::px(10.0),
+            gap: ui_px(4.0),
+            marker_size: ui_px(10.0),
         }
     }
 
     /// Returns the label text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns the gap between the text and required marker.
-    pub const fn gap(self) -> open_gpui::Pixels {
+    pub const fn gap(self) -> UiPx {
         self.gap
     }
 
     /// Returns the required marker size.
-    pub const fn marker_size(self) -> open_gpui::Pixels {
+    pub const fn marker_size(self) -> UiPx {
         self.marker_size
     }
 }

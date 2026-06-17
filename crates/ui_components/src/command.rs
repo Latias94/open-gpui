@@ -4,13 +4,13 @@ use std::rc::Rc;
 
 use open_gpui::prelude::*;
 use open_gpui::{
-    App, ClickEvent, ElementId, Entity, IntoElement, KeyDownEvent, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point, px,
-    rgba,
+    App, ClickEvent, ElementId, Entity, IntoElement, KeyDownEvent, ParentElement, Pixels,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div,
+    point, px, rgba,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx, ui_px,
 };
 
 use crate::color::{ColorIntent, ColorState};
@@ -259,63 +259,63 @@ impl CommandColors {
 /// Resolved command metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CommandMetrics {
-    padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    min_width: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
-    max_height: open_gpui::Pixels,
-    shortcut_min_width: open_gpui::Pixels,
+    padding: UiPx,
+    radius: UiPx,
+    min_width: UiPx,
+    max_width: UiPx,
+    max_height: UiPx,
+    shortcut_min_width: UiPx,
 }
 
 impl CommandMetrics {
     /// Resolves metrics from the shared foundation size vocabulary.
     pub const fn from_size(size: Size) -> Self {
         Self {
-            padding: px(6.0),
+            padding: ui_px(6.0),
             radius: size.control_radius(),
-            min_width: px(320.0),
-            max_width: px(560.0),
+            min_width: ui_px(320.0),
+            max_width: ui_px(560.0),
             max_height: match size {
-                Size::XSmall => px(220.0),
-                Size::Small => px(260.0),
-                Size::Medium => px(340.0),
-                Size::Large => px(420.0),
+                Size::XSmall => ui_px(220.0),
+                Size::Small => ui_px(260.0),
+                Size::Medium => ui_px(340.0),
+                Size::Large => ui_px(420.0),
             },
             shortcut_min_width: match size {
-                Size::XSmall | Size::Small => px(48.0),
-                Size::Medium => px(64.0),
-                Size::Large => px(76.0),
+                Size::XSmall | Size::Small => ui_px(48.0),
+                Size::Medium => ui_px(64.0),
+                Size::Large => ui_px(76.0),
             },
         }
     }
 
     /// Returns panel padding.
-    pub const fn padding(self) -> open_gpui::Pixels {
+    pub const fn padding(self) -> UiPx {
         self.padding
     }
 
     /// Returns panel radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns minimum panel width.
-    pub const fn min_width(self) -> open_gpui::Pixels {
+    pub const fn min_width(self) -> UiPx {
         self.min_width
     }
 
     /// Returns maximum panel width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 
     /// Returns maximum command list height.
-    pub const fn max_height(self) -> open_gpui::Pixels {
+    pub const fn max_height(self) -> UiPx {
         self.max_height
     }
 
     /// Returns minimum shortcut label width.
-    pub const fn shortcut_min_width(self) -> open_gpui::Pixels {
+    pub const fn shortcut_min_width(self) -> UiPx {
         self.shortcut_min_width
     }
 }
@@ -1427,7 +1427,7 @@ fn command_dialog_layer_element(
     listbox_id: ElementId,
     state: CommandState,
     dialog_state: CommandDialogState,
-    viewport: open_gpui::Size<open_gpui::Pixels>,
+    viewport: open_gpui::Size<Pixels>,
     items: Vec<CommandItem>,
     groups: Vec<CommandGroup>,
     input_controller: Entity<TextInputController>,
@@ -1438,7 +1438,7 @@ fn command_dialog_layer_element(
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let outside_change = outside_press_open_change(dialog_state.overlay().policy());
-    let x = ((viewport.width - metrics.max_width()) / 2.0).max(px(12.0));
+    let x = ((viewport.width - metrics.max_width().into()) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
     div()

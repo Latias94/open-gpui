@@ -5,8 +5,10 @@ use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
     OverlayAnchorInput, OverlayLayerKind, OverlayLayerPolicy, OverlayLayerState,
     OverlayPlacementAlignment, OverlayPlacementInput, OverlayPlacementSide, OverlayPresence, Rect,
-    UiPoint, UiPx, UiSize,
+    UiPx,
 };
+
+pub(crate) use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, ui_point_from_gpui};
 
 /// Default margin used when snapping an anchored overlay inside the window.
 pub const DEFAULT_OVERLAY_SAFE_MARGIN: Pixels = px(8.0);
@@ -345,26 +347,6 @@ fn gpui_offset(side: OverlayPlacementSide, offset: UiPx) -> Point<Pixels> {
         OverlayPlacementSide::Bottom => point(px(0.0), offset),
         OverlayPlacementSide::Left => point(-offset, px(0.0)),
     }
-}
-
-pub(crate) fn ui_px_from_gpui(value: Pixels) -> UiPx {
-    UiPx::new(value.as_f32())
-}
-
-pub(crate) fn ui_point_from_gpui(value: Point<Pixels>) -> UiPoint {
-    UiPoint::new(ui_px_from_gpui(value.x), ui_px_from_gpui(value.y))
-}
-
-pub(crate) fn ui_size_from_gpui(width: Pixels, height: Pixels) -> UiSize {
-    UiSize::new(ui_px_from_gpui(width), ui_px_from_gpui(height))
-}
-
-pub(crate) fn gpui_px_from_ui(value: UiPx) -> Pixels {
-    px(value.as_f32())
-}
-
-pub(crate) fn gpui_point_from_ui(value: UiPoint) -> Point<Pixels> {
-    point(gpui_px_from_ui(value.x), gpui_px_from_ui(value.y))
 }
 
 /// Creates a point anchor placement input for context-menu-like adapters.

@@ -1,6 +1,6 @@
 //! Renderer-neutral geometry values for UI component state.
 
-use std::ops::{Add, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// A renderer-neutral logical pixel scalar.
 #[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
@@ -27,6 +27,16 @@ impl UiPx {
     pub const fn half(self) -> Self {
         Self(self.0 * 0.5)
     }
+
+    /// Returns the smaller of two pixel values.
+    pub const fn min(self, other: Self) -> Self {
+        if self.0 <= other.0 { self } else { other }
+    }
+
+    /// Returns the larger of two pixel values.
+    pub const fn max(self, other: Self) -> Self {
+        if self.0 >= other.0 { self } else { other }
+    }
 }
 
 impl Add for UiPx {
@@ -50,6 +60,46 @@ impl Neg for UiPx {
 
     fn neg(self) -> Self::Output {
         Self(-self.0)
+    }
+}
+
+impl Mul<f32> for UiPx {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs)
+    }
+}
+
+impl Div<f32> for UiPx {
+    type Output = Self;
+
+    fn div(self, rhs: f32) -> Self::Output {
+        Self(self.0 / rhs)
+    }
+}
+
+impl From<UiPx> for open_gpui::Pixels {
+    fn from(value: UiPx) -> Self {
+        open_gpui::px(value.as_f32())
+    }
+}
+
+impl From<UiPx> for open_gpui::DefiniteLength {
+    fn from(value: UiPx) -> Self {
+        open_gpui::Pixels::from(value).into()
+    }
+}
+
+impl From<UiPx> for open_gpui::AbsoluteLength {
+    fn from(value: UiPx) -> Self {
+        open_gpui::Pixels::from(value).into()
+    }
+}
+
+impl From<UiPx> for open_gpui::Length {
+    fn from(value: UiPx) -> Self {
+        open_gpui::Pixels::from(value).into()
     }
 }
 

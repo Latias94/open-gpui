@@ -2,9 +2,9 @@
 
 use open_gpui::{
     ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
-    div, px,
+    div,
 };
-use open_gpui_ui_core::{Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::ColorIntent;
 use crate::theme::ThemeResolver;
@@ -63,11 +63,11 @@ impl BadgeColors {
 /// Resolved badge metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BadgeMetrics {
-    min_height: open_gpui::Pixels,
-    padding_x: open_gpui::Pixels,
-    padding_y: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
+    min_height: UiPx,
+    padding_x: UiPx,
+    padding_y: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
 }
 
 impl BadgeMetrics {
@@ -75,45 +75,45 @@ impl BadgeMetrics {
     pub const fn from_size(size: Size) -> Self {
         Self {
             min_height: match size {
-                Size::XSmall => px(18.0),
-                Size::Small => px(20.0),
-                Size::Medium => px(22.0),
-                Size::Large => px(24.0),
+                Size::XSmall => ui_px(18.0),
+                Size::Small => ui_px(20.0),
+                Size::Medium => ui_px(22.0),
+                Size::Large => ui_px(24.0),
             },
             padding_x: match size {
-                Size::XSmall => px(6.0),
-                Size::Small => px(8.0),
-                Size::Medium => px(9.0),
-                Size::Large => px(10.0),
+                Size::XSmall => ui_px(6.0),
+                Size::Small => ui_px(8.0),
+                Size::Medium => ui_px(9.0),
+                Size::Large => ui_px(10.0),
             },
-            padding_y: px(2.0),
-            radius: px(999.0),
+            padding_y: ui_px(2.0),
+            radius: ui_px(999.0),
             text_size: size.control_text_px(),
         }
     }
 
     /// Returns the minimum badge height.
-    pub const fn min_height(self) -> open_gpui::Pixels {
+    pub const fn min_height(self) -> UiPx {
         self.min_height
     }
 
     /// Returns horizontal padding.
-    pub const fn padding_x(self) -> open_gpui::Pixels {
+    pub const fn padding_x(self) -> UiPx {
         self.padding_x
     }
 
     /// Returns vertical padding.
-    pub const fn padding_y(self) -> open_gpui::Pixels {
+    pub const fn padding_y(self) -> UiPx {
         self.padding_y
     }
 
     /// Returns the pill radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 }

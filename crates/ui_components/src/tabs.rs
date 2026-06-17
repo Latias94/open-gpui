@@ -9,7 +9,7 @@ use open_gpui::{
     KeyDownEvent, ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
 };
-use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens};
+use open_gpui_ui_core::{Orientation, Role, Sizable, Size, ThemeTokens, UiPx, ui_px};
 
 use crate::color::{ColorIntent, ColorState};
 use crate::focus::{FocusRing, focus_ring_shadow};
@@ -196,13 +196,13 @@ impl TabsColors {
 /// Resolved tab metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TabsMetrics {
-    tab_min_height: open_gpui::Pixels,
-    tab_padding_x: open_gpui::Pixels,
-    tab_padding_y: open_gpui::Pixels,
-    tab_gap: open_gpui::Pixels,
-    panel_padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
+    tab_min_height: UiPx,
+    tab_padding_x: UiPx,
+    tab_padding_y: UiPx,
+    tab_gap: UiPx,
+    panel_padding: UiPx,
+    radius: UiPx,
+    text_size: UiPx,
 }
 
 impl TabsMetrics {
@@ -212,45 +212,45 @@ impl TabsMetrics {
             tab_min_height: size.button_h(),
             tab_padding_x: size.button_px(),
             tab_padding_y: size.button_py(),
-            tab_gap: open_gpui::px(4.0),
-            panel_padding: open_gpui::px(12.0),
+            tab_gap: ui_px(4.0),
+            panel_padding: ui_px(12.0),
             radius: size.control_radius(),
             text_size: size.control_text_px(),
         }
     }
 
     /// Returns the minimum tab height.
-    pub const fn tab_min_height(self) -> open_gpui::Pixels {
+    pub const fn tab_min_height(self) -> UiPx {
         self.tab_min_height
     }
 
     /// Returns the horizontal tab padding.
-    pub const fn tab_padding_x(self) -> open_gpui::Pixels {
+    pub const fn tab_padding_x(self) -> UiPx {
         self.tab_padding_x
     }
 
     /// Returns the vertical tab padding.
-    pub const fn tab_padding_y(self) -> open_gpui::Pixels {
+    pub const fn tab_padding_y(self) -> UiPx {
         self.tab_padding_y
     }
 
     /// Returns the gap between tabs.
-    pub const fn tab_gap(self) -> open_gpui::Pixels {
+    pub const fn tab_gap(self) -> UiPx {
         self.tab_gap
     }
 
     /// Returns the panel padding.
-    pub const fn panel_padding(self) -> open_gpui::Pixels {
+    pub const fn panel_padding(self) -> UiPx {
         self.panel_padding
     }
 
     /// Returns the corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns the text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 }

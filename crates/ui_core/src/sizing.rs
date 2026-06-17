@@ -1,6 +1,6 @@
 //! Component sizing vocabulary for the Open GPUI component ecosystem.
 
-use open_gpui::{Pixels as Px, px};
+use crate::geometry::{UiPx, ui_px};
 
 /// Shared component size vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,132 +28,132 @@ impl Size {
     }
 
     /// Returns the default text size for controls using this size vocabulary.
-    pub const fn control_text_px(self) -> Px {
+    pub const fn control_text_px(self) -> UiPx {
         match self {
-            Self::XSmall => px(12.0),
-            Self::Small => px(13.0),
-            Self::Medium => px(13.0),
-            Self::Large => px(14.0),
+            Self::XSmall => ui_px(12.0),
+            Self::Small => ui_px(13.0),
+            Self::Medium => ui_px(13.0),
+            Self::Large => ui_px(14.0),
         }
     }
 
     /// Returns the default corner radius for controls using this size vocabulary.
-    pub const fn control_radius(self) -> Px {
+    pub const fn control_radius(self) -> UiPx {
         match self {
-            Self::XSmall => px(6.0),
-            Self::Small => px(6.0),
-            Self::Medium => px(8.0),
-            Self::Large => px(8.0),
+            Self::XSmall => ui_px(6.0),
+            Self::Small => ui_px(6.0),
+            Self::Medium => ui_px(8.0),
+            Self::Large => ui_px(8.0),
         }
     }
 
     /// Returns horizontal padding for text inputs.
-    pub const fn input_px(self) -> Px {
+    pub const fn input_px(self) -> UiPx {
         match self {
-            Self::XSmall => px(8.0),
-            Self::Small => px(10.0),
-            Self::Medium => px(12.0),
-            Self::Large => px(14.0),
+            Self::XSmall => ui_px(8.0),
+            Self::Small => ui_px(10.0),
+            Self::Medium => ui_px(12.0),
+            Self::Large => ui_px(14.0),
         }
     }
 
     /// Returns vertical padding for text inputs.
-    pub const fn input_py(self) -> Px {
+    pub const fn input_py(self) -> UiPx {
         match self {
-            Self::XSmall => px(4.0),
-            Self::Small => px(5.0),
-            Self::Medium => px(6.0),
-            Self::Large => px(7.0),
+            Self::XSmall => ui_px(4.0),
+            Self::Small => ui_px(5.0),
+            Self::Medium => ui_px(6.0),
+            Self::Large => ui_px(7.0),
         }
     }
 
     /// Returns the default control height for text inputs.
-    pub const fn input_h(self) -> Px {
+    pub const fn input_h(self) -> UiPx {
         match self {
-            Self::XSmall => px(24.0),
-            Self::Small => px(28.0),
-            Self::Medium => px(32.0),
-            Self::Large => px(36.0),
+            Self::XSmall => ui_px(24.0),
+            Self::Small => ui_px(28.0),
+            Self::Medium => ui_px(32.0),
+            Self::Large => ui_px(36.0),
         }
     }
 
     /// Returns horizontal padding for buttons.
-    pub const fn button_px(self) -> Px {
+    pub const fn button_px(self) -> UiPx {
         match self {
-            Self::XSmall => px(8.0),
-            Self::Small => px(10.0),
-            Self::Medium => px(12.0),
-            Self::Large => px(14.0),
+            Self::XSmall => ui_px(8.0),
+            Self::Small => ui_px(10.0),
+            Self::Medium => ui_px(12.0),
+            Self::Large => ui_px(14.0),
         }
     }
 
     /// Returns vertical padding for buttons.
-    pub const fn button_py(self) -> Px {
+    pub const fn button_py(self) -> UiPx {
         match self {
-            Self::XSmall => px(4.0),
-            Self::Small => px(5.0),
-            Self::Medium => px(6.0),
-            Self::Large => px(7.0),
+            Self::XSmall => ui_px(4.0),
+            Self::Small => ui_px(5.0),
+            Self::Medium => ui_px(6.0),
+            Self::Large => ui_px(7.0),
         }
     }
 
     /// Returns the default control height for buttons.
-    pub const fn button_h(self) -> Px {
+    pub const fn button_h(self) -> UiPx {
         match self {
-            Self::XSmall => px(24.0),
-            Self::Small => px(28.0),
-            Self::Medium => px(32.0),
-            Self::Large => px(36.0),
+            Self::XSmall => ui_px(24.0),
+            Self::Small => ui_px(28.0),
+            Self::Medium => ui_px(32.0),
+            Self::Large => ui_px(36.0),
         }
     }
 
     /// Returns the default icon button size.
-    pub const fn icon_button_size(self) -> Px {
+    pub const fn icon_button_size(self) -> UiPx {
         match self {
-            Self::XSmall => px(24.0),
-            Self::Small => px(28.0),
-            Self::Medium => px(32.0),
-            Self::Large => px(36.0),
+            Self::XSmall => ui_px(24.0),
+            Self::Small => ui_px(28.0),
+            Self::Medium => ui_px(32.0),
+            Self::Large => ui_px(36.0),
         }
     }
 
     /// Returns the default icon glyph size for icon-bearing controls.
-    pub const fn icon_size(self) -> Px {
+    pub const fn icon_size(self) -> UiPx {
         match self {
-            Self::XSmall => px(13.0),
-            Self::Small => px(14.0),
-            Self::Medium => px(15.0),
-            Self::Large => px(16.0),
+            Self::XSmall => ui_px(13.0),
+            Self::Small => ui_px(14.0),
+            Self::Medium => ui_px(15.0),
+            Self::Large => ui_px(16.0),
         }
     }
 
     /// Returns horizontal padding for dense lists.
-    pub const fn list_px(self) -> Px {
+    pub const fn list_px(self) -> UiPx {
         match self {
-            Self::XSmall => px(8.0),
-            Self::Small => px(8.0),
-            Self::Medium => px(12.0),
-            Self::Large => px(12.0),
+            Self::XSmall => ui_px(8.0),
+            Self::Small => ui_px(8.0),
+            Self::Medium => ui_px(12.0),
+            Self::Large => ui_px(12.0),
         }
     }
 
     /// Returns vertical padding for dense lists.
-    pub const fn list_py(self) -> Px {
+    pub const fn list_py(self) -> UiPx {
         match self {
-            Self::XSmall => px(2.0),
-            Self::Small => px(2.0),
-            Self::Medium => px(4.0),
-            Self::Large => px(8.0),
+            Self::XSmall => ui_px(2.0),
+            Self::Small => ui_px(2.0),
+            Self::Medium => ui_px(4.0),
+            Self::Large => ui_px(8.0),
         }
     }
 
     /// Returns the default row height for list-like components.
-    pub const fn list_row_h(self) -> Px {
+    pub const fn list_row_h(self) -> UiPx {
         match self {
-            Self::XSmall => px(24.0),
-            Self::Small => px(28.0),
-            Self::Medium => px(32.0),
-            Self::Large => px(36.0),
+            Self::XSmall => ui_px(24.0),
+            Self::Small => ui_px(28.0),
+            Self::Medium => ui_px(32.0),
+            Self::Large => ui_px(36.0),
         }
     }
 }
@@ -228,10 +228,10 @@ mod tests {
 
     #[test]
     fn size_defaults_follow_the_expected_scale() {
-        assert_eq!(Size::Small.button_h(), px(28.0));
-        assert_eq!(Size::Medium.input_h(), px(32.0));
-        assert_eq!(Size::Large.icon_button_size(), px(36.0));
-        assert_eq!(Size::Medium.icon_size(), px(15.0));
+        assert_eq!(Size::Small.button_h(), ui_px(28.0));
+        assert_eq!(Size::Medium.input_h(), ui_px(32.0));
+        assert_eq!(Size::Large.icon_button_size(), ui_px(36.0));
+        assert_eq!(Size::Medium.icon_size(), ui_px(15.0));
     }
 
     #[test]

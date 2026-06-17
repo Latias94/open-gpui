@@ -5,12 +5,13 @@ use std::rc::Rc;
 use open_gpui::prelude::*;
 use open_gpui::{
     App, ClickEvent, ElementId, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div, point, px,
+    ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, Styled, Window,
+    anchored, deferred, div, point, px,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy,
-    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens,
+    OverlayFocusTarget, OverlayLayerKind, OverlayPresence, Role, Sizable, Size, ThemeTokens, UiPx,
+    ui_px,
 };
 
 use crate::button::ButtonVariant;
@@ -248,19 +249,19 @@ impl AlertDialogColors {
 /// Resolved alert dialog metrics.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlertDialogMetrics {
-    trigger_height: open_gpui::Pixels,
-    trigger_padding_x: open_gpui::Pixels,
-    trigger_padding_y: open_gpui::Pixels,
-    action_height: open_gpui::Pixels,
-    action_padding_x: open_gpui::Pixels,
-    action_padding_y: open_gpui::Pixels,
-    padding: open_gpui::Pixels,
-    radius: open_gpui::Pixels,
-    title_size: open_gpui::Pixels,
-    text_size: open_gpui::Pixels,
-    width: open_gpui::Pixels,
-    max_width: open_gpui::Pixels,
-    action_gap: open_gpui::Pixels,
+    trigger_height: UiPx,
+    trigger_padding_x: UiPx,
+    trigger_padding_y: UiPx,
+    action_height: UiPx,
+    action_padding_x: UiPx,
+    action_padding_y: UiPx,
+    padding: UiPx,
+    radius: UiPx,
+    title_size: UiPx,
+    text_size: UiPx,
+    width: UiPx,
+    max_width: UiPx,
+    action_gap: UiPx,
 }
 
 impl AlertDialogMetrics {
@@ -275,76 +276,76 @@ impl AlertDialogMetrics {
             action_padding_y: size.button_py(),
             padding: size.button_px(),
             radius: size.control_radius(),
-            title_size: px(18.0),
+            title_size: ui_px(18.0),
             text_size: size.control_text_px(),
-            width: px(440.0),
-            max_width: px(580.0),
-            action_gap: px(8.0),
+            width: ui_px(440.0),
+            max_width: ui_px(580.0),
+            action_gap: ui_px(8.0),
         }
     }
 
     /// Returns trigger height.
-    pub const fn trigger_height(self) -> open_gpui::Pixels {
+    pub const fn trigger_height(self) -> UiPx {
         self.trigger_height
     }
 
     /// Returns trigger horizontal padding.
-    pub const fn trigger_padding_x(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_x(self) -> UiPx {
         self.trigger_padding_x
     }
 
     /// Returns trigger vertical padding.
-    pub const fn trigger_padding_y(self) -> open_gpui::Pixels {
+    pub const fn trigger_padding_y(self) -> UiPx {
         self.trigger_padding_y
     }
 
     /// Returns action height.
-    pub const fn action_height(self) -> open_gpui::Pixels {
+    pub const fn action_height(self) -> UiPx {
         self.action_height
     }
 
     /// Returns action horizontal padding.
-    pub const fn action_padding_x(self) -> open_gpui::Pixels {
+    pub const fn action_padding_x(self) -> UiPx {
         self.action_padding_x
     }
 
     /// Returns action vertical padding.
-    pub const fn action_padding_y(self) -> open_gpui::Pixels {
+    pub const fn action_padding_y(self) -> UiPx {
         self.action_padding_y
     }
 
     /// Returns surface padding.
-    pub const fn padding(self) -> open_gpui::Pixels {
+    pub const fn padding(self) -> UiPx {
         self.padding
     }
 
     /// Returns corner radius.
-    pub const fn radius(self) -> open_gpui::Pixels {
+    pub const fn radius(self) -> UiPx {
         self.radius
     }
 
     /// Returns title text size.
-    pub const fn title_size(self) -> open_gpui::Pixels {
+    pub const fn title_size(self) -> UiPx {
         self.title_size
     }
 
     /// Returns body text size.
-    pub const fn text_size(self) -> open_gpui::Pixels {
+    pub const fn text_size(self) -> UiPx {
         self.text_size
     }
 
     /// Returns preferred surface width.
-    pub const fn width(self) -> open_gpui::Pixels {
+    pub const fn width(self) -> UiPx {
         self.width
     }
 
     /// Returns maximum surface width.
-    pub const fn max_width(self) -> open_gpui::Pixels {
+    pub const fn max_width(self) -> UiPx {
         self.max_width
     }
 
     /// Returns gap between actions.
-    pub const fn action_gap(self) -> open_gpui::Pixels {
+    pub const fn action_gap(self) -> UiPx {
         self.action_gap
     }
 }
@@ -984,7 +985,7 @@ impl RenderOnce for AlertDialog {
 fn alert_dialog_layer_element(
     content_id: ElementId,
     state: AlertDialogState,
-    viewport: open_gpui::Size<open_gpui::Pixels>,
+    viewport: open_gpui::Size<Pixels>,
     runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
     action_focus: FocusHandle,
@@ -996,7 +997,7 @@ fn alert_dialog_layer_element(
     let colors = state.colors();
     let outside_change = outside_press_open_change(state.overlay().policy());
     let escape_change = escape_open_change(state.overlay().policy());
-    let x = ((viewport.width - metrics.width()) / 2.0).max(px(12.0));
+    let x = ((viewport.width - metrics.width().into()) / 2.0).max(px(12.0));
     let y = (viewport.height / 10.0).max(px(24.0));
 
     div()
