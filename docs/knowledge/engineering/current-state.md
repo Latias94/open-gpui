@@ -18,10 +18,17 @@ status: "active"
   `examples/ui-foundation-gallery` the active product boundary for the next UI component phase.
   ADR 0006 and ADR 0007 remain extraction-boundary references, but standalone
   `open-gpui-ui-headless` creation is no longer the active roadmap.
-- In progress: U1 of the productization roadmap is aligning ADRs, roadmap docs, component
-  contract, verification notes, and engineering memory around the productization story.
-- Next action: After U1 lands, execute the productization roadmap from runtime foundations and
-  interaction-family hardening instead of starting a behavior-crate extraction plan.
+- Done: Continued the productization roadmap through U2-U6 by verifying that the runtime
+  foundations, interaction/layout primitives, shell/navigation family, choice/search family, and
+  gallery release gate are already represented in the current component stack. This pass tightened
+  dark/high-contrast theme table coverage, added a direct Command popup ScrollArea preserve-scroll
+  assertion, and updated the gallery checkpoint test to assert ADR 0008 productization semantics.
+- Last verified for the productization pass: `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
+- Next action: Run final formatting/diff checks, commit the productization verification pass, then
+  decide the next roadmap from actual product gaps rather than from standalone headless extraction.
 - Done: Completed the strict UI-core headless boundary plan through the design checkpoint.
   `open-gpui-ui-core` no longer depends on `open_gpui`, its strict boundary guard has an empty
   blocker set, adaptive policy uses neutral `UiPx`, and GPUI geometry/style conversion now lives in

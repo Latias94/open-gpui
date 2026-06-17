@@ -92,14 +92,21 @@ fn package_manifest_stays_foundation_scoped() {
 }
 
 #[test]
-fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
+fn productization_checkpoint_keeps_extraction_deferred_and_boundary_refs_available() {
     let workspace_manifest = include_str!("../../../Cargo.toml");
     let adr = include_str!("../../../docs/adr/0006-open-gpui-ui-headless-extraction-checkpoint.md");
     let design = include_str!("../../../docs/adr/0007-open-gpui-ui-headless-boundary-design.md");
+    let productization =
+        include_str!("../../../docs/adr/0008-open-gpui-ui-component-productization-roadmap.md");
     let component_contract = include_str!("../../../docs/ui/component-contract.md");
 
     assert!(!workspace_manifest.contains("open-gpui-ui-headless"));
     assert!(!workspace_manifest.contains("open_gpui_ui_headless"));
+    assert!(productization.contains("Treat the current UI crates as the product boundary"));
+    assert!(productization.contains(
+        "Do not create a standalone `open-gpui-ui-headless` crate in the active roadmap."
+    ));
+    assert!(productization.contains("This ADR does not invalidate either document."));
     assert!(adr.contains("Do **not** create `open-gpui-ui-headless` yet."));
     assert!(adr.contains("The strict UI-core boundary is clean"));
     assert!(adr.contains("ListboxState"));
@@ -121,9 +128,12 @@ fn headless_checkpoint_keeps_extraction_deferred_until_boundaries_are_clean() {
     assert!(design.contains("TextInputController"));
     assert!(design.contains("focus_ring_shadow"));
     assert!(design.contains("Interaction Ownership Matrix"));
-    assert!(component_contract.contains(
-        "ADR 0007 records the post-boundary extraction design without creating the behavior crate."
-    ));
+    assert!(
+        component_contract
+            .contains("ADR 0008 keeps current-crate productization as the active roadmap.")
+    );
+    assert!(component_contract.contains("ADR 0007 records the"));
+    assert!(component_contract.contains("post-boundary extraction design without creating"));
     assert!(component_contract.contains("open_gpui_ui_components::gpui_adapter"));
     assert!(component_contract.contains("TextInputController"));
     assert!(component_contract.contains("ScrollHandle"));

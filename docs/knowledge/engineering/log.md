@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Continued the ADR 0008 productization roadmap through U2-U6 by validating that the
+  current crates already contain the runtime foundation, interaction/layout, shell/navigation,
+  choice/search, and gallery gate work described by the plan. The follow-up code change tightened
+  theme table coverage for dark/high-contrast state-specific intents and added a direct Command
+  popup ScrollArea preserve-scroll assertion.
+* **Verification**: Productization pass currently passes `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-core`, `cargo nextest run -p open-gpui-ui-components`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery`.
 * **Decision**: Added ADR 0008 and recentered the active UI component roadmap on current-crate
   productization. `open-gpui-ui-core`, `open-gpui-ui-components`, and
   `examples/ui-foundation-gallery` are the product boundary for the next phase; standalone

@@ -861,7 +861,9 @@ const LIGHT_THEME_COLORS: &[ThemeColor] = &[
 const DARK_THEME_COLORS: &[ThemeColor] = &[
     ThemeColor::new(semantic::SURFACE, ColorState::Default, 0x121417),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Default, 0x20262d),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Selected, 0x20262d),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0x2a333d),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::FocusVisible, 0x27313b),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0x1a1f25),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::ReadOnly, 0x171b20),
     ThemeColor::new(semantic::BORDER, ColorState::Default, 0x3b4450),
@@ -894,7 +896,9 @@ const DARK_THEME_COLORS: &[ThemeColor] = &[
 const HIGH_CONTRAST_THEME_COLORS: &[ThemeColor] = &[
     ThemeColor::new(semantic::SURFACE, ColorState::Default, 0xffffff),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Default, 0xf0f0f0),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Selected, 0xf0f0f0),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Hover, 0xd9e8ff),
+    ThemeColor::new(semantic::SURFACE_MUTED, ColorState::FocusVisible, 0xe0f0ff),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::Disabled, 0xe6e6e6),
     ThemeColor::new(semantic::SURFACE_MUTED, ColorState::ReadOnly, 0xf7f7f7),
     ThemeColor::new(semantic::BORDER, ColorState::Default, 0x000000),

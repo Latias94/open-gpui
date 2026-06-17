@@ -2297,6 +2297,11 @@ fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     assert!(state.loading().is_some());
     assert_eq!(state.loading().unwrap().role(), Role::ProgressIndicator);
     assert_eq!(state.loading().unwrap().progress_percent(), Some(45));
+    assert!(state.scroll_area().scrolls_y());
+    assert_eq!(
+        state.scroll_area().reset_policy(),
+        ScrollResetPolicy::Preserve
+    );
     assert_eq!(
         state.overlay().policy().kind(),
         OverlayLayerKind::NonModalDismissible
@@ -2421,7 +2426,11 @@ fn default_theme_snapshots_expose_distinct_modes_and_revisions() {
 
 #[test]
 fn default_theme_resolves_all_current_component_color_intents() {
-    let theme = ThemeSnapshot::light();
+    let theme = [
+        ThemeSnapshot::light(),
+        ThemeSnapshot::dark(),
+        ThemeSnapshot::high_contrast(),
+    ];
     let buttons = [
         Button::new("default", "Default").state(),
         Button::new("secondary", "Secondary")
@@ -2860,18 +2869,21 @@ fn default_theme_resolves_all_current_component_color_intents() {
 }
 
 fn assert_theme_has_exact_color(
-    theme: ThemeSnapshot<'_>,
+    themes: [ThemeSnapshot<'_>; 3],
     intent: open_gpui_ui_components::ColorIntent,
 ) {
-    assert!(
-        theme
-            .colors()
-            .iter()
-            .any(|entry| entry.token() == intent.token() && entry.state() == intent.state()),
-        "missing theme color for {} / {}",
-        intent.token(),
-        intent.state().as_str()
-    );
+    for theme in themes {
+        assert!(
+            theme
+                .colors()
+                .iter()
+                .any(|entry| entry.token() == intent.token() && entry.state() == intent.state()),
+            "missing {} theme color for {} / {}",
+            theme.mode().as_str(),
+            intent.token(),
+            intent.state().as_str()
+        );
+    }
 }
 
 #[test]
