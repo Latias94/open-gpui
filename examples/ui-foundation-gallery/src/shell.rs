@@ -600,6 +600,57 @@ impl GalleryShell {
     }
 
     fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
+        let component_catalog = pages::components::COMPONENT_CATALOG;
+        let component_catalog_cards = component_catalog.iter().map(|entry| {
+            div()
+                .id(format!("component-catalog:{}", entry.name))
+                .debug_selector({
+                    let component_name = entry.name;
+                    move || format!("component-catalog:{component_name}")
+                })
+                .min_w(px(180.0))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(0xd6d8ce))
+                .bg(rgb(0xffffff))
+                .p_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(open_gpui::FontWeight::BOLD)
+                                .child(entry.name),
+                        )
+                        .child(component_catalog_status_pill(entry.status)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x5a6472))
+                        .child(entry.family),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x5a6472))
+                        .child(entry.state.unwrap_or("adapter-owned")),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .line_height(px(18.0))
+                        .text_color(rgb(0x5a6472))
+                        .child(entry.coverage),
+                )
+        });
         let conformance_gates = pages::components::CONFORMANCE_GATES;
         let conformance_gate_cards = conformance_gates.iter().map(|gate| {
             div()
@@ -658,6 +709,25 @@ impl GalleryShell {
             .flex()
             .flex_col()
             .gap_5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child("Component catalog"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .flex_wrap()
+                            .children(component_catalog_cards),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -3386,6 +3456,30 @@ fn label_pill(label: &'static str) -> impl IntoElement {
         .text_xs()
         .text_color(rgb(0x3f4a57))
         .child(label)
+}
+
+fn component_catalog_status_pill(
+    status: pages::components::ComponentCatalogStatus,
+) -> impl IntoElement {
+    let (background, border, text) = match status {
+        pages::components::ComponentCatalogStatus::Official => (0xe8f3ef, 0x9ccdbd, 0x1f5f4d),
+        pages::components::ComponentCatalogStatus::AdapterOnly => (0xf4f1ea, 0xd9c7a8, 0x6a512b),
+        pages::components::ComponentCatalogStatus::InternalAnatomy => {
+            (0xf2f4f8, 0xc6cfdd, 0x475569)
+        }
+        pages::components::ComponentCatalogStatus::Deferred => (0xf7f7f2, 0xd6d8ce, 0x5a6472),
+    };
+
+    div()
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(border))
+        .bg(rgb(background))
+        .text_xs()
+        .text_color(rgb(text))
+        .child(status.as_str())
 }
 
 fn toggled_label(toggled: Toggled) -> impl IntoElement {

@@ -25,6 +25,9 @@ pub const SUMMARY: &str = "First concrete component consumers built on the found
 pub const SIGNALS: &[&str] = &[
     "open_gpui_ui_foundation_gallery::pages::components::CONFORMANCE_GATES",
     "open_gpui_ui_foundation_gallery::pages::components::ComponentConformanceGate",
+    "open_gpui_ui_foundation_gallery::pages::components::COMPONENT_CATALOG",
+    "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogEntry",
+    "open_gpui_ui_foundation_gallery::pages::components::ComponentCatalogStatus",
     "open_gpui_ui_components::Button",
     "open_gpui_ui_components::ButtonState",
     "open_gpui_ui_components::ButtonVariant",
@@ -103,6 +106,246 @@ pub const SIGNALS: &[&str] = &[
     "Role::TabList",
     "Role::Tab",
     "Role::TabPanel",
+];
+
+/// Component catalog status shown by the Components page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentCatalogStatus {
+    /// Official component with resolved state, exports, gallery sample, docs, and verification.
+    Official,
+    /// Public adapter helper or implementation detail that is not an official standalone component.
+    AdapterOnly,
+    /// Public anatomy used by an official component family, not a standalone gallery component.
+    InternalAnatomy,
+    /// Planned component not present in the current official catalog.
+    Deferred,
+}
+
+impl ComponentCatalogStatus {
+    /// Stable status label used by tests and the gallery.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Official => "official",
+            Self::AdapterOnly => "adapter-only",
+            Self::InternalAnatomy => "internal-anatomy",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
+/// One component catalog entry shown by the Components page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComponentCatalogEntry {
+    /// Public component or helper name.
+    pub name: &'static str,
+    /// Current catalog status.
+    pub status: ComponentCatalogStatus,
+    /// Component family or ownership area.
+    pub family: &'static str,
+    /// Resolved state or public contract type, when applicable.
+    pub state: Option<&'static str>,
+    /// Gallery, adapter, or follow-up coverage note.
+    pub coverage: &'static str,
+}
+
+/// Official component catalog and adjacent public surfaces.
+pub const COMPONENT_CATALOG: &[ComponentCatalogEntry] = &[
+    ComponentCatalogEntry {
+        name: "Button",
+        status: ComponentCatalogStatus::Official,
+        family: "action",
+        state: Some("ButtonState"),
+        coverage: "exports / gallery / state tests",
+    },
+    ComponentCatalogEntry {
+        name: "Badge",
+        status: ComponentCatalogStatus::Official,
+        family: "display",
+        state: Some("BadgeState"),
+        coverage: "exports / gallery / state tests",
+    },
+    ComponentCatalogEntry {
+        name: "IconButton",
+        status: ComponentCatalogStatus::Official,
+        family: "action",
+        state: Some("IconButtonState"),
+        coverage: "exports / gallery / a11y metadata",
+    },
+    ComponentCatalogEntry {
+        name: "Switch",
+        status: ComponentCatalogStatus::Official,
+        family: "form",
+        state: Some("SwitchState"),
+        coverage: "exports / gallery / state tests",
+    },
+    ComponentCatalogEntry {
+        name: "Checkbox",
+        status: ComponentCatalogStatus::Official,
+        family: "form",
+        state: Some("CheckboxState"),
+        coverage: "exports / gallery / state tests",
+    },
+    ComponentCatalogEntry {
+        name: "RadioGroup",
+        status: ComponentCatalogStatus::Official,
+        family: "choice",
+        state: Some("RadioGroupState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Toggle",
+        status: ComponentCatalogStatus::Official,
+        family: "action",
+        state: Some("ToggleState"),
+        coverage: "exports / gallery / state tests",
+    },
+    ComponentCatalogEntry {
+        name: "Toolbar",
+        status: ComponentCatalogStatus::Official,
+        family: "shell",
+        state: Some("ToolbarState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Sidebar",
+        status: ComponentCatalogStatus::Official,
+        family: "shell",
+        state: Some("SidebarState"),
+        coverage: "exports / gallery / scroll smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Listbox",
+        status: ComponentCatalogStatus::Official,
+        family: "choice",
+        state: Some("ListboxState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Select",
+        status: ComponentCatalogStatus::Official,
+        family: "choice",
+        state: Some("SelectState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Combobox",
+        status: ComponentCatalogStatus::Official,
+        family: "choice-search",
+        state: Some("ComboboxState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Command",
+        status: ComponentCatalogStatus::Official,
+        family: "choice-search",
+        state: Some("CommandState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Label",
+        status: ComponentCatalogStatus::Official,
+        family: "form",
+        state: Some("LabelState"),
+        coverage: "exports / gallery / a11y metadata",
+    },
+    ComponentCatalogEntry {
+        name: "TextInput",
+        status: ComponentCatalogStatus::Official,
+        family: "form",
+        state: Some("TextInputState"),
+        coverage: "exports / gallery / controller tests",
+    },
+    ComponentCatalogEntry {
+        name: "Field",
+        status: ComponentCatalogStatus::Official,
+        family: "form",
+        state: Some("FieldState"),
+        coverage: "exports / gallery / composition tests",
+    },
+    ComponentCatalogEntry {
+        name: "Tabs",
+        status: ComponentCatalogStatus::Official,
+        family: "navigation",
+        state: Some("TabsState"),
+        coverage: "exports / gallery / runtime smoke",
+    },
+    ComponentCatalogEntry {
+        name: "ScrollArea",
+        status: ComponentCatalogStatus::Official,
+        family: "layout",
+        state: Some("ScrollAreaState"),
+        coverage: "exports / gallery / redraw smoke",
+    },
+    ComponentCatalogEntry {
+        name: "Splitter",
+        status: ComponentCatalogStatus::Official,
+        family: "layout",
+        state: Some("SplitterState"),
+        coverage: "exports / gallery / drag smoke",
+    },
+    ComponentCatalogEntry {
+        name: "TextInputController",
+        status: ComponentCatalogStatus::AdapterOnly,
+        family: "form-adapter",
+        state: None,
+        coverage: "gpui_adapter export / controller tests",
+    },
+    ComponentCatalogEntry {
+        name: "ToolbarItem",
+        status: ComponentCatalogStatus::InternalAnatomy,
+        family: "shell",
+        state: None,
+        coverage: "Toolbar anatomy",
+    },
+    ComponentCatalogEntry {
+        name: "SidebarItem",
+        status: ComponentCatalogStatus::InternalAnatomy,
+        family: "shell",
+        state: None,
+        coverage: "Sidebar anatomy",
+    },
+    ComponentCatalogEntry {
+        name: "ListboxOption",
+        status: ComponentCatalogStatus::InternalAnatomy,
+        family: "choice",
+        state: None,
+        coverage: "Listbox anatomy",
+    },
+    ComponentCatalogEntry {
+        name: "Separator",
+        status: ComponentCatalogStatus::Deferred,
+        family: "layout",
+        state: Some("SeparatorState"),
+        coverage: "planned primitive batch",
+    },
+    ComponentCatalogEntry {
+        name: "Kbd",
+        status: ComponentCatalogStatus::Deferred,
+        family: "display",
+        state: Some("KbdState"),
+        coverage: "planned primitive batch",
+    },
+    ComponentCatalogEntry {
+        name: "Progress",
+        status: ComponentCatalogStatus::Deferred,
+        family: "status",
+        state: Some("ProgressState"),
+        coverage: "planned primitive batch",
+    },
+    ComponentCatalogEntry {
+        name: "Skeleton",
+        status: ComponentCatalogStatus::Deferred,
+        family: "status",
+        state: Some("SkeletonState"),
+        coverage: "planned primitive batch",
+    },
+    ComponentCatalogEntry {
+        name: "Avatar",
+        status: ComponentCatalogStatus::Deferred,
+        family: "identity",
+        state: Some("AvatarState"),
+        coverage: "planned primitive batch",
+    },
 ];
 
 /// One component conformance gate shown by the Components page.

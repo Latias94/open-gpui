@@ -75,7 +75,7 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
     let scroll_bounds = bounds(cx, "gallery:page-scroll");
     let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
 
-    for _ in 0..48 {
+    for _ in 0..96 {
         if let Some(target) = cx.debug_bounds(selector) {
             if scroll_bounds.contains(&target.center()) {
                 return target;
@@ -100,7 +100,7 @@ fn scroll_page_until_vertically_visible(
     let scroll_bounds = bounds(cx, "gallery:page-scroll");
     let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
 
-    for _ in 0..48 {
+    for _ in 0..96 {
         if let Some(target) = cx.debug_bounds(selector) {
             if bounds_overlap_y(scroll_bounds, target) {
                 return target;
@@ -900,6 +900,7 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
 #[test]
 fn components_page_samples_expose_component_metadata() {
     let tokens = ThemeTokens::default();
+    let catalog = pages::components::COMPONENT_CATALOG;
     let gates = pages::components::CONFORMANCE_GATES;
     let buttons = pages::components::button_samples(tokens);
     let badges = pages::components::badge_samples(tokens);
@@ -919,6 +920,59 @@ fn components_page_samples_expose_component_metadata() {
     let fields = pages::components::field_samples(tokens);
     let scroll_areas = pages::components::scroll_area_samples(tokens);
     let splitters = pages::components::splitter_samples(tokens);
+
+    let official_names: Vec<_> = catalog
+        .iter()
+        .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(
+        official_names,
+        vec![
+            "Button",
+            "Badge",
+            "IconButton",
+            "Switch",
+            "Checkbox",
+            "RadioGroup",
+            "Toggle",
+            "Toolbar",
+            "Sidebar",
+            "Listbox",
+            "Select",
+            "Combobox",
+            "Command",
+            "Label",
+            "TextInput",
+            "Field",
+            "Tabs",
+            "ScrollArea",
+            "Splitter",
+        ]
+    );
+    assert!(catalog.iter().all(|entry| !entry.name.trim().is_empty()));
+    assert!(
+        catalog
+            .iter()
+            .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
+            .all(|entry| entry.state.is_some())
+    );
+    assert!(
+        catalog
+            .iter()
+            .any(|entry| entry.name == "TextInputController"
+                && entry.status == pages::components::ComponentCatalogStatus::AdapterOnly
+                && entry.state.is_none())
+    );
+    assert!(catalog.iter().any(|entry| entry.name == "ToolbarItem"
+        && entry.status == pages::components::ComponentCatalogStatus::InternalAnatomy));
+    assert!(
+        ["Separator", "Kbd", "Progress", "Skeleton", "Avatar"]
+            .iter()
+            .all(|name| catalog.iter().any(|entry| entry.name == *name
+                && entry.status == pages::components::ComponentCatalogStatus::Deferred
+                && entry.coverage == "planned primitive batch"))
+    );
 
     assert_eq!(gates.len(), 6);
     assert_eq!(gates[0].id, "public-api-exports");
@@ -1637,6 +1691,20 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
     cx: &mut open_gpui::TestAppContext,
 ) {
     let cx = open_components_gallery(cx);
+
+    assert!(
+        cx.debug_bounds("component-catalog:Button").is_some(),
+        "expected Components page to render official component catalog entries"
+    );
+    assert!(
+        cx.debug_bounds("component-catalog:TextInputController")
+            .is_some(),
+        "expected Components page to classify adapter-only public surfaces"
+    );
+    assert!(
+        cx.debug_bounds("component-catalog:Avatar").is_some(),
+        "expected Components page to show deferred planned primitives"
+    );
 
     let tabs_sample = scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
     let page_scroll = bounds(cx, "gallery:page-scroll");

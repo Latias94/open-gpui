@@ -188,6 +188,28 @@ GPUI-specific helpers that remain public for concrete applications should also b
 `init_text_input`, `focus_ring_shadow`, and GPUI overlay scheduling helpers. Keeping compatibility
 exports at the crate root is acceptable, but these APIs are not renderer-neutral contracts.
 
+## Official Component Completion
+
+A component is official only when it satisfies the current-crate completion contract:
+
+- it has a public resolved-state or descriptor type that avoids GPUI runtime/rendering types;
+- crate-root and prelude exports are explicit and covered by public export tests;
+- metrics, sizes, colors, focus rings, and accessibility metadata use foundation vocabulary;
+- callbacks, focus handles, scroll handles, image loading, deferred rendering, and subscriptions
+  stay in the GPUI adapter layer;
+- the Components gallery exposes real samples, stable sample ids, and resolved-state metadata;
+- focused tests cover state contracts, and rendered runtime tests cover behavior that state tests
+  cannot prove;
+- `docs/verification.md` names any manual or automated gate added by the component.
+
+`examples/ui-foundation-gallery::pages::components::COMPONENT_CATALOG` is the current visible
+catalog for this contract. Entries marked `official` satisfy the checklist above. Entries marked
+`adapter-only` are public GPUI helper surfaces such as `TextInputController`, not standalone
+components. Entries marked `internal-anatomy` are public parts of a component family, such as
+toolbar or listbox item descriptors, and should not be promoted to standalone components without a
+new resolved-state contract. Entries marked `deferred` are planned components that must not be
+treated as shipped API until they satisfy the checklist.
+
 ## Theme Resolution
 
 Component state should expose `ColorIntent` values rather than concrete GPUI colors. A color intent
@@ -301,7 +323,9 @@ min/max/collapse logic in adapter code.
 should expose stable sample ids, real resolved state, and a short gate list that names the
 regression-prone behaviors each slice must keep covered.
 
-The Components page should keep these gates visible:
+The Components page should keep the official component catalog visible and distinguish shipped
+components from adapter-only helpers, internal anatomy, and deferred primitives. It should also keep
+these gates visible:
 
 - crate-root and prelude exports stay explicit;
 - gallery samples continue to show real resolved state for each shipped component;
