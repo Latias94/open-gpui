@@ -7,6 +7,7 @@
 
 pub mod a11y;
 pub mod alert_dialog;
+pub mod avatar;
 pub mod badge;
 pub mod button;
 pub mod checkbox;
@@ -67,6 +68,7 @@ pub use alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
 };
+pub use avatar::{Avatar, AvatarColors, AvatarMetrics, AvatarSource, AvatarState};
 pub use badge::{Badge, BadgeColors, BadgeMetrics, BadgeState, BadgeVariant};
 pub use button::{Button, ButtonColors, ButtonMetrics, ButtonState, ButtonVariant};
 pub use checkbox::{Checkbox, CheckboxColors, CheckboxMetrics, CheckboxState};

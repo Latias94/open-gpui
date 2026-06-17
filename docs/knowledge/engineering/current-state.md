@@ -25,12 +25,18 @@ status: "active"
   debug selectors, and focused component tests. `Role::Separator` is now part of UI core; the
   current GPUI adapter maps it to the nearest available AccessKit role because the bundled
   AccessKit enum does not expose a separator role.
-- Last verified for U3: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components`, `cargo check
-  -p open-gpui-ui-core -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-core -p
-  open-gpui-ui-components` passed with 157 tests.
-- Next action: Start U4 from the component completion plan: add the `Avatar` primitive with
-  fallback initials, accessible label metadata, size/color state, exports, tests, and contract
-  documentation. Gallery sample/catalog wiring remains scheduled for U5.
+- Done: U4 added the `Avatar` primitive to `open-gpui-ui-components` with resolved display name,
+  fallback initials or explicit fallback text, renderer-neutral `AvatarSource` metadata,
+  accessible label, size metrics, theme intents, explicit root/prelude exports, stable rendered
+  debug selector, component tests, and contract/verification documentation. Image loading, cache
+  state, retry policy, fallback delay timers, and AvatarGroup layout remain outside the first
+  primitive contract.
+- Last verified for U4: `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components`, focused `cargo nextest run -p open-gpui-ui-components avatar`, and
+  full `cargo nextest run -p open-gpui-ui-components` passed with 138 tests.
+- Next action: Start U5 from the component completion plan: wire Separator, Kbd, Progress,
+  Skeleton, and Avatar into the Components gallery catalog/samples, expose stable sample ids and
+  resolved-state metadata, then run gallery/component verification.
 - Done: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
 - Decision: The next component series should define the official-component completion checklist and

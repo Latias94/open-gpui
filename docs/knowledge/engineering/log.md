@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Completed U4 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
+  Added the `Avatar` primitive to `open-gpui-ui-components` with a resolved-state-first contract
+  for display name, fallback initials or explicit fallback text, renderer-neutral source metadata,
+  accessible label, size metrics, and theme intents. The GPUI adapter renders a stable circular
+  avatar root with explicit debug selectors while keeping image loading and cache state outside
+  the primitive contract.
+* **Verification**: U4 passed `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components avatar`, and the full
+  `cargo nextest run -p open-gpui-ui-components` with 138 passing tests.
 * **Update**: Completed U1 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
   The Components gallery now exposes an official component completion catalog with
   `component-catalog:{name}` debug selectors, and the official-component checklist is recorded in

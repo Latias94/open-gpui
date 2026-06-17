@@ -175,6 +175,13 @@ normalized `0..=1` value for rendering, and maps to `Role::ProgressIndicator`. `
 non-interactive static loading placeholder with muted surface token intent; animation remains a
 future adapter enhancement, not part of the first resolved-state contract.
 
+`AvatarState` is the identity primitive contract. It resolves display name, fallback initials or
+explicit fallback text, optional renderer-neutral `AvatarSource` metadata, accessible label,
+metrics, and token intents. The first slice intentionally does not own async image loading status,
+retry policy, cache state, grouped avatar overlap layout, or fallback delay timers; callers can
+model those outside the primitive and pass only the current source/fallback intent into the GPUI
+adapter.
+
 ## Focus Rings
 
 Interactive component state should expose `FocusRing` metadata instead of rendering focus by

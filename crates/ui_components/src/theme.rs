@@ -4,6 +4,7 @@ use open_gpui::{Rgba, rgb};
 use open_gpui_ui_core::{ThemeTokens, TokenKey, semantic};
 
 use crate::alert_dialog::{AlertDialogColors, AlertDialogIntent};
+use crate::avatar::AvatarColors;
 use crate::badge::{BadgeColors, BadgeVariant};
 use crate::button::{ButtonColors, ButtonVariant};
 use crate::checkbox::CheckboxColors;
@@ -531,6 +532,14 @@ impl ThemeResolver {
                 ColorState::Required,
                 DEFAULT_DESTRUCTIVE,
             ),
+        }
+    }
+
+    pub(crate) const fn avatar_colors(tokens: ThemeTokens) -> AvatarColors {
+        AvatarColors {
+            background: ColorIntent::new(tokens.surface_muted, DEFAULT_GHOST_SURFACE),
+            foreground: ColorIntent::new(tokens.text, DEFAULT_TEXT),
+            border: ColorIntent::new(tokens.border, DEFAULT_BORDER),
         }
     }
 

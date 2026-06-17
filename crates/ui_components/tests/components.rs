@@ -3,7 +3,7 @@ use open_gpui::{
     Render, ScrollDelta, ScrollWheelEvent, Styled, Window, div, point, px,
 };
 use open_gpui_ui_components::{
-    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Badge,
+    AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
     CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH,
@@ -1985,6 +1985,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let root_scroll = root::ScrollArea::new("scroll", div());
     let root_splitter = root::Splitter::new("split");
     let root_tabs = root::Tabs::new("tabs");
+    let root_avatar = root::Avatar::new("avatar", "Ada Lovelace");
     let root_separator = root::Separator::new("separator");
     let root_kbd = root::Kbd::new("kbd", "Ctrl+K");
     let root_progress = root::Progress::new("progress", "Progress");
@@ -2008,6 +2009,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
     let prelude_scroll = prelude::ScrollArea::new("scroll", div());
     let prelude_splitter = prelude::Splitter::new("split");
     let prelude_tabs = prelude::Tabs::new("tabs");
+    let prelude_avatar = prelude::Avatar::new("avatar", "Ada Lovelace");
     let prelude_separator = prelude::Separator::new("separator");
     let prelude_kbd = prelude::Kbd::new("kbd", "Ctrl+K");
     let prelude_progress = prelude::Progress::new("progress", "Progress");
@@ -2027,6 +2029,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         root_scroll.state(),
         root_splitter.state(),
         root_tabs.state(),
+        root_avatar.state(),
         root_separator.state(),
         root_kbd.state(),
         root_progress.state(),
@@ -2044,6 +2047,7 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_scroll.state(),
         prelude_splitter.state(),
         prelude_tabs.state(),
+        prelude_avatar.state(),
         prelude_separator.state(),
         prelude_kbd.state(),
         prelude_progress.state(),
@@ -3898,6 +3902,110 @@ fn disabled_icon_button_blocks_activation_metadata() {
 }
 
 #[test]
+fn avatar_fallback_initials_derive_from_display_names_and_empty_names() {
+    let ada = Avatar::new("ada", "Ada Lovelace").state();
+    let single = Avatar::new("single", "Grace").state();
+    let trio = Avatar::new("trio", "Foo Bar Dar").state();
+    let empty = Avatar::new("empty", "  ").state();
+
+    assert_eq!(ada.name(), "Ada Lovelace");
+    assert_eq!(ada.fallback(), "AL");
+    assert_eq!(ada.accessible_label(), "Ada Lovelace");
+    assert_eq!(ada.role(), Role::Label);
+
+    assert_eq!(single.fallback(), "GR");
+    assert_eq!(trio.fallback(), "FB");
+    assert_eq!(empty.fallback(), "?");
+    assert_eq!(empty.accessible_label(), "Avatar");
+}
+
+#[test]
+fn avatar_explicit_fallback_overrides_derived_initials() {
+    let state = Avatar::new("current-user", "Ada Lovelace")
+        .fallback("ME")
+        .state();
+
+    assert_eq!(state.name(), "Ada Lovelace");
+    assert_eq!(state.fallback(), "ME");
+}
+
+#[test]
+fn avatar_source_metadata_does_not_own_loading_state() {
+    let state = Avatar::new("profile", "Ada Lovelace")
+        .source("asset://avatars/ada.png")
+        .state();
+
+    assert!(state.has_source());
+    assert_eq!(
+        state.source().map(|source| source.uri()),
+        Some("asset://avatars/ada.png")
+    );
+    assert_eq!(state.fallback(), "AL");
+    assert_eq!(state.accessible_label(), "Ada Lovelace");
+}
+
+#[test]
+fn avatar_accessible_label_can_be_explicit_for_source_and_fallback_avatars() {
+    let fallback = Avatar::new("fallback-avatar", "Ada Lovelace")
+        .accessible_label("Current user")
+        .state();
+    let source = Avatar::new("source-avatar", "Ada Lovelace")
+        .source("asset://avatars/ada.png")
+        .accessible_label("Ada profile photo")
+        .state();
+
+    assert_eq!(fallback.accessible_label(), "Current user");
+    assert_eq!(source.accessible_label(), "Ada profile photo");
+}
+
+#[test]
+fn avatar_size_metrics_and_token_intents_are_stable() {
+    let tokens = custom_tokens();
+    let small = Avatar::new("small-avatar", "Ada")
+        .small()
+        .tokens(tokens)
+        .state();
+    let medium = Avatar::new("medium-avatar", "Ada").tokens(tokens).state();
+    let large = Avatar::new("large-avatar", "Ada")
+        .large()
+        .tokens(tokens)
+        .state();
+
+    assert_eq!(small.size(), Size::Small);
+    assert_eq!(small.metrics().diameter(), ui_px(28.0));
+    assert_eq!(small.metrics().text_size(), ui_px(11.0));
+
+    assert_eq!(medium.metrics().diameter(), ui_px(32.0));
+    assert_eq!(medium.metrics().radius(), ui_px(16.0));
+
+    assert_eq!(large.metrics().diameter(), ui_px(40.0));
+    assert_eq!(large.metrics().text_size(), ui_px(14.0));
+    assert_eq!(large.colors().background().token(), tokens.surface_muted);
+    assert_eq!(large.colors().foreground().token(), tokens.text);
+    assert_eq!(large.colors().border().token(), tokens.border);
+}
+
+#[open_gpui::test]
+fn avatar_renders_stable_debug_selector(cx: &mut open_gpui::TestAppContext) {
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(Avatar::new("runtime-avatar", "Ada Lovelace"))
+        }
+    }
+
+    let (_, cx) = cx.add_window_view(|_, _| TestView);
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(cx.debug_bounds("avatar:runtime-avatar:root").is_some());
+}
+
+#[test]
 fn separator_state_exposes_orientation_role_and_decorative_mode() {
     let horizontal = Separator::new("section-separator").state();
     let vertical = Separator::new("panel-separator").vertical().large().state();
@@ -4123,6 +4231,12 @@ fn default_theme_resolves_all_current_component_color_intents() {
             .variant(BadgeVariant::Outline)
             .state(),
     ];
+    let avatars = [
+        Avatar::new("avatar", "Ada Lovelace").state(),
+        Avatar::new("source-avatar", "Ada Lovelace")
+            .source("asset://avatars/ada.png")
+            .state(),
+    ];
     let icon_buttons = [
         IconButton::new("search", "?", "Search").state(),
         IconButton::new("outline-icon", "+", "Add")
@@ -4299,6 +4413,13 @@ fn default_theme_resolves_all_current_component_color_intents() {
     }
 
     for state in badges {
+        let colors = state.colors();
+        for intent in [colors.background(), colors.foreground(), colors.border()] {
+            assert_theme_has_exact_color(theme, intent);
+        }
+    }
+
+    for state in avatars {
         let colors = state.colors();
         for intent in [colors.background(), colors.foreground(), colors.border()] {
             assert_theme_has_exact_color(theme, intent);
