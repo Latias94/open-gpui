@@ -3374,6 +3374,100 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
     );
 }
 
+#[open_gpui::test]
+fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestAppContext) {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum ComboboxRuntimeEvent {
+        Open(bool),
+        Select(ComboboxSelection),
+    }
+
+    struct TestView {
+        events: Rc<RefCell<Vec<ComboboxRuntimeEvent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_events = self.events.clone();
+            let select_events = self.events.clone();
+
+            div().size_full().child(
+                Combobox::new("keyboard-combobox", "Keyboard combobox")
+                    .placeholder("Search frameworks")
+                    .option(ComboboxOption::new("react", "React").keyword("library"))
+                    .option(ComboboxOption::new("solid", "Solid"))
+                    .group(
+                        ComboboxGroup::new("meta", "Meta")
+                            .option(ComboboxOption::new("remix", "Remix").keyword("react"))
+                            .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
+                    )
+                    .on_open_change(move |open, _, _| {
+                        open_events
+                            .borrow_mut()
+                            .push(ComboboxRuntimeEvent::Open(open));
+                    })
+                    .on_select(move |selection, _, _| {
+                        select_events
+                            .borrow_mut()
+                            .push(ComboboxRuntimeEvent::Select(selection));
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("text-input:keyboard-combobox-input:root")
+        .expect("combobox text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("re");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![ComboboxRuntimeEvent::Open(true)]
+    );
+    assert!(
+        cx.debug_bounds("combobox:keyboard-combobox:content")
+            .is_some(),
+        "down arrow should open filtered combobox content from the input row"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            ComboboxRuntimeEvent::Open(true),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Open(false),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("combobox:keyboard-combobox:content")
+            .is_none(),
+        "keyboard selection should close filtered combobox content"
+    );
+}
+
 #[test]
 fn command_state_filters_groups_shortcuts_loading_and_dialog_policy() {
     let state = Command::new("command-palette", "Command palette")
@@ -3557,6 +3651,222 @@ fn command_runtime_filters_input_and_selects_with_keyboard(cx: &mut open_gpui::T
     assert!(
         cx.debug_bounds("command:runtime-command:content").is_some(),
         "inline command selection should not close non-dialog content"
+    );
+}
+
+#[open_gpui::test]
+fn command_runtime_dialog_selects_and_dismisses_without_stale_modal_layer(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum CommandDialogRuntimeEvent {
+        Open(bool),
+        Select(CommandSelection),
+    }
+
+    struct TestView {
+        events: Rc<RefCell<Vec<CommandDialogRuntimeEvent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_events = self.events.clone();
+            let select_events = self.events.clone();
+
+            div().size_full().child(
+                Command::new("dialog-runtime-command", "Dialog runtime command")
+                    .dialog("Command palette")
+                    .trigger_label("Open command")
+                    .placeholder("Type a command")
+                    .item(CommandItem::new("open-file", "Open File").shortcut("Ctrl+O"))
+                    .group(
+                        CommandGroup::new("file", "File")
+                            .item(CommandItem::new("new-file", "New File").shortcut("Ctrl+N"))
+                            .item(
+                                CommandItem::new("close-window", "Close Window").shortcut("Alt+F4"),
+                            ),
+                    )
+                    .group(CommandGroup::new("view", "View").item(
+                        CommandItem::new("toggle-sidebar", "Toggle Sidebar").keyword("layout"),
+                    ))
+                    .on_open_change(move |open, _, _| {
+                        open_events
+                            .borrow_mut()
+                            .push(CommandDialogRuntimeEvent::Open(open));
+                    })
+                    .on_select(move |selection, _, _| {
+                        select_events
+                            .borrow_mut()
+                            .push(CommandDialogRuntimeEvent::Select(selection));
+                    }),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("command:dialog-runtime-command:content")
+            .is_none(),
+        "dialog command content should start closed"
+    );
+
+    let trigger = cx
+        .debug_bounds("command:dialog-runtime-command:trigger")
+        .expect("dialog command trigger should expose a stable debug selector");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![CommandDialogRuntimeEvent::Open(true)]
+    );
+    assert!(
+        cx.debug_bounds("command:dialog-runtime-command:content")
+            .is_some(),
+        "trigger click should open dialog command content"
+    );
+
+    let input = cx
+        .debug_bounds("text-input:dialog-runtime-command-input:root")
+        .expect("dialog command text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("file");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("listbox:dialog-runtime-command-listbox:option:open-file")
+            .is_some(),
+        "Open File should match query text in dialog mode"
+    );
+    assert!(
+        cx.debug_bounds("listbox:dialog-runtime-command-listbox:option:new-file")
+            .is_some(),
+        "New File should match query text in dialog mode"
+    );
+    assert!(
+        cx.debug_bounds("listbox:dialog-runtime-command-listbox:option:toggle-sidebar")
+            .is_none(),
+        "unmatched command rows should be filtered out in dialog mode"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![CommandDialogRuntimeEvent::Open(true)],
+        "arrow navigation should move the active command without selecting"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Select(CommandSelection::new(
+                1,
+                "new-file",
+                "New File",
+                Some("Ctrl+N".to_string()),
+            )),
+            CommandDialogRuntimeEvent::Open(false),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("command:dialog-runtime-command:content")
+            .is_none(),
+        "dialog command selection should close the modal content"
+    );
+
+    let trigger = cx
+        .debug_bounds("command:dialog-runtime-command:trigger")
+        .expect("dialog command trigger should remain rendered after selection");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    let input = cx
+        .debug_bounds("text-input:dialog-runtime-command-input:root")
+        .expect("dialog command input should render after reopening");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Select(CommandSelection::new(
+                1,
+                "new-file",
+                "New File",
+                Some("Ctrl+N".to_string()),
+            )),
+            CommandDialogRuntimeEvent::Open(false),
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Open(false),
+        ],
+        "escape should close a reopened dialog exactly once"
+    );
+    assert!(
+        cx.debug_bounds("command:dialog-runtime-command:content")
+            .is_none(),
+        "escape should remove the dialog content"
+    );
+
+    let trigger = cx
+        .debug_bounds("command:dialog-runtime-command:trigger")
+        .expect("dialog command trigger should remain rendered after escape");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    cx.simulate_click(point(px(4.0), px(4.0)), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Select(CommandSelection::new(
+                1,
+                "new-file",
+                "New File",
+                Some("Ctrl+N".to_string()),
+            )),
+            CommandDialogRuntimeEvent::Open(false),
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Open(false),
+            CommandDialogRuntimeEvent::Open(true),
+            CommandDialogRuntimeEvent::Open(false),
+        ],
+        "outside press should close a reopened dialog exactly once"
+    );
+    assert!(
+        cx.debug_bounds("command:dialog-runtime-command:content")
+            .is_none(),
+        "outside press should remove the dialog content"
     );
 }
 
@@ -4500,6 +4810,51 @@ fn text_input_controller_rejects_editing_when_disabled_or_read_only(
 
         assert_eq!(controller.value(), "locked");
         assert!(!controller.accepts_editing());
+    });
+}
+
+#[open_gpui::test]
+fn text_input_runtime_accepts_controller_backed_simulated_input(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    struct TestView {
+        controller: open_gpui::Entity<TextInputController>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                TextInput::new("runtime-text-input", "Runtime text input")
+                    .controller(self.controller.clone())
+                    .placeholder("Type here"),
+            )
+        }
+    }
+
+    cx.update(init_text_input);
+    let controller = cx.new(TextInputController::new);
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        controller: controller.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    let input = cx
+        .debug_bounds("text-input:runtime-text-input:root")
+        .expect("standalone text input should expose a stable debug selector");
+    cx.simulate_click(input.center(), Default::default());
+    cx.simulate_input("hello\nworld");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    cx.update_entity(&controller, |controller, _| {
+        assert_eq!(controller.value(), "hello world");
+        assert_eq!(
+            controller.selected_range(),
+            controller.value().len()..controller.value().len()
+        );
     });
 }
 

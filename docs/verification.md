@@ -52,8 +52,11 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
-The components package includes runtime smoke coverage for RadioGroup, Listbox, Select, Combobox,
-Command, Tabs, and Toolbar keyboard navigation. The focused RadioGroup test renders real radio
+The components package includes runtime smoke coverage for TextInput, RadioGroup, Listbox, Select,
+Combobox, Command, Tabs, and Toolbar keyboard navigation. The focused TextInput test renders a
+standalone controller-backed input, clicks its real root, accepts simulated platform text, sanitizes
+single-line input, and verifies the controller caret ends at the inserted text. The focused
+RadioGroup test renders real radio
 items, rejects disabled clicks, skips disabled items with arrow navigation, verifies click and
 arrow-selection payloads, and confirms Space on an already selected radio does not emit a duplicate
 selection change. The focused Listbox test renders real standalone, separator, and grouped options,
@@ -61,11 +64,12 @@ rejects disabled clicks, keeps arrow navigation selection-free, skips disabled/s
 verifies Enter and Space dispatch both option-level and listbox-level selection callbacks. The
 focused Select test opens the real trigger, rejects disabled popup option clicks, verifies click and
 keyboard selection payloads, closes after selection, and confirms popup Listbox arrow navigation
-skips disabled rows. The focused Combobox test clicks the controller-backed text input, types a
-query, opens the filtered popup, verifies filtered Listbox options, and selects a filtered option
-with ordered select/open callbacks. The focused Command test clicks the controller-backed text
-input, types a query, verifies inline command filtering, and selects the active command with
-keyboard navigation while keeping non-dialog content open. The focused Tabs test renders real tabs,
+skips disabled rows. The focused Combobox tests click the controller-backed text input, type a
+query, open the filtered popup by trigger and keyboard paths, verify filtered Listbox options, and
+select filtered options with ordered select/open callbacks. The focused Command tests click the
+controller-backed text input, type a query, verify inline and dialog command filtering, select the
+active command with keyboard navigation, keep non-dialog content open, and verify dialog selection,
+Escape, and outside press remove the modal content. The focused Tabs test renders real tabs,
 preserves the builder-selected seed on the first frame, rejects disabled tab clicks, keeps manual
 arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
 Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and

@@ -11,6 +11,21 @@ status: "active"
 
 ## 2026-06-17
 
+- Done: Completed U1 and U2 of the UI component completion plan
+  `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
+- Done: U1 added an official component completion catalog to the Components gallery, made catalog
+  entries test-visible through `component-catalog:{name}` debug selectors, and documented the
+  official-component checklist in `docs/ui/component-contract.md` and `docs/verification.md`.
+- Done: U2 closed rendered runtime coverage gaps in `open-gpui-ui-components`: standalone
+  `TextInput` now has a controller-backed rendered input smoke; `Combobox` now has filtered
+  keyboard open/select coverage; dialog-backed `Command` now opens, filters, selects, closes on
+  Escape, and closes on outside press without leaving modal content mounted.
+- Last verified for U2: `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components` passed with 127
+  tests.
+- Next action: Start U3 from the component completion plan: add the low-state primitive batch
+  (`Separator`, `Kbd`, `Progress`, `Skeleton`, `Avatar`) with resolved state, stable debug
+  selectors, gallery samples, component catalog entries, and focused state/render tests.
 - Done: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
 - Decision: The next component series should define the official-component completion checklist and

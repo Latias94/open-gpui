@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Completed U1 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
+  The Components gallery now exposes an official component completion catalog with
+  `component-catalog:{name}` debug selectors, and the official-component checklist is recorded in
+  `docs/ui/component-contract.md` plus `docs/verification.md`.
+* **Verification**: U1 passed `cargo fmt -p open-gpui-ui-foundation-gallery`, `cargo check -p
+  open-gpui-ui-foundation-gallery`, and focused gallery nextest coverage for component metadata,
+  conformance gates, and short-viewport navigation reset.
+* **Update**: Completed U2 of the component completion plan. Added rendered runtime tests for
+  standalone controller-backed `TextInput`, filtered keyboard `Combobox` selection, and
+  dialog-backed `Command` open/filter/select plus Escape and outside-press dismissal. Updated
+  `docs/verification.md` so the automation matrix reflects the new runtime coverage.
+* **Verification**: U2 passed `cargo fmt -p open-gpui-ui-components`, `cargo check -p
+  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components` with 127 passing
+  tests.
 * **Update**: Wrote the next UI component completion plan at
   `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`. The plan keeps ADR 0008's
   current-crate product boundary, defines an official-component completion checklist, targets
