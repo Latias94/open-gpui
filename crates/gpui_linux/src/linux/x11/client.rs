@@ -1804,6 +1804,16 @@ impl LinuxClient for X11Client {
         })
     }
 
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        let state = self.0.borrow();
+        state.mouse_focused_window.and_then(|focused_window| {
+            state
+                .windows
+                .get(&focused_window)
+                .map(|window| window.handle())
+        })
+    }
+
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         let state = self.0.borrow();
         let root = state.xcb_connection.setup().roots[state.x_root_index].root;
@@ -1849,6 +1859,7 @@ impl LinuxClient for X11Client {
     fn viewport_capabilities(&self) -> PlatformViewportCapabilities {
         PlatformViewportCapabilities {
             global_window_bounds: true,
+            mouse_hovered_window: true,
             active_window: true,
             window_stack: true,
             dpi_scale: true,

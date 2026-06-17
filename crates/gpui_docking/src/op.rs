@@ -1,75 +1,44 @@
-use crate::{DockItemId, DockNodeId, DockSpaceId, DropZone};
+use crate::{DockEdgeDockPlan, DockItemId, DockNodeId, DockSpaceId, DropZone};
 use thiserror::Error;
 
-/// Graph-level target for a dock tree move.
+/// Graph-level target consumed by dock tree drop mutations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockMoveTarget {
-    /// Merge into an existing tab stack.
-    Stack {
+pub(crate) enum DockGraphDropTarget {
+    /// Merge into an existing tab stack through a center dock-over target.
+    Center {
         /// Target tabs node.
         tabs: DockNodeId,
-        /// Optional insertion index in the target tabs node.
-        insert_index: Option<usize>,
+    },
+    /// Insert into an existing tab bar at a concrete tab index.
+    TabBar {
+        /// Target tabs node.
+        tabs: DockNodeId,
+        /// Insertion index in the target tabs node.
+        insert_index: usize,
     },
     /// Dock against an edge anchor.
     Edge {
-        /// Edge anchor carrying whether this is a leaf or root edge.
-        anchor: DockMoveTargetAnchor,
-        /// Edge zone.
-        zone: DropZone,
+        /// Precomputed topology plan for the edge drop.
+        plan: DockEdgeDockPlan,
     },
-    /// Promote the moved subtree as the root of an empty dock space.
+    /// Promote the payload subtree as the root of an empty dock space.
     EmptySpace,
 }
 
-/// Anchor for graph-level edge docking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DockMoveTargetAnchor {
-    /// Inner edge around a leaf, tied to its owning root.
-    Leaf {
-        /// Root containing the leaf.
-        root: DockNodeId,
-        /// Leaf tabs node.
-        tabs: DockNodeId,
-    },
-    /// Outer edge around a dock root.
-    Root {
-        /// Root node.
-        root: DockNodeId,
-    },
-}
-
-impl DockMoveTarget {
+impl DockGraphDropTarget {
     /// Builds a center merge target.
     pub(crate) fn center(tabs: DockNodeId) -> Self {
-        Self::Stack {
-            tabs,
-            insert_index: None,
-        }
+        Self::Center { tabs }
     }
 
     /// Builds a tab-bar insertion target.
     pub(crate) fn tab_bar(tabs: DockNodeId, insert_index: usize) -> Self {
-        Self::Stack {
-            tabs,
-            insert_index: Some(insert_index),
-        }
+        Self::TabBar { tabs, insert_index }
     }
 
-    /// Builds an inner-edge target around a leaf.
-    pub(crate) fn inner_edge(root: DockNodeId, tabs: DockNodeId, zone: DropZone) -> Self {
-        Self::Edge {
-            anchor: DockMoveTargetAnchor::Leaf { root, tabs },
-            zone,
-        }
-    }
-
-    /// Builds an outer-edge target around a root.
-    pub(crate) fn root_edge(root: DockNodeId, zone: DropZone) -> Self {
-        Self::Edge {
-            anchor: DockMoveTargetAnchor::Root { root },
-            zone,
-        }
+    /// Builds an edge target from a precomputed dock topology plan.
+    pub(crate) fn edge(plan: DockEdgeDockPlan) -> Self {
+        Self::Edge { plan }
     }
 
     /// Builds an empty-space promotion target.
@@ -79,40 +48,24 @@ impl DockMoveTarget {
 
     pub(crate) fn existing_node(self) -> Option<DockNodeId> {
         match self {
-            Self::Stack { tabs, .. } => Some(tabs),
-            Self::Edge { anchor, .. } => Some(anchor.node()),
+            Self::Center { tabs } | Self::TabBar { tabs, .. } => Some(tabs),
+            Self::Edge { plan } => Some(plan.target_node()),
             Self::EmptySpace => None,
         }
     }
 
     pub(crate) fn drop_zone(self) -> Option<DropZone> {
         match self {
-            Self::Stack { .. } => Some(DropZone::Center),
-            Self::Edge { zone, .. } => Some(zone),
+            Self::Center { .. } | Self::TabBar { .. } => Some(DropZone::Center),
+            Self::Edge { plan } => Some(plan.drop_zone()),
             Self::EmptySpace => None,
         }
     }
 
-    pub(crate) fn insert_index(self) -> Option<usize> {
+    pub(crate) fn center_tabs(self) -> Option<DockNodeId> {
         match self {
-            Self::Stack { insert_index, .. } => insert_index,
-            Self::Edge { .. } | Self::EmptySpace => None,
-        }
-    }
-
-    pub(crate) fn noop_tabs(self) -> Option<DockNodeId> {
-        match self {
-            Self::Stack { tabs, .. } => Some(tabs),
-            Self::Edge { .. } | Self::EmptySpace => None,
-        }
-    }
-}
-
-impl DockMoveTargetAnchor {
-    pub(crate) fn node(self) -> DockNodeId {
-        match self {
-            Self::Leaf { root: _, tabs } => tabs,
-            Self::Root { root } => root,
+            Self::Center { tabs } => Some(tabs),
+            Self::TabBar { .. } | Self::Edge { .. } | Self::EmptySpace => None,
         }
     }
 }
@@ -134,6 +87,8 @@ pub(crate) enum DockOp {
         space: DockSpaceId,
         /// The item to close.
         item: DockItemId,
+        /// Preferred remaining item to select after closing, when still present in the same tabs.
+        preferred_after_close: Option<DockItemId>,
     },
 
     /// Opens a registered item into an existing tabs node or an empty dock space.
@@ -156,8 +111,8 @@ pub(crate) enum DockOp {
         item: DockItemId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Moves an entire tabs node as a group.
@@ -168,8 +123,8 @@ pub(crate) enum DockOp {
         source_tabs: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Moves an in-window floating subtree into another dock target.
@@ -180,8 +135,8 @@ pub(crate) enum DockOp {
         floating: DockNodeId,
         /// The target dock space.
         target_space: DockSpaceId,
-        /// Move target.
-        target: DockMoveTarget,
+        /// Graph drop target.
+        target: DockGraphDropTarget,
     },
 
     /// Floats one item inside a dock space without creating a platform window.
@@ -365,6 +320,26 @@ pub enum DockGraphMutationError {
         floating: DockNodeId,
         /// The target tabs node inside the floating container.
         target: DockNodeId,
+    },
+
+    /// A visibly split payload cannot be center-merged into a non-empty target.
+    #[error(
+        "visible split payload {payload:?} cannot be center-merged into non-empty target {target:?}"
+    )]
+    VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+        /// The split payload root.
+        payload: DockNodeId,
+        /// The non-empty target node.
+        target: DockNodeId,
+    },
+
+    /// A whole-space merge needs exactly one concrete target tab stack.
+    #[error("dock space {space} has {tabs_len} root tab stacks; merge target is not unique")]
+    MergeTargetTabsNotUnique {
+        /// The target dock space.
+        space: DockSpaceId,
+        /// Number of target tab stacks reachable from the root.
+        tabs_len: usize,
     },
 
     /// A split fraction update has the wrong number of fractions.

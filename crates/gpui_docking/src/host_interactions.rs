@@ -5,6 +5,7 @@ use crate::{
     drag::{DockDragPayload, DockDragPayloadKind},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockFloatingBoundsRequest, DockPayloadDropRelease, DockSplitterResizeRequest},
+    workspace_move_validation::dock_target_validator,
     workspace_transaction::DockWorkspacePayloadDropRequest,
 };
 use open_gpui::{Bounds, Context, Pixels, Point, Window};
@@ -12,8 +13,8 @@ use open_gpui::{Bounds, Context, Pixels, Point, Window};
 impl DockHost {
     pub(crate) fn clear_drop_preview_interaction(&mut self) -> bool {
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
-        let resolved_target_cleared = self.interaction_mut().take_resolved_drop_target().is_some();
-        route_preview_cleared || resolved_target_cleared
+        let drop_acceptance_cleared = self.interaction_mut().clear_drop_acceptance();
+        route_preview_cleared || drop_acceptance_cleared
     }
 
     pub(crate) fn select_tab_interaction(
@@ -126,24 +127,30 @@ impl DockHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DockHostInteractionOutcome {
-        let payload = release.payload();
         let delivery = self.interaction_mut().take_drop_delivery();
         let route_preview_cleared = self.interaction_mut().clear_drop_route_preview();
         let runtime_preview_cleared = self
             .viewport_runtime()
             .cloned()
             .is_some_and(|runtime| runtime.clear_routed_drop_preview(cx));
+        let (policy, payload_classes) = self.with_workspace(cx, |workspace| {
+            (
+                workspace.policy().clone(),
+                workspace.payload_dock_classes_for_drag_payload(release.payload()),
+            )
+        });
+        let default_space = self.space().clone();
+        let target_validator = dock_target_validator(&default_space, &payload_classes, &policy);
         let mut drop_preview_cleared = false;
-        let target = self.interaction_mut().take_resolved_drop_target();
-        let outcome = if let Some(target) = target {
-            let focus_item = self.focus_item_for_drag_payload(payload, cx);
+        let local_delivery = self.interaction_mut().take_local_drop_delivery(
+            &release,
+            &policy,
+            Some(&target_validator),
+        );
+        let outcome = if let Some(delivery) = local_delivery {
+            let focus_item = self.focus_item_for_drag_payload(delivery.payload(), cx);
             let outcome = self.commit_resolved_payload_drop_interaction(
-                DockWorkspacePayloadDropRequest {
-                    source_space: &payload.source_space,
-                    payload: payload.as_workspace_payload(),
-                    target_space: release.host_space(),
-                    target,
-                },
+                delivery.workspace_request(),
                 cx,
                 true,
             );
@@ -281,7 +288,7 @@ impl DockHost {
                 workspace.graph().selected_item_in_tabs(payload.source_node)
             }),
             DockDragPayloadKind::Floating { floating } => self.with_workspace(cx, |workspace| {
-                workspace.graph().selected_item_in_subtree(*floating)
+                workspace.graph().unique_selected_item_in_subtree(*floating)
             }),
         }
     }

@@ -44,9 +44,13 @@ impl DockHost {
             .active_payload_drag_tear_off_geometry(session)
     }
 
-    pub(crate) fn finish_payload_drag_session(&self, session: &DockRuntimeDragSession) -> bool {
+    pub(crate) fn finish_payload_drag_session(
+        &self,
+        session: &DockRuntimeDragSession,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.viewport_runtime()
-            .is_some_and(|runtime| runtime.finish_payload_drag(session))
+            .is_some_and(|runtime| runtime.finish_payload_drag_with_app(session, cx))
     }
 
     pub(crate) fn select_tab_from_render(
@@ -88,7 +92,7 @@ impl DockHost {
             .finish(cx);
         let session_changed = drag_session
             .as_ref()
-            .is_some_and(|session| self.finish_payload_drag_session(session));
+            .is_some_and(|session| self.finish_payload_drag_session(session, cx));
         changed || session_changed
     }
 

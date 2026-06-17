@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::viewport_target_resolver::choose_viewport_target;
+use crate::viewport_target_resolver::choose_diagnostic_viewport_target;
 use crate::{
     DockViewportAdapter, DockViewportTargetContext, DockViewportTargetHit,
     viewport_target_resolver::{
@@ -9,15 +9,15 @@ use crate::{
 use open_gpui::{Pixels, Point};
 
 impl DockViewportAdapter {
-    /// Resolves a registered viewport target using explicit platform arbitration inputs.
+    /// Resolves the diagnostic viewport candidate chosen from explicit platform arbitration inputs.
     #[cfg(test)]
-    pub(crate) fn resolve_viewport_target(
+    pub(crate) fn resolve_diagnostic_viewport_target(
         &self,
         position: Point<Pixels>,
         context: &DockViewportTargetContext,
     ) -> Option<DockViewportTargetHit> {
         let hits = self.viewport_hits(position);
-        choose_viewport_target(hits, context)
+        choose_diagnostic_viewport_target(hits, context)
     }
 
     /// Resolves a registered viewport target with confidence for drop-route commit decisions.
@@ -31,7 +31,7 @@ impl DockViewportAdapter {
     }
 
     fn viewport_hits(&self, position: Point<Pixels>) -> Vec<DockViewportTargetHit> {
-        self.spaces_by_fallback_priority()
+        self.spaces_by_diagnostic_hit_order()
             .into_iter()
             .filter_map(|space| {
                 let snapshot = self.snapshot(&space)?;
@@ -53,7 +53,7 @@ impl DockViewportAdapter {
 mod tests {
     use super::*;
     use crate::{
-        DockViewportWindowFacts,
+        DockViewportRouteAuthority, DockViewportWindowFacts,
         viewport_test_support::{bounds, handle, space},
     };
     use open_gpui::{WindowBounds, point, px};
@@ -81,32 +81,31 @@ mod tests {
         let position = point(px(120.0), px(140.0));
         assert_eq!(
             adapter
-                .resolve_viewport_target(position, &DockViewportTargetContext::new())
+                .resolve_diagnostic_viewport_target(position, &DockViewportTargetContext::new())
                 .map(|target| target.space().clone()),
             Some(alpha.clone()),
             "empty context uses stable space order as the final fallback"
         );
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     position,
-                    &DockViewportTargetContext::new().with_active_window(zeta_window),
+                    &DockViewportTargetContext::new()
+                        .with_window_stack([zeta_window, alpha_window]),
                 )
                 .map(|target| target.space().clone()),
             Some(zeta.clone()),
-            "active-window context should beat stable space order"
+            "window stack should beat stable space order"
         );
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     position,
-                    &DockViewportTargetContext::new()
-                        .with_hovered_window(alpha_window)
-                        .with_active_window(zeta_window),
+                    &DockViewportTargetContext::new().with_hovered_window(alpha_window),
                 )
                 .map(|target| target.space().clone()),
             Some(alpha),
-            "hovered-window context should beat active-window context"
+            "hovered-window context should beat stable space order"
         );
     }
 
@@ -135,15 +134,21 @@ mod tests {
             .resolve_viewport_route_target(position, &DockViewportTargetContext::new())
             .expect("overlapping live viewports should still expose a diagnostic fallback");
         assert_eq!(ambiguous.target().space(), &alpha);
-        assert!(!ambiguous.is_trusted());
+        assert_eq!(
+            ambiguous.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
 
-        let trusted = adapter
+        let stacked = adapter
             .resolve_viewport_route_target(
                 position,
                 &DockViewportTargetContext::new().with_window_stack([zeta_window, alpha_window]),
             )
-            .expect("window stack should arbitrate overlapping live viewports");
-        assert_eq!(trusted.target().space(), &zeta);
-        assert!(trusted.is_trusted());
+            .expect("window stack should still expose a diagnostic target");
+        assert_eq!(stacked.target().space(), &zeta);
+        assert_eq!(
+            stacked.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
     }
 }

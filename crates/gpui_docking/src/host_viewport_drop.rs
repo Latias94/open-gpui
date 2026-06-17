@@ -1,6 +1,6 @@
 use crate::{
-    DockDropDelivery, DockHost, DockViewportDropPayload, DockViewportDropRouteRequest,
-    DockViewportPlatformSignals, DockViewportWindowFacts,
+    DockActionApplyError, DockDropDelivery, DockHost, DockViewportDropPayload,
+    DockViewportDropRouteRequest, DockViewportPlatformSignals, DockViewportWindowFacts,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     host_interaction_outcome::DockHostInteractionOutcome,
     interaction::{DockPayloadDropRelease, DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
@@ -58,18 +58,15 @@ impl DockHost {
             window,
             cx,
             DockPayloadDropReleaseOrigin::HoveredHost,
-            None,
             drag_session,
             tear_off_geometry,
         );
         let resolution = runtime.resolve_payload_drop_delivery(&request, cx);
-        let route = resolution.route().clone();
-        let delivery = resolution.delivery().clone();
         let routed_preview_changed =
             runtime.update_routed_drop_preview(&resolution, payload.title(), cx);
         DockHostInteractionOutcome::from_session_changed(
             self.interaction_mut()
-                .update_drop_route_preview(&route, position, delivery)
+                .update_drop_route_preview(&resolution, position)
                 || routed_preview_changed,
         )
     }
@@ -82,33 +79,59 @@ impl DockHost {
         cx: &mut Context<Self>,
     ) -> Option<DockHostInteractionOutcome> {
         let runtime = self.viewport_runtime()?.clone();
+        let release_request = self.viewport_drop_route_request_from_release(release, window, cx);
         if let Some(delivery) = delivery {
-            let result = if delivery.accepts_drag_payload(release.payload()) {
-                runtime.deliver_payload_drop_with_outcome(delivery, cx)
-            } else {
-                Err(delivery.payload_mismatch_error())
-            };
-            return Some(DockHostInteractionOutcome::from_routed_drop_result(result));
+            let authority = delivery.release_authority_for_cached_preview(
+                release.origin(),
+                release.host_space(),
+                window.window_handle().window_id(),
+                release.payload(),
+            );
+            match authority {
+                Ok(true) => {
+                    let fresh = runtime.resolve_payload_drop_delivery(&release_request, cx);
+                    if fresh.delivery() == Some(&delivery) {
+                        let result = match runtime.validate_payload_drop_delivery(&delivery, cx) {
+                            Ok(()) => runtime.deliver_payload_drop_with_outcome(delivery, cx),
+                            Err(error) => Err(error),
+                        };
+                        if !matches!(result, Err(DockActionApplyError::DropTargetUnavailable)) {
+                            return Some(DockHostInteractionOutcome::from_routed_drop_result(
+                                result,
+                            ));
+                        }
+                    }
+                }
+                Err(error) => {
+                    return Some(DockHostInteractionOutcome::from_routed_drop_result(Err(
+                        error,
+                    )));
+                }
+                Ok(false) => {}
+            }
         }
 
+        let result = runtime.commit_payload_drop_from_screen(&release_request, cx);
+        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
+    }
+
+    fn viewport_drop_route_request_from_release(
+        &self,
+        release: &DockPayloadDropRelease,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> DockViewportDropRouteRequest {
         let drag_session = release.drag_session().cloned();
         let tear_off_geometry = self.active_payload_drag_tear_off_geometry(drag_session.as_ref());
-        let request = viewport_drop_route_request_from_host(
+        viewport_drop_route_request_from_host(
             release.payload(),
             release.release_position(),
             window,
             cx,
             release.origin(),
-            self.viewport_runtime()
-                .and_then(|runtime| match release.drag_session() {
-                    Some(session) => runtime.last_hovered_window_for_drag_session(Some(session)),
-                    None => runtime.last_hovered_window(),
-                }),
             drag_session,
             tear_off_geometry,
-        );
-        let result = runtime.commit_payload_drop_from_screen(&request, cx);
-        Some(DockHostInteractionOutcome::from_routed_drop_result(result))
+        )
     }
 }
 
@@ -118,32 +141,43 @@ fn viewport_drop_route_request_from_host(
     window: &Window,
     cx: &Context<DockHost>,
     origin: DockPayloadDropReleaseOrigin,
-    last_hovered_window: Option<open_gpui::WindowId>,
     drag_session: Option<DockRuntimeDragSession>,
     tear_off_geometry: Option<DockDragTearOffGeometry>,
 ) -> DockViewportDropRouteRequest {
     let platform_signals = match origin {
         DockPayloadDropReleaseOrigin::HoveredHost => {
-            DockViewportPlatformSignals::from_hovered_window(window, cx)
+            DockViewportPlatformSignals::from_event_receiver_window(window, cx)
         }
-        DockPayloadDropReleaseOrigin::SourceOnly => {
-            DockViewportPlatformSignals::from_app(cx).with_hovered_window_id(last_hovered_window)
-        }
+        DockPayloadDropReleaseOrigin::SourceOnly => DockViewportPlatformSignals::from_app(cx),
     };
-    DockViewportDropRouteRequest::from_platform_signals(
+    let release_position =
+        route_release_position(window.bounds(), host_position, &platform_signals);
+    DockViewportDropRouteRequest::from_platform_signals_with_origin(
         payload.source_space.clone(),
         payload.source_node,
         DockViewportDropPayload::from_drag_payload(payload),
-        window_screen_position(window, host_position),
+        release_position,
         None,
         platform_signals,
+        origin,
     )
     .with_drag_session(drag_session)
     .with_tear_off_geometry(tear_off_geometry)
 }
 
-fn window_screen_position(window: &Window, position: Point<Pixels>) -> Point<Pixels> {
-    let window_bounds = window.bounds();
+fn route_release_position(
+    window_bounds: Bounds<Pixels>,
+    position: Point<Pixels>,
+    platform_signals: &DockViewportPlatformSignals,
+) -> Point<Pixels> {
+    if platform_signals.has_global_window_bounds() {
+        return window_screen_position(window_bounds, position);
+    }
+
+    position
+}
+
+fn window_screen_position(window_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Point<Pixels> {
     point(
         window_bounds.origin.x + position.x,
         window_bounds.origin.y + position.y,
@@ -163,4 +197,38 @@ fn host_local_point(host_bounds: Bounds<Pixels>, position: Point<Pixels>) -> Poi
         position.x - host_bounds.origin.x,
         position.y - host_bounds.origin.y,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DockViewportTargetContext;
+    use open_gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn route_release_position_uses_screen_coordinates_when_bounds_are_global() {
+        let window_bounds = Bounds::new(point(px(400.0), px(300.0)), size(px(320.0), px(240.0)));
+        let window_position = point(px(30.0), px(50.0));
+        let signals =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new());
+
+        assert_eq!(
+            route_release_position(window_bounds, window_position, &signals),
+            point(px(430.0), px(350.0))
+        );
+    }
+
+    #[test]
+    fn route_release_position_keeps_window_local_coordinates_without_global_bounds() {
+        let window_bounds = Bounds::new(point(px(400.0), px(300.0)), size(px(320.0), px(240.0)));
+        let window_position = point(px(30.0), px(50.0));
+        let signals =
+            DockViewportPlatformSignals::from_target_context(DockViewportTargetContext::new())
+                .with_global_window_bounds(false);
+
+        assert_eq!(
+            route_release_position(window_bounds, window_position, &signals),
+            window_position
+        );
+    }
 }

@@ -1,7 +1,7 @@
 use crate::{
-    DockActionOutcome, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
-    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportDropRouteOutcome,
-    DockViewportPlatformSignals, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
+    DockActionApplyError, DockController, DockGraph, DockItemId, DockNode, DockNodeId, DockSpaceId,
+    DockViewportDropOutcomeKind, DockViewportDropPayload, DockViewportPlatformSignals,
+    DockViewportRouteTarget, DockViewportRuntimeHandle, DockViewportWindowFacts, DockWorkspace,
     DropZone, SplitAxis,
     debug::DockDebugRegion,
     drop_runtime::DockHostDropSceneFact,
@@ -71,18 +71,36 @@ impl MatrixPayload {
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_release_matrix_commits_payloads_to_rendered_targets(
-    cx: &mut TestAppContext,
-) {
+fn source_only_known_viewport_release_matrix_commits_unique_geometry_hits(cx: &mut TestAppContext) {
     for case in matrix_cases() {
         run_source_only_release_case(cx, case);
     }
 }
 
 #[open_gpui::test]
-fn source_only_known_viewport_root_edge_matrix_commits_without_leaf_hit(cx: &mut TestAppContext) {
+fn source_only_known_viewport_root_edge_matrix_commits_unique_geometry_hits(
+    cx: &mut TestAppContext,
+) {
     for case in root_only_matrix_cases() {
         run_source_only_root_only_release_case(cx, case);
+    }
+}
+
+#[open_gpui::test]
+fn source_only_known_viewport_release_rejects_overlapping_geometry_hits(cx: &mut TestAppContext) {
+    for case in [
+        MatrixCase {
+            name: "overlap item to leaf center",
+            payload: MatrixPayload::Item,
+            target: MatrixTarget::LeafCenter,
+        },
+        MatrixCase {
+            name: "overlap tabs to leaf center",
+            payload: MatrixPayload::Tabs,
+            target: MatrixTarget::LeafCenter,
+        },
+    ] {
+        run_overlapping_source_only_release_case(cx, case);
     }
 }
 
@@ -329,7 +347,7 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
     let source_release_signals = source_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(target_opened.window())
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
@@ -345,27 +363,32 @@ fn run_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
         )
     });
 
-    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
+    let outcome = result.unwrap_or_else(|error| {
         panic!("{}: source-only release should commit: {error}", case.name)
-    }) else {
-        panic!(
-            "{}: source-only release should produce an action",
-            case.name
-        );
-    };
-    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
+    });
+    assert!(
+        matches!(
+            outcome,
+            crate::DockViewportDropRouteOutcome::Action(ref action)
+                if action.action() == crate::DockActionOutcome::Changed
+        ),
+        "{}: source-only release should commit as a normal workspace action, got {outcome:?}",
+        case.name
+    );
     let status = runtime.runtime_status();
-    let target = &status
-        .last_route
-        .as_ref()
-        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-        .target;
-    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    let routed_position = target
-        .host_position()
-        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
-    assert_point_close(routed_position, host_position);
-
+    assert!(
+        matches!(
+            status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::KnownViewport { .. }
+        ),
+        "{}: unique source-only geometry should route to known viewport, got {:?}",
+        case.name,
+        status.last_route
+    );
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }
 
@@ -439,7 +462,7 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
     let source_release_signals = source_opened
         .window()
         .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).with_hovered_window(target_opened.window())
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
         })
         .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
 
@@ -455,31 +478,173 @@ fn run_source_only_root_only_release_case(cx: &mut TestAppContext, case: MatrixC
         )
     });
 
-    let DockViewportDropRouteOutcome::Action(action) = result.unwrap_or_else(|error| {
+    let outcome = result.unwrap_or_else(|error| {
         panic!(
-            "{}: root-only source release should commit: {error}",
+            "{}: root-only source-only release should commit: {error}",
             case.name
         )
-    }) else {
-        panic!(
-            "{}: root-only source release should produce an action",
+    });
+    assert!(
+        matches!(
+            outcome,
+            crate::DockViewportDropRouteOutcome::Action(ref action)
+                if action.action() == crate::DockActionOutcome::Changed
+        ),
+        "{}: root-only source-only release should commit as a normal workspace action, got {outcome:?}",
+        case.name
+    );
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::KnownViewport { .. }
+        ),
+        "{}: root-only unique source-only geometry should route to known viewport, got {:?}",
+        case.name,
+        status.last_route
+    );
+    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+}
+
+fn run_overlapping_source_only_release_case(cx: &mut TestAppContext, case: MatrixCase) {
+    let source_space = DockSpaceId::from(format!("overlap source:{}", case.name));
+    let target_space = DockSpaceId::from(format!("overlap target:{}", case.name));
+    let (graph, nodes) = matrix_graph(&source_space, &target_space, case);
+    let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+    workspace.policy_mut().set_allow_platform_viewports(true);
+    workspace.register_panel_view(item("a"), "Panel A", test_view(cx, "A"));
+    workspace.register_panel_view(item("b"), "Panel B", test_view(cx, "B"));
+    workspace.register_panel_view(item("c"), "Panel C", test_view(cx, "C"));
+    let controller = cx.new(|_| DockController::new(workspace));
+    let runtime = DockViewportRuntimeHandle::new(controller.clone());
+
+    let target_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                target_space.clone(),
+                viewport_window_options(420.0, 240.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: target viewport should open: {error}", case.name));
+    let source_opened = cx
+        .update(|app| {
+            runtime.open_viewport(
+                source_space.clone(),
+                viewport_window_options(360.0, 220.0),
+                app,
+            )
+        })
+        .unwrap_or_else(|error| panic!("{}: source viewport should open: {error}", case.name));
+
+    let overlapping_bounds = WindowBounds::Windowed(floating_bounds(120.0, 80.0, 420.0, 240.0));
+    let target_host_bounds = floating_bounds(0.0, 0.0, 420.0, 240.0);
+    assert!(
+        runtime.begin_viewport_host_scene(
+            target_space.clone(),
+            target_opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(overlapping_bounds),
+            target_host_bounds,
+            point(px(0.0), px(0.0)),
+        ),
+        "{}: target scene snapshot should be registered",
+        case.name
+    );
+    assert!(
+        runtime.begin_viewport_host_scene(
+            source_space.clone(),
+            source_opened.window().window_id(),
+            DockViewportWindowFacts::from_window_bounds(overlapping_bounds),
+            floating_bounds(0.0, 0.0, 420.0, 240.0),
+            point(px(0.0), px(0.0)),
+        ),
+        "{}: source scene snapshot should be registered",
+        case.name
+    );
+
+    let host_position = push_target_scene_facts(
+        &runtime,
+        &target_space,
+        target_opened.window().window_id(),
+        case,
+        &nodes,
+    );
+    let release_screen_position = point(
+        overlapping_bounds.get_bounds().origin.x + host_position.x,
+        overlapping_bounds.get_bounds().origin.y + host_position.y,
+    );
+    let source_release_signals = source_opened
+        .window()
+        .update(cx, |_, _, app| {
+            DockViewportPlatformSignals::from_app_without_hovered_window_authority(app)
+        })
+        .unwrap_or_else(|_| panic!("{}: source window should still be live", case.name));
+
+    let result = cx.update(|app| {
+        runtime.commit_payload_drop_from_screen_with_platform_signals(
+            source_space.clone(),
+            nodes.source_tabs,
+            case.payload.drop_payload(),
+            release_screen_position,
+            None,
+            source_release_signals,
+            app,
+        )
+    });
+
+    assert_eq!(
+        result,
+        Err(DockActionApplyError::DropTargetUnavailable),
+        "{}: overlapping source-only release must not commit from geometry/window-stack fallback",
+        case.name
+    );
+    let status = runtime.runtime_status();
+    assert!(
+        matches!(
+            status
+                .last_route
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
+                .target,
+            DockViewportRouteTarget::Unavailable
+        ),
+        "{}: overlapping source-only release should be routed as unavailable, got {:?}",
+        case.name,
+        status.last_route
+    );
+    assert_case_graph_unmoved(cx, &controller, &source_space, &target_space, case);
+}
+
+fn assert_case_graph_unmoved(
+    cx: &TestAppContext,
+    controller: &open_gpui::Entity<DockController>,
+    source_space: &DockSpaceId,
+    target_space: &DockSpaceId,
+    case: MatrixCase,
+) {
+    cx.read_entity(controller, |controller, _| {
+        assert_eq!(
+            controller.graph().collect_items_in_space(source_space),
+            case.payload.source_items(),
+            "{}: source payload should remain in the source space",
             case.name
         );
-    };
-    assert_eq!(action.action(), DockActionOutcome::Changed, "{}", case.name);
-    let status = runtime.runtime_status();
-    let target = &status
-        .last_route
-        .as_ref()
-        .unwrap_or_else(|| panic!("{}: release should record a route", case.name))
-        .target;
-    assert_eq!(target.space(), Some(&target_space), "{}", case.name);
-    let routed_position = target
-        .host_position()
-        .unwrap_or_else(|| panic!("{}: release should record a host position", case.name));
-    assert_point_close(routed_position, host_position);
-
-    assert_case_graph(cx, &controller, &target_space, case, &nodes);
+        let expected_target_items = match case.target {
+            MatrixTarget::LeafCenter => vec![item("b")],
+            MatrixTarget::RootEdge { .. } => vec![item("b"), item("d")],
+            MatrixTarget::EmptySpace => Vec::new(),
+        };
+        assert_eq!(
+            controller.graph().collect_items_in_space(target_space),
+            expected_target_items,
+            "{}: target space should not receive an untrusted source-only drop",
+            case.name
+        );
+    });
 }
 
 fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
@@ -538,6 +703,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     source_visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
     source_visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    cx.set_platform_hovered_window(Some(target_opened.window()));
     target_visual.simulate_mouse_move(target_position, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
 
@@ -555,6 +721,7 @@ fn run_target_hover_release_case(cx: &mut TestAppContext, case: MatrixCase) {
 
     target_visual.simulate_mouse_up(target_position, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
+    cx.set_platform_hovered_window(None);
 
     assert_case_graph(cx, &controller, &target_space, case, &nodes);
 }

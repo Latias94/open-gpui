@@ -1,6 +1,6 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
+    DispatchEventResult, GpuSpecs, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
@@ -112,6 +112,16 @@ impl TestWindow {
         self.0.lock().active_status_change_callback = Some(callback);
     }
 
+    pub(crate) fn simulate_hover_status_change(&self, hovered: bool) {
+        let mut lock = self.0.lock();
+        let Some(mut callback) = lock.hover_status_change_callback.take() else {
+            return;
+        };
+        drop(lock);
+        callback(hovered);
+        self.0.lock().hover_status_change_callback = Some(callback);
+    }
+
     pub fn simulate_input(&mut self, event: PlatformInput) -> bool {
         let mut lock = self.0.lock();
         let Some(mut callback) = lock.input_callback.take() else {
@@ -209,7 +219,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn is_hovered(&self) -> bool {
-        false
+        let (platform, handle) = {
+            let lock = self.0.lock();
+            (lock.platform.upgrade(), lock.handle)
+        };
+        platform.is_some_and(|platform| platform.hovered_window() == Some(handle))
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {

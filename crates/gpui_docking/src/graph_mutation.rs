@@ -1,5 +1,5 @@
 use crate::{
-    DockItemId, DockMoveTarget, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
+    DockGraphDropTarget, DockItemId, DockNodeId, DockSpaceId, split_fraction::normalize_shares,
 };
 
 use super::{DockGraph, DockNode};
@@ -77,11 +77,16 @@ impl DockGraph {
         true
     }
 
-    pub(in crate::graph) fn close_item(&mut self, space: &DockSpaceId, item: DockItemId) -> bool {
+    pub(in crate::graph) fn close_item(
+        &mut self,
+        space: &DockSpaceId,
+        item: DockItemId,
+        preferred_after_close: Option<&DockItemId>,
+    ) -> bool {
         let Some((tabs, index)) = self.find_item_in_space(space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(tabs, index) {
+        if !self.remove_item_from_tabs(tabs, index, preferred_after_close) {
             return false;
         }
         self.simplify_space(space);
@@ -123,15 +128,15 @@ impl DockGraph {
         source_space: &DockSpaceId,
         item: DockItemId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> bool {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
 
         match target {
-            DockMoveTarget::Stack { tabs, insert_index } => {
-                if source_space == target_space && source_tabs == tabs && insert_index.is_none() {
+            DockGraphDropTarget::Center { tabs } => {
+                if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
                 if self.root_for_node_in_space(target_space, tabs).is_none() {
@@ -140,17 +145,41 @@ impl DockGraph {
                 if !matches!(self.nodes.get(tabs), Some(DockNode::Tabs { .. })) {
                     return false;
                 }
-                if !self.remove_item_from_tabs(source_tabs, source_index) {
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
                     return false;
                 }
 
-                let mut index = insert_index;
+                let ok = self.insert_item_into_tabs_at(tabs, item, None);
+                self.simplify_space(source_space);
+                if source_space != target_space {
+                    self.simplify_space(target_space);
+                }
+                ok
+            }
+            DockGraphDropTarget::TabBar { tabs, insert_index } => {
+                if self.root_for_node_in_space(target_space, tabs).is_none() {
+                    return false;
+                }
+                if !matches!(self.nodes.get(tabs), Some(DockNode::Tabs { .. })) {
+                    return false;
+                }
+                if source_space == target_space && source_tabs == tabs {
+                    let same_position = insert_index == source_index
+                        || insert_index == source_index.saturating_add(1);
+                    if same_position {
+                        return false;
+                    }
+                }
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
+                    return false;
+                }
+
+                let mut index = Some(insert_index);
                 if source_space == target_space
                     && source_tabs == tabs
-                    && let Some(i) = index.as_mut()
-                    && *i > source_index
+                    && insert_index > source_index
                 {
-                    *i = i.saturating_sub(1);
+                    index = Some(insert_index.saturating_sub(1));
                 }
 
                 let ok = self.insert_item_into_tabs_at(tabs, item, index);
@@ -160,15 +189,8 @@ impl DockGraph {
                 }
                 ok
             }
-            DockMoveTarget::Edge { anchor, zone } => {
-                let target_node = anchor.node();
-                if self
-                    .root_for_node_in_space(target_space, target_node)
-                    .is_none()
-                {
-                    return false;
-                }
-                if !self.remove_item_from_tabs(source_tabs, source_index) {
+            DockGraphDropTarget::Edge { plan } => {
+                if !self.remove_item_from_tabs(source_tabs, source_index, None) {
                     return false;
                 }
                 let new_tabs = self.insert_node(DockNode::Tabs {
@@ -176,7 +198,7 @@ impl DockGraph {
                     selected: Some(item),
                 });
 
-                if !self.insert_edge_docked_child(target_space, target_node, zone, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
@@ -185,7 +207,7 @@ impl DockGraph {
                 }
                 true
             }
-            DockMoveTarget::EmptySpace => {
+            DockGraphDropTarget::EmptySpace => {
                 if !self.target_space_is_empty_for_item_move(source_space, &item, target_space) {
                     return false;
                 }
@@ -203,7 +225,7 @@ impl DockGraph {
         let Some((source_tabs, source_index)) = self.find_item_in_space(source_space, &item) else {
             return false;
         };
-        if !self.remove_item_from_tabs(source_tabs, source_index) {
+        if !self.remove_item_from_tabs(source_tabs, source_index, None) {
             return false;
         }
         let tabs = self.insert_node(DockNode::Tabs {
@@ -221,10 +243,10 @@ impl DockGraph {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> bool {
         match target {
-            DockMoveTarget::Stack { tabs, insert_index } => {
+            DockGraphDropTarget::Center { tabs } | DockGraphDropTarget::TabBar { tabs, .. } => {
                 if source_space == target_space && source_tabs == tabs {
                     return false;
                 }
@@ -242,7 +264,13 @@ impl DockGraph {
                 let ok = self.insert_items_into_tabs_at(
                     tabs,
                     &detached.items,
-                    insert_index,
+                    match target {
+                        DockGraphDropTarget::Center { .. } => None,
+                        DockGraphDropTarget::TabBar { insert_index, .. } => Some(insert_index),
+                        DockGraphDropTarget::Edge { .. } | DockGraphDropTarget::EmptySpace => {
+                            unreachable!()
+                        }
+                    },
                     detached.selected.as_ref(),
                 );
                 self.simplify_space(source_space);
@@ -251,14 +279,7 @@ impl DockGraph {
                 }
                 ok
             }
-            DockMoveTarget::Edge { anchor, zone } => {
-                let target_node = anchor.node();
-                if self
-                    .root_for_node_in_space(target_space, target_node)
-                    .is_none()
-                {
-                    return false;
-                }
+            DockGraphDropTarget::Edge { plan } => {
                 let Some(detached) =
                     self.take_tabs_from_space_without_simplify(source_space, source_tabs)
                 else {
@@ -266,7 +287,7 @@ impl DockGraph {
                 };
                 let new_tabs = self.insert_detached_tabs(detached);
 
-                if !self.insert_edge_docked_child(target_space, target_node, zone, new_tabs) {
+                if !self.apply_edge_dock_plan(target_space, plan, new_tabs) {
                     return false;
                 }
                 self.simplify_space(source_space);
@@ -275,7 +296,7 @@ impl DockGraph {
                 }
                 true
             }
-            DockMoveTarget::EmptySpace => {
+            DockGraphDropTarget::EmptySpace => {
                 if !self.target_space_is_empty_for_tabs_move(
                     source_space,
                     source_tabs,
@@ -299,6 +320,92 @@ impl DockGraph {
         };
         let tabs = self.insert_detached_tabs(detached);
         self.set_root_for_empty_space(target_space, tabs);
+        self.simplify_space(target_space);
+        true
+    }
+
+    pub(crate) fn move_root_to_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> bool {
+        if source_space == target_space
+            || self.root(target_space).is_some()
+            || !self.floating_containers(target_space).is_empty()
+        {
+            return false;
+        }
+
+        let Some(source_root) = self.remove_root(source_space) else {
+            return false;
+        };
+
+        self.set_root_for_empty_space(target_space, source_root);
+        self.simplify_space(source_space);
+        self.simplify_space(target_space);
+        true
+    }
+
+    pub(crate) fn move_root_to_non_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+    ) -> bool {
+        if source_space == target_space {
+            return false;
+        }
+
+        let Some(source_root) = self.root(source_space) else {
+            return false;
+        };
+        if self.root(target_space).is_none() {
+            return false;
+        }
+
+        match self.nodes.get(source_root).cloned() {
+            Some(DockNode::Tabs { .. }) => self.move_root_tabs_to_non_empty_space(
+                source_space,
+                source_root,
+                target_space,
+                target_tabs,
+            ),
+            Some(DockNode::Split { .. }) => false,
+            Some(DockNode::Floating { .. }) => false,
+            None => false,
+        }
+    }
+
+    fn move_root_tabs_to_non_empty_space(
+        &mut self,
+        source_space: &DockSpaceId,
+        source_root: DockNodeId,
+        target_space: &DockSpaceId,
+        target_tabs: DockNodeId,
+    ) -> bool {
+        if !matches!(self.nodes.get(target_tabs), Some(DockNode::Tabs { .. })) {
+            return false;
+        }
+        if self
+            .root_for_node_in_space(target_space, target_tabs)
+            .is_none()
+        {
+            return false;
+        }
+        let Some(detached) = self.take_tabs_from_space_without_simplify(source_space, source_root)
+        else {
+            return false;
+        };
+        if !self.insert_items_into_tabs_at(
+            target_tabs,
+            &detached.items,
+            None,
+            detached.selected.as_ref(),
+        ) {
+            return false;
+        }
+        self.remove_subtree(source_root);
+        self.simplify_space(source_space);
         self.simplify_space(target_space);
         true
     }

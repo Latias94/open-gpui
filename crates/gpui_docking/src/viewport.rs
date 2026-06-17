@@ -63,6 +63,14 @@ impl DockViewportAdapter {
             .map(|snapshot| snapshot.is_route_ready())
     }
 
+    pub(crate) fn window_close_requested(&self, window_id: WindowId) -> bool {
+        let Some(space) = self.space_for_window_id(window_id) else {
+            return false;
+        };
+        self.snapshot(space)
+            .is_some_and(|snapshot| snapshot.is_platform_close_requested())
+    }
+
     pub(crate) fn unregister_window_id_snapshot(
         &mut self,
         window_id: WindowId,
@@ -77,6 +85,10 @@ impl DockViewportAdapter {
 
     pub(crate) fn record_window_focus(&mut self, window_id: WindowId) {
         self.registry.record_window_focus(window_id);
+    }
+
+    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
+        self.registry.record_space_focus(space);
     }
 
     /// Returns the logical dock space rendered by a window id.
@@ -98,8 +110,8 @@ impl DockViewportAdapter {
             .collect()
     }
 
-    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
-        self.registry.spaces_by_fallback_priority()
+    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
+        self.registry.spaces_by_diagnostic_hit_order()
     }
 
     #[cfg(test)]
@@ -271,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_fallback_prefers_recent_focus_over_lexical_order() {
+    fn viewport_target_diagnostic_hit_order_prefers_recent_focus_over_lexical_order() {
         let mut adapter = DockViewportAdapter::new();
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -294,7 +306,7 @@ mod tests {
 
         assert_eq!(
             adapter
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     point(px(120.0), px(140.0)),
                     &DockViewportTargetContext::new()
                 )

@@ -1,11 +1,12 @@
 use crate::DockViewportTargetContext;
 use crate::{
-    DockNodeId, DockPolicy, DockPolicyError, DockSpaceId, DockViewportAdapter,
-    DockViewportDropPayload, DockViewportPlatformSignals, DockViewportTargetHit,
-    DockViewportTearOffRequest,
+    DockActionApplyError, DockNodeId, DockPolicy, DockPolicyError, DockSpaceId,
+    DockViewportAdapter, DockViewportDropPayload, DockViewportPlatformSignals,
+    DockViewportPointerAuthority, DockViewportPointerCoordinateSpace, DockViewportRouteAuthority,
+    DockViewportTargetHit, DockViewportTearOffRequest,
     drag::{DockDragPayload, DockDragTearOffGeometry},
     drop_target::DockResolvedDropTarget,
-    interaction::DockRuntimeDragSession,
+    interaction::{DockPayloadDropReleaseOrigin, DockRuntimeDragSession},
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{Pixels, Point, WindowBounds, WindowId};
@@ -17,18 +18,33 @@ pub(crate) enum DockViewportDropRoute {
     Local {
         /// Local host position for the release.
         host_position: Point<Pixels>,
+        /// Authority that selected the local source viewport.
+        authority: DockViewportRouteAuthority,
     },
     /// The release landed inside another registered viewport.
     KnownViewport {
         /// Destination viewport hit and its owning runtime window.
         target: DockViewportTargetHit,
+        /// Authority that selected the destination viewport.
+        authority: DockViewportRouteAuthority,
     },
     /// The release landed outside all registered viewports and may open a new platform viewport.
-    TearOff(DockViewportTearOffRequest),
+    TearOff,
     /// The release landed in a registered viewport that has no current dock target.
     Unavailable,
     /// The release landed outside all registered viewports, but policy forbids opening one.
     Rejected(DockPolicyError),
+}
+
+/// Route values that are allowed to produce a delivery.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockViewportAuthorizedDropRoute {
+    /// The source viewport may commit the route locally.
+    Local,
+    /// A registered destination viewport may receive the route.
+    KnownViewport,
+    /// A new platform viewport may be opened for the route.
+    TearOff,
 }
 
 /// All routing and payload facts needed to route one rendered drop release.
@@ -41,32 +57,34 @@ pub(crate) struct DockViewportDropRouteRequest {
     release_position: Point<Pixels>,
     tear_off_geometry: Option<DockDragTearOffGeometry>,
     suggested_window_bounds: Option<WindowBounds>,
-    target_context: DockViewportTargetContext,
-    has_global_window_bounds: bool,
+    pointer_authority: DockViewportPointerAuthority,
 }
 
 /// Delivery facts for a resolved viewport drop route.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DockDropDelivery {
+pub(crate) struct DockDropDelivery {
+    source: DockDropDeliverySource,
+    kind: DockDropDeliveryKind,
+}
+
+/// Variant-specific delivery target selected for a resolved viewport drop route.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum DockDropDeliveryKind {
     /// Commit a route into an already registered viewport host scene.
-    Workspace(DockDropWorkspaceDelivery),
+    Workspace(DockViewportResolvedDropTargetSnapshot),
     /// Open and commit into a new platform viewport.
     TearOff(DockViewportTearOffRequest),
-    /// Reject the delivery because the target viewport has no current dock target.
-    Unavailable(DockDropUnavailableDelivery),
-    /// Reject the delivery for the same policy reason as routing.
-    Rejected(DockDropRejectedDelivery),
 }
 
 /// Route and delivery facts resolved from the same release snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DockViewportResolvedDropRoute {
     route: DockViewportDropRoute,
-    delivery: DockDropDelivery,
+    delivery: Option<DockDropDelivery>,
 }
 
 impl DockViewportResolvedDropRoute {
-    pub(crate) fn new(route: DockViewportDropRoute, delivery: DockDropDelivery) -> Self {
+    pub(crate) fn new(route: DockViewportDropRoute, delivery: Option<DockDropDelivery>) -> Self {
         Self { route, delivery }
     }
 
@@ -74,56 +92,53 @@ impl DockViewportResolvedDropRoute {
         &self.route
     }
 
-    pub(crate) fn delivery(&self) -> &DockDropDelivery {
-        &self.delivery
+    pub(crate) fn delivery(&self) -> Option<&DockDropDelivery> {
+        self.delivery.as_ref()
     }
 
-    pub(crate) fn drag_session_id(&self) -> Option<u64> {
-        self.delivery.drag_session_id()
+    pub(crate) fn delivery_result(&self) -> Result<&DockDropDelivery, DockActionApplyError> {
+        self.delivery.as_ref().ok_or_else(|| match &self.route {
+            DockViewportDropRoute::Rejected(error) => DockActionApplyError::Policy(error.clone()),
+            DockViewportDropRoute::Unavailable
+            | DockViewportDropRoute::Local { .. }
+            | DockViewportDropRoute::KnownViewport { .. }
+            | DockViewportDropRoute::TearOff => DockActionApplyError::DropTargetUnavailable,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expect_delivery(&self) -> &DockDropDelivery {
+        self.delivery
+            .as_ref()
+            .expect("resolved route should carry a delivery")
     }
 }
 
-/// Delivery facts for a drop route that lands in an existing viewport workspace.
+impl DockViewportDropRoute {
+    pub(crate) fn into_authorized_drop_route(self) -> Option<DockViewportAuthorizedDropRoute> {
+        match self {
+            Self::Local { authority, .. } if authority.can_authorize_local_route() => {
+                Some(DockViewportAuthorizedDropRoute::Local)
+            }
+            Self::KnownViewport { authority, .. }
+                if authority.can_authorize_known_viewport_route() =>
+            {
+                Some(DockViewportAuthorizedDropRoute::KnownViewport)
+            }
+            Self::TearOff => Some(DockViewportAuthorizedDropRoute::TearOff),
+            Self::Local { .. } | Self::KnownViewport { .. } => None,
+            Self::Unavailable | Self::Rejected(_) => None,
+        }
+    }
+}
+
+/// Source facts shared by every resolved drop delivery variant.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropWorkspaceDelivery {
+pub(crate) struct DockDropDeliverySource {
     source_space: DockSpaceId,
     source_node: DockNodeId,
     payload: DockViewportDropPayload,
     drag_session: Option<DockRuntimeDragSession>,
-    target: DockDropWorkspaceTarget,
-}
-
-/// Destination facts for an existing-viewport workspace delivery.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DockDropWorkspaceTarget {
-    /// Commit against a resolved target snapshot if it still matches current runtime facts.
-    Resolved(DockViewportResolvedDropTargetSnapshot),
-    /// Resolve the target from current host-scene facts at delivery time.
-    ResolveAtDelivery {
-        target_space: DockSpaceId,
-        target_window_id: Option<WindowId>,
-        target_facts_generation: Option<u64>,
-        host_position: Point<Pixels>,
-    },
-}
-
-/// Delivery facts for a route that was unavailable when resolved.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropUnavailableDelivery {
-    source_space: DockSpaceId,
-    source_node: DockNodeId,
-    payload: DockViewportDropPayload,
-    drag_session: Option<DockRuntimeDragSession>,
-}
-
-/// Delivery facts for a route rejected by policy when resolved.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DockDropRejectedDelivery {
-    source_space: DockSpaceId,
-    source_node: DockNodeId,
-    payload: DockViewportDropPayload,
-    drag_session: Option<DockRuntimeDragSession>,
-    error: DockPolicyError,
 }
 
 /// Resolved target snapshot captured from a concrete host-scene frame.
@@ -136,74 +151,7 @@ pub(crate) struct DockViewportResolvedDropTargetSnapshot {
     target: DockResolvedDropTarget,
 }
 
-impl DockDropWorkspaceDelivery {
-    fn from_request_resolved_target(
-        request: &DockViewportDropRouteRequest,
-        target_space: DockSpaceId,
-        target_window_id: Option<WindowId>,
-        target_facts_generation: Option<u64>,
-        host_position: Point<Pixels>,
-        resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
-    ) -> Self {
-        let target = match resolved_target {
-            Some(resolved) => DockDropWorkspaceTarget::Resolved(resolved),
-            None => DockDropWorkspaceTarget::ResolveAtDelivery {
-                target_space,
-                target_window_id,
-                target_facts_generation,
-                host_position,
-            },
-        };
-        Self {
-            source_space: request.source_space().clone(),
-            source_node: request.source_node(),
-            payload: request.payload().clone(),
-            drag_session: request.drag_session().cloned(),
-            target,
-        }
-    }
-
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        DockSpaceId,
-        DockNodeId,
-        DockViewportDropPayload,
-        DockDropWorkspaceTarget,
-    ) {
-        (
-            self.source_space,
-            self.source_node,
-            self.payload,
-            self.target,
-        )
-    }
-
-    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
-        self.drag_session.as_ref()
-    }
-
-    pub(crate) fn source_space(&self) -> &DockSpaceId {
-        &self.source_space
-    }
-
-    pub(crate) fn source_node(&self) -> DockNodeId {
-        self.source_node
-    }
-
-    pub(crate) fn payload(&self) -> &DockViewportDropPayload {
-        &self.payload
-    }
-
-    fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        match &self.target {
-            DockDropWorkspaceTarget::Resolved(target) => target.routed_preview_target(),
-            DockDropWorkspaceTarget::ResolveAtDelivery { .. } => None,
-        }
-    }
-}
-
-impl DockDropUnavailableDelivery {
+impl DockDropDeliverySource {
     fn from_request(request: &DockViewportDropRouteRequest) -> Self {
         Self {
             source_space: request.source_space().clone(),
@@ -213,6 +161,7 @@ impl DockDropUnavailableDelivery {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn source_space(&self) -> &DockSpaceId {
         &self.source_space
     }
@@ -228,37 +177,34 @@ impl DockDropUnavailableDelivery {
     pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
         self.drag_session.as_ref()
     }
-}
 
-impl DockDropRejectedDelivery {
-    fn from_request(request: &DockViewportDropRouteRequest, error: DockPolicyError) -> Self {
-        Self {
-            source_space: request.source_space().clone(),
-            source_node: request.source_node(),
-            payload: request.payload().clone(),
-            drag_session: request.drag_session().cloned(),
-            error,
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        DockSpaceId,
+        DockNodeId,
+        DockViewportDropPayload,
+        Option<DockRuntimeDragSession>,
+    ) {
+        (
+            self.source_space,
+            self.source_node,
+            self.payload,
+            self.drag_session,
+        )
+    }
+
+    fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
+        self.source_space == payload.source_space
+            && self.source_node == payload.source_node
+            && self.payload == DockViewportDropPayload::from_drag_payload(payload)
+    }
+
+    fn payload_mismatch_error(&self) -> DockActionApplyError {
+        DockActionApplyError::DropPayloadMismatch {
+            space: self.source_space.clone(),
+            tabs: self.source_node,
         }
-    }
-
-    pub(crate) fn source_space(&self) -> &DockSpaceId {
-        &self.source_space
-    }
-
-    pub(crate) fn source_node(&self) -> DockNodeId {
-        self.source_node
-    }
-
-    pub(crate) fn payload(&self) -> &DockViewportDropPayload {
-        &self.payload
-    }
-
-    pub(crate) fn drag_session(&self) -> Option<&DockRuntimeDragSession> {
-        self.drag_session.as_ref()
-    }
-
-    pub(crate) fn into_error(self) -> DockPolicyError {
-        self.error
     }
 }
 
@@ -306,6 +252,27 @@ impl DockViewportResolvedDropTargetSnapshot {
     fn routed_preview_target(&self) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
         Some((&self.target_space, self.target_window_id?, self.target()))
     }
+
+    fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
+        target_accepts_hovered_host_window(
+            &self.target_space,
+            self.target_window_id,
+            host_space,
+            window_id,
+        )
+    }
+}
+
+fn target_accepts_hovered_host_window(
+    target_space: &DockSpaceId,
+    target_window_id: Option<WindowId>,
+    host_space: &DockSpaceId,
+    window_id: WindowId,
+) -> bool {
+    match target_window_id {
+        Some(target_window_id) => target_window_id == window_id,
+        None => target_space == host_space,
+    }
 }
 
 impl DockDropDelivery {
@@ -313,117 +280,136 @@ impl DockDropDelivery {
     pub(crate) fn from_route_request(
         request: &DockViewportDropRouteRequest,
         route: DockViewportDropRoute,
-    ) -> Self {
-        Self::from_route_request_with_resolved_target(request, route, None)
+    ) -> Option<Self> {
+        route.into_authorized_drop_route().and_then(|authorized| {
+            Self::from_authorized_route_request_with_resolved_target(request, authorized, None)
+        })
     }
 
-    pub(crate) fn from_route_request_with_resolved_target(
+    pub(crate) fn from_authorized_route_request_with_resolved_target(
         request: &DockViewportDropRouteRequest,
-        route: DockViewportDropRoute,
+        route: DockViewportAuthorizedDropRoute,
         resolved_target: Option<DockViewportResolvedDropTargetSnapshot>,
-    ) -> Self {
-        match route {
-            DockViewportDropRoute::Local { host_position } => {
-                Self::Workspace(DockDropWorkspaceDelivery::from_request_resolved_target(
-                    request,
-                    request.source_space().clone(),
-                    None,
-                    None,
-                    host_position,
-                    resolved_target,
-                ))
+    ) -> Option<Self> {
+        let source = DockDropDeliverySource::from_request(request);
+        let kind = match route {
+            DockViewportAuthorizedDropRoute::Local
+            | DockViewportAuthorizedDropRoute::KnownViewport => {
+                DockDropDeliveryKind::Workspace(resolved_target?)
             }
-            DockViewportDropRoute::KnownViewport { target } => {
-                let target_space = target.space().clone();
-                let target_window_id = Some(target.window_id());
-                let target_facts_generation = Some(target.facts_generation());
-                let host_position = target.host_position();
-                Self::Workspace(DockDropWorkspaceDelivery::from_request_resolved_target(
-                    request,
-                    target_space,
-                    target_window_id,
-                    target_facts_generation,
-                    host_position,
-                    resolved_target,
-                ))
+            DockViewportAuthorizedDropRoute::TearOff => {
+                DockDropDeliveryKind::TearOff(tear_off_request_from_drop_route_request(request))
             }
-            DockViewportDropRoute::TearOff(_) => Self::TearOff(request.tear_off_request()),
-            DockViewportDropRoute::Unavailable => {
-                Self::Unavailable(DockDropUnavailableDelivery::from_request(request))
-            }
-            DockViewportDropRoute::Rejected(error) => {
-                Self::Rejected(DockDropRejectedDelivery::from_request(request, error))
-            }
-        }
+        };
+        Some(Self { source, kind })
     }
 
     pub(crate) fn routed_preview_target(
         &self,
     ) -> Option<(&DockSpaceId, WindowId, &DockResolvedDropTarget)> {
-        match self {
-            DockDropDelivery::Workspace(delivery) => delivery.routed_preview_target(),
-            DockDropDelivery::TearOff(_)
-            | DockDropDelivery::Unavailable(_)
-            | DockDropDelivery::Rejected(_) => None,
+        match &self.kind {
+            DockDropDeliveryKind::Workspace(delivery) => delivery.routed_preview_target(),
+            DockDropDeliveryKind::TearOff(_) => None,
         }
     }
 
     pub(crate) fn drag_session_id(&self) -> Option<u64> {
-        match self {
-            DockDropDelivery::Workspace(delivery) => {
-                delivery.drag_session().map(DockRuntimeDragSession::id)
-            }
-            DockDropDelivery::TearOff(request) => {
-                request.drag_session().map(DockRuntimeDragSession::id)
-            }
-            DockDropDelivery::Unavailable(delivery) => {
-                delivery.drag_session().map(DockRuntimeDragSession::id)
-            }
-            DockDropDelivery::Rejected(delivery) => {
-                delivery.drag_session().map(DockRuntimeDragSession::id)
-            }
-        }
+        self.source.drag_session().map(DockRuntimeDragSession::id)
     }
 
+    #[cfg(test)]
     pub(crate) fn source_space(&self) -> &DockSpaceId {
-        match self {
-            DockDropDelivery::Workspace(delivery) => delivery.source_space(),
-            DockDropDelivery::TearOff(request) => request.source_space(),
-            DockDropDelivery::Unavailable(delivery) => delivery.source_space(),
-            DockDropDelivery::Rejected(delivery) => delivery.source_space(),
-        }
+        self.source.source_space()
     }
 
+    #[cfg(test)]
     pub(crate) fn source_node(&self) -> DockNodeId {
-        match self {
-            DockDropDelivery::Workspace(delivery) => delivery.source_node(),
-            DockDropDelivery::TearOff(request) => request.source_node(),
-            DockDropDelivery::Unavailable(delivery) => delivery.source_node(),
-            DockDropDelivery::Rejected(delivery) => delivery.source_node(),
-        }
+        self.source.source_node()
     }
 
+    #[cfg(test)]
     pub(crate) fn payload(&self) -> &DockViewportDropPayload {
-        match self {
-            DockDropDelivery::Workspace(delivery) => delivery.payload(),
-            DockDropDelivery::TearOff(request) => request.payload(),
-            DockDropDelivery::Unavailable(delivery) => delivery.payload(),
-            DockDropDelivery::Rejected(delivery) => delivery.payload(),
+        self.source.payload()
+    }
+
+    fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
+        self.source.accepts_drag_payload(payload)
+    }
+
+    fn accepts_hovered_host_window(&self, host_space: &DockSpaceId, window_id: WindowId) -> bool {
+        match &self.kind {
+            DockDropDeliveryKind::Workspace(delivery) => {
+                delivery.accepts_hovered_host_window(host_space, window_id)
+            }
+            DockDropDeliveryKind::TearOff(_) => false,
         }
     }
 
-    pub(crate) fn accepts_drag_payload(&self, payload: &DockDragPayload) -> bool {
-        self.source_space() == &payload.source_space
-            && self.source_node() == payload.source_node
-            && self.payload() == &DockViewportDropPayload::from_drag_payload(payload)
+    fn payload_mismatch_error(&self) -> DockActionApplyError {
+        self.source.payload_mismatch_error()
     }
 
-    pub(crate) fn payload_mismatch_error(&self) -> crate::DockActionApplyError {
-        crate::DockActionApplyError::DropPayloadMismatch {
-            space: self.source_space().clone(),
-            tabs: self.source_node(),
+    #[cfg(test)]
+    pub(crate) fn kind(&self) -> &DockDropDeliveryKind {
+        &self.kind
+    }
+
+    pub(crate) fn into_parts(self) -> (DockDropDeliverySource, DockDropDeliveryKind) {
+        (self.source, self.kind)
+    }
+
+    pub(crate) fn parts(&self) -> (&DockDropDeliverySource, &DockDropDeliveryKind) {
+        (&self.source, &self.kind)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn tear_off_request(&self) -> Option<DockViewportTearOffRequest> {
+        match &self.kind {
+            DockDropDeliveryKind::TearOff(request) => Some(request.clone()),
+            DockDropDeliveryKind::Workspace(_) => None,
         }
     }
+
+    pub(crate) fn into_tear_off_request(self) -> Result<DockViewportTearOffRequest, Self> {
+        let Self { source, kind } = self;
+        match kind {
+            DockDropDeliveryKind::TearOff(request) => Ok(request),
+            kind => Err(Self { source, kind }),
+        }
+    }
+
+    pub(crate) fn release_authority_for_cached_preview(
+        &self,
+        origin: DockPayloadDropReleaseOrigin,
+        host_space: &DockSpaceId,
+        window_id: WindowId,
+        payload: &DockDragPayload,
+    ) -> Result<bool, DockActionApplyError> {
+        if origin != DockPayloadDropReleaseOrigin::HoveredHost {
+            return Ok(false);
+        }
+        if !self.accepts_hovered_host_window(host_space, window_id) {
+            return Ok(false);
+        }
+        if !self.accepts_drag_payload(payload) {
+            return Err(self.payload_mismatch_error());
+        }
+        Ok(true)
+    }
+}
+
+fn tear_off_request_from_drop_route_request(
+    request: &DockViewportDropRouteRequest,
+) -> DockViewportTearOffRequest {
+    DockViewportTearOffRequest::new(
+        request.source_space().clone(),
+        request.source_node(),
+        request.payload().clone(),
+        request.release_position(),
+        request.suggested_window_bounds(),
+    )
+    .with_drag_session(request.drag_session().cloned())
+    .with_tear_off_geometry(request.tear_off_geometry())
 }
 
 impl DockViewportDropRouteRequest {
@@ -433,7 +419,7 @@ impl DockViewportDropRouteRequest {
         payload: DockViewportDropPayload,
         release_position: Point<Pixels>,
         suggested_window_bounds: Option<WindowBounds>,
-        target_context: DockViewportTargetContext,
+        pointer_authority: DockViewportPointerAuthority,
     ) -> Self {
         Self {
             source_space: source_space.into(),
@@ -443,11 +429,11 @@ impl DockViewportDropRouteRequest {
             release_position,
             tear_off_geometry: None,
             suggested_window_bounds,
-            target_context,
-            has_global_window_bounds: true,
+            pointer_authority,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_platform_signals(
         source_space: impl Into<DockSpaceId>,
         source_node: DockNodeId,
@@ -456,17 +442,36 @@ impl DockViewportDropRouteRequest {
         suggested_window_bounds: Option<WindowBounds>,
         platform_signals: DockViewportPlatformSignals,
     ) -> Self {
-        let has_global_window_bounds = platform_signals.has_global_window_bounds();
-        let mut request = Self::new(
+        Self::from_platform_signals_with_origin(
             source_space,
             source_node,
             payload,
             release_position,
             suggested_window_bounds,
-            platform_signals.into(),
-        );
-        request.has_global_window_bounds = has_global_window_bounds;
-        request
+            platform_signals,
+            DockPayloadDropReleaseOrigin::HoveredHost,
+        )
+    }
+
+    pub(crate) fn from_platform_signals_with_origin(
+        source_space: impl Into<DockSpaceId>,
+        source_node: DockNodeId,
+        payload: DockViewportDropPayload,
+        release_position: Point<Pixels>,
+        suggested_window_bounds: Option<WindowBounds>,
+        platform_signals: DockViewportPlatformSignals,
+        origin: DockPayloadDropReleaseOrigin,
+    ) -> Self {
+        let pointer_authority =
+            DockViewportPointerAuthority::from_platform_signals(origin, platform_signals);
+        Self::new(
+            source_space,
+            source_node,
+            payload,
+            release_position,
+            suggested_window_bounds,
+            pointer_authority,
+        )
     }
 
     pub(crate) fn with_drag_session(
@@ -514,23 +519,11 @@ impl DockViewportDropRouteRequest {
     }
 
     pub(crate) fn target_context(&self) -> &DockViewportTargetContext {
-        &self.target_context
+        self.pointer_authority.target_context()
     }
 
-    pub(crate) fn has_global_window_bounds(&self) -> bool {
-        self.has_global_window_bounds
-    }
-
-    pub(crate) fn tear_off_request(&self) -> DockViewportTearOffRequest {
-        DockViewportTearOffRequest::new(
-            self.source_space().clone(),
-            self.source_node(),
-            self.payload().clone(),
-            self.release_position(),
-            self.suggested_window_bounds(),
-        )
-        .with_drag_session(self.drag_session().cloned())
-        .with_tear_off_geometry(self.tear_off_geometry())
+    pub(crate) fn coordinate_space(&self) -> DockViewportPointerCoordinateSpace {
+        self.pointer_authority.coordinate_space()
     }
 
     #[cfg(test)]
@@ -548,7 +541,7 @@ impl DockViewportDropRouteRequest {
             payload,
             release_position,
             suggested_window_bounds,
-            target_context,
+            DockViewportPointerAuthority::from_target_context(target_context),
         )
     }
 }
@@ -565,43 +558,122 @@ impl DockViewportAdapter {
         {
             return DockViewportDropRoute::Unavailable;
         }
-        if !request.has_global_window_bounds() {
-            if let Some(hovered_window) = target_context.hovered_window()
-                && self
-                    .window_for_space(request.source_space())
-                    .is_some_and(|window| {
-                        window.window_id() == hovered_window
-                            && self.window_route_ready(hovered_window) == Some(true)
-                    })
-                && let Some(host_position) =
-                    self.window_to_host(request.source_space(), request.release_position())
-            {
-                return DockViewportDropRoute::Local { host_position };
+        match request.coordinate_space() {
+            DockViewportPointerCoordinateSpace::GlobalScreen => {
+                if let Some(route) = self.resolve_global_screen_payload_drop_route(request) {
+                    return route;
+                }
             }
-            return DockViewportDropRoute::Unavailable;
-        }
-        if let Some(resolution) =
-            self.resolve_viewport_route_target(request.release_position(), target_context)
-        {
-            if !resolution.is_trusted() {
-                return DockViewportDropRoute::Unavailable;
+            DockViewportPointerCoordinateSpace::ReceiverLocal => {
+                return self.resolve_receiver_local_payload_drop_route(request);
             }
-
-            let target = resolution.into_target();
-            if target.space() == request.source_space() {
-                return DockViewportDropRoute::Local {
-                    host_position: target.host_position(),
-                };
+            DockViewportPointerCoordinateSpace::SourceLocalOnly => {
+                return self.resolve_source_local_payload_drop_route(request);
             }
-
-            return DockViewportDropRoute::KnownViewport { target };
         }
 
         if let Err(reason) = policy.validate_platform_viewports() {
             return DockViewportDropRoute::Rejected(reason);
         }
 
-        DockViewportDropRoute::TearOff(request.tear_off_request())
+        DockViewportDropRoute::TearOff
+    }
+
+    fn resolve_global_screen_payload_drop_route(
+        &self,
+        request: &DockViewportDropRouteRequest,
+    ) -> Option<DockViewportDropRoute> {
+        let resolution = self
+            .resolve_viewport_route_target(request.release_position(), request.target_context())?;
+        let route_authority = resolution.route_authority();
+        if !route_authority.can_authorize_known_viewport_route() {
+            return Some(DockViewportDropRoute::Unavailable);
+        }
+
+        let target = resolution.into_target();
+        if target.space() == request.source_space() {
+            if !route_authority.can_authorize_local_route() {
+                return Some(DockViewportDropRoute::Unavailable);
+            }
+            return Some(DockViewportDropRoute::Local {
+                host_position: target.host_position(),
+                authority: route_authority,
+            });
+        }
+
+        Some(DockViewportDropRoute::KnownViewport {
+            target,
+            authority: route_authority,
+        })
+    }
+
+    fn resolve_receiver_local_payload_drop_route(
+        &self,
+        request: &DockViewportDropRouteRequest,
+    ) -> DockViewportDropRoute {
+        let target_context = request.target_context();
+        if let Some(receiver_window) = target_context.event_receiver_window() {
+            if target_context.has_conflicting_hovered_window(receiver_window) {
+                return DockViewportDropRoute::Unavailable;
+            }
+            let Some(target_space) = self.space_for_window_id(receiver_window).cloned() else {
+                return DockViewportDropRoute::Unavailable;
+            };
+            if self.window_route_ready(receiver_window) != Some(true) {
+                return DockViewportDropRoute::Unavailable;
+            }
+            if let Some(host_position) =
+                self.window_to_host(&target_space, request.release_position())
+            {
+                let Some(target_window) = self.window_for_space(&target_space) else {
+                    return DockViewportDropRoute::Unavailable;
+                };
+                if &target_space == request.source_space() {
+                    return DockViewportDropRoute::Local {
+                        host_position,
+                        authority: DockViewportRouteAuthority::TrustedPlatform,
+                    };
+                }
+
+                let facts_generation = self
+                    .snapshot_facts_generation(&target_space, receiver_window)
+                    .unwrap_or(0);
+                return DockViewportDropRoute::KnownViewport {
+                    target: crate::DockViewportTargetHit::with_facts_generation(
+                        target_space,
+                        target_window,
+                        host_position,
+                        facts_generation,
+                    ),
+                    authority: DockViewportRouteAuthority::TrustedPlatform,
+                };
+            }
+        }
+
+        self.resolve_source_local_payload_drop_route(request)
+    }
+
+    fn resolve_source_local_payload_drop_route(
+        &self,
+        request: &DockViewportDropRouteRequest,
+    ) -> DockViewportDropRoute {
+        let target_context = request.target_context();
+        if let Some(hovered_window) = target_context.hovered_window()
+            && self
+                .window_for_space(request.source_space())
+                .is_some_and(|window| {
+                    window.window_id() == hovered_window
+                        && self.window_route_ready(hovered_window) == Some(true)
+                })
+            && let Some(host_position) =
+                self.window_to_host(request.source_space(), request.release_position())
+        {
+            return DockViewportDropRoute::Local {
+                host_position,
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            };
+        }
+        DockViewportDropRoute::Unavailable
     }
 
     /// Resolves a rendered payload release into a runtime route without mutating the graph.
@@ -639,14 +711,16 @@ mod tests {
     use crate::{
         DockPolicy, DockViewportWindowFacts,
         drag::{DockDragPayload, DockDragTearOffGeometry},
+        drop_target::{DockDropResolveSource, DockResolvedDropTarget, DockResolvedDropTargetKind},
         interaction::DockRuntimeDragSession,
+        viewport_drop_scene::{DockViewportHostSceneRegistry, DockViewportHostSceneSnapshot},
         viewport_test_support::{bounds, handle, item, space},
     };
-    use open_gpui::{DisplayId, WindowBounds, point, px};
+    use open_gpui::{DisplayId, WindowBounds, WindowId, point, px};
     use slotmap::Key;
 
     #[test]
-    fn drop_route_treats_source_viewport_hit_as_local() {
+    fn drop_route_requires_hover_authority_for_source_viewport_hit() {
         let main = space("main");
         let window = handle(1);
         let mut adapter = DockViewportAdapter::new();
@@ -670,14 +744,27 @@ mod tests {
                 &DockPolicy::default(),
                 DockViewportTargetContext::new(),
             ),
+            DockViewportDropRoute::Unavailable
+        );
+        assert_eq!(
+            adapter.resolve_payload_drop_route_with_context(
+                main.clone(),
+                DockNodeId::null(),
+                DockViewportDropPayload::Item(item("a")),
+                point(px(115.0), px(225.0)),
+                None,
+                &DockPolicy::default(),
+                DockViewportTargetContext::new().with_hovered_window(window),
+            ),
             DockViewportDropRoute::Local {
                 host_position: point(px(5.0), px(5.0)),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
             }
         );
     }
 
     #[test]
-    fn drop_route_uses_trusted_window_stack_arbitration_for_known_viewport() {
+    fn drop_route_does_not_use_window_stack_fallback_for_known_viewport_commit() {
         let source = space("source");
         let alpha = space("alpha");
         let zeta = space("zeta");
@@ -709,14 +796,47 @@ mod tests {
 
         assert_eq!(
             route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    zeta,
-                    zeta_window,
-                    point(px(20.0), px(40.0)),
-                    1,
-                ),
-            }
+            DockViewportDropRoute::Unavailable,
+            "window-stack/focus fallback may rank diagnostics, but must not authorize an overlapping cross-viewport commit"
+        );
+    }
+
+    #[test]
+    fn drop_route_rejects_window_stack_when_hovered_window_is_known_empty() {
+        let source = space("source");
+        let target = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.register_viewport(target, target_window);
+
+        for space in [&source, &space("target")] {
+            adapter.update_snapshot(
+                space,
+                DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                    100.0, 100.0, 320.0, 240.0,
+                ))),
+                bounds(0.0, 0.0, 320.0, 240.0),
+            );
+        }
+
+        let route = adapter.resolve_payload_drop_route_with_context(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(120.0), px(140.0)),
+            None,
+            &DockPolicy::default(),
+            DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([target_window, source_window]),
+        );
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::Unavailable,
+            "when the platform can report hovered windows, hovered=None means a foreign or no window is under the pointer"
         );
     }
 
@@ -748,7 +868,7 @@ mod tests {
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
-            DockViewportTargetContext::new().with_active_window(zeta_window),
+            DockViewportTargetContext::new(),
         );
 
         assert_eq!(
@@ -797,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn source_only_overlap_route_uses_active_window_without_hovered_source() {
+    fn source_only_overlap_route_does_not_use_window_stack_as_hover_authority() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);
@@ -823,22 +943,13 @@ mod tests {
             point(px(120.0), px(140.0)),
             None,
             &DockPolicy::default(),
-            DockViewportTargetContext::new()
-                .with_active_window(target_window)
-                .with_window_stack([target_window, source_window]),
+            DockViewportTargetContext::new().with_window_stack([target_window, source_window]),
         );
 
         assert_eq!(
             route,
-            DockViewportDropRoute::KnownViewport {
-                target: DockViewportTargetHit::with_facts_generation(
-                    target,
-                    target_window,
-                    point(px(20.0), px(40.0)),
-                    1,
-                ),
-            },
-            "source-only routes must not treat the source event window as hovered"
+            DockViewportDropRoute::Unavailable,
+            "source-only routes must not promote window-stack fallback into current hover authority"
         );
     }
 
@@ -915,12 +1026,49 @@ mod tests {
             route,
             DockViewportDropRoute::Local {
                 host_position: point(px(20.0), px(30.0)),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
             }
         );
     }
 
     #[test]
-    fn drop_route_without_global_window_bounds_rejects_hovered_non_source() {
+    fn drop_route_without_global_window_bounds_keeps_event_receiver_source_local() {
+        let source = space("source");
+        let source_window = handle(1);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 300.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_event_receiver_window(source_window),
+            )
+            .with_global_window_bounds(false),
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::Local {
+                host_position: point(px(20.0), px(30.0)),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            }
+        );
+    }
+
+    #[test]
+    fn drop_route_without_global_window_bounds_rejects_hovered_non_source_without_event_receiver() {
         let source = space("source");
         let target = space("target");
         let source_window = handle(1);
@@ -960,6 +1108,147 @@ mod tests {
     }
 
     #[test]
+    fn drop_route_without_global_window_bounds_uses_event_receiver_target_local() {
+        let source = space("source");
+        let target = space("target");
+        let source_window = handle(1);
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(source.clone(), source_window);
+        adapter.register_viewport(target.clone(), target_window);
+        adapter.update_snapshot(
+            &source,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                0.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        adapter.update_snapshot(
+            &target,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new().with_event_receiver_window(target_window),
+            )
+            .with_global_window_bounds(false),
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target,
+                    target_window,
+                    point(px(20.0), px(30.0)),
+                    1,
+                ),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            }
+        );
+    }
+
+    #[test]
+    fn global_drop_route_keeps_event_receiver_single_hit_authority_when_hovered_window_is_known_empty()
+     {
+        let source = space("source");
+        let target = space("target");
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(target.clone(), target_window);
+        adapter.update_snapshot(
+            &target,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(430.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new()
+                    .with_hovered_window_known_empty()
+                    .with_event_receiver_window(target_window),
+            ),
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target,
+                    target_window,
+                    point(px(20.0), px(30.0)),
+                    1,
+                ),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            },
+            "a single non-conflicting event-receiver hit should remain route-authoritative even when hovered=None is known"
+        );
+    }
+
+    #[test]
+    fn local_coordinate_drop_route_keeps_event_receiver_when_hovered_window_is_known_empty() {
+        let source = space("source");
+        let target = space("target");
+        let target_window = handle(2);
+        let mut adapter = DockViewportAdapter::new();
+        adapter.register_viewport(target.clone(), target_window);
+        adapter.update_snapshot(
+            &target,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                400.0, 0.0, 320.0, 240.0,
+            ))),
+            bounds(10.0, 20.0, 300.0, 200.0),
+        );
+        let request = DockViewportDropRouteRequest::from_platform_signals(
+            source,
+            DockNodeId::null(),
+            DockViewportDropPayload::Item(item("a")),
+            point(px(30.0), px(50.0)),
+            None,
+            DockViewportPlatformSignals::from_target_context(
+                DockViewportTargetContext::new()
+                    .with_hovered_window_known_empty()
+                    .with_event_receiver_window(target_window),
+            )
+            .with_global_window_bounds(false),
+        );
+
+        let route = adapter.resolve_payload_drop_route(&request, &DockPolicy::default());
+
+        assert_eq!(
+            route,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target,
+                    target_window,
+                    point(px(20.0), px(30.0)),
+                    1,
+                ),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            },
+            "without global bounds, the event receiver is the adapter's coordinate authority"
+        );
+    }
+
+    #[test]
     fn drop_route_outside_all_viewports_uses_tear_off_policy() {
         let source = space("source");
         let source_tabs = DockNodeId::null();
@@ -993,18 +1282,12 @@ mod tests {
                 &policy,
                 DockViewportTargetContext::new(),
             ),
-            DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
-                source,
-                source_tabs,
-                DockViewportDropPayload::Item(item),
-                release_position,
-                Some(suggested_window_bounds),
-            ))
+            DockViewportDropRoute::TearOff
         );
     }
 
     #[test]
-    fn drop_delivery_derives_workspace_target_from_local_and_known_routes() {
+    fn local_drop_delivery_without_resolved_snapshot_is_absent() {
         let source = space("source");
         let source_tabs = DockNodeId::null();
         let item = item("a");
@@ -1022,54 +1305,129 @@ mod tests {
         .with_drag_session(Some(drag_session.clone()));
         let local_position = point(px(5.0), px(7.0));
 
-        let DockDropDelivery::Workspace(local) = DockDropDelivery::from_route_request(
+        let delivery = DockDropDelivery::from_route_request(
             &request,
             DockViewportDropRoute::Local {
                 host_position: local_position,
+                authority: DockViewportRouteAuthority::TrustedPlatform,
             },
-        ) else {
-            panic!("local route should derive a workspace commit");
-        };
-        assert_eq!(local.drag_session(), Some(&drag_session));
-        let (recorded_source, recorded_tabs, payload, target) = local.into_parts();
-        assert_eq!(recorded_source, source);
-        assert_eq!(recorded_tabs, source_tabs);
-        assert_eq!(payload, DockViewportDropPayload::Item(item.clone()));
-        assert_eq!(
-            target,
-            DockDropWorkspaceTarget::ResolveAtDelivery {
-                target_space: recorded_source,
-                target_window_id: None,
-                target_facts_generation: None,
-                host_position: local_position,
-            }
         );
+        assert_eq!(delivery, None);
+    }
 
+    #[test]
+    fn diagnostic_known_viewport_drop_route_cannot_authorize_delivery() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let drag_payload =
+            DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
+        let drag_session = DockRuntimeDragSession::new(13, &drag_payload);
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            point(px(900.0), px(900.0)),
+            None,
+            DockViewportTargetContext::new(),
+        )
+        .with_drag_session(Some(drag_session.clone()));
         let target = space("target");
         let target_window = handle(9);
         let known_position = point(px(12.0), px(34.0));
-        let DockDropDelivery::Workspace(known) = DockDropDelivery::from_route_request(
+
+        let delivery = DockDropDelivery::from_route_request(
             &request,
             DockViewportDropRoute::KnownViewport {
                 target: DockViewportTargetHit::new(target.clone(), target_window, known_position),
+                authority: DockViewportRouteAuthority::DiagnosticOnly,
             },
-        ) else {
-            panic!("known viewport route should derive a workspace commit");
-        };
-        assert_eq!(known.drag_session(), Some(&drag_session));
-        let (recorded_source, recorded_tabs, payload, target_delivery) = known.into_parts();
-        assert_eq!(recorded_source, source);
-        assert_eq!(recorded_tabs, source_tabs);
-        assert_eq!(payload, DockViewportDropPayload::Item(item));
-        assert_eq!(
-            target_delivery,
-            DockDropWorkspaceTarget::ResolveAtDelivery {
-                target_space: target,
-                target_window_id: Some(target_window.window_id()),
-                target_facts_generation: Some(0),
-                host_position: known_position,
-            }
         );
+        assert_eq!(delivery, None);
+    }
+
+    #[test]
+    fn known_viewport_drop_delivery_without_resolved_snapshot_is_absent() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let drag_payload =
+            DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
+        let drag_session = DockRuntimeDragSession::new(13, &drag_payload);
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            point(px(900.0), px(900.0)),
+            None,
+            DockViewportTargetContext::new(),
+        )
+        .with_drag_session(Some(drag_session.clone()));
+        let target = space("target");
+        let target_window = handle(9);
+        let known_position = point(px(12.0), px(34.0));
+
+        let delivery = DockDropDelivery::from_route_request(
+            &request,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::new(target.clone(), target_window, known_position),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            },
+        );
+        assert_eq!(delivery, None);
+    }
+
+    #[test]
+    fn known_viewport_drop_delivery_uses_resolved_snapshot() {
+        let source = space("source");
+        let source_tabs = DockNodeId::null();
+        let item = item("a");
+        let drag_payload =
+            DockDragPayload::new_item(source.clone(), source_tabs, item.clone(), "A".to_string());
+        let drag_session = DockRuntimeDragSession::new(13, &drag_payload);
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source.clone(),
+            source_tabs,
+            DockViewportDropPayload::Item(item.clone()),
+            point(px(900.0), px(900.0)),
+            None,
+            DockViewportTargetContext::new(),
+        )
+        .with_drag_session(Some(drag_session.clone()));
+        let target = space("target");
+        let target_window = handle(9);
+        let known_position = point(px(12.0), px(34.0));
+        let target_facts_generation = 41;
+        let resolved_target = resolved_drop_target_snapshot(
+            target.clone(),
+            target_window.window_id(),
+            target_facts_generation,
+        );
+
+        let delivery = DockDropDelivery::from_authorized_route_request_with_resolved_target(
+            &request,
+            DockViewportDropRoute::KnownViewport {
+                target: DockViewportTargetHit::with_facts_generation(
+                    target,
+                    target_window,
+                    known_position,
+                    target_facts_generation,
+                ),
+                authority: DockViewportRouteAuthority::TrustedPlatform,
+            }
+            .into_authorized_drop_route()
+            .expect("known viewport route should be authorized"),
+            Some(resolved_target.clone()),
+        )
+        .expect("resolved known viewport route should derive a delivery");
+        let DockDropDeliveryKind::Workspace(known) = delivery.kind() else {
+            panic!("resolved known viewport route should derive a workspace commit");
+        };
+        assert_eq!(delivery.drag_session_id(), Some(drag_session.id()));
+        assert_eq!(delivery.source_space(), &source);
+        assert_eq!(delivery.source_node(), source_tabs);
+        assert_eq!(delivery.payload(), &DockViewportDropPayload::Item(item));
+        assert_eq!(known, &resolved_target);
     }
 
     #[test]
@@ -1096,18 +1454,15 @@ mod tests {
         )
         .with_drag_session(Some(drag_session.clone()))
         .with_tear_off_geometry(Some(tear_off_geometry));
-        let mismatched_route = DockViewportDropRoute::TearOff(DockViewportTearOffRequest::new(
-            space("other"),
-            source_tabs,
-            DockViewportDropPayload::Tabs,
-            point(px(1.0), px(2.0)),
-            None,
-        ));
+        let route = DockViewportDropRoute::TearOff;
 
         assert_eq!(
-            DockDropDelivery::from_route_request(&request, mismatched_route),
-            DockDropDelivery::TearOff(
-                DockViewportTearOffRequest::new(
+            DockDropDelivery::from_route_request(&request, route)
+                .expect("tear-off route should derive a delivery")
+                .tear_off_request()
+                .as_ref(),
+            Some(
+                &DockViewportTearOffRequest::new(
                     source,
                     source_tabs,
                     DockViewportDropPayload::Item(item),
@@ -1127,7 +1482,6 @@ mod tests {
         let target_window = handle(2);
         let target_context = DockViewportTargetContext::new()
             .with_hovered_window(target_window)
-            .with_active_window(source_window)
             .with_window_stack([target_window, source_window]);
         let request = DockViewportDropRouteRequest::from_platform_signals(
             source,
@@ -1139,5 +1493,38 @@ mod tests {
         );
 
         assert_eq!(request.target_context(), &target_context);
+    }
+
+    fn resolved_drop_target_snapshot(
+        target_space: DockSpaceId,
+        target_window_id: WindowId,
+        facts_generation: u64,
+    ) -> DockViewportResolvedDropTargetSnapshot {
+        let mut registry = DockViewportHostSceneRegistry::default();
+        let frame = registry
+            .register(DockViewportHostSceneSnapshot::new(
+                target_space.clone(),
+                target_window_id,
+                bounds(0.0, 0.0, 320.0, 240.0),
+                bounds(0.0, 0.0, 320.0, 240.0),
+                point(px(0.0), px(0.0)),
+            ))
+            .frame;
+        DockViewportResolvedDropTargetSnapshot::new(
+            target_space.clone(),
+            Some(target_window_id),
+            frame,
+            Some(facts_generation),
+            DockResolvedDropTarget {
+                kind: DockResolvedDropTargetKind::EmptyDockSpace {
+                    space: target_space,
+                    is_central: false,
+                },
+                source: DockDropResolveSource::EmptyDockSpace,
+                drop_box: None,
+                preview_bounds: Some(bounds(0.0, 0.0, 320.0, 240.0)),
+                is_central_region: false,
+            },
+        )
     }
 }

@@ -1132,6 +1132,11 @@ impl App {
         self.platform.viewport_capabilities()
     }
 
+    /// Returns the application window currently under the mouse cursor, if the platform can report it.
+    pub fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        self.platform.hovered_window()
+    }
+
     /// Returns a handle to the window that is currently focused at the platform level, if one exists.
     pub fn active_window(&self) -> Option<AnyWindowHandle> {
         self.platform.active_window()

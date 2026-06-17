@@ -10,6 +10,12 @@ pub(crate) enum DockHostPanelRenderResolution {
     Missing { prefix: String, item: DockItemId },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockFloatingChromeTarget {
+    SingleTabs(DockNodeId),
+    AmbiguousSplit,
+}
+
 /// Read-only docking state captured for one GPUI render pass.
 ///
 /// Render code reads this session instead of repeatedly reaching through `DockHost` into the
@@ -24,6 +30,7 @@ pub(crate) struct DockHostRenderSession {
     panels: HashMap<DockItemId, DockPanelRenderRegistration>,
     panel_titles: HashMap<DockItemId, String>,
     panel_closable: HashMap<DockItemId, bool>,
+    selected_tabs: Vec<(DockNodeId, DockItemId)>,
     central_node: Option<DockNodeId>,
     central_keep_alive_when_empty: bool,
     central_passthrough_when_empty: bool,
@@ -43,6 +50,7 @@ impl DockHostRenderSession {
             panels: HashMap::new(),
             panel_titles: HashMap::new(),
             panel_closable: HashMap::new(),
+            selected_tabs: Vec::new(),
             central_node: central.and_then(|central| central.node),
             central_keep_alive_when_empty: central
                 .is_some_and(|central| central.keep_alive_when_empty),
@@ -76,7 +84,7 @@ impl DockHostRenderSession {
                 }
             }
             DockNode::Tabs { items, selected } => {
-                self.collect_tab_stack(workspace, items, selected);
+                self.collect_tab_stack(workspace, node_id, items, selected);
             }
             DockNode::Floating { child } => {
                 self.collect_subtree(workspace, *child);
@@ -89,6 +97,7 @@ impl DockHostRenderSession {
     fn collect_tab_stack(
         &mut self,
         workspace: &DockWorkspace,
+        tabs: DockNodeId,
         items: &[DockItemId],
         selected: &Option<DockItemId>,
     ) {
@@ -97,6 +106,7 @@ impl DockHostRenderSession {
         }
 
         if let Some(selected_item) = selected_tab_item(items, selected) {
+            self.selected_tabs.push((tabs, selected_item.clone()));
             self.collect_panel_registration(workspace, selected_item);
         }
     }
@@ -137,6 +147,10 @@ impl DockHostRenderSession {
         self.root
     }
 
+    pub(crate) fn selected_tabs(&self) -> &[(DockNodeId, DockItemId)] {
+        &self.selected_tabs
+    }
+
     pub(crate) fn node(&self, node_id: DockNodeId) -> Option<&DockNode> {
         self.nodes.get(&node_id)
     }
@@ -162,18 +176,35 @@ impl DockHostRenderSession {
         }
     }
 
-    pub(crate) fn first_tabs_in_subtree(&self, node_id: DockNodeId) -> Option<DockNodeId> {
+    pub(crate) fn floating_chrome_target(
+        &self,
+        node_id: DockNodeId,
+    ) -> Option<DockFloatingChromeTarget> {
         match self.node(node_id)? {
-            DockNode::Tabs { .. } => Some(node_id),
-            DockNode::Split { children, .. } => children
-                .iter()
-                .find_map(|child| self.first_tabs_in_subtree(*child)),
-            DockNode::Floating { child } => self.first_tabs_in_subtree(*child),
+            DockNode::Floating { child } => match self.node(*child)? {
+                DockNode::Tabs { .. } => Some(DockFloatingChromeTarget::SingleTabs(*child)),
+                DockNode::Split { .. } | DockNode::Floating { .. } => {
+                    Some(DockFloatingChromeTarget::AmbiguousSplit)
+                }
+            },
+            DockNode::Tabs { .. } => Some(DockFloatingChromeTarget::SingleTabs(node_id)),
+            DockNode::Split { .. } => Some(DockFloatingChromeTarget::AmbiguousSplit),
         }
     }
 
     pub(crate) fn floating_containers(&self) -> &[DockFloatingContainer] {
         &self.floating_containers
+    }
+
+    pub(crate) fn visible_panel_items(&self) -> Vec<DockItemId> {
+        let mut items = Vec::new();
+        if let Some(root) = self.root {
+            self.collect_visible_panel_items_in_subtree(root, &mut items);
+        }
+        for container in &self.floating_containers {
+            self.collect_visible_panel_items_in_subtree(container.node, &mut items);
+        }
+        items
     }
 
     pub(crate) fn empty_message(&self) -> &str {
@@ -189,20 +220,17 @@ impl DockHostRenderSession {
             .is_some_and(|central| self.subtree_contains(central, node_id))
     }
 
-    pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> DockNodeId {
+    pub(crate) fn drop_root_for_tabs(&self, tabs: DockNodeId) -> Option<DockNodeId> {
         if let Some(root) = self.root
             && self.subtree_contains(root, tabs)
         {
-            return root;
+            return Some(root);
         }
 
-        self.floating_containers
-            .iter()
-            .find_map(|container| {
-                self.subtree_contains(container.node, tabs)
-                    .then_some(container.node)
-            })
-            .unwrap_or(tabs)
+        self.floating_containers.iter().find_map(|container| {
+            self.subtree_contains(container.node, tabs)
+                .then_some(container.node)
+        })
     }
 
     pub(crate) fn central_child_index(&self, children: &[DockNodeId]) -> Option<usize> {
@@ -269,6 +297,35 @@ impl DockHostRenderSession {
             Some(DockNode::Tabs { .. }) | None => false,
         }
     }
+
+    fn collect_visible_panel_items_in_subtree(
+        &self,
+        node_id: DockNodeId,
+        items: &mut Vec<DockItemId>,
+    ) {
+        let Some(node) = self.node(node_id) else {
+            return;
+        };
+
+        match node {
+            DockNode::Tabs {
+                items: tabs,
+                selected,
+            } => {
+                if let Some(item) = selected_tab_item(tabs, selected) {
+                    items.push(item.clone());
+                }
+            }
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.collect_visible_panel_items_in_subtree(*child, items);
+                }
+            }
+            DockNode::Floating { child } => {
+                self.collect_visible_panel_items_in_subtree(*child, items);
+            }
+        }
+    }
 }
 
 impl DockHost {
@@ -282,7 +339,6 @@ pub(crate) fn selected_index(items: &[DockItemId], selected: &Option<DockItemId>
     selected
         .as_ref()
         .and_then(|selected| items.iter().position(|item| item == selected))
-        .or_else(|| (!items.is_empty()).then_some(0))
 }
 
 fn selected_tab_item<'a>(
@@ -320,6 +376,25 @@ mod tests {
     }
 
     #[test]
+    fn render_session_does_not_repair_invalid_tab_selection() {
+        let mut graph = DockGraph::new();
+        let root = graph.insert_node(DockNode::Tabs {
+            items: vec![item("a"), item("b")],
+            selected: Some(item("missing")),
+        });
+        graph.set_root(space(), root);
+        let mut workspace = DockWorkspace::new(space(), graph);
+        workspace.register_panel_factory("a", "A", |_| unreachable!());
+        workspace.register_panel_factory("b", "B", |_| unreachable!());
+
+        let session = DockHostRenderSession::new(space(), &workspace);
+
+        assert_eq!(session.selected_tabs(), &[]);
+        assert!(!session.panels.contains_key(&item("a")));
+        assert!(!session.panels.contains_key(&item("b")));
+    }
+
+    #[test]
     fn render_session_resolves_floating_title_from_snapshot() {
         let (graph, _root, floating) = floating_overlay_graph();
         let mut workspace = DockWorkspace::new(space(), graph);
@@ -330,14 +405,24 @@ mod tests {
 
         assert!(session.floating_child(floating).is_some());
         assert_eq!(session.floating_title(floating), "Floating A");
+        assert_eq!(
+            session.floating_chrome_target(floating),
+            session
+                .floating_child(floating)
+                .map(DockFloatingChromeTarget::SingleTabs)
+        );
     }
 
     #[test]
-    fn render_session_uses_floating_root_as_drop_root_for_floating_tabs() {
+    fn render_session_marks_split_floating_chrome_as_ambiguous() {
         let mut graph = DockGraph::new();
         let root = graph.insert_node(DockNode::Tabs {
             items: vec![item("root")],
             selected: Some(item("root")),
+        });
+        let orphan = graph.insert_node(DockNode::Tabs {
+            items: vec![item("orphan")],
+            selected: Some(item("orphan")),
         });
         graph.set_root(space(), root);
         let left = graph.insert_node(DockNode::Tabs {
@@ -367,9 +452,14 @@ mod tests {
 
         let session = DockHostRenderSession::new(space(), &workspace);
 
-        assert_eq!(session.drop_root_for_tabs(left), floating);
-        assert_eq!(session.drop_root_for_tabs(right), floating);
-        assert_eq!(session.drop_root_for_tabs(root), root);
+        assert_eq!(
+            session.floating_chrome_target(floating),
+            Some(DockFloatingChromeTarget::AmbiguousSplit)
+        );
+        assert_eq!(session.drop_root_for_tabs(left), Some(floating));
+        assert_eq!(session.drop_root_for_tabs(right), Some(floating));
+        assert_eq!(session.drop_root_for_tabs(root), Some(root));
+        assert_eq!(session.drop_root_for_tabs(orphan), None);
     }
 
     #[test]

@@ -3,13 +3,13 @@ use crate::{
     debug::DockDebugRegion,
     drag::{DockDragPayload, DockDragPayloadKind, DockDragPreview, DockDragTearOffGeometry},
     drop_scene_fact,
-    host_render_session::DockHostRenderSession,
+    host_render_session::{DockFloatingChromeTarget, DockHostRenderSession},
     render::DockViewportHostSceneFrameSlot,
 };
 use open_gpui::{
     AnyElement, AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, StatefulInteractiveElement,
-    Styled, canvas, div, px, rgb, rgba, white,
+    Styled, Window, canvas, div, px, rgb, rgba, white,
 };
 
 impl DockHost {
@@ -19,6 +19,7 @@ impl DockHost {
         child: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -32,7 +33,7 @@ impl DockHost {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .child(self.render_node(child, session, viewport_host_scene_frame, cx))
+            .child(self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .into_any_element()
     }
 
@@ -41,6 +42,7 @@ impl DockHost {
         container: DockFloatingContainer,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -56,7 +58,7 @@ impl DockHost {
         let child = session.floating_child(container.node);
         let bounds = container.bounds;
         let content = child
-            .map(|child| self.render_node(child, session, viewport_host_scene_frame, cx))
+            .map(|child| self.render_node(child, session, viewport_host_scene_frame, window, cx))
             .unwrap_or_else(|| self.render_missing_node(container.node, session));
         let title = child
             .map(|child| session.floating_title(child))
@@ -117,7 +119,7 @@ impl DockHost {
         let floating = container.node;
         let bounds = container.bounds;
         let entity = cx.entity();
-        let primary_tabs = session.first_tabs_in_subtree(floating);
+        let chrome_target = session.floating_chrome_target(floating);
 
         let mut handle = div()
             .id(selector.clone())
@@ -135,7 +137,7 @@ impl DockHost {
             .text_sm()
             .cursor_pointer();
 
-        if let Some(target_tabs) = primary_tabs {
+        if let Some(DockFloatingChromeTarget::SingleTabs(target_tabs)) = chrome_target {
             if let Some(probe) = self.render_viewport_drop_scene_fact_probe(
                 viewport_host_scene_frame,
                 move |title_bounds| {

@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 use slotmap::Key;
 
@@ -106,7 +106,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(floating_tabs),
+                target: DockGraphDropTarget::center(floating_tabs),
             })
             .expect_err("floating cannot merge into its own tabs"),
         DockGraphMutationError::CannotMergeFloatingIntoOwnSubtree {
@@ -121,7 +121,7 @@ fn checked_floating_runtime_ops_report_specific_errors_without_mutation() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(orphan_tabs),
+                target: DockGraphDropTarget::center(orphan_tabs),
             })
             .expect_err("merge target outside space should be reported"),
         DockGraphMutationError::TargetNodeNotInSpace {
@@ -158,7 +158,7 @@ fn merge_floating_into_moves_items_and_removes_floating() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
             .expect("floating merge should commit")
     );
@@ -199,7 +199,7 @@ fn merge_floating_tabs_preserves_selected_item() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
             .expect("floating merge should commit")
     );
@@ -211,7 +211,244 @@ fn merge_floating_tabs_preserves_selected_item() {
     assert_eq!(items, &vec![item("root"), item("a"), item("b")]);
     assert_eq!(selected.as_ref(), items.get(2));
     assert!(graph.floating_containers(&space()).is_empty());
+    assert!(
+        graph.node(floating).is_none(),
+        "merged floating wrapper should be deleted"
+    );
+    assert!(
+        graph.node(floating_tabs).is_none(),
+        "merged floating payload tabs should be deleted"
+    );
     graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn merge_floating_tabs_into_tab_bar_uses_insert_index() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root-a"), item("root-b")],
+        selected: Some(item("root-a")),
+    });
+    graph.set_root(space(), root);
+    let floating_tabs = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("b")),
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_tabs,
+    });
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    assert!(
+        graph
+            .apply_op_checked(&DockOp::MoveFloating {
+                source_space: space(),
+                floating,
+                target_space: space(),
+                target: DockGraphDropTarget::tab_bar(root, 1),
+            })
+            .expect("floating tabs tab-bar merge should commit")
+    );
+
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected root tabs");
+    };
+    assert_eq!(
+        items,
+        &vec![item("root-a"), item("a"), item("b"), item("root-b")]
+    );
+    assert_eq!(selected.as_ref(), items.get(2));
+    assert!(graph.floating_containers(&space()).is_empty());
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn merge_visible_split_floating_into_center_is_rejected_without_flattening() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_child = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.3, 0.7],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_child,
+    });
+    graph.set_root(space(), root);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveFloating {
+            source_space: space(),
+            floating,
+            target_space: space(),
+            target: DockGraphDropTarget::center(root),
+        })
+        .expect_err("visible split floating payload should not be center-flattened");
+
+    assert_eq!(
+        err,
+        DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+            payload: floating_child,
+            target: root,
+        }
+    );
+    assert_eq!(graph.floating_containers(&space())[0].node, floating);
+    assert!(
+        matches!(graph.node(floating), Some(DockNode::Floating { child }) if *child == floating_child)
+    );
+    assert_eq!(
+        graph.collect_items_in_subtree(floating_child),
+        vec![item("a"), item("b")]
+    );
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs should remain")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(items, &vec![item("root")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+}
+
+#[test]
+fn merge_visible_split_floating_into_tab_bar_is_rejected_without_flattening() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root-a"), item("root-b")],
+        selected: Some(item("root-a")),
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_child = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.3, 0.7],
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: floating_child,
+    });
+    graph.set_root(space(), root);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveFloating {
+            source_space: space(),
+            floating,
+            target_space: space(),
+            target: DockGraphDropTarget::tab_bar(root, 1),
+        })
+        .expect_err("visible split floating payload should not be tab-bar flattened");
+
+    assert_eq!(
+        err,
+        DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+            payload: floating_child,
+            target: root,
+        }
+    );
+    assert_eq!(graph.floating_containers(&space())[0].node, floating);
+    assert!(
+        matches!(graph.node(floating), Some(DockNode::Floating { child }) if *child == floating_child)
+    );
+    assert_eq!(
+        graph.collect_items_in_subtree(floating_child),
+        vec![item("a"), item("b")]
+    );
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs should remain")
+    else {
+        panic!("root should be tabs");
+    };
+    assert_eq!(items, &vec![item("root-a"), item("root-b")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+}
+
+#[test]
+fn merge_wrapped_split_floating_into_center_is_rejected_without_flattening() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("root")],
+        selected: Some(item("root")),
+    });
+    let floating_left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let floating_right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let floating_split = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![floating_left, floating_right],
+        fractions: vec![0.3, 0.7],
+    });
+    let wrapped_child = graph.insert_node(DockNode::Floating {
+        child: floating_split,
+    });
+    let floating = graph.insert_node(DockNode::Floating {
+        child: wrapped_child,
+    });
+    graph.set_root(space(), root);
+    graph
+        .floating_containers_mut(space())
+        .push(DockFloatingContainer {
+            node: floating,
+            bounds: dock_bounds(10.0, 20.0, 300.0, 200.0),
+        });
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveFloating {
+            source_space: space(),
+            floating,
+            target_space: space(),
+            target: DockGraphDropTarget::center(root),
+        })
+        .expect_err("wrapped visible split floating payload should not be center-flattened");
+
+    assert_eq!(
+        err,
+        DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+            payload: wrapped_child,
+            target: root,
+        }
+    );
+    assert_eq!(
+        graph.collect_items_in_space(&space()),
+        vec![item("root"), item("a"), item("b")]
+    );
+    assert_eq!(graph.floating_containers(&space())[0].node, floating);
 }
 
 #[test]
@@ -251,7 +488,7 @@ fn move_floating_edge_preserves_child_subtree() {
                 source_space: space(),
                 floating,
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("floating edge drop should be valid")
     );
@@ -306,7 +543,7 @@ fn move_floating_to_empty_space_promotes_child_as_root() {
                 source_space: space(),
                 floating,
                 target_space: detached.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("floating tear-off move should be valid")
     );
@@ -349,7 +586,7 @@ fn move_floating_to_empty_space_rebinds_empty_central_region() {
                 source_space: space(),
                 floating,
                 target_space: central.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("moving floating content into an empty central space should create a root")
     );

@@ -83,12 +83,29 @@ impl DockViewportTargetHit {
 /// Confidence assigned to a resolved viewport target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DockViewportTargetConfidence {
-    /// The target is backed by current hovered/window-stack arbitration or is the only live hit.
-    Trusted,
+    /// Backend/platform hovered-window authority matched the target.
+    TrustedHovered,
+    /// The event receiver owns the only live hit and no stronger signal conflicts.
+    TrustedEventReceiver,
+    /// Exactly one live rectangle hit exists and no current platform signal conflicts with it.
+    UniqueGeometryHit,
+    /// A platform window-stack/focus fallback selected a diagnostic target.
+    WindowStackFallback,
     /// Multiple live hits overlap and no platform signal can arbitrate them.
     Ambiguous,
     /// Platform signals existed but none matched the live hits; the result is only stable fallback.
     FallbackOnly,
+}
+
+/// Commit authority derived from viewport hit arbitration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DockViewportRouteAuthority {
+    /// Current backend/platform signal authorizes this viewport.
+    TrustedPlatform,
+    /// The point has exactly one non-conflicting live geometry hit.
+    UniqueGeometry,
+    /// The target is useful for diagnostics or preview ranking only.
+    DiagnosticOnly,
 }
 
 /// A viewport target plus whether it may be used as commit authority.
@@ -102,7 +119,13 @@ pub(crate) struct DockViewportTargetResolution {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DockViewportHoverArbitration {
     /// A route-authoritative viewport target was selected.
-    Trusted(DockViewportTargetHit),
+    TrustedHovered(DockViewportTargetHit),
+    /// The event receiver owns the only live hit and can commit locally.
+    TrustedEventReceiver(DockViewportTargetHit),
+    /// Exactly one live rectangle hit exists and no current platform signal conflicts with it.
+    UniqueGeometryHit(DockViewportTargetHit),
+    /// Window-stack/focus fallback selected a diagnostic target, but it is not commit authority.
+    WindowStackFallback(DockViewportTargetHit),
     /// Multiple live hits overlap and no trusted signal can pick one.
     Ambiguous(DockViewportTargetHit),
     /// A deterministic diagnostic target exists, but current signals do not authorize it.
@@ -136,17 +159,52 @@ impl DockViewportTargetResolution {
         self.confidence
     }
 
-    pub(crate) fn is_trusted(&self) -> bool {
-        self.confidence == DockViewportTargetConfidence::Trusted
+    pub(crate) fn route_authority(&self) -> DockViewportRouteAuthority {
+        match self.confidence {
+            DockViewportTargetConfidence::TrustedHovered
+            | DockViewportTargetConfidence::TrustedEventReceiver => {
+                DockViewportRouteAuthority::TrustedPlatform
+            }
+            DockViewportTargetConfidence::UniqueGeometryHit => {
+                DockViewportRouteAuthority::UniqueGeometry
+            }
+            DockViewportTargetConfidence::WindowStackFallback
+            | DockViewportTargetConfidence::Ambiguous
+            | DockViewportTargetConfidence::FallbackOnly => {
+                DockViewportRouteAuthority::DiagnosticOnly
+            }
+        }
+    }
+}
+
+impl DockViewportRouteAuthority {
+    pub(crate) fn can_authorize_known_viewport_route(self) -> bool {
+        matches!(self, Self::TrustedPlatform | Self::UniqueGeometry)
+    }
+
+    pub(crate) fn can_authorize_local_route(self) -> bool {
+        matches!(self, Self::TrustedPlatform)
     }
 }
 
 impl DockViewportHoverArbitration {
     fn into_resolution(self) -> Option<DockViewportTargetResolution> {
         match self {
-            Self::Trusted(target) => Some(DockViewportTargetResolution::new(
+            Self::TrustedHovered(target) => Some(DockViewportTargetResolution::new(
                 target,
-                DockViewportTargetConfidence::Trusted,
+                DockViewportTargetConfidence::TrustedHovered,
+            )),
+            Self::TrustedEventReceiver(target) => Some(DockViewportTargetResolution::new(
+                target,
+                DockViewportTargetConfidence::TrustedEventReceiver,
+            )),
+            Self::UniqueGeometryHit(target) => Some(DockViewportTargetResolution::new(
+                target,
+                DockViewportTargetConfidence::UniqueGeometryHit,
+            )),
+            Self::WindowStackFallback(target) => Some(DockViewportTargetResolution::new(
+                target,
+                DockViewportTargetConfidence::WindowStackFallback,
             )),
             Self::Ambiguous(target) => Some(DockViewportTargetResolution::new(
                 target,
@@ -168,20 +226,44 @@ impl<'a> DockViewportHoverArbiter<'a> {
 
     pub(crate) fn resolve(self, hits: Vec<DockViewportTargetHit>) -> DockViewportHoverArbitration {
         let hit_count = hits.len();
-        let Some(target) = choose_viewport_target(hits, self.context) else {
+        let Some(target) = choose_diagnostic_viewport_target(hits, self.context) else {
             return DockViewportHoverArbitration::Unavailable;
         };
 
-        if self.is_trusted_route_target(target.window_id()) {
-            return DockViewportHoverArbitration::Trusted(target);
+        if self.context.hovered_window() == Some(target.window_id()) {
+            return DockViewportHoverArbitration::TrustedHovered(target);
         }
 
-        if hit_count == 1
-            && !self
+        if hit_count == 1 {
+            if self
                 .context
-                .has_unmatched_arbitration_signal(target.window_id())
-        {
-            return DockViewportHoverArbitration::Trusted(target);
+                .event_receiver_window()
+                .is_some_and(|window_id| window_id == target.window_id())
+                && !self
+                    .context
+                    .has_conflicting_hovered_window(target.window_id())
+            {
+                return DockViewportHoverArbitration::TrustedEventReceiver(target);
+            }
+
+            if self.context.hovered_window_known_empty() {
+                return DockViewportHoverArbitration::FallbackOnly(target);
+            }
+
+            if !self
+                .context
+                .has_conflicting_single_hit_signal(target.window_id())
+            {
+                return DockViewportHoverArbitration::UniqueGeometryHit(target);
+            }
+        }
+
+        if self.context.hovered_window_known_empty() {
+            return DockViewportHoverArbitration::FallbackOnly(target);
+        }
+
+        if self.context.window_stack_contains(target.window_id()) {
+            return DockViewportHoverArbitration::WindowStackFallback(target);
         }
 
         if self.context.has_arbitration_signal() {
@@ -190,14 +272,9 @@ impl<'a> DockViewportHoverArbiter<'a> {
             DockViewportHoverArbitration::Ambiguous(target)
         }
     }
-
-    fn is_trusted_route_target(&self, window_id: WindowId) -> bool {
-        self.context.hovered_window() == Some(window_id)
-            || self.context.window_stack().contains(&window_id)
-    }
 }
 
-pub(crate) fn choose_viewport_target(
+pub(crate) fn choose_diagnostic_viewport_target(
     hits: Vec<DockViewportTargetHit>,
     context: &DockViewportTargetContext,
 ) -> Option<DockViewportTargetHit> {
@@ -227,27 +304,19 @@ mod tests {
     }
 
     #[test]
-    fn viewport_target_prefers_hovered_active_then_window_stack() {
+    fn diagnostic_viewport_target_prefers_hovered_then_window_stack() {
         let first = handle(1);
         let second = handle(2);
         let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
 
         assert_eq!(
-            choose_viewport_target(hits(), &DockViewportTargetContext::new())
+            choose_diagnostic_viewport_target(hits(), &DockViewportTargetContext::new())
                 .map(|hit| hit.space().clone()),
             Some(space("alpha")),
             "default fallback should preserve deterministic candidate order"
         );
         assert_eq!(
-            choose_viewport_target(
-                hits(),
-                &DockViewportTargetContext::new().with_active_window(second),
-            )
-            .map(|hit| hit.space().clone()),
-            Some(space("zeta"))
-        );
-        assert_eq!(
-            choose_viewport_target(
+            choose_diagnostic_viewport_target(
                 hits(),
                 &DockViewportTargetContext::new().with_window_stack([second, first]),
             )
@@ -255,11 +324,10 @@ mod tests {
             Some(space("zeta"))
         );
         assert_eq!(
-            choose_viewport_target(
+            choose_diagnostic_viewport_target(
                 hits(),
                 &DockViewportTargetContext::new()
                     .with_hovered_window(first)
-                    .with_active_window(second)
                     .with_window_stack([second, first]),
             )
             .map(|hit| hit.space().clone()),
@@ -281,7 +349,10 @@ mod tests {
             ambiguous.confidence(),
             DockViewportTargetConfidence::Ambiguous
         );
-        assert!(!ambiguous.is_trusted());
+        assert_eq!(
+            ambiguous.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
 
         let hovered = resolve_viewport_target_with_confidence(
             hits(),
@@ -289,39 +360,46 @@ mod tests {
         )
         .expect("hovered window should resolve a target");
         assert_eq!(hovered.target().space(), &space("zeta"));
-        assert_eq!(hovered.confidence(), DockViewportTargetConfidence::Trusted);
-        assert!(hovered.is_trusted());
+        assert_eq!(
+            hovered.confidence(),
+            DockViewportTargetConfidence::TrustedHovered
+        );
+        assert_eq!(
+            hovered.route_authority(),
+            DockViewportRouteAuthority::TrustedPlatform
+        );
 
         let stacked = resolve_viewport_target_with_confidence(
             hits(),
             &DockViewportTargetContext::new().with_window_stack([second, first]),
         )
-        .expect("window stack should resolve a target");
+        .expect("window stack should still produce a diagnostic candidate");
         assert_eq!(stacked.target().space(), &space("zeta"));
-        assert_eq!(stacked.confidence(), DockViewportTargetConfidence::Trusted);
-        assert!(stacked.is_trusted());
-
-        let active_only = resolve_viewport_target_with_confidence(
-            hits(),
-            &DockViewportTargetContext::new().with_active_window(second),
-        )
-        .expect("active-only target should still be reported for diagnostics");
-        assert_eq!(active_only.target().space(), &space("zeta"));
         assert_eq!(
-            active_only.confidence(),
-            DockViewportTargetConfidence::FallbackOnly,
-            "active-window alone is not trusted hover/topmost arbitration"
+            stacked.confidence(),
+            DockViewportTargetConfidence::WindowStackFallback
         );
-        assert!(!active_only.is_trusted());
-
-        let fallback_only = resolve_viewport_target_with_confidence(
-            hits(),
-            &DockViewportTargetContext::new().with_active_window(handle(9)),
-        )
-        .expect("fallback-only target should still be reported for diagnostics");
         assert_eq!(
-            fallback_only.confidence(),
-            DockViewportTargetConfidence::FallbackOnly
+            stacked.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
+
+        let hovered_known_empty = resolve_viewport_target_with_confidence(
+            hits(),
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([second, first]),
+        )
+        .expect("window stack should still produce a diagnostic candidate");
+        assert_eq!(hovered_known_empty.target().space(), &space("zeta"));
+        assert_eq!(
+            hovered_known_empty.confidence(),
+            DockViewportTargetConfidence::FallbackOnly,
+            "window stack must not authorize a route when the platform says no app window is hovered"
+        );
+        assert_eq!(
+            hovered_known_empty.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
         );
 
         let single = resolve_viewport_target_with_confidence(
@@ -329,18 +407,134 @@ mod tests {
             &DockViewportTargetContext::new(),
         )
         .expect("single hit should resolve");
-        assert_eq!(single.confidence(), DockViewportTargetConfidence::Trusted);
+        assert_eq!(
+            single.confidence(),
+            DockViewportTargetConfidence::UniqueGeometryHit
+        );
+        assert_eq!(
+            single.route_authority(),
+            DockViewportRouteAuthority::UniqueGeometry,
+            "unique non-conflicting geometry may authorize a cross-viewport route without pretending to be platform authority"
+        );
+
+        let single_hovered_known_empty = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", first)],
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_window_stack([first]),
+        )
+        .expect("single hit should still be reported for diagnostics");
+        assert_eq!(
+            single_hovered_known_empty.confidence(),
+            DockViewportTargetConfidence::FallbackOnly,
+            "trusted hovered=None must block even a single matching app-window hit"
+        );
+        assert_eq!(
+            single_hovered_known_empty.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
 
         let single_unmatched_signal = resolve_viewport_target_with_confidence(
             vec![candidate("alpha", first)],
-            &DockViewportTargetContext::new().with_active_window(second),
+            &DockViewportTargetContext::new().with_window_stack([second]),
         )
         .expect("single hit should still be reported for diagnostics");
         assert_eq!(
             single_unmatched_signal.confidence(),
             DockViewportTargetConfidence::FallbackOnly,
-            "a single rectangle hit is not trusted when platform arbitration points elsewhere"
+            "a single rectangle hit should be diagnostic-only when trusted arbitration points elsewhere"
         );
-        assert!(!single_unmatched_signal.is_trusted());
+        assert_eq!(
+            single_unmatched_signal.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
+    }
+
+    #[test]
+    fn event_receiver_window_does_not_authorize_overlap_commit() {
+        let first = handle(1);
+        let second = handle(2);
+        let hits = || vec![candidate("alpha", first), candidate("zeta", second)];
+
+        let resolved = resolve_viewport_target_with_confidence(
+            hits(),
+            &DockViewportTargetContext::new().with_event_receiver_window(second),
+        )
+        .expect("event receiver window should still produce a diagnostic candidate");
+
+        assert_eq!(resolved.target().space(), &space("alpha"));
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::FallbackOnly
+        );
+        assert_eq!(
+            resolved.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
+    }
+
+    #[test]
+    fn event_receiver_window_authorizes_single_hit_even_when_hovered_window_is_known_empty() {
+        let window = handle(1);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", window)],
+            &DockViewportTargetContext::new()
+                .with_hovered_window_known_empty()
+                .with_event_receiver_window(window),
+        )
+        .expect("event receiver should resolve its single hit");
+
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::TrustedEventReceiver
+        );
+        assert_eq!(
+            resolved.route_authority(),
+            DockViewportRouteAuthority::TrustedPlatform
+        );
+    }
+
+    #[test]
+    fn event_receiver_window_alone_keeps_single_hit_authority() {
+        let window = handle(1);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", window)],
+            &DockViewportTargetContext::new().with_event_receiver_window(window),
+        )
+        .expect("single geometry hit should still resolve");
+
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::TrustedEventReceiver
+        );
+        assert_eq!(
+            resolved.route_authority(),
+            DockViewportRouteAuthority::TrustedPlatform
+        );
+    }
+
+    #[test]
+    fn event_receiver_window_does_not_override_conflicting_hovered_window() {
+        let first = handle(1);
+        let second = handle(2);
+
+        let resolved = resolve_viewport_target_with_confidence(
+            vec![candidate("alpha", first)],
+            &DockViewportTargetContext::new()
+                .with_event_receiver_window(first)
+                .with_hovered_window(second),
+        )
+        .expect("event receiver should still resolve diagnostics");
+
+        assert_eq!(
+            resolved.confidence(),
+            DockViewportTargetConfidence::FallbackOnly
+        );
+        assert_eq!(
+            resolved.route_authority(),
+            DockViewportRouteAuthority::DiagnosticOnly
+        );
     }
 }

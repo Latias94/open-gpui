@@ -1,6 +1,8 @@
-use crate::{DockGraphMutationError, DockItemId, DockMoveTarget, DockNodeId, DockOp, DockSpaceId};
+use crate::{
+    DockGraphDropTarget, DockGraphMutationError, DockItemId, DockNodeId, DockOp, DockSpaceId,
+};
 
-use super::{DockGraph, DropZone};
+use super::{DockGraph, DockNode, DropZone};
 
 impl DockGraph {
     /// Applies an operation with validation for the common error-prone cases.
@@ -19,7 +21,7 @@ impl DockGraph {
                     DockTreeMutationExpectation::ValidateOnly,
                 ))
             }
-            DockOp::CloseItem { space, item } => {
+            DockOp::CloseItem { space, item, .. } => {
                 if self.find_item_in_space(space, item).is_none() {
                     return Err(DockGraphMutationError::ItemNotFound {
                         space: space.clone(),
@@ -66,10 +68,19 @@ impl DockGraph {
             } => {
                 self.validate_move_item(source_space, item, target_space, *target)?;
                 if source_space == target_space
-                    && self
-                        .find_item_in_space(source_space, item)
-                        .is_some_and(|(source_tabs, _)| target.noop_tabs() == Some(source_tabs))
-                    && target.insert_index().is_none()
+                    && self.find_item_in_space(source_space, item).is_some_and(
+                        |(source_tabs, source_index)| match target {
+                            DockGraphDropTarget::Center { tabs } => *tabs == source_tabs,
+                            DockGraphDropTarget::TabBar { tabs, insert_index } => {
+                                *tabs == source_tabs
+                                    && (*insert_index == source_index
+                                        || *insert_index == source_index.saturating_add(1))
+                            }
+                            DockGraphDropTarget::Edge { .. } | DockGraphDropTarget::EmptySpace => {
+                                false
+                            }
+                        },
+                    )
                 {
                     return Ok(false);
                 }
@@ -89,8 +100,12 @@ impl DockGraph {
             } => {
                 self.validate_move_tabs(source_space, *source_tabs, target_space, *target)?;
                 if source_space == target_space
-                    && target.noop_tabs() == Some(*source_tabs)
-                    && target.insert_index().is_none()
+                    && matches!(target, DockGraphDropTarget::Center { tabs } if *tabs == *source_tabs)
+                {
+                    return Ok(false);
+                }
+                if source_space == target_space
+                    && matches!(target, DockGraphDropTarget::TabBar { tabs, .. } if *tabs == *source_tabs)
                 {
                     return Ok(false);
                 }
@@ -241,9 +256,9 @@ impl DockGraph {
         source_space: &DockSpaceId,
         item: &DockItemId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<(), DockGraphMutationError> {
-        if matches!(target, DockMoveTarget::EmptySpace)
+        if matches!(target, DockGraphDropTarget::EmptySpace)
             && !self.target_space_is_empty_for_item_move(source_space, item, target_space)
         {
             return Err(DockGraphMutationError::TargetSpaceNotEmpty {
@@ -256,7 +271,7 @@ impl DockGraph {
                 item: item.clone(),
             });
         }
-        self.validate_move_target(target_space, target)?;
+        self.validate_graph_drop_target(target_space, target)?;
         Ok(())
     }
 
@@ -275,9 +290,9 @@ impl DockGraph {
         source_space: &DockSpaceId,
         source_tabs: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<(), DockGraphMutationError> {
-        if matches!(target, DockMoveTarget::EmptySpace)
+        if matches!(target, DockGraphDropTarget::EmptySpace)
             && !self.target_space_is_empty_for_tabs_move(source_space, source_tabs, target_space)
         {
             return Err(DockGraphMutationError::TargetSpaceNotEmpty {
@@ -286,7 +301,7 @@ impl DockGraph {
         }
         self.require_non_empty_tabs_node(source_tabs)?;
         self.require_source_node_in_space(source_space, source_tabs)?;
-        self.validate_move_target(target_space, target)?;
+        self.validate_graph_drop_target(target_space, target)?;
         Ok(())
     }
 
@@ -295,7 +310,7 @@ impl DockGraph {
         source_space: &DockSpaceId,
         floating: DockNodeId,
         target_space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<(), DockGraphMutationError> {
         if self.floating_container(source_space, floating).is_none() {
             return Err(DockGraphMutationError::FloatingContainerNotFound {
@@ -303,14 +318,26 @@ impl DockGraph {
                 floating,
             });
         }
-        if matches!(target, DockMoveTarget::EmptySpace)
+        if let DockGraphDropTarget::Center { tabs } | DockGraphDropTarget::TabBar { tabs, .. } =
+            target
+            && let Some(DockNode::Floating { child }) = self.node(floating)
+            && self.is_visible_split_payload(*child)
+        {
+            return Err(
+                DockGraphMutationError::VisibleSplitPayloadCannotDockOverNonEmptyTarget {
+                    payload: *child,
+                    target: tabs,
+                },
+            );
+        }
+        if matches!(target, DockGraphDropTarget::EmptySpace)
             && !self.target_space_is_empty_for_floating_move(source_space, floating, target_space)
         {
             return Err(DockGraphMutationError::TargetSpaceNotEmpty {
                 space: target_space.clone(),
             });
         }
-        self.validate_move_target(target_space, target)?;
+        self.validate_graph_drop_target(target_space, target)?;
         if let Some(target_node) = target.existing_node()
             && source_space == target_space
             && self.subtree_contains(floating, target_node)
@@ -323,26 +350,31 @@ impl DockGraph {
         Ok(())
     }
 
-    fn validate_move_target(
+    fn validate_graph_drop_target(
         &self,
         space: &DockSpaceId,
-        target: DockMoveTarget,
+        target: DockGraphDropTarget,
     ) -> Result<(), DockGraphMutationError> {
         match target {
-            DockMoveTarget::Stack { tabs, .. } => {
+            DockGraphDropTarget::Center { tabs } | DockGraphDropTarget::TabBar { tabs, .. } => {
                 self.require_target_node_in_space(space, tabs)?;
                 self.require_tabs_node(tabs)?;
             }
-            DockMoveTarget::Edge { anchor, zone } => {
-                self.require_target_node_in_space(space, anchor.node())?;
-                if zone == DropZone::Center {
+            DockGraphDropTarget::Edge { plan } => {
+                if !self.edge_dock_plan_is_current(space, plan) {
                     return Err(DockGraphMutationError::MutationInvariantViolation {
-                        op: "DockMoveTarget",
-                        reason: "edge move target cannot use center drop zone".into(),
+                        op: "DockGraphDropTarget",
+                        reason: "edge graph drop plan is no longer current".into(),
+                    });
+                }
+                if plan.drop_zone() == DropZone::Center {
+                    return Err(DockGraphMutationError::MutationInvariantViolation {
+                        op: "DockGraphDropTarget",
+                        reason: "edge graph drop target cannot use center drop zone".into(),
                     });
                 }
             }
-            DockMoveTarget::EmptySpace => {}
+            DockGraphDropTarget::EmptySpace => {}
         }
         Ok(())
     }

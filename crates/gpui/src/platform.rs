@@ -85,6 +85,8 @@ pub use visual_test::VisualTestPlatform;
 pub struct PlatformViewportCapabilities {
     /// Window bounds are reported in a shared desktop coordinate space.
     pub global_window_bounds: bool,
+    /// The platform can report the application window currently under the mouse cursor.
+    pub mouse_hovered_window: bool,
     /// The platform can report the active/focused application window.
     pub active_window: bool,
     /// The platform can report application windows in front-to-back order.
@@ -153,6 +155,9 @@ pub trait Platform: 'static {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn hovered_window(&self) -> Option<AnyWindowHandle> {
+        None
+    }
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
         None

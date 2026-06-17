@@ -19,6 +19,8 @@ pub(crate) enum DockViewportLifecycleState {
 pub(crate) enum DockViewportStaleReason {
     /// GPUI reported platform window facts changed after the last rendered host scene.
     WindowFactsChanged,
+    /// GPUI accepted a platform close request and the window is waiting for the close callback.
+    PlatformCloseRequested,
 }
 
 /// Why a registered viewport cannot currently authorize routing.
@@ -78,6 +80,13 @@ impl DockViewportLifecycleMachine {
 
     fn is_route_ready(&self) -> bool {
         matches!(self.state, DockViewportLifecycleState::RouteReady)
+    }
+
+    fn is_platform_close_requested(&self) -> bool {
+        matches!(
+            self.state,
+            DockViewportLifecycleState::Stale(DockViewportStaleReason::PlatformCloseRequested)
+        )
     }
 
     fn mark_route_ready(&mut self) {
@@ -191,6 +200,10 @@ impl DockViewportSnapshot {
         self.has_current_route_facts()
     }
 
+    pub(crate) fn is_platform_close_requested(&self) -> bool {
+        self.lifecycle.is_platform_close_requested()
+    }
+
     pub(crate) fn facts_generation(&self) -> u64 {
         self.lifecycle.facts_generation()
     }
@@ -209,6 +222,10 @@ impl DockViewportSnapshot {
         window_facts: DockViewportWindowFacts,
         host_bounds: Bounds<Pixels>,
     ) -> bool {
+        if self.lifecycle.is_platform_close_requested() {
+            return false;
+        }
+
         let display_id = window_facts.display_id;
         let window_bounds = Some(window_facts.window_bounds);
         let screen_bounds = Some(window_facts.screen_bounds);
@@ -307,8 +324,15 @@ impl DockViewportRegistry {
         let Some(space) = self.space_for_window_id(window_id).cloned() else {
             return;
         };
+        self.record_space_focus(&space);
+    }
+
+    pub(crate) fn record_space_focus(&mut self, space: &DockSpaceId) {
+        if !self.viewports.contains_key(space) {
+            return;
+        }
         self.next_focus_stamp = self.next_focus_stamp.wrapping_add(1);
-        if let Some(snapshot) = self.viewports.get_mut(&space) {
+        if let Some(snapshot) = self.viewports.get_mut(space) {
             snapshot.record_focus(self.next_focus_stamp);
         }
     }
@@ -367,7 +391,7 @@ impl DockViewportRegistry {
         self.viewports.iter()
     }
 
-    pub(crate) fn spaces_by_fallback_priority(&self) -> Vec<DockSpaceId> {
+    pub(crate) fn spaces_by_diagnostic_hit_order(&self) -> Vec<DockSpaceId> {
         let mut spaces = self.spaces();
         spaces.sort_by(|left, right| {
             let left_stamp = self
@@ -490,13 +514,59 @@ mod tests {
         registry.record_window_focus(alpha_window.window_id());
         registry.record_window_focus(zeta_window.window_id());
         assert_eq!(
-            registry.spaces_by_fallback_priority(),
+            registry.spaces_by_diagnostic_hit_order(),
             vec![zeta.clone(), alpha.clone()]
         );
 
         registry.register(zeta.clone(), rebound_window);
 
         assert_eq!(registry.space_for_window_id(zeta_window.window_id()), None);
-        assert_eq!(registry.spaces_by_fallback_priority(), vec![alpha, zeta]);
+        assert_eq!(registry.spaces_by_diagnostic_hit_order(), vec![alpha, zeta]);
+    }
+
+    #[test]
+    fn platform_close_requested_cannot_be_restored_by_route_fact_update() {
+        let mut registry = DockViewportRegistry::default();
+        let main = space("main");
+        let window = handle(1);
+        registry.register(main.clone(), window);
+
+        let snapshot = registry
+            .snapshot_mut(&main)
+            .expect("registered viewport should have a mutable snapshot");
+        assert!(snapshot.update_route_facts(
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                open_gpui::point(open_gpui::px(100.0), open_gpui::px(100.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ))),
+            Bounds::new(
+                open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ),
+        ));
+        assert!(snapshot.is_route_ready());
+
+        assert!(snapshot.mark_route_facts_stale(DockViewportStaleReason::PlatformCloseRequested));
+        assert!(!snapshot.update_route_facts(
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(Bounds::new(
+                open_gpui::point(open_gpui::px(120.0), open_gpui::px(120.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ))),
+            Bounds::new(
+                open_gpui::point(open_gpui::px(0.0), open_gpui::px(0.0)),
+                open_gpui::size(open_gpui::px(320.0), open_gpui::px(240.0)),
+            ),
+        ));
+        assert_eq!(
+            snapshot.lifecycle_state(),
+            DockViewportLifecycleState::Stale(DockViewportStaleReason::PlatformCloseRequested)
+        );
+        assert_eq!(
+            snapshot.route_unavailable_reason(),
+            Some(DockViewportRouteUnavailableReason::Stale(
+                DockViewportStaleReason::PlatformCloseRequested
+            ))
+        );
+        assert!(!snapshot.is_route_ready());
     }
 }

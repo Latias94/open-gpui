@@ -2,7 +2,8 @@ use crate::{
     DockActionApplyError, DockClassId, DockGraphMutationError, DockItemId, DockNode, DockNodeId,
     DockPolicy, DockPolicyError, DockSpaceId, DockViewportDropPayload, DockWorkspace,
     drag::{DockDragPayload, DockDragPayloadKind},
-    drop_target::DockResolvedDropTarget,
+    drop_target::{DockResolvedDropTarget, DockResolvedDropTargetKind},
+    workspace_transaction::DockWorkspaceDropPayload,
 };
 
 pub(crate) struct DockWorkspaceMoveValidation<'a> {
@@ -12,6 +13,7 @@ pub(crate) struct DockWorkspaceMoveValidation<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DockPayloadDockClasses {
     items: Vec<DockPayloadDockClassItem>,
+    visible_split_floating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +93,28 @@ impl<'a> DockWorkspaceMoveValidation<'a> {
             .validate_target_space(target_space, self.workspace.policy())
             .map_err(Into::into)
     }
+
+    pub(crate) fn validate_space_floating_forest_target_space(
+        &self,
+        source_space: &DockSpaceId,
+        target_space: &DockSpaceId,
+    ) -> Result<(), DockActionApplyError> {
+        let items = self
+            .workspace
+            .graph()
+            .floating_containers(source_space)
+            .iter()
+            .flat_map(|floating| {
+                self.workspace
+                    .graph()
+                    .collect_items_in_subtree(floating.node)
+            })
+            .collect::<Vec<_>>();
+        self.workspace
+            .payload_dock_classes_for_items(&items)
+            .validate_target_space(target_space, self.workspace.policy())
+            .map_err(Into::into)
+    }
 }
 
 impl DockWorkspace {
@@ -102,7 +126,7 @@ impl DockWorkspace {
         &self,
         item: &DockItemId,
     ) -> DockPayloadDockClasses {
-        DockPayloadDockClasses::from_items([payload_dock_class_item(self, item)])
+        DockPayloadDockClasses::from_items([payload_dock_class_item(self, item)], false)
     }
 
     pub(crate) fn payload_dock_classes_for_tabs(&self, tabs: DockNodeId) -> DockPayloadDockClasses {
@@ -118,7 +142,17 @@ impl DockWorkspace {
         floating: DockNodeId,
     ) -> DockPayloadDockClasses {
         let items = self.graph().collect_items_in_subtree(floating);
-        self.payload_dock_classes_for_items(&items)
+        let visible_split_floating = matches!(
+            self.graph().node(floating),
+            Some(DockNode::Floating { child })
+                if matches!(self.graph().node(*child), Some(DockNode::Split { .. }))
+        );
+        DockPayloadDockClasses::from_items(
+            items
+                .into_iter()
+                .map(|item| payload_dock_class_item(self, &item)),
+            visible_split_floating,
+        )
     }
 
     pub(crate) fn payload_dock_classes_for_drag_payload(
@@ -129,6 +163,21 @@ impl DockWorkspace {
             DockDragPayloadKind::Item { item } => self.payload_dock_classes_for_item(item),
             DockDragPayloadKind::Tabs => self.payload_dock_classes_for_tabs(payload.source_node),
             DockDragPayloadKind::Floating { floating } => {
+                self.payload_dock_classes_for_floating(*floating)
+            }
+        }
+    }
+
+    pub(crate) fn payload_dock_classes_for_workspace_payload(
+        &self,
+        payload: &DockWorkspaceDropPayload<'_>,
+    ) -> DockPayloadDockClasses {
+        match payload {
+            DockWorkspaceDropPayload::Item { item, .. } => self.payload_dock_classes_for_item(item),
+            DockWorkspaceDropPayload::Tabs { source_tabs } => {
+                self.payload_dock_classes_for_tabs(*source_tabs)
+            }
+            DockWorkspaceDropPayload::Floating { floating } => {
                 self.payload_dock_classes_for_floating(*floating)
             }
         }
@@ -148,7 +197,7 @@ impl DockWorkspace {
         }
     }
 
-    fn payload_dock_classes_for_items<'a>(
+    pub(crate) fn payload_dock_classes_for_items<'a>(
         &self,
         items: impl IntoIterator<Item = &'a DockItemId>,
     ) -> DockPayloadDockClasses {
@@ -156,14 +205,19 @@ impl DockWorkspace {
             items
                 .into_iter()
                 .map(|item| payload_dock_class_item(self, item)),
+            false,
         )
     }
 }
 
 impl DockPayloadDockClasses {
-    fn from_items(items: impl IntoIterator<Item = DockPayloadDockClassItem>) -> Self {
+    fn from_items(
+        items: impl IntoIterator<Item = DockPayloadDockClassItem>,
+        visible_split_floating: bool,
+    ) -> Self {
         Self {
             items: items.into_iter().collect(),
+            visible_split_floating,
         }
     }
 
@@ -188,7 +242,19 @@ pub(crate) fn dock_target_validator<'a>(
     payload_classes: &'a DockPayloadDockClasses,
     policy: &'a DockPolicy,
 ) -> impl Fn(&DockResolvedDropTarget) -> Result<(), DockPolicyError> + 'a {
-    move |target| payload_classes.validate_target_space(target.target_space(default_space), policy)
+    move |target| {
+        if payload_classes.visible_split_floating
+            && matches!(
+                target.kind,
+                DockResolvedDropTargetKind::TabBar { .. }
+                    | DockResolvedDropTargetKind::LeafCenter { .. }
+                    | DockResolvedDropTargetKind::FloatingTitleBar { .. }
+            )
+        {
+            return Err(DockPolicyError::SplitPayloadCenterMergeRejected);
+        }
+        payload_classes.validate_target_space(target.target_space(default_space), policy)
+    }
 }
 
 fn payload_dock_class_item(

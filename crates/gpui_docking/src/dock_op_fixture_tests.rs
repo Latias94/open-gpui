@@ -1,4 +1,4 @@
-use crate::graph_test_support::{main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, main_space as space, root_tabs_graph};
 use crate::*;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -112,13 +112,9 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                 .0;
             let zone: DropZone = zone.into();
             let target = if zone == DropZone::Center {
-                DockMoveTarget::center(target_tabs)
+                DockGraphDropTarget::center(target_tabs)
             } else {
-                DockMoveTarget::inner_edge(
-                    graph.root(&space()).expect("fixture should have a root"),
-                    target_tabs,
-                    zone,
-                )
+                edge_target(graph, &space(), target_tabs, zone)
             };
             let changed = graph
                 .apply_op_checked(&DockOp::MoveItem {
@@ -162,7 +158,7 @@ fn apply_fixture_step(graph: &mut DockGraph, step: FixtureStep) {
                         source_space: space(),
                         floating,
                         target_space: space(),
-                        target: DockMoveTarget::center(target_tabs),
+                        target: DockGraphDropTarget::center(target_tabs),
                     })
                     .expect("fixture floating merge should commit")
             );

@@ -8,7 +8,7 @@ use crate::{
 };
 use open_gpui::{
     AnyElement, AppContext as _, Context, DragMoveEvent, InteractiveElement, IntoElement,
-    ParentElement, StatefulInteractiveElement, Styled, black, div, px, rgb, white,
+    ParentElement, StatefulInteractiveElement, Styled, Window, black, div, px, rgb, white,
 };
 
 impl DockHost {
@@ -19,6 +19,7 @@ impl DockHost {
         selected: usize,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if items.is_empty() {
@@ -68,21 +69,23 @@ impl DockHost {
                         }
                         this.update_payload_drag_tear_off_geometry_from_render(&payload, geometry);
                     }
-                    let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
-                    this.update_drop_scene_fact_from_render(
-                        &payload,
-                        fact,
-                        event.event.position,
-                        window,
-                        cx,
-                    );
+                    if let Some(drop_root) = drop_root {
+                        let fact = drop_scene_fact::leaf(drop_root, node, event.bounds, is_central);
+                        this.update_drop_scene_fact_from_render(
+                            &payload,
+                            fact,
+                            event.event.position,
+                            window,
+                            cx,
+                        );
+                    }
                 },
             ));
-        if let Some(probe) = self
-            .render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
+        if let Some(probe) = drop_root.and_then(|drop_root| {
+            self.render_viewport_drop_scene_fact_probe(viewport_host_scene_frame, move |bounds| {
                 drop_scene_fact::leaf(drop_root, node, bounds, is_central)
             })
-        {
+        }) {
             tabs = tabs.child(probe);
         }
 
@@ -256,6 +259,7 @@ impl DockHost {
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.close_item_from_render(close_item.clone(), cx);
+                        cx.stop_propagation();
                     }))
                     .child("x");
                 tab = tab.child(close);
@@ -265,7 +269,7 @@ impl DockHost {
 
         tabs = tabs
             .child(tab_bar)
-            .child(self.render_panel(&selected_item, session, cx));
+            .child(self.render_panel(&selected_item, session, window, cx));
         if let Some(guides) = self.render_drop_guides(session, Some(node), cx) {
             tabs = tabs.child(guides);
         }
@@ -276,11 +280,13 @@ impl DockHost {
         &mut self,
         item: &DockItemId,
         session: &DockHostRenderSession,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let resolution = session.panel_for_render(item, cx);
         match resolution {
             DockHostPanelRenderResolution::Registered(panel_view) => {
+                let focus_handle = self.ensure_panel_focus_tracker(item, window, cx);
                 let selector = self.record_debug_selector(
                     DockDebugRegion::Panel { item: item.clone() },
                     format!("{}:panel:{}", session.selector_prefix(), item),
@@ -288,6 +294,7 @@ impl DockHost {
                 div()
                     .id(selector.clone())
                     .debug_selector(move || selector)
+                    .track_focus(&focus_handle)
                     .flex()
                     .flex_col()
                     .flex_1()

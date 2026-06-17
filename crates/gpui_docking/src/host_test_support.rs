@@ -223,14 +223,6 @@ pub(crate) fn assert_close(actual: f32, expected: f32) {
     );
 }
 
-pub(crate) fn assert_point_close(
-    actual: open_gpui::Point<Pixels>,
-    expected: open_gpui::Point<Pixels>,
-) {
-    assert_close(f32::from(actual.x), f32::from(expected.x));
-    assert_close(f32::from(actual.y), f32::from(expected.y));
-}
-
 pub(crate) fn center_drop_position(bounds: Bounds<Pixels>) -> open_gpui::Point<Pixels> {
     drop_box_position(bounds, DockDropBoxSet::Inner, DockDropBoxKind::Center)
 }

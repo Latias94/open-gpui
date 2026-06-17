@@ -14,9 +14,9 @@ use crate::{
     viewport_drop_scene::DockViewportHostSceneFrame,
 };
 use open_gpui::{
-    AnyElement, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas, div, point,
-    px, relative, rgb, rgba,
+    AnyElement, AppContext as _, Bounds, Context, DragMoveEvent, InteractiveElement, IntoElement,
+    MouseButton, MouseUpEvent, ParentElement, Pixels, Render, Rgba, Styled, Window, black, canvas,
+    div, point, px, relative, rgb, rgba,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -27,8 +27,12 @@ impl Render for DockHost {
         self.clear_debug_selectors();
         self.ensure_viewport_activation_subscription(window, cx);
         self.ensure_viewport_bounds_subscription(window, cx);
+        self.ensure_viewport_release_subscription(window, cx);
         let session = self.render_session(cx);
+        self.record_rendered_selected_tabs(&session, cx);
+        self.sync_panel_focus_trackers(session.visible_panel_items().as_slice(), window, cx);
         self.focus_pending_panel_from_render(&session, window, cx);
+        self.restore_viewport_panel_focus_from_render(&session, window, cx);
         let drop_host_space = session.space().clone();
         let outside_release_host_space = session.space().clone();
         let viewport_host_scene_frame =
@@ -93,7 +97,7 @@ impl Render for DockHost {
                     match this.interaction_mut().rendered_outside_release(request) {
                         DockRenderedOutsideReleaseDecision::Inactive => {}
                         DockRenderedOutsideReleaseDecision::StopDragSession(drag_session) => {
-                            this.finish_payload_drag_session(&drag_session);
+                            this.finish_payload_drag_session(&drag_session, cx);
                             this.clear_drop_preview_interaction();
                             if let Some(runtime) = this.viewport_runtime().cloned() {
                                 runtime.clear_routed_drop_preview(cx);
@@ -126,18 +130,21 @@ impl Render for DockHost {
                 root,
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         } else if session.empty_central_passthrough() {
             host = host.child(self.render_passthrough_empty_central_space(
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         } else {
             host = host.child(self.render_empty_space(
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         }
@@ -147,6 +154,7 @@ impl Render for DockHost {
                 *floating,
                 &session,
                 viewport_host_scene_frame.as_ref(),
+                window,
                 cx,
             ));
         }
@@ -160,6 +168,25 @@ impl Render for DockHost {
 }
 
 impl DockHost {
+    fn record_rendered_selected_tabs(
+        &mut self,
+        session: &DockHostRenderSession,
+        cx: &mut Context<Self>,
+    ) {
+        if session.selected_tabs().is_empty() {
+            return;
+        }
+        let controller = self.controller().clone();
+        let selected_tabs = session.selected_tabs().to_vec();
+        cx.update_entity(&controller, |controller, _| {
+            for (tabs, item) in selected_tabs {
+                controller
+                    .workspace_mut()
+                    .refresh_tab_selected_stamp(tabs, &item);
+            }
+        });
+    }
+
     fn focus_pending_panel_from_render(
         &mut self,
         session: &DockHostRenderSession,
@@ -169,7 +196,41 @@ impl DockHost {
         let Some(item) = self.take_pending_panel_focus() else {
             return;
         };
-        session.request_panel_focus(&item, window, cx);
+        if session.request_panel_focus(&item, window, cx) {
+            self.clear_viewport_focus_restore_pending();
+            self.remember_panel_focus(item, cx);
+        } else {
+            self.set_viewport_focus_restore_pending(true);
+        }
+    }
+
+    fn restore_viewport_panel_focus_from_render(
+        &mut self,
+        session: &DockHostRenderSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let visible_items = session.visible_panel_items();
+        let visible_focused_panel = self.visible_focused_panel_item(&visible_items, window, cx);
+        if let Some(item) = visible_focused_panel {
+            self.remember_panel_focus(item, cx);
+            self.clear_viewport_focus_restore_pending();
+            return;
+        }
+
+        if !self.viewport_focus_restore_pending() || self.has_pending_panel_focus() {
+            return;
+        }
+
+        let Some(item) = self.restore_panel_focus_target(&visible_items) else {
+            self.clear_viewport_focus_restore_pending();
+            return;
+        };
+
+        if session.request_panel_focus(&item, window, cx) {
+            self.remember_panel_focus(item, cx);
+        }
+        self.clear_viewport_focus_restore_pending();
     }
 
     pub(crate) fn render_node(
@@ -177,6 +238,7 @@ impl DockHost {
         node_id: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(node) = session.node(node_id).cloned() else {
@@ -192,22 +254,31 @@ impl DockHost {
                 DockRenderSplitInput::new(node_id, axis, children, fractions),
                 session,
                 viewport_host_scene_frame,
+                window,
                 cx,
             ),
             DockNode::Tabs { items, selected } => {
-                let selected = selected_index(&items, &selected).unwrap_or(0);
+                let Some(selected) = selected_index(&items, &selected) else {
+                    return self.render_missing_node(node_id, session);
+                };
                 self.render_tabs(
                     node_id,
                     items,
                     selected,
                     session,
                     viewport_host_scene_frame,
+                    window,
                     cx,
                 )
             }
-            DockNode::Floating { child } => {
-                self.render_floating_node(node_id, child, session, viewport_host_scene_frame, cx)
-            }
+            DockNode::Floating { child } => self.render_floating_node(
+                node_id,
+                child,
+                session,
+                viewport_host_scene_frame,
+                window,
+                cx,
+            ),
         }
     }
 
@@ -216,9 +287,10 @@ impl DockHost {
         root: DockNodeId,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let root_child = self.render_node(root, session, viewport_host_scene_frame, cx);
+        let root_child = self.render_node(root, session, viewport_host_scene_frame, window, cx);
         let mut root_container = div()
             .relative()
             .flex()
@@ -255,6 +327,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -304,6 +377,7 @@ impl DockHost {
         &mut self,
         session: &DockHostRenderSession,
         viewport_host_scene_frame: Option<&DockViewportHostSceneFrameSlot>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = self.record_debug_selector(
@@ -383,15 +457,17 @@ impl DockHost {
         let routed_preview = self.viewport_runtime().and_then(|runtime| {
             runtime.routed_drop_preview_for(self.space(), window.window_handle().window_id())
         });
-        let local_preview = self
-            .interaction()
-            .drop_preview()
-            .map(|preview| (preview, active_payload_title));
+        let local_preview = self.interaction().drop_preview();
         let route_preview = self.interaction().drop_route_preview();
         let routed_target_preview =
             routed_preview.map(|preview| (preview.preview, Some(preview.payload_title)));
 
-        if let Some((preview, payload_title)) = local_preview.or(routed_target_preview) {
+        if let Some(preview) = local_preview {
+            self.interaction_mut().mark_drop_preview_rendered();
+            return Some(self.render_target_drop_preview(session, preview, active_payload_title));
+        }
+
+        if let Some((preview, payload_title)) = routed_target_preview {
             return Some(self.render_target_drop_preview(session, preview, payload_title));
         }
 

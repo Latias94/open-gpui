@@ -1,10 +1,12 @@
 use crate::{
     DockNodeId, DockPolicy,
     drop_target::{
-        self, DockDropResolution, DockDropResolverInput, DockDropTargetValidator,
-        DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget, DockLeafDropTarget,
-        DockResolvedDropTarget, DockRootDropTarget, DockTabBarDropTarget, DockTabLabelDropTarget,
+        self, DockDropResolution, DockDropResolveSource, DockDropResolverInput,
+        DockDropTargetValidator, DockEmptySpaceDropTarget, DockFloatingTitleBarDropTarget,
+        DockLeafDropTarget, DockResolvedDropTarget, DockResolvedDropTargetKind, DockRootDropTarget,
+        DockTabBarDropTarget, DockTabLabelDropTarget,
     },
+    geometry::DockDropBoxKind,
 };
 use open_gpui::{Bounds, Pixels, Point};
 
@@ -18,6 +20,7 @@ struct DockTabReorderHold {
 pub(crate) struct DockDropRuntime {
     resolution: Option<DockDropResolution>,
     scene: Option<DockHostDropScene>,
+    accept: DockDropAcceptState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +44,89 @@ pub(crate) enum DockHostDropSceneFact {
     Root(DockRootDropTarget),
     FloatingTitleBar(DockFloatingTitleBarDropTarget),
     EmptySpace(DockEmptySpaceDropTarget),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockDropAcceptState {
+    previous: Option<DockDropTargetKey>,
+    current: Option<DockDropAcceptedTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockDropAcceptedTarget {
+    key: DockDropTargetKey,
+    target: DockResolvedDropTarget,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct DockDropTargetKey {
+    kind: DockResolvedDropTargetKind,
+    source: DockDropResolveSource,
+    drop_box_kind: Option<DockDropBoxKind>,
+}
+
+impl Default for DockDropAcceptState {
+    fn default() -> Self {
+        Self {
+            previous: None,
+            current: None,
+        }
+    }
+}
+
+impl DockDropAcceptState {
+    fn accept_resolution(&mut self, resolution: Option<&DockDropResolution>) {
+        let current = resolution.and_then(|resolution| match resolution {
+            DockDropResolution::Valid(target) => Some(DockDropAcceptedTarget::new(target.clone())),
+            DockDropResolution::Rejected(_) => None,
+        });
+        if current.is_none() {
+            self.previous = None;
+        }
+        self.current = current;
+    }
+
+    fn mark_preview_rendered(&mut self) -> bool {
+        let previous = self.current.as_ref().map(|target| target.key.clone());
+        if self.previous == previous {
+            return false;
+        }
+        self.previous = previous;
+        true
+    }
+
+    fn take_delivery_target(&mut self) -> Option<DockResolvedDropTarget> {
+        let current = self.current.take()?;
+        let deliverable = self.previous.as_ref() == Some(&current.key);
+        self.previous = None;
+        deliverable.then_some(current.target)
+    }
+
+    fn clear(&mut self) -> bool {
+        let changed = self.previous.is_some() || self.current.is_some();
+        self.previous = None;
+        self.current = None;
+        changed
+    }
+}
+
+impl DockDropAcceptedTarget {
+    fn new(target: DockResolvedDropTarget) -> Self {
+        Self {
+            key: DockDropTargetKey::from_target(&target),
+            target,
+        }
+    }
+}
+
+impl DockDropTargetKey {
+    fn from_target(target: &DockResolvedDropTarget) -> Self {
+        Self {
+            kind: target.kind.clone(),
+            source: target.source,
+            drop_box_kind: target.drop_box.map(|drop_box| drop_box.kind),
+        }
+    }
 }
 
 impl DockHostDropScene {
@@ -105,6 +191,13 @@ impl DockHostDropScene {
             floating_title_bars: &self.floating_title_bars,
             empty_spaces: &self.empty_spaces,
         })
+    }
+
+    fn for_release_position(&self, position: Point<Pixels>) -> Self {
+        let mut scene = self.clone();
+        scene.position = position;
+        scene.clear_on_miss = true;
+        scene
     }
 }
 
@@ -189,12 +282,41 @@ impl DockDropRuntime {
         {
             resolution = Some(DockDropResolution::Valid(existing.clone()));
         }
+        self.accept.accept_resolution(resolution.as_ref());
         self.replace_resolution(resolution)
     }
 
-    pub(crate) fn take_resolved_target(&mut self) -> Option<DockResolvedDropTarget> {
+    pub(crate) fn take_accepted_target_at(
+        &mut self,
+        release_position: Point<Pixels>,
+        policy: &DockPolicy,
+        target_validator: Option<&DockDropTargetValidator<'_>>,
+    ) -> Option<DockResolvedDropTarget> {
+        let Some(scene) = self.scene.as_ref() else {
+            self.accept.clear();
+            self.resolution = None;
+            return None;
+        };
+        let release_scene = scene.for_release_position(release_position);
+        let _ = self.resolve_scene(&release_scene, policy, target_validator);
         self.scene = None;
-        self.resolution.take().and_then(DockDropResolution::target)
+        self.resolution = None;
+        self.accept.take_delivery_target()
+    }
+
+    #[cfg(test)]
+    fn take_accepted_target(&mut self) -> Option<DockResolvedDropTarget> {
+        let position = self.scene.as_ref()?.position;
+        self.take_accepted_target_at(position, &DockPolicy::default(), None)
+    }
+
+    pub(crate) fn mark_preview_rendered(&mut self) -> bool {
+        self.accept.mark_preview_rendered()
+    }
+
+    pub(crate) fn clear(&mut self) -> bool {
+        let changed = self.resolution.take().is_some() || self.scene.take().is_some();
+        self.accept.clear() || changed
     }
 
     pub(crate) fn drop_resolution(&self) -> Option<&DockDropResolution> {
@@ -307,6 +429,171 @@ mod tests {
             .expect("center box should exist")
     }
 
+    fn accepted_leaf_center(
+        runtime: &mut DockDropRuntime,
+        tabs: DockNodeId,
+        position: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) {
+        runtime.begin_scene(DockHostDropScene::new(position), &DockPolicy::default());
+        runtime.push_scene_fact(
+            position,
+            None,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: tabs,
+                target_tabs: tabs,
+                bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+    }
+
+    #[test]
+    fn first_accepted_target_is_not_deliverable_until_preview_renders() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = leaf_center_position(leaf_bounds);
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(
+            runtime.take_accepted_target().is_none(),
+            "a target first accepted by the release event has not previewed yet"
+        );
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(runtime.mark_preview_rendered());
+        let target = runtime
+            .take_accepted_target()
+            .expect("a previewed target should be deliverable");
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: tabs,
+                target_tabs: tabs,
+            }
+        );
+    }
+
+    #[test]
+    fn target_change_requires_rendered_preview_before_delivery() {
+        let first = DockNodeId::null();
+        let mut graph = crate::DockGraph::new();
+        let second = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("target")],
+            selected: Some(crate::DockItemId::from("target")),
+        });
+        let mut runtime = DockDropRuntime::default();
+        let first_bounds = bounds(0.0, 0.0, 160.0, 160.0);
+        let second_bounds = bounds(180.0, 0.0, 160.0, 160.0);
+        let first_position = leaf_center_position(first_bounds);
+        let second_position = leaf_center_position(second_bounds);
+
+        accepted_leaf_center(&mut runtime, first, first_position, first_bounds);
+        assert!(runtime.mark_preview_rendered());
+
+        accepted_leaf_center(&mut runtime, second, second_position, second_bounds);
+        assert!(
+            runtime.take_accepted_target().is_none(),
+            "switching targets invalidates the previous preview authority"
+        );
+
+        accepted_leaf_center(&mut runtime, second, second_position, second_bounds);
+        assert!(runtime.mark_preview_rendered());
+        let target = runtime
+            .take_accepted_target()
+            .expect("the new target should deliver after its preview renders");
+        assert_eq!(
+            target.kind,
+            DockResolvedDropTargetKind::LeafCenter {
+                root: second,
+                target_tabs: second,
+            }
+        );
+    }
+
+    #[test]
+    fn miss_frame_clears_previous_delivery_candidate() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = leaf_center_position(leaf_bounds);
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(runtime.mark_preview_rendered());
+        runtime.begin_scene(
+            DockHostDropScene::new(point(px(900.0), px(900.0))),
+            &DockPolicy::default(),
+        );
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(
+            runtime.take_accepted_target().is_none(),
+            "a miss frame must clear stale preview authority"
+        );
+    }
+
+    #[test]
+    fn release_revalidation_requires_pointer_to_still_hit_previewed_target() {
+        let tabs = DockNodeId::null();
+        let mut runtime = DockDropRuntime::default();
+        let leaf_bounds = bounds(0.0, 0.0, 400.0, 240.0);
+        let position = leaf_center_position(leaf_bounds);
+
+        accepted_leaf_center(&mut runtime, tabs, position, leaf_bounds);
+        assert!(runtime.mark_preview_rendered());
+        assert!(!runtime.begin_scene(
+            DockHostDropScene::new(point(px(900.0), px(900.0))).preserve_on_miss(),
+            &DockPolicy::default()
+        ));
+
+        assert!(
+            runtime
+                .take_accepted_target_at(point(px(900.0), px(900.0)), &DockPolicy::default(), None)
+                .is_none(),
+            "release outside the current scene must not deliver a stale preview target"
+        );
+        assert!(runtime.resolved_target().is_none());
+    }
+
+    #[test]
+    fn release_revalidation_requires_same_previewed_target_key() {
+        let first = DockNodeId::null();
+        let mut graph = crate::DockGraph::new();
+        let second = graph.insert_node(crate::DockNode::Tabs {
+            items: vec![crate::DockItemId::from("target")],
+            selected: Some(crate::DockItemId::from("target")),
+        });
+        let mut runtime = DockDropRuntime::default();
+        let first_bounds = bounds(0.0, 0.0, 160.0, 160.0);
+        let second_bounds = bounds(180.0, 0.0, 160.0, 160.0);
+        let first_position = leaf_center_position(first_bounds);
+        let second_position = leaf_center_position(second_bounds);
+
+        accepted_leaf_center(&mut runtime, first, first_position, first_bounds);
+        let _ = runtime.push_scene_fact(
+            first_position,
+            None,
+            DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                root: second,
+                target_tabs: second,
+                bounds: second_bounds,
+                is_central: false,
+            }),
+            &DockPolicy::default(),
+        );
+        assert!(runtime.mark_preview_rendered());
+
+        assert!(
+            runtime
+                .take_accepted_target_at(second_position, &DockPolicy::default(), None)
+                .is_none(),
+            "release on a different target must not reuse the previous preview authority"
+        );
+        assert!(runtime.resolved_target().is_none());
+    }
+
     #[test]
     fn tab_reorder_drop_updates_target_only_inside_tab_bounds() {
         let tabs = DockNodeId::null();
@@ -364,8 +651,9 @@ mod tests {
             &DockPolicy::default()
         ));
 
+        assert!(runtime.mark_preview_rendered());
         let target = runtime
-            .take_resolved_target()
+            .take_accepted_target()
             .expect("reorder target should remain available");
         assert_eq!(
             target.kind,
@@ -430,8 +718,9 @@ mod tests {
             &DockPolicy::default()
         ));
 
+        assert!(runtime.mark_preview_rendered());
         let target = runtime
-            .take_resolved_target()
+            .take_accepted_target()
             .expect("multi-fact update should resolve");
         assert_eq!(
             target.kind,
@@ -488,8 +777,9 @@ mod tests {
             &DockPolicy::default()
         ));
 
+        assert!(runtime.mark_preview_rendered());
         let target = runtime
-            .take_resolved_target()
+            .take_accepted_target()
             .expect("underlying target should remain after excluding source tabs");
         assert_eq!(
             target.kind,
@@ -549,8 +839,9 @@ mod tests {
             &DockPolicy::default(),
         );
 
+        assert!(runtime.mark_preview_rendered());
         let target = runtime
-            .take_resolved_target()
+            .take_accepted_target()
             .expect("target leaf should resolve");
         assert_eq!(
             target.kind,
@@ -617,8 +908,9 @@ mod tests {
                 &DockPolicy::default()
             ));
 
+            assert!(runtime.mark_preview_rendered());
             let target = runtime
-                .take_resolved_target()
+                .take_accepted_target()
                 .unwrap_or_else(|| panic!("{zone:?} root-edge target should resolve"));
             assert_eq!(target.source, DockDropResolveSource::RootEdge, "{zone:?}");
             assert!(
@@ -654,8 +946,9 @@ mod tests {
             &DockPolicy::default()
         ));
 
+        assert!(runtime.mark_preview_rendered());
         let target = runtime
-            .take_resolved_target()
+            .take_accepted_target()
             .expect("empty-space target should resolve without receiver bounds");
         assert!(matches!(
             target.kind,

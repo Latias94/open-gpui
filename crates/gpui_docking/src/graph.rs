@@ -82,20 +82,55 @@ pub enum DockNode {
     },
 }
 
-/// A pure decision describing how an edge dock will mutate the graph.
+/// Pure n-ary topology plan for an edge dock mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeDockDecision {
+pub enum DockEdgeDockPlan {
     /// Insert a new child into an existing same-axis split.
     InsertIntoSplit {
         /// The split container receiving the new child.
         split: DockNodeId,
+        /// Original edge zone resolved by preview.
+        zone: DropZone,
+        /// Existing child whose share was selected by preview-time planning.
+        anchor_child: DockNodeId,
         /// Existing child whose share will be split.
         anchor_index: usize,
         /// Position where the new child will be inserted.
         insert_index: usize,
     },
     /// Wrap the target in a new split.
-    WrapNewSplit,
+    WrapTarget {
+        /// Target node being wrapped.
+        target: DockNodeId,
+        /// Axis of the new split.
+        axis: SplitAxis,
+        /// Position of the new child relative to the target.
+        zone: DropZone,
+    },
+}
+
+impl DockEdgeDockPlan {
+    /// Returns the existing node this plan was built around.
+    pub(crate) fn target_node(self) -> DockNodeId {
+        match self {
+            Self::InsertIntoSplit {
+                split,
+                zone: _,
+                anchor_child: _,
+                anchor_index: _,
+                insert_index: _,
+            } => split,
+            Self::WrapTarget { target, .. } => target,
+        }
+    }
+
+    /// Returns the logical drop zone represented by this plan.
+    pub(crate) fn drop_zone(self) -> DropZone {
+        match self {
+            Self::InsertIntoSplit { zone, .. } => zone,
+            Self::WrapTarget { zone, .. } => zone,
+        }
+    }
 }
 
 /// In-window floating container metadata.
@@ -176,6 +211,21 @@ impl DockGraph {
     /// Returns a node by id.
     pub fn node(&self, id: DockNodeId) -> Option<&DockNode> {
         self.nodes.get(id)
+    }
+
+    pub(in crate::graph) fn remove_subtree(&mut self, root: DockNodeId) {
+        let Some(node) = self.nodes.remove(root) else {
+            return;
+        };
+        match node {
+            DockNode::Tabs { .. } => {}
+            DockNode::Floating { child } => self.remove_subtree(child),
+            DockNode::Split { children, .. } => {
+                for child in children {
+                    self.remove_subtree(child);
+                }
+            }
+        }
     }
 
     /// Sets the root node for a dock space.

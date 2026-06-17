@@ -23,6 +23,7 @@ pub(crate) struct TestPlatform {
     foreground_executor: ForegroundExecutor,
 
     pub(crate) active_window: RefCell<Option<TestWindow>>,
+    pub(crate) hovered_window: RefCell<Option<TestWindow>>,
     active_display: Rc<dyn PlatformDisplay>,
     active_cursor: Mutex<CursorStyle>,
     pressed_mouse_buttons: Mutex<Option<Vec<MouseButton>>>,
@@ -128,6 +129,7 @@ impl TestPlatform {
             pressed_mouse_buttons: Default::default(),
             active_display: Rc::new(TestDisplay::new()),
             active_window: Default::default(),
+            hovered_window: Default::default(),
             expect_restart: Default::default(),
             current_clipboard_item: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -257,6 +259,23 @@ impl TestPlatform {
             .detach();
     }
 
+    pub(crate) fn set_hovered_window(&self, window: Option<TestWindow>) {
+        let previous_window = self.hovered_window.borrow_mut().take();
+        self.hovered_window.borrow_mut().clone_from(&window);
+
+        if let Some(previous_window) = previous_window {
+            if let Some(window) = window.as_ref()
+                && Rc::ptr_eq(&previous_window.0, &window.0)
+            {
+                return;
+            }
+            previous_window.simulate_hover_status_change(false);
+        }
+        if let Some(window) = window {
+            window.simulate_hover_status_change(true);
+        }
+    }
+
     pub(crate) fn set_mouse_button_is_pressed(&self, button: MouseButton, pressed: Option<bool>) {
         let mut buttons = self.pressed_mouse_buttons.lock();
         match pressed {
@@ -374,9 +393,17 @@ impl Platform for TestPlatform {
             .map(|window| window.0.lock().handle)
     }
 
+    fn hovered_window(&self) -> Option<crate::AnyWindowHandle> {
+        self.hovered_window
+            .borrow()
+            .as_ref()
+            .map(|window| window.0.lock().handle)
+    }
+
     fn viewport_capabilities(&self) -> crate::PlatformViewportCapabilities {
         crate::PlatformViewportCapabilities {
             global_window_bounds: true,
+            mouse_hovered_window: true,
             active_window: true,
             display_work_area: true,
             dpi_scale: true,

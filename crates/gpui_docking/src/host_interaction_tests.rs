@@ -3,8 +3,11 @@ use crate::{
     DockPanelDescriptor, DockViewportPlatformSignals, DockViewportRuntimeHandle, DockWorkspace,
     DropZone, SplitAxis,
     debug::DockDebugRegion,
+    drag::DockDragPayload,
+    drop_scene_fact,
     drop_target::{DockDropResolveSource, DockResolvedDropTargetKind},
     host_test_support::*,
+    interaction::DockPayloadDropRelease,
 };
 use open_gpui::{
     AppContext as _, Focusable, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
@@ -213,6 +216,114 @@ fn dragging_tab_to_other_stack_center_moves_panel(cx: &mut TestAppContext) {
         };
         assert_eq!(items, &vec![item("b"), item("a")]);
         assert_eq!(selected.as_ref(), items.get(1));
+    });
+}
+
+#[open_gpui::test]
+fn local_release_on_first_target_hit_does_not_commit(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let release_position = target_bounds.center();
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                target_bounds,
+                release_position,
+                window,
+                cx,
+            );
+            host.update_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
+                release_position,
+                window,
+                cx,
+            );
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
+                window,
+                cx,
+            )
+        })
+        .expect("host should handle release");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(right_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
+    });
+}
+
+#[open_gpui::test]
+fn local_release_after_preview_miss_does_not_commit(cx: &mut TestAppContext) {
+    let (graph, _split, left_tabs, right_tabs) = split_graph(SplitAxis::Horizontal, 0.5, 0.5);
+    let workspace =
+        workspace_with_panels(cx, graph, &[("a", "Panel A", "A"), ("b", "Panel B", "B")]);
+    let controller = cx.new(|_| DockController::new(workspace));
+    let (window, host, mut visual) =
+        open_controller_workspace(cx, controller.clone(), size(px(500.0), px(240.0)));
+
+    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: right_tabs })
+        .expect("target tabs selector should be emitted");
+    let target_bounds = debug_bounds(&mut visual, &target_tabs);
+    let preview_position = target_bounds.center();
+    let release_position = point(px(900.0), px(900.0));
+    let payload = DockDragPayload::new_item(space(), left_tabs, item("a"), "Panel A".to_string());
+
+    window
+        .update(cx, |host, window, cx| {
+            host.begin_host_drop_scene_from_render(
+                &payload,
+                target_bounds,
+                preview_position,
+                window,
+                cx,
+            );
+            host.update_drop_scene_fact_from_render(
+                &payload,
+                drop_scene_fact::leaf(right_tabs, right_tabs, target_bounds, false),
+                preview_position,
+                window,
+                cx,
+            );
+            host.interaction_mut().mark_drop_preview_rendered();
+            host.drop_payload_release_from_render(
+                DockPayloadDropRelease::hovered_host(payload.clone(), space(), release_position),
+                window,
+                cx,
+            )
+        })
+        .expect("host should handle release");
+    cx.run_until_parked();
+
+    cx.read_entity(&controller, |controller, _| {
+        let DockNode::Tabs { items, selected } = controller
+            .graph()
+            .node(right_tabs)
+            .expect("target tabs should exist")
+        else {
+            panic!("target should be tabs");
+        };
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
     });
 }
 
@@ -807,9 +918,7 @@ fn runtime_rendered_mouse_up_outside_viewports_tears_off_tab(cx: &mut TestAppCon
         .expect("detached space should have a runtime window");
     let after_drop_context = opened
         .window()
-        .update(cx, |_, _, app| {
-            DockViewportPlatformSignals::from_app(app).target_context()
-        })
+        .update(cx, |_, _, app| DockViewportPlatformSignals::from_app(app))
         .expect("source viewport should still be live");
     assert_eq!(
         after_drop_context.active_window(),
@@ -1388,7 +1497,7 @@ fn dragging_floating_title_bar_to_tabs_merges_floating_stack(cx: &mut TestAppCon
 }
 
 #[open_gpui::test]
-fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
+fn dragging_split_floating_title_bar_to_center_rejects_visible_split_payload(
     cx: &mut TestAppContext,
 ) {
     let mut graph = DockGraph::new();
@@ -1439,23 +1548,35 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
         DockDebugRegion::FloatingHandle { node: floating },
     )
     .expect("floating handle selector should be emitted");
-    let target_tabs = selector_for(&visual, &host, DockDebugRegion::Tabs { node: root })
-        .expect("root tabs selector should be emitted");
+    let target_panel = selector_for(&visual, &host, DockDebugRegion::Panel { item: item("b") })
+        .expect("root panel selector should be emitted");
     let start = debug_bounds(&mut visual, &floating_handle).center();
-    let end = debug_bounds(&mut visual, &target_tabs).center();
+    let end = debug_bounds(&mut visual, &target_panel).center();
 
-    simulate_left_drag(&mut visual, start, end);
+    let threshold = point(start.x + px(24.0), start.y);
+    visual.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(threshold, MouseButton::Left, Modifiers::none());
+    visual.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
-    let visual = VisualTestContext::from_window(window.into(), cx);
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
 
     assert!(
-        selector_for(&visual, &host, DockDebugRegion::Panel { item: item("a") }).is_some(),
-        "first floating subtree item should be active in the root stack"
+        selector_for(&visual, &host, DockDebugRegion::DropPreview).is_none(),
+        "split floating title bar should not publish a commit-capable preview"
     );
+    cx.read_entity(&host, |host, _| {
+        assert!(
+            host.interaction().drop_preview().is_none(),
+            "split floating title bar should not track a drop preview for a non-single-tabs chrome target"
+        );
+    });
+
+    visual.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
     cx.read_entity(&controller, |controller, _| {
         assert!(
-            controller.graph().floating_containers(&space()).is_empty(),
-            "floating container should be removed after the full subtree merges into root"
+            !controller.graph().floating_containers(&space()).is_empty(),
+            "visible split floating payload should remain floating after rejected center merge"
         );
         let DockNode::Tabs { items, selected } = controller
             .graph()
@@ -1464,8 +1585,8 @@ fn dragging_split_floating_title_bar_to_tabs_merges_entire_floating_subtree(
         else {
             panic!("root should remain tabs");
         };
-        assert_eq!(items, &vec![item("b"), item("a"), item("c")]);
-        assert_eq!(selected.as_ref(), items.get(1));
+        assert_eq!(items, &vec![item("b")]);
+        assert_eq!(selected.as_ref(), items.first());
     });
 }
 

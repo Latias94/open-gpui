@@ -206,7 +206,7 @@ mod tests {
         );
         assert!(
             restored
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     point(px(935.0), px(245.0)),
                     &DockViewportTargetContext::new()
                 )
@@ -223,7 +223,7 @@ mod tests {
         );
         assert_eq!(
             restored
-                .resolve_viewport_target(
+                .resolve_diagnostic_viewport_target(
                     point(px(935.0), px(245.0)),
                     &DockViewportTargetContext::new()
                 )

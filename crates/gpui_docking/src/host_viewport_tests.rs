@@ -115,10 +115,12 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
     zeta_window
         .update(cx, |_, window, _| window.activate_window())
         .expect("zeta window should be live");
-    let (context, capabilities) = alpha_window
+    let (signals, context, capabilities) = alpha_window
         .update(cx, |_, _, app| {
+            let signals = DockViewportPlatformSignals::from_app(app);
             (
-                DockViewportPlatformSignals::from_app(app).target_context(),
+                signals.clone(),
+                signals.target_context(),
                 app.viewport_capabilities(),
             )
         })
@@ -126,24 +128,27 @@ fn viewport_platform_signals_separate_hovered_from_active_window(cx: &mut TestAp
 
     assert!(!capabilities.window_stack);
     assert_eq!(context.hovered_window(), None);
-    assert_eq!(context.active_window(), Some(zeta_handle.window_id()));
+    assert_eq!(signals.active_window(), Some(zeta_handle.window_id()));
     assert_eq!(context.window_stack(), &[]);
     assert_eq!(
         adapter
-            .resolve_viewport_target(point(px(125.0), px(150.0)), &context)
+            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &context)
             .map(|target| target.space().clone()),
-        Some(zeta_space.clone()),
-        "active window should arbitrate overlapping hits when no hovered window is known"
+        Some(alpha_space.clone()),
+        "active window is diagnostic only and should not arbitrate overlapping hits"
     );
 
-    let hovered_context = cx.update(|app| {
-        DockViewportPlatformSignals::from_app(app)
-            .with_hovered_window(alpha_handle)
-            .target_context()
-    });
+    cx.set_platform_hovered_window(Some(alpha_handle));
+    let hovered_context =
+        cx.update(|app| DockViewportPlatformSignals::from_app(app).target_context());
+    assert_eq!(
+        hovered_context.hovered_window(),
+        Some(alpha_handle.window_id()),
+        "platform hovered window should be captured by from_app"
+    );
     assert_eq!(
         adapter
-            .resolve_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
+            .resolve_diagnostic_viewport_target(point(px(125.0), px(150.0)), &hovered_context)
             .map(|target| target.space().clone()),
         Some(alpha_space),
         "explicit hovered window should win viewport arbitration"

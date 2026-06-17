@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 use slotmap::Key;
 
@@ -11,7 +11,7 @@ fn checked_set_split_fraction_two_reports_only_real_changes() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("initial edge dock should commit")
     );
@@ -160,7 +160,7 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("first edge dock should commit")
     );
@@ -174,11 +174,7 @@ fn repeated_same_axis_edge_docks_flatten_into_nary_split() {
                 source_space: space(),
                 item: item("c"),
                 target_space: space(),
-                target: DockMoveTarget::inner_edge(
-                    graph.root(&space()).expect("space should keep root"),
-                    target_tabs,
-                    DropZone::Right,
-                ),
+                target: edge_target(&graph, &space(), target_tabs, DropZone::Right),
             })
             .expect("second edge dock should commit")
     );
@@ -208,7 +204,7 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("first edge dock should commit")
     );
@@ -223,11 +219,7 @@ fn cross_axis_edge_dock_wraps_target_without_flattening_parent_axis() {
                 source_space: space(),
                 item: item("c"),
                 target_space: space(),
-                target: DockMoveTarget::inner_edge(
-                    graph.root(&space()).expect("space should keep root"),
-                    left_tabs,
-                    DropZone::Top,
-                ),
+                target: edge_target(&graph, &space(), left_tabs, DropZone::Top),
             })
             .expect("cross-axis edge dock should commit")
     );

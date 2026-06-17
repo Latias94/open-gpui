@@ -458,6 +458,20 @@ impl TestAppContext {
             .set_mouse_button_is_pressed(button, pressed);
     }
 
+    /// Overrides the platform-reported window under the mouse cursor for tests.
+    pub fn set_platform_hovered_window(&self, window: Option<AnyWindowHandle>) {
+        let test_window = window.and_then(|window| {
+            self.app
+                .borrow_mut()
+                .update_window(window, |_, window, _| {
+                    window.platform_window.as_test().cloned()
+                })
+                .ok()
+                .flatten()
+        });
+        self.test_platform.set_hovered_window(test_window);
+    }
+
     /// Simulate dispatching an action to the currently focused node in the window.
     pub fn dispatch_action<A>(&mut self, window: AnyWindowHandle, action: A)
     where
@@ -1123,7 +1137,7 @@ impl AnyWindowHandle {
 
 #[cfg(test)]
 mod tests {
-    use crate::{PathPromptOptions, TestAppContext};
+    use crate::{Empty, PathPromptOptions, TestAppContext, px, size};
     use std::path::PathBuf;
 
     #[open_gpui::test]
@@ -1169,5 +1183,28 @@ mod tests {
 
         let response = receiver.await.unwrap().unwrap();
         assert_eq!(response, None);
+    }
+
+    #[open_gpui::test]
+    fn test_platform_hovered_window_signal(cx: &mut TestAppContext) {
+        let first = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+        let second = cx
+            .open_window(size(px(320.0), px(200.0)), |_, _| Empty)
+            .into();
+
+        cx.set_platform_hovered_window(Some(second));
+        let (hovered, capabilities) =
+            cx.update(|app| (app.hovered_window(), app.viewport_capabilities()));
+
+        assert_eq!(hovered, Some(second));
+        assert!(capabilities.mouse_hovered_window);
+
+        cx.set_platform_hovered_window(Some(first));
+        assert_eq!(cx.update(|app| app.hovered_window()), Some(first));
+
+        cx.set_platform_hovered_window(None);
+        assert_eq!(cx.update(|app| app.hovered_window()), None);
     }
 }

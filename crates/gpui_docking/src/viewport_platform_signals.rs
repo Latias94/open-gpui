@@ -4,8 +4,10 @@ use open_gpui::{AnyWindowHandle, App, PlatformViewportCapabilities, Window, Wind
 /// Snapshot of platform window signals used to arbitrate overlapping viewport hits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportPlatformSignals {
-    /// Window known to be under the pointer for this docking route event.
-    hovered_window: Option<WindowId>,
+    /// Window reported by the platform as being under the pointer.
+    platform_hovered_window: Option<WindowId>,
+    /// Window that delivered the GPUI drag/drop event.
+    event_receiver_window: Option<WindowId>,
     /// Platform-active window, when known.
     active_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
@@ -19,7 +21,11 @@ impl DockViewportPlatformSignals {
     pub(crate) fn from_app(cx: &App) -> Self {
         let capabilities = cx.viewport_capabilities();
         Self {
-            hovered_window: None,
+            platform_hovered_window: capabilities
+                .mouse_hovered_window
+                .then(|| cx.hovered_window().map(|window| window.window_id()))
+                .flatten(),
+            event_receiver_window: None,
             active_window: capabilities
                 .active_window
                 .then(|| cx.active_window().map(|window| window.window_id()))
@@ -37,20 +43,36 @@ impl DockViewportPlatformSignals {
         }
     }
 
-    /// Captures GPUI platform signals for a host known to be under the dragged payload.
-    pub(crate) fn from_hovered_window(window: &Window, cx: &App) -> Self {
-        Self::from_app(cx).with_hovered_window(window.window_handle())
+    /// Captures GPUI platform signals for a host that delivered this drag/drop event.
+    pub(crate) fn from_event_receiver_window(window: &Window, cx: &App) -> Self {
+        Self::from_app(cx).with_event_receiver_window(window.window_handle())
     }
 
-    /// Adds the hovered window signal.
-    pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.hovered_window = Some(window.into().window_id());
+    /// Captures app-level signals for release paths that did not sample the hovered window.
+    #[cfg(test)]
+    pub(crate) fn from_app_without_hovered_window_authority(cx: &App) -> Self {
+        Self::from_app(cx).without_hovered_window_authority()
+    }
+
+    /// Removes hovered-window authority while preserving other platform signals.
+    #[cfg(test)]
+    pub(crate) fn without_hovered_window_authority(mut self) -> Self {
+        self.platform_hovered_window = None;
+        self.capabilities.mouse_hovered_window = false;
         self
     }
 
-    /// Adds the hovered window signal by id.
-    pub(crate) fn with_hovered_window_id(mut self, window_id: Option<WindowId>) -> Self {
-        self.hovered_window = window_id;
+    /// Adds the platform hovered window signal.
+    #[cfg(test)]
+    pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.platform_hovered_window = Some(window.into().window_id());
+        self.capabilities.mouse_hovered_window = true;
+        self
+    }
+
+    /// Adds the GPUI event receiver window signal.
+    pub(crate) fn with_event_receiver_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.event_receiver_window = Some(window.into().window_id());
         self
     }
 
@@ -61,27 +83,40 @@ impl DockViewportPlatformSignals {
     /// Converts the platform snapshot into the pure resolver context.
     #[cfg(test)]
     pub(crate) fn target_context(&self) -> DockViewportTargetContext {
-        DockViewportTargetContext::from_window_signals(
-            self.hovered_window,
-            self.active_window,
+        DockViewportTargetContext::from_window_and_event_signals_with_hovered_known(
+            self.platform_hovered_window,
+            self.capabilities.mouse_hovered_window,
+            self.event_receiver_window,
             self.window_stack.clone(),
         )
     }
 
     #[cfg(test)]
     pub(crate) fn from_target_context(target_context: DockViewportTargetContext) -> Self {
-        let (hovered_window, active_window, window_stack) = target_context.into_window_signals();
+        let (
+            platform_hovered_window,
+            platform_hovered_window_known,
+            event_receiver_window,
+            window_stack,
+        ) = target_context.into_window_signals();
         Self {
-            hovered_window,
-            active_window,
+            platform_hovered_window,
+            event_receiver_window,
+            active_window: None,
             window_stack,
             capabilities: PlatformViewportCapabilities {
                 global_window_bounds: true,
+                mouse_hovered_window: platform_hovered_window_known,
                 active_window: true,
                 window_stack: true,
                 ..Default::default()
             },
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_window(&self) -> Option<WindowId> {
+        self.active_window
     }
 
     #[cfg(test)]
@@ -93,9 +128,10 @@ impl DockViewportPlatformSignals {
 
 impl From<DockViewportPlatformSignals> for DockViewportTargetContext {
     fn from(signals: DockViewportPlatformSignals) -> Self {
-        Self::from_window_signals(
-            signals.hovered_window,
-            signals.active_window,
+        Self::from_window_and_event_signals_with_hovered_known(
+            signals.platform_hovered_window,
+            signals.capabilities.mouse_hovered_window,
+            signals.event_receiver_window,
             signals.window_stack,
         )
     }

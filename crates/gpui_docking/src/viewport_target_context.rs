@@ -5,10 +5,13 @@ use open_gpui::WindowId;
 /// Pure resolver context derived from platform window signals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DockViewportTargetContext {
-    /// Window known to be under the pointer for this docking route event.
-    hovered_window: Option<WindowId>,
-    /// Platform-active window, when known.
-    active_window: Option<WindowId>,
+    /// Window reported by the platform as being under the pointer.
+    platform_hovered_window: Option<WindowId>,
+    /// Whether the platform hovered-window signal is reliable for this snapshot, including
+    /// the case where no application window is hovered.
+    platform_hovered_window_known: bool,
+    /// Window that delivered the GPUI drag/drop event.
+    event_receiver_window: Option<WindowId>,
     /// Front-to-back window stack, when the platform provides it.
     window_stack: Vec<WindowId>,
 }
@@ -17,20 +20,43 @@ pub(crate) struct DockViewportTargetContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct DockViewportTargetPriority {
     hovered: usize,
-    active: usize,
     stacked: usize,
     fallback: usize,
 }
 
 impl DockViewportTargetContext {
+    #[cfg(test)]
     pub(crate) fn from_window_signals(
-        hovered_window: Option<WindowId>,
-        active_window: Option<WindowId>,
+        platform_hovered_window: Option<WindowId>,
+        window_stack: Vec<WindowId>,
+    ) -> Self {
+        Self::from_window_and_event_signals(platform_hovered_window, None, window_stack)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_window_and_event_signals(
+        platform_hovered_window: Option<WindowId>,
+        event_receiver_window: Option<WindowId>,
+        window_stack: Vec<WindowId>,
+    ) -> Self {
+        Self::from_window_and_event_signals_with_hovered_known(
+            platform_hovered_window,
+            platform_hovered_window.is_some(),
+            event_receiver_window,
+            window_stack,
+        )
+    }
+
+    pub(crate) fn from_window_and_event_signals_with_hovered_known(
+        platform_hovered_window: Option<WindowId>,
+        platform_hovered_window_known: bool,
+        event_receiver_window: Option<WindowId>,
         window_stack: Vec<WindowId>,
     ) -> Self {
         Self {
-            hovered_window,
-            active_window,
+            platform_hovered_window,
+            platform_hovered_window_known,
+            event_receiver_window,
             window_stack,
         }
     }
@@ -42,12 +68,8 @@ impl DockViewportTargetContext {
     ) -> DockViewportTargetPriority {
         DockViewportTargetPriority {
             hovered: self
-                .hovered_window
+                .platform_hovered_window
                 .map(|hovered| usize::from(hovered != window_id))
-                .unwrap_or(1),
-            active: self
-                .active_window
-                .map(|active| usize::from(active != window_id))
                 .unwrap_or(1),
             stacked: self
                 .window_stack
@@ -59,37 +81,63 @@ impl DockViewportTargetContext {
     }
 
     pub(crate) fn has_arbitration_signal(&self) -> bool {
-        self.hovered_window.is_some()
-            || self.active_window.is_some()
+        self.platform_hovered_window.is_some()
+            || self.platform_hovered_window_known
+            || self.event_receiver_window.is_some()
             || !self.window_stack.is_empty()
     }
 
-    pub(crate) fn has_signal_for_window(&self, window_id: WindowId) -> bool {
-        self.hovered_window == Some(window_id)
-            || self.active_window == Some(window_id)
-            || self.window_stack.contains(&window_id)
+    pub(crate) fn has_conflicting_primary_signal(&self, window_id: WindowId) -> bool {
+        self.hovered_window_known_empty()
+            || self
+                .platform_hovered_window
+                .is_some_and(|hovered| hovered != window_id)
+            || self
+                .event_receiver_window
+                .is_some_and(|receiver| receiver != window_id)
     }
 
-    pub(crate) fn has_unmatched_arbitration_signal(&self, window_id: WindowId) -> bool {
-        self.has_arbitration_signal() && !self.has_signal_for_window(window_id)
+    pub(crate) fn has_conflicting_single_hit_signal(&self, window_id: WindowId) -> bool {
+        self.has_conflicting_primary_signal(window_id)
+            || (!self.window_stack.is_empty() && !self.window_stack.contains(&window_id))
+    }
+
+    pub(crate) fn has_conflicting_hovered_window(&self, window_id: WindowId) -> bool {
+        self.platform_hovered_window
+            .is_some_and(|hovered| hovered != window_id)
     }
 
     pub(crate) fn hovered_window(&self) -> Option<WindowId> {
-        self.hovered_window
+        self.platform_hovered_window
+    }
+
+    pub(crate) fn hovered_window_known_empty(&self) -> bool {
+        self.platform_hovered_window_known && self.platform_hovered_window.is_none()
+    }
+
+    pub(crate) fn event_receiver_window(&self) -> Option<WindowId> {
+        self.event_receiver_window
     }
 
     #[cfg(test)]
-    pub(crate) fn active_window(&self) -> Option<WindowId> {
-        self.active_window
-    }
-
     pub(crate) fn window_stack(&self) -> &[WindowId] {
         &self.window_stack
     }
 
+    pub(crate) fn window_stack_contains(&self, window_id: WindowId) -> bool {
+        self.window_stack.contains(&window_id)
+    }
+
     #[cfg(test)]
-    pub(crate) fn into_window_signals(self) -> (Option<WindowId>, Option<WindowId>, Vec<WindowId>) {
-        (self.hovered_window, self.active_window, self.window_stack)
+    pub(crate) fn into_window_signals(
+        self,
+    ) -> (Option<WindowId>, bool, Option<WindowId>, Vec<WindowId>) {
+        (
+            self.platform_hovered_window,
+            self.platform_hovered_window_known,
+            self.event_receiver_window,
+            self.window_stack,
+        )
     }
 
     /// Creates an empty target context that falls back to deterministic adapter ordering.
@@ -101,14 +149,23 @@ impl DockViewportTargetContext {
     /// Adds the hovered window signal.
     #[cfg(test)]
     pub(crate) fn with_hovered_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.hovered_window = Some(window.into().window_id());
+        self.platform_hovered_window = Some(window.into().window_id());
+        self.platform_hovered_window_known = true;
         self
     }
 
-    /// Adds the active window signal.
+    /// Marks the platform hovered window signal as reliable and currently empty.
     #[cfg(test)]
-    pub(crate) fn with_active_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
-        self.active_window = Some(window.into().window_id());
+    pub(crate) fn with_hovered_window_known_empty(mut self) -> Self {
+        self.platform_hovered_window = None;
+        self.platform_hovered_window_known = true;
+        self
+    }
+
+    /// Adds the event receiver window signal.
+    #[cfg(test)]
+    pub(crate) fn with_event_receiver_window(mut self, window: impl Into<AnyWindowHandle>) -> Self {
+        self.event_receiver_window = Some(window.into().window_id());
         self
     }
 
@@ -132,23 +189,16 @@ mod tests {
     use open_gpui::WindowId;
 
     #[test]
-    fn target_priority_prefers_hovered_active_stack_then_fallback() {
+    fn target_priority_prefers_hovered_stack_then_fallback() {
         let first = WindowId::from(1);
         let second = WindowId::from(2);
         let third = WindowId::from(3);
-        let context = DockViewportTargetContext::from_window_signals(
-            Some(third),
-            Some(second),
-            vec![second, first],
-        );
+        let context =
+            DockViewportTargetContext::from_window_signals(Some(third), vec![second, first]);
 
         assert!(
             context.priority_for_window(third, 2) < context.priority_for_window(second, 1),
-            "hovered window should beat active window"
-        );
-        assert!(
-            context.priority_for_window(second, 1) < context.priority_for_window(first, 0),
-            "active window should beat window stack order"
+            "hovered window should beat window-stack membership"
         );
         assert!(
             context.priority_for_window(first, 0)

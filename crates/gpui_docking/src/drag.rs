@@ -133,6 +133,12 @@ impl DockDragPayload {
     }
 }
 
+impl DockDragPayloadIdentity {
+    pub(crate) fn source_space(&self) -> &DockSpaceId {
+        &self.source_space
+    }
+}
+
 impl DockDragTearOffGeometry {
     pub(crate) fn new(source_bounds: Bounds<Pixels>, cursor_offset: Point<Pixels>) -> Self {
         Self {

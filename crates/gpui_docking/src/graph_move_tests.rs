@@ -1,4 +1,4 @@
-use crate::graph_test_support::{item, main_space as space, root_tabs_graph};
+use crate::graph_test_support::{edge_target, item, main_space as space, root_tabs_graph};
 use crate::*;
 
 #[test]
@@ -38,6 +38,46 @@ fn checked_select_tab_reports_only_real_changes() {
 }
 
 #[test]
+fn selected_item_queries_do_not_repair_invalid_selection() {
+    let mut graph = DockGraph::new();
+    let root = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a"), item("b")],
+        selected: Some(item("missing")),
+    });
+    graph.set_root(space(), root);
+
+    assert_eq!(graph.selected_item_in_tabs(root), None);
+    assert_eq!(graph.selected_item_in_subtree(root), None);
+
+    graph.simplify_space(&space());
+
+    assert_eq!(graph.selected_item_in_tabs(root), Some(item("a")));
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn unique_selected_item_in_subtree_requires_single_visible_selection() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+
+    assert_eq!(graph.selected_item_in_subtree(root), Some(item("a")));
+    assert_eq!(graph.unique_selected_item_in_subtree(root), None);
+}
+
+#[test]
 fn checked_move_item_same_stack_center_reports_noop() {
     let (mut graph, root) = root_tabs_graph(&["a", "b"]);
 
@@ -47,9 +87,33 @@ fn checked_move_item_same_stack_center_reports_noop() {
                 source_space: space(),
                 item: item("a"),
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
-            .expect("same-stack center move without insert index should be valid")
+            .expect("same-stack center move should be valid")
+    );
+
+    let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
+    else {
+        panic!("expected tabs root");
+    };
+    assert_eq!(items, &vec![item("a"), item("b")]);
+    assert_eq!(selected.as_ref(), items.get(0));
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_same_tab_bar_position_reports_noop() {
+    let (mut graph, root) = root_tabs_graph(&["a", "b"]);
+
+    assert!(
+        !graph
+            .apply_op_checked(&DockOp::MoveItem {
+                source_space: space(),
+                item: item("a"),
+                target_space: space(),
+                target: DockGraphDropTarget::tab_bar(root, 1),
+            })
+            .expect("dropping a tab back into its current slot should be a valid no-op")
     );
 
     let DockNode::Tabs { items, selected } = graph.node(root).expect("root tabs node should exist")
@@ -71,7 +135,7 @@ fn checked_move_tabs_self_center_reports_noop() {
                 source_space: space(),
                 source_tabs: root,
                 target_space: space(),
-                target: DockMoveTarget::center(root),
+                target: DockGraphDropTarget::center(root),
             })
             .expect("moving a tabs node onto itself should be a valid no-op")
     );
@@ -109,7 +173,7 @@ fn checked_move_tabs_edge_drop_onto_same_space_root_preserves_items() {
                 source_space: space(),
                 source_tabs,
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("same-space root-edge tabs move should commit transactionally")
     );
@@ -155,7 +219,7 @@ fn checked_move_tabs_reports_empty_source_tabs() {
                 source_space: space(),
                 source_tabs: empty,
                 target_space: DockSpaceId::new("other"),
-                target: DockMoveTarget::center(target),
+                target: DockGraphDropTarget::center(target),
             })
             .expect_err("empty source tabs should be reported"),
         DockGraphMutationError::TabsNodeEmpty { tabs: empty }
@@ -268,6 +332,7 @@ fn checked_close_item_rebinds_collapsed_central_region() {
             .apply_op_checked(&DockOp::CloseItem {
                 space: space(),
                 item: item("a"),
+                preferred_after_close: None,
             })
             .expect("closing a reachable item should be valid")
     );
@@ -313,7 +378,7 @@ fn checked_open_item_rejects_duplicate_items_without_mutation() {
 }
 
 #[test]
-fn move_item_center_inserts_and_selects_item() {
+fn move_item_tab_bar_inserts_and_selects_item() {
     let (mut graph, root) = root_tabs_graph(&["a", "b", "c"]);
 
     assert!(
@@ -322,7 +387,7 @@ fn move_item_center_inserts_and_selects_item() {
                 source_space: space(),
                 item: item("c"),
                 target_space: space(),
-                target: DockMoveTarget::tab_bar(root, 1),
+                target: DockGraphDropTarget::tab_bar(root, 1),
             })
             .expect("same-space insert should commit")
     );
@@ -344,7 +409,7 @@ fn checked_move_item_reports_missing_source_item() {
             source_space: space(),
             item: item("missing"),
             target_space: space(),
-            target: DockMoveTarget::center(root),
+            target: DockGraphDropTarget::center(root),
         })
         .expect_err("missing source item should fail");
 
@@ -366,12 +431,17 @@ fn checked_move_item_reports_target_outside_space_without_mutation() {
         selected: Some(item("orphan")),
     });
 
+    assert!(
+        graph
+            .edge_dock_plan(&space(), orphan, DropZone::Right)
+            .is_none()
+    );
     let err = graph
         .apply_op_checked(&DockOp::MoveItem {
             source_space: space(),
             item: item("b"),
             target_space: space(),
-            target: DockMoveTarget::root_edge(orphan, DropZone::Right),
+            target: DockGraphDropTarget::center(orphan),
         })
         .expect_err("orphan target should fail");
 
@@ -400,7 +470,7 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
                 source_space: space(),
                 item: item("b"),
                 target_space: space(),
-                target: DockMoveTarget::root_edge(root, DropZone::Right),
+                target: edge_target(&graph, &space(), root, DropZone::Right),
             })
             .expect("root-edge move should commit")
     );
@@ -411,11 +481,63 @@ fn checked_move_item_reports_center_target_that_is_not_tabs() {
             source_space: space(),
             item: item("a"),
             target_space: space(),
-            target: DockMoveTarget::center(split),
+            target: DockGraphDropTarget::center(split),
         })
         .expect_err("center target must be tabs");
 
     assert_eq!(err, DockGraphMutationError::NodeIsNotTabs { node: split });
+    graph.assert_canonical_space(&space());
+}
+
+#[test]
+fn checked_move_item_rejects_stale_edge_plan_without_replanning() {
+    let mut graph = DockGraph::new();
+    let left = graph.insert_node(DockNode::Tabs {
+        items: vec![item("a")],
+        selected: Some(item("a")),
+    });
+    let right = graph.insert_node(DockNode::Tabs {
+        items: vec![item("b")],
+        selected: Some(item("b")),
+    });
+    let root = graph.insert_node(DockNode::Split {
+        axis: SplitAxis::Horizontal,
+        children: vec![left, right],
+        fractions: vec![0.5, 0.5],
+    });
+    graph.set_root(space(), root);
+    assert!(
+        graph
+            .edge_dock_plan(&space(), root, DropZone::Right)
+            .is_some()
+    );
+
+    let stale_plan = DockEdgeDockPlan::InsertIntoSplit {
+        split: root,
+        zone: DropZone::Right,
+        anchor_child: left,
+        anchor_index: 1,
+        insert_index: 2,
+    };
+    let before = graph.export_layout();
+
+    let err = graph
+        .apply_op_checked(&DockOp::MoveItem {
+            source_space: space(),
+            item: item("a"),
+            target_space: space(),
+            target: DockGraphDropTarget::edge(stale_plan),
+        })
+        .expect_err("stale edge plan should not be re-planned at commit time");
+
+    assert_eq!(
+        err,
+        DockGraphMutationError::MutationInvariantViolation {
+            op: "DockGraphDropTarget",
+            reason: "edge graph drop plan is no longer current".into(),
+        }
+    );
+    assert_eq!(graph.export_layout(), before);
     graph.assert_canonical_space(&space());
 }
 
@@ -430,7 +552,7 @@ fn checked_move_item_to_empty_space_creates_target_root() {
                 source_space: space(),
                 item: item("b"),
                 target_space: detached.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("move to empty space should be valid")
     );
@@ -469,7 +591,7 @@ fn checked_move_item_to_empty_space_rebinds_empty_central_region() {
                 source_space: space(),
                 item: item("b"),
                 target_space: central.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("moving into an empty central space should create a root")
     );
@@ -512,7 +634,7 @@ fn checked_move_tabs_to_empty_space_preserves_stack_order_and_selected_tab() {
                 source_space: space(),
                 source_tabs,
                 target_space: detached.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("moving tabs to empty space should be valid")
     );
@@ -550,7 +672,7 @@ fn checked_move_tabs_to_empty_space_rebinds_empty_central_region() {
                 source_space: space(),
                 source_tabs,
                 target_space: central.clone(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("moving tabs into an empty central space should create a root")
     );
@@ -584,7 +706,7 @@ fn checked_move_floating_tabs_to_empty_same_space_removes_floating_and_creates_r
                 source_space: space(),
                 source_tabs,
                 target_space: space(),
-                target: DockMoveTarget::empty_space(),
+                target: DockGraphDropTarget::empty_space(),
             })
             .expect("floating tabs should move to the empty root in the same space")
     );
@@ -615,7 +737,7 @@ fn checked_empty_space_moves_reject_non_empty_target_without_mutation() {
             source_space: space(),
             item: item("b"),
             target_space: detached.clone(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("non-empty target should be rejected");
     assert_eq!(
@@ -667,7 +789,7 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
             source_space: space(),
             item: item("b"),
             target_space: detached.clone(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("floating-only target should still be non-empty");
     assert_eq!(
@@ -682,7 +804,7 @@ fn checked_empty_space_moves_reject_floating_only_target_without_mutation() {
             source_space: space(),
             source_tabs: root,
             target_space: detached.clone(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("floating-only target should reject tab-group moves too");
     assert_eq!(
@@ -717,7 +839,7 @@ fn checked_empty_same_space_moves_report_missing_source() {
             source_space: space(),
             item: item("missing"),
             target_space: space(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("empty same-space item move should still validate the source item");
     assert_eq!(
@@ -737,7 +859,7 @@ fn checked_empty_same_space_moves_report_missing_source() {
             source_space: space(),
             source_tabs: tabs,
             target_space: space(),
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("empty same-space tabs move should still validate the source tabs");
     assert_eq!(tabs_err, DockGraphMutationError::TabsNodeEmpty { tabs });
@@ -759,7 +881,7 @@ fn checked_move_tabs_to_empty_space_rejects_source_outside_space() {
             source_space: space(),
             source_tabs: other_tabs,
             target_space: detached,
-            target: DockMoveTarget::empty_space(),
+            target: DockGraphDropTarget::empty_space(),
         })
         .expect_err("source tabs outside source space should fail");
 

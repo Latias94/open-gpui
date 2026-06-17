@@ -158,9 +158,11 @@ impl DockWorkspace {
         &mut self,
         op: DockOp,
     ) -> Result<DockActionOutcome, DockActionApplyError> {
-        self.apply_op_checked(&op)
-            .map(DockActionOutcome::from_changed)
-            .map_err(Into::into)
+        let changed = self.apply_op_checked(&op)?;
+        if changed {
+            self.prune_tab_focus_history();
+        }
+        Ok(DockActionOutcome::from_changed(changed))
     }
 
     pub(crate) fn commit_select_tab(
@@ -184,9 +186,11 @@ impl DockWorkspace {
             return Ok(DockActionOutcome::Unchanged);
         }
 
-        self.commit_graph_op(DockOp::SelectTab {
+        let outcome = self.commit_graph_op(DockOp::SelectTab {
             tabs,
             item: item.clone(),
-        })
+        })?;
+        self.refresh_tab_selected_stamp(tabs, item);
+        Ok(outcome)
     }
 }
