@@ -26,7 +26,8 @@ use crate::overlay::{
     outside_press_open_change,
 };
 use crate::scroll_area::{ScrollArea, ScrollAreaAxis, ScrollAreaState};
-use crate::text_input::{TextInput, TextInputController, TextInputState};
+use crate::text_input::adapter::TextInputController;
+use crate::text_input::{TextInput, TextInputState};
 use crate::theme::ThemeResolver;
 
 type CommandOpenChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;

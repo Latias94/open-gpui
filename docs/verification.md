@@ -79,9 +79,13 @@ The components package also includes low-state primitive coverage for Separator,
 Skeleton, and Avatar. Those tests verify resolved state branches, explicit root/prelude exports,
 theme color intents, stable rendered debug selectors, decorative separator semantics, progress
 clamping, indeterminate progress, Avatar fallback initials, explicit accessible labels, size
-metrics, and source metadata staying outside image-loading ownership. The gallery metadata and
+metrics, `Role::Image`, and source metadata staying outside image-loading ownership. The gallery metadata and
 short-viewport smoke tests also verify those primitives are listed as official catalog entries and
 render visible samples with stable debug selectors.
+`official_component_catalog_entries_have_signals_and_sample_selectors` is the gallery contract
+gate for catalog drift: every official `COMPONENT_CATALOG` entry must have matching component and
+resolved-state `SIGNALS` entries plus one rendered `gallery:component-*-sample:{id}` selector in
+the Components page.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -117,9 +121,10 @@ invoking UI-core adaptive helpers. The companion strict-boundary inventory must 
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
 surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
-`GpuiOverlayState`, the adapter geometry conversions, and related adapter scheduling helpers must
-stay classified instead of drifting into resolved state. `FocusRing` itself uses neutral `UiPx`;
-only `focus_ring_shadow` returns a GPUI `BoxShadow`.
+`GpuiOverlayState`, the adapter accessibility/geometry conversions, and related adapter scheduling
+helpers must stay classified under `open_gpui_ui_components::gpui_adapter` instead of drifting into
+the crate root, prelude default interface, or resolved state. `FocusRing` itself uses neutral
+`UiPx`; only `focus_ring_shadow` returns a GPUI `BoxShadow`.
 
 When changing GPUI accessibility repair or component metadata that creates explicit cross-node
 relationships, also run:

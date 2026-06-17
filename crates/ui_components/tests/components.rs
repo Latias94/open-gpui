@@ -6,26 +6,30 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogActionKind, AlertDialogIntent, AlertDialogOpenMode, Avatar, Badge,
     BadgeVariant, Button, ButtonVariant, Checkbox, ColorIntent, ColorState, Combobox,
     ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxSelection, Command, CommandGroup,
-    CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH,
-    DEFAULT_OVERLAY_SAFE_MARGIN, Dialog, DialogOpenMode, Field, FocusRing,
-    GpuiOverlayAdapterConfig, GpuiOverlayPlacement, HoverCard, HoverCardContentKind,
-    HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox,
-    ListboxGroup, ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor,
-    ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
-    Popover, PopoverOpenMode, Progress, RadioGroup, RadioGroupState, RadioItem,
-    RadioItemDescriptor, RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState,
-    ScrollResetPolicy, Select, SelectOpenMode, SelectSelection, Separator, Sheet,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode,
-    SidebarItem, SidebarItemDescriptor, SidebarSection, SidebarSectionDescriptor, SidebarSide,
-    SidebarState, SidebarVariant, Skeleton, Splitter, SplitterPanel, SplitterPanelDescriptor,
-    SplitterState, Switch, Tabs, TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection,
-    TabsState, TextInput, TextInputController, ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot,
-    Toggle, ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind,
-    ToolbarSelection, ToolbarState, Tooltip, TooltipContentKind, TooltipDelayPolicy,
-    TooltipOpenIntent, active_index_from_str_keys, default_deferred_priority, escape_open_change,
-    first_enabled, focus_ring_shadow, gpui_anchor, init_text_input, last_enabled,
-    listbox_navigation_target, menu_navigation_target, next_enabled, outside_press_open_change,
-    point_anchor_placement, sidebar_navigation_target, toolbar_navigation_target,
+    CommandItem, CommandOpenMode, CommandSelection, ContextMenu, DEFAULT_FOCUS_RING_WIDTH, Dialog,
+    DialogOpenMode, Field, FocusRing, HoverCard, HoverCardContentKind, HoverCardDelayPolicy,
+    HoverCardOpenIntent, HoverCardOpenMode, IconButton, Kbd, Label, Listbox, ListboxGroup,
+    ListboxGroupDescriptor, ListboxOption, ListboxOptionDescriptor, ListboxOptionKind,
+    ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode, Popover,
+    PopoverOpenMode, Progress, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
+    RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
+    SelectOpenMode, SelectSelection, Separator, Sheet, SheetCloseAffordance, SheetModalMode,
+    SheetOpenMode, SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor,
+    SidebarSection, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton,
+    Splitter, SplitterPanel, SplitterPanelDescriptor, SplitterState, Switch, Tabs,
+    TabsActivationMode, TabsItem, TabsItemDescriptor, TabsSelection, TabsState, TextInput,
+    ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot, Toggle, ToggleVariant, Toolbar,
+    ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarSelection, ToolbarState, Tooltip,
+    TooltipContentKind, TooltipDelayPolicy, TooltipOpenIntent, active_index_from_str_keys,
+    first_enabled,
+    gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
+        TextInputController, default_deferred_priority, escape_open_change, focus_ring_shadow,
+        gpui_anchor, gpui_role_from_ui, init_text_input, outside_press_open_change,
+        point_anchor_placement,
+    },
+    last_enabled, listbox_navigation_target, menu_navigation_target, next_enabled,
+    sidebar_navigation_target, toolbar_navigation_target,
 };
 use open_gpui_ui_core::{
     DismissReason, EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation,
@@ -1960,12 +1964,12 @@ fn icon_button_requires_accessible_label_and_reuses_button_primitives() {
 fn crate_root_and_prelude_exports_remain_explicit() {
     use open_gpui_ui_components::{self as root, prelude};
 
-    let root_overlay: root::OverlayResolvedState =
-        root::GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, OverlayPresence::open())
-            .resolved_state();
-    let prelude_overlay: prelude::OverlayResolvedState =
-        prelude::GpuiOverlayAdapterConfig::new(OverlayLayerKind::Tooltip, OverlayPresence::open())
-            .resolved_state();
+    let root_overlay: root::OverlayResolvedState = root::OverlayResolvedState::resolve(
+        OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
+    );
+    let prelude_overlay: prelude::OverlayResolvedState = prelude::OverlayResolvedState::resolve(
+        OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
+    );
     let root_button = root::Button::new("save", "Save");
     let root_alert_dialog = root::AlertDialog::new(
         "delete",
@@ -2054,13 +2058,13 @@ fn crate_root_and_prelude_exports_remain_explicit() {
         prelude_skeleton.state(),
         root_overlay.policy().kind(),
         prelude_overlay.policy().kind(),
-        prelude::DEFAULT_OVERLAY_SAFE_MARGIN,
-        prelude::default_deferred_priority(OverlayLayerKind::Tooltip),
-        prelude::escape_open_change(&OverlayLayerPolicy::new(
-            OverlayLayerKind::Tooltip,
-            OverlayPresence::open(),
-        )),
     );
+}
+
+#[test]
+fn gpui_role_mapping_covers_neutral_image_and_separator_fallback() {
+    assert_eq!(gpui_role_from_ui(Role::Image), open_gpui::Role::Image);
+    assert_eq!(gpui_role_from_ui(Role::Separator), open_gpui::Role::Group);
 }
 
 #[test]
@@ -2141,13 +2145,7 @@ fn adapter_only_public_surfaces_match_allowlist() {
     let expected = [
         ("focus.rs", "BoxShadow"),
         ("focus.rs", "focus_ring_shadow"),
-        ("lib.rs", "GpuiOverlayState"),
-        ("lib.rs", "TextInputController"),
-        ("lib.rs", "focus_ring_shadow"),
         ("overlay.rs", "GpuiOverlayState"),
-        ("prelude.rs", "GpuiOverlayState"),
-        ("prelude.rs", "TextInputController"),
-        ("prelude.rs", "focus_ring_shadow"),
         ("scroll_area.rs", "ScrollHandle"),
         ("text_input.rs", "Entity<TextInputController>"),
         ("text_input.rs", "EntityInputHandler"),
@@ -2180,39 +2178,33 @@ fn adapter_only_public_surfaces_match_allowlist() {
 fn gpui_adapter_exports_group_runtime_specific_surfaces() {
     use open_gpui_ui_components::{self as root, prelude};
 
+    let module_text_input = root::text_input::TextInput::new("module-text-input", "Module input");
+    let _module_state: root::text_input::TextInputState = module_text_input.state();
+    let _module_colors: Option<root::text_input::TextInputColors> = None;
+    let _module_metrics: Option<root::text_input::TextInputMetrics> = None;
+
     let root_overlay = root::gpui_adapter::GpuiOverlayAdapterConfig::new(
-        OverlayLayerKind::Tooltip,
-        OverlayPresence::open(),
-    )
-    .state();
-    let prelude_overlay = prelude::gpui_adapter::GpuiOverlayAdapterConfig::new(
         OverlayLayerKind::Tooltip,
         OverlayPresence::open(),
     )
     .state();
 
     let _root_init: fn(&mut open_gpui::App) = root::gpui_adapter::init_text_input;
-    let _prelude_init: fn(&mut open_gpui::App) = prelude::gpui_adapter::init_text_input;
     let _root_controller: Option<root::gpui_adapter::TextInputController> = None;
-    let _prelude_controller: Option<prelude::gpui_adapter::TextInputController> = None;
     let _root_px: fn(UiPx) -> open_gpui::Pixels = root::gpui_adapter::gpui_px_from_ui;
-    let _prelude_px: fn(UiPx) -> open_gpui::Pixels = prelude::gpui_adapter::gpui_px_from_ui;
     let _root_point: fn(UiPoint) -> open_gpui::Point<open_gpui::Pixels> =
         root::gpui_adapter::gpui_point_from_ui;
-    let _prelude_point: fn(UiPoint) -> open_gpui::Point<open_gpui::Pixels> =
-        prelude::gpui_adapter::gpui_point_from_ui;
     let _root_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
         root::gpui_adapter::gpui_size_from_ui;
-    let _prelude_size: fn(UiSize) -> open_gpui::Size<open_gpui::Pixels> =
-        prelude::gpui_adapter::gpui_size_from_ui;
+    let _prelude_button: prelude::Button = prelude::Button::new("save", "Save");
 
     assert_eq!(
         root_overlay.deferred_priority(),
         root::gpui_adapter::default_deferred_priority(OverlayLayerKind::Tooltip)
     );
     assert_eq!(
-        prelude_overlay.snap_margin(),
-        prelude::gpui_adapter::DEFAULT_OVERLAY_SAFE_MARGIN
+        root_overlay.snap_margin(),
+        root::gpui_adapter::DEFAULT_OVERLAY_SAFE_MARGIN
     );
     assert_eq!(
         root::gpui_adapter::focus_ring_shadow(FocusRing::from_color(ColorIntent::new(
@@ -2221,6 +2213,45 @@ fn gpui_adapter_exports_group_runtime_specific_surfaces() {
         )))[0]
             .spread_radius,
         px(2.0)
+    );
+}
+
+#[test]
+fn adapter_only_helpers_do_not_leak_from_default_exports() {
+    let adapter_only_tokens = [
+        "TextInputController",
+        "init_text_input",
+        "focus_ring_shadow",
+        "GpuiOverlayState",
+        "GpuiOverlayAdapterConfig",
+        "gpui_px_from_ui",
+    ];
+
+    for file_name in ["lib.rs", "prelude.rs"] {
+        let source =
+            std::fs::read_to_string(format!("{}/src/{file_name}", env!("CARGO_MANIFEST_DIR")))
+                .unwrap_or_else(|error| panic!("failed to read {file_name}: {error}"));
+        let default_interface = if file_name == "lib.rs" {
+            source_without_gpui_adapter_module(&source)
+        } else {
+            source
+        };
+
+        for token in adapter_only_tokens {
+            assert!(
+                !default_interface.contains(token),
+                "{file_name} default interface must not expose adapter-only token `{token}`"
+            );
+        }
+    }
+
+    let text_input_source =
+        std::fs::read_to_string(format!("{}/src/text_input.rs", env!("CARGO_MANIFEST_DIR")))
+            .unwrap_or_else(|error| panic!("failed to read text_input.rs: {error}"));
+    assert!(text_input_source.contains("pub(crate) mod adapter"));
+    assert!(
+        !text_input_source.contains("pub use adapter"),
+        "text_input must not re-export its internal adapter module"
     );
 }
 
@@ -2371,11 +2402,16 @@ fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
     for source_file in source_files {
         let source = std::fs::read_to_string(&source_file)
             .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
-        let surface = public_api_surface(&uncommented_lines(&source));
         let file_name = source_file
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>");
+        let source = if matches!(file_name, "lib.rs" | "prelude.rs") {
+            source_without_gpui_adapter_module(&source)
+        } else {
+            source
+        };
+        let surface = public_api_surface(&uncommented_lines(&source));
 
         for token in tokens {
             if surface.contains(token) {
@@ -2388,6 +2424,26 @@ fn public_surface_blockers(tokens: &[&str]) -> Vec<PublicSurfaceBlocker> {
     }
 
     blockers
+}
+
+fn source_without_gpui_adapter_module(source: &str) -> String {
+    let Some(module_start) = source.find("pub mod gpui_adapter") else {
+        return source.to_owned();
+    };
+    let Some(open_brace) = source[module_start..]
+        .find('{')
+        .map(|offset| module_start + offset)
+    else {
+        return source.to_owned();
+    };
+    let Some(close_brace) = matching_brace(source, open_brace) else {
+        return source.to_owned();
+    };
+
+    let mut stripped = String::with_capacity(source.len());
+    stripped.push_str(&source[..module_start]);
+    stripped.push_str(&source[close_brace + 1..]);
+    stripped
 }
 
 fn public_api_surface(source: &str) -> String {
@@ -3911,7 +3967,7 @@ fn avatar_fallback_initials_derive_from_display_names_and_empty_names() {
     assert_eq!(ada.name(), "Ada Lovelace");
     assert_eq!(ada.fallback(), "AL");
     assert_eq!(ada.accessible_label(), "Ada Lovelace");
-    assert_eq!(ada.role(), Role::Label);
+    assert_eq!(ada.role(), Role::Image);
 
     assert_eq!(single.fallback(), "GR");
     assert_eq!(trio.fallback(), "FB");

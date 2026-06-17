@@ -10,6 +10,7 @@ use open_gpui_ui_core::{AccessibleAction, Orientation, Role, Toggled};
 pub fn gpui_role_from_ui(role: Role) -> GpuiRole {
     match role {
         Role::Label => GpuiRole::Label,
+        Role::Image => GpuiRole::Image,
         Role::Button => GpuiRole::Button,
         Role::CheckBox => GpuiRole::CheckBox,
         Role::Switch => GpuiRole::Switch,

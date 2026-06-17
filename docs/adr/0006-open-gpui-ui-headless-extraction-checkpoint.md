@@ -99,8 +99,9 @@ Positive:
 Negative:
 
 - Other UI frameworks still cannot consume a standalone Open GPUI behavior package.
-- Crate users can still import GPUI adapter helpers from compatibility root/prelude exports, so
-  docs and tests must keep the adapter-only classification visible.
+- Crate users must import GPUI adapter helpers from
+  `open_gpui_ui_components::gpui_adapter`; the previous compatibility root/prelude exports are
+  intentionally removed so the default interface stays component-contract oriented.
 - The next extraction plan must be careful not to move adapter-owned runtime responsibilities along
   with neutral policy/state.
 
@@ -123,7 +124,8 @@ Revisit crate creation when all of the following are true:
 6. Focus scope, dismissible layer ordering, and focus restoration have window-free tests. Partially
    complete: outside-press and focus-restore ordering are covered; full focus-trap traversal remains
    deferred until nested overlays require it.
-7. Adapter-only public APIs are inventoried and kept out of resolved state. Completed for
+7. Adapter-only public APIs are inventoried, kept out of resolved state, and no longer re-exported
+   from the crate root or prelude. Completed for
    `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
    `GpuiOverlayState`, GPUI geometry conversion helpers, and overlay scheduling helpers.
 

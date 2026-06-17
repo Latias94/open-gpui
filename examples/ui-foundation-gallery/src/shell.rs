@@ -10,19 +10,20 @@ use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Avatar, AvatarState, Badge, BadgeState,
     Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup,
     ComboboxOpenMode, ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem,
-    CommandOpenMode, CommandState, ContextMenu, DEFAULT_OVERLAY_SAFE_MARGIN, Dialog,
-    DialogOpenMode, Field, FieldState, FocusRing, HoverCard, HoverCardOpenIntent,
-    HoverCardOpenMode, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox,
-    ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover, PopoverOpenMode, Progress,
-    ProgressState, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState, Select,
-    SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, SheetModalMode, SheetOpenMode,
-    SheetSide, Sidebar, SidebarItem, SidebarSection, SidebarSide, SidebarState, Skeleton,
-    SkeletonState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState, Tabs,
-    TabsActivationMode, TabsItem, TabsState, TextInput, TextInputController, TextInputState,
-    Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState, Tooltip,
-    TooltipContentKind, TooltipOpenIntent, UiA11yElementExt, focus_ring_shadow,
-    gpui_adapter::{gpui_point_from_ui, gpui_px_from_ui},
-    init_text_input,
+    CommandOpenMode, CommandState, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
+    FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState, Kbd,
+    KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
+    MenuItem, Popover, PopoverOpenMode, Progress, ProgressState, RadioGroup, RadioItem, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, Select, SelectOpenMode, SelectState, Separator,
+    SeparatorState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem,
+    SidebarSection, SidebarSide, SidebarState, Skeleton, SkeletonState, Splitter, SplitterPanel,
+    SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
+    TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
+    Tooltip, TooltipContentKind, TooltipOpenIntent,
+    gpui_adapter::{
+        DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
+        gpui_point_from_ui, gpui_px_from_ui, init_text_input,
+    },
 };
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode,
@@ -980,9 +981,13 @@ impl GalleryShell {
                             pages::components::button_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let state = sample.state;
                                     div()
-                                        .id(format!("component-button-sample:{}", sample.id))
+                                        .id(format!("component-button-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!("gallery:component-button-sample:{sample_id}")
+                                        })
                                         .min_w(px(180.0))
                                         .flex()
                                         .flex_col()
@@ -1231,9 +1236,13 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         badge_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
                             let state = sample.state;
                             div()
-                                .id(format!("component-badge-sample:{}", sample.id))
+                                .id(format!("component-badge-sample:{sample_id}"))
+                                .debug_selector(move || {
+                                    format!("gallery:component-badge-sample:{sample_id}")
+                                })
                                 .min_w(px(160.0))
                                 .flex()
                                 .flex_col()
@@ -1273,9 +1282,13 @@ impl GalleryShell {
                             pages::components::switch_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let state = sample.state;
                                     div()
-                                        .id(format!("component-switch-sample:{}", sample.id))
+                                        .id(format!("component-switch-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!("gallery:component-switch-sample:{sample_id}")
+                                        })
                                         .min_w(px(200.0))
                                         .flex()
                                         .flex_col()
@@ -1314,9 +1327,15 @@ impl GalleryShell {
                             pages::components::checkbox_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let state = sample.state;
                                     div()
-                                        .id(format!("component-checkbox-sample:{}", sample.id))
+                                        .id(format!("component-checkbox-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!(
+                                                "gallery:component-checkbox-sample:{sample_id}"
+                                            )
+                                        })
                                         .min_w(px(220.0))
                                         .flex()
                                         .flex_col()
@@ -1350,6 +1369,7 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         radio_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
                             let state = sample.state.clone();
                             let mut radio =
                                 RadioGroup::new(format!("component-radio:{}", sample.id))
@@ -1367,7 +1387,10 @@ impl GalleryShell {
                             }
 
                             div()
-                                .id(format!("component-radio-sample:{}", sample.id))
+                                .id(format!("component-radio-sample:{sample_id}"))
+                                .debug_selector(move || {
+                                    format!("gallery:component-radio-sample:{sample_id}")
+                                })
                                 .min_w(px(240.0))
                                 .flex()
                                 .flex_col()
@@ -1395,9 +1418,13 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         toggle_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
                             let state = sample.state;
                             div()
-                                .id(format!("component-toggle-sample:{}", sample.id))
+                                .id(format!("component-toggle-sample:{sample_id}"))
+                                .debug_selector(move || {
+                                    format!("gallery:component-toggle-sample:{sample_id}")
+                                })
                                 .min_w(px(180.0))
                                 .flex()
                                 .flex_col()
@@ -1435,9 +1462,13 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         icon_button_samples.into_iter().map(|sample| {
+                            let sample_id = sample.id;
                             let state = sample.state;
                             div()
-                                .id(format!("component-icon-button-sample:{}", sample.id))
+                                .id(format!("component-icon-button-sample:{sample_id}"))
+                                .debug_selector(move || {
+                                    format!("gallery:component-icon-button-sample:{sample_id}")
+                                })
                                 .min_w(px(170.0))
                                 .flex()
                                 .flex_col()
@@ -1482,9 +1513,13 @@ impl GalleryShell {
                             pages::components::label_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let state = sample.state.clone();
                                     div()
-                                        .id(format!("component-label-sample:{}", sample.id))
+                                        .id(format!("component-label-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!("gallery:component-label-sample:{sample_id}")
+                                        })
                                         .min_w(px(220.0))
                                         .flex()
                                         .flex_col()
@@ -1520,12 +1555,18 @@ impl GalleryShell {
                             pages::components::text_input_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let state = sample.state.clone();
                                     let controller = sample
                                         .controller_driven
                                         .then(|| self.editable_text_input.clone());
                                     div()
-                                        .id(format!("component-text-input-sample:{}", sample.id))
+                                        .id(format!("component-text-input-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!(
+                                                "gallery:component-text-input-sample:{sample_id}"
+                                            )
+                                        })
                                         .min_w(px(240.0))
                                         .flex()
                                         .flex_col()
@@ -1573,10 +1614,14 @@ impl GalleryShell {
                             pages::components::field_samples(snapshot.tokens)
                                 .into_iter()
                                 .map(|sample| {
+                                    let sample_id = sample.id;
                                     let field_state = sample.state.clone();
                                     let input_state = sample.input_state.clone();
                                     div()
-                                        .id(format!("component-field-sample:{}", sample.id))
+                                        .id(format!("component-field-sample:{sample_id}"))
+                                        .debug_selector(move || {
+                                            format!("gallery:component-field-sample:{sample_id}")
+                                        })
                                         .min_w(px(280.0))
                                         .flex()
                                         .flex_col()
@@ -4311,6 +4356,7 @@ fn component_listbox_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
+                    let sample_id = sample.id;
                     let state = sample.state.clone();
                     let mut listbox =
                         Listbox::new(format!("component-listbox:{}", sample.id), sample.title)
@@ -4331,7 +4377,10 @@ fn component_listbox_samples_section(
                     }
 
                     div()
-                        .id(format!("component-listbox-sample:{}", sample.id))
+                        .id(format!("component-listbox-sample:{sample_id}"))
+                        .debug_selector(move || {
+                            format!("gallery:component-listbox-sample:{sample_id}")
+                        })
                         .w(px(320.0))
                         .flex()
                         .flex_col()
@@ -4387,6 +4436,7 @@ fn component_select_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
+                    let sample_id = sample.id;
                     let state = sample.state.clone();
                     let mut select =
                         Select::new(format!("component-select:{}", sample.id), sample.title)
@@ -4411,7 +4461,10 @@ fn component_select_samples_section(
                     }
 
                     div()
-                        .id(format!("component-select-sample:{}", sample.id))
+                        .id(format!("component-select-sample:{sample_id}"))
+                        .debug_selector(move || {
+                            format!("gallery:component-select-sample:{sample_id}")
+                        })
                         .w(px(340.0))
                         .flex()
                         .flex_col()
@@ -4471,6 +4524,7 @@ fn component_combobox_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
+                    let sample_id = sample.id;
                     let state = sample.state.clone();
                     let mut combobox =
                         Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
@@ -4496,7 +4550,10 @@ fn component_combobox_samples_section(
                     }
 
                     div()
-                        .id(format!("component-combobox-sample:{}", sample.id))
+                        .id(format!("component-combobox-sample:{sample_id}"))
+                        .debug_selector(move || {
+                            format!("gallery:component-combobox-sample:{sample_id}")
+                        })
                         .w(px(360.0))
                         .flex()
                         .flex_col()
@@ -4556,6 +4613,7 @@ fn component_command_samples_section(
                 .gap_3()
                 .flex_wrap()
                 .children(samples.into_iter().map(move |sample| {
+                    let sample_id = sample.id;
                     let state = sample.state.clone();
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), sample.title)
@@ -4589,7 +4647,10 @@ fn component_command_samples_section(
                     }
 
                     div()
-                        .id(format!("component-command-sample:{}", sample.id))
+                        .id(format!("component-command-sample:{sample_id}"))
+                        .debug_selector(move || {
+                            format!("gallery:component-command-sample:{sample_id}")
+                        })
                         .w(px(420.0))
                         .flex()
                         .flex_col()

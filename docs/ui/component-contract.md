@@ -60,7 +60,7 @@ reaching GPUI adapters. The shared contract distinguishes:
 
 GPUI adapters remain responsible for `deferred` and `anchored` rendering, event subscriptions,
 hitboxes, focus handles, concrete focus restoration, and AccessKit relationship wiring.
-`open_gpui_ui_components::overlay` provides the narrow GPUI mapping layer: deferred priority,
+`open_gpui_ui_components::gpui_adapter` provides the narrow GPUI mapping layer: deferred priority,
 snap-to-window margin, GPUI anchor mapping, and open-change decisions derived from the shared
 policy. It does not own global overlay ordering, callback storage, or window subscriptions.
 `open_gpui_ui_core::overlay` owns renderer-neutral stack ordering through
@@ -177,10 +177,10 @@ future adapter enhancement, not part of the first resolved-state contract.
 
 `AvatarState` is the identity primitive contract. It resolves display name, fallback initials or
 explicit fallback text, optional renderer-neutral `AvatarSource` metadata, accessible label,
-metrics, and token intents. The first slice intentionally does not own async image loading status,
-retry policy, cache state, grouped avatar overlap layout, or fallback delay timers; callers can
-model those outside the primitive and pass only the current source/fallback intent into the GPUI
-adapter.
+metrics, token intents, and `Role::Image`. The first slice intentionally does not own async image
+loading status, retry policy, cache state, grouped avatar overlap layout, or fallback delay timers;
+callers can model those outside the primitive and pass only the current source/fallback intent into
+the GPUI adapter.
 
 ## Focus Rings
 
@@ -189,10 +189,10 @@ changing border width. `FocusRing` keeps the focus color as a `ColorIntent`, rec
 width as neutral `UiPx`, and documents that it does not change layout.
 
 The GPUI adapter should apply the ring inside `focus_visible` using
-`open_gpui_ui_components::focus_ring_shadow`. This paints an outer box shadow, so keyboard focus
-visibility does not resize or move the focused component. `focus_ring_shadow` is also exported
-through `open_gpui_ui_components::gpui_adapter` to mark its `BoxShadow` return type as
-renderer-specific.
+`open_gpui_ui_components::gpui_adapter::focus_ring_shadow`. This paints an outer box shadow, so
+keyboard focus visibility does not resize or move the focused component. `focus_ring_shadow` is
+available only through `open_gpui_ui_components::gpui_adapter` because its `BoxShadow` return type
+is renderer-specific.
 
 ## Public API
 
@@ -202,10 +202,11 @@ Device-specific names such as `on_click` are acceptable only when maintaining an
 bootstrap API.
 
 Keep crate-root exports explicit. Do not use wildcard public re-exports in component crates.
-GPUI-specific helpers that remain public for concrete applications should also be reachable through
+GPUI-specific helpers that remain public for concrete applications must be reachable through
 `open_gpui_ui_components::gpui_adapter`; current examples include `TextInputController`,
-`init_text_input`, `focus_ring_shadow`, and GPUI overlay scheduling helpers. Keeping compatibility
-exports at the crate root is acceptable, but these APIs are not renderer-neutral contracts.
+`init_text_input`, `focus_ring_shadow`, accessibility mapping helpers, geometry conversion helpers,
+and GPUI overlay scheduling helpers. The crate root and prelude default interface are reserved for
+official components and renderer-neutral contracts.
 
 ## Official Component Completion
 
@@ -217,6 +218,8 @@ A component is official only when it satisfies the current-crate completion cont
 - callbacks, focus handles, scroll handles, image loading, deferred rendering, and subscriptions
   stay in the GPUI adapter layer;
 - the Components gallery exposes real samples, stable sample ids, and resolved-state metadata;
+- every official catalog entry has matching `SIGNALS` entries for its component type and resolved
+  state type, plus at least one rendered `gallery:component-*-sample:{id}` selector;
 - focused tests cover state contracts, and rendered runtime tests cover behavior that state tests
   cannot prove;
 - `docs/verification.md` names any manual or automated gate added by the component.
@@ -347,6 +350,9 @@ components from adapter-only helpers, internal anatomy, and deferred primitives.
 these gates visible:
 
 - crate-root and prelude exports stay explicit;
+- adapter-only helper exports stay grouped under `open_gpui_ui_components::gpui_adapter`;
+- every official catalog entry keeps matching component/state signals and a rendered sample
+  selector;
 - gallery samples continue to show real resolved state for each shipped component;
 - ScrollArea redraws preserve the default keyed runtime handle;
 - Splitter runtime fractions continue to share one constraint solver;
@@ -375,7 +381,8 @@ Before extraction, keep these boundary rules explicit:
   `open-gpui-ui-core` has no `open_gpui` dependency, source reference, or `UiPx` GPUI
   style-conversion impl;
 - `open_gpui_ui_core` now exposes neutral `Role`, `Toggled`, `Orientation`, `AccessibleAction`,
-  and `FocusTargetId`; GPUI/AccessKit conversion lives in `open_gpui_ui_components::a11y`;
+  and `FocusTargetId`; GPUI/AccessKit conversion is publicly exposed through
+  `open_gpui_ui_components::gpui_adapter`;
 - component resolved state now exposes `OverlayResolvedState` for overlay policy/presence/focus
   data. `GpuiOverlayState` remains a GPUI adapter helper for deferred priority, snap margins, and
   renderer scheduling, and should not be stored in public `*State` contracts;
@@ -400,7 +407,8 @@ The project now has repeated reusable behavior across overlay, roving focus, lis
 scroll viewports, and splitter constraints, and component tests guard public resolved-state structs
 against GPUI runtime/rendering type leaks. Public component metrics now use neutral `UiPx`
 instead of GPUI `Pixels`, and direct GPUI focus/a11y re-exports have been replaced by UI-core
-semantic facades with GPUI adapter mapping in `open_gpui_ui_components::a11y`. Component overlay
+semantic facades with GPUI adapter mapping exposed through
+`open_gpui_ui_components::gpui_adapter`. Component overlay
 state now uses neutral `OverlayResolvedState`; `GpuiOverlayState` is adapter-only scheduling
 state. Extraction is no longer blocked by UI-core GPUI dependencies or `UiPx` style conversion
 impls; the remaining non-headless surfaces are GPUI-owned adapter APIs such as

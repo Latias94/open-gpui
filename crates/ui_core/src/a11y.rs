@@ -5,6 +5,8 @@
 pub enum Role {
     /// A title or descriptive text node.
     Label,
+    /// An image or image-like identity primitive.
+    Image,
     /// A push button.
     Button,
     /// A two-state or tri-state checkbox.

@@ -5,7 +5,7 @@
 //! This crate sits above `open-gpui-ui-core`: it renders styled GPUI elements while consuming the
 //! foundation vocabulary for sizing, tokens, accessibility, and focus.
 
-pub mod a11y;
+mod a11y;
 pub mod alert_dialog;
 pub mod avatar;
 pub mod badge;
@@ -17,7 +17,7 @@ pub mod command;
 pub mod context_menu;
 pub mod dialog;
 pub mod field;
-pub mod focus;
+mod focus;
 mod geometry;
 pub mod hover_card;
 pub mod icon_button;
@@ -25,7 +25,7 @@ pub mod kbd;
 pub mod label;
 pub mod listbox;
 pub mod menu;
-pub mod overlay;
+mod overlay;
 pub mod popover;
 pub mod prelude;
 pub mod progress;
@@ -51,19 +51,20 @@ pub mod tooltip;
 /// These exports remain public for applications that use the concrete GPUI components, but a
 /// future headless crate should not depend on them as component contracts.
 pub mod gpui_adapter {
+    pub use crate::a11y::{
+        UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui,
+        gpui_role_from_ui, gpui_toggled_from_ui,
+    };
     pub use crate::focus::focus_ring_shadow;
     pub use crate::geometry::{gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui};
     pub use crate::overlay::{
         DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
-        GpuiOverlayState, default_deferred_priority, gpui_anchor, point_anchor_placement,
+        GpuiOverlayState, OverlayOpenChange, default_deferred_priority, escape_open_change,
+        gpui_anchor, gpui_overlay_state, outside_press_open_change, point_anchor_placement,
     };
-    pub use crate::text_input::{TextInputController, init as init_text_input};
+    pub use crate::text_input::adapter::{TextInputController, init as init_text_input};
 }
 
-pub use a11y::{
-    UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
-    gpui_toggled_from_ui,
-};
 pub use alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
@@ -85,7 +86,7 @@ pub use command::{
 pub use context_menu::{ContextMenu, ContextMenuState};
 pub use dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
-pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
+pub use focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use hover_card::{
     HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
@@ -102,11 +103,7 @@ pub use menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
     MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
 };
-pub use overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    OverlayOpenChange, OverlayResolvedState, default_deferred_priority, escape_open_change,
-    gpui_anchor, outside_press_open_change, point_anchor_placement,
-};
+pub use overlay::OverlayResolvedState;
 pub use popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
 pub use radio::{
@@ -141,10 +138,7 @@ pub use tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
 };
-pub use text_input::{
-    TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
-    init as init_text_input,
-};
+pub use text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
 pub use theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use toolbar::{

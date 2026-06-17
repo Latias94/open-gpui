@@ -5,10 +5,11 @@ use std::time::Duration;
 
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
-    DialogState, GpuiOverlayAdapterConfig, GpuiOverlayState, HoverCard, HoverCardDelayPolicy,
-    HoverCardOpenIntent, HoverCardState, Menu, MenuItem, MenuOpenMode, MenuState, Popover,
-    PopoverState, Sheet, SheetCloseAffordance, SheetModalMode, SheetSide, SheetState, Tooltip,
-    TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
+    DialogState, HoverCard, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardState, Menu,
+    MenuItem, MenuOpenMode, MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance,
+    SheetModalMode, SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent,
+    TooltipState,
+    gpui_adapter::{GpuiOverlayAdapterConfig, GpuiOverlayState},
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,

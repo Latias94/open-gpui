@@ -9,6 +9,31 @@ status: "active"
 
 # Current State
 
+## 2026-06-18
+
+- Done: Started and executed
+  `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md` to align the
+  current component product surface with the stricter adapter-first contract.
+- Done: Adapter-only GPUI helpers now stay off the default crate root and prelude. Concrete runtime
+  helpers such as `TextInputController`, text-input initialization, overlay scheduling helpers,
+  focus-ring shadow painting, a11y conversion helpers, and neutral-to-GPUI geometry conversion are
+  grouped under `open_gpui_ui_components::gpui_adapter`.
+- Done: `open_gpui_ui_components::text_input` remains the official component module for
+  `TextInput`, `TextInputState`, `TextInputColors`, and `TextInputMetrics`; the GPUI-backed
+  `TextInputController` implementation now lives behind the internal adapter module and is exposed
+  publicly only through `gpui_adapter`.
+- Done: Avatar now resolves to neutral `Role::Image`, and the GPUI adapter maps that role to the
+  concrete AccessKit image role.
+- Done: The Components gallery gained stricter catalog conformance coverage: every official catalog
+  entry must have component/state signals when declared, one stable rendered sample selector, and a
+  selector family prefix that matches the component name.
+- Last verified: `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, full `cargo nextest run -p
+  open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery` with 207
+  passing tests, local engineering-wiki structure validation, `git diff --check`, and
+  `cargo run -p xtask -- verify`.
+
 ## 2026-06-17
 
 - Done: Completed U1 and U2 of the UI component completion plan

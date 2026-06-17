@@ -1,19 +1,5 @@
 //! Convenient re-exports for Open GPUI UI components.
 
-/// GPUI-specific adapter APIs that are intentionally outside renderer-neutral component state.
-pub mod gpui_adapter {
-    pub use crate::gpui_adapter::{
-        DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement,
-        GpuiOverlayState, TextInputController, default_deferred_priority, focus_ring_shadow,
-        gpui_anchor, gpui_point_from_ui, gpui_px_from_ui, gpui_size_from_ui, init_text_input,
-        point_anchor_placement,
-    };
-}
-
-pub use crate::a11y::{
-    UiA11yElementExt, gpui_accessible_action_from_ui, gpui_orientation_from_ui, gpui_role_from_ui,
-    gpui_toggled_from_ui,
-};
 pub use crate::alert_dialog::{
     AlertDialog, AlertDialogActionKind, AlertDialogActionState, AlertDialogColors,
     AlertDialogIntent, AlertDialogMetrics, AlertDialogOpenMode, AlertDialogState,
@@ -35,7 +21,7 @@ pub use crate::command::{
 pub use crate::context_menu::{ContextMenu, ContextMenuState};
 pub use crate::dialog::{Dialog, DialogColors, DialogMetrics, DialogOpenMode, DialogState};
 pub use crate::field::{Field, FieldColors, FieldMessage, FieldMetrics, FieldState};
-pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing, focus_ring_shadow};
+pub use crate::focus::{DEFAULT_FOCUS_RING_WIDTH, FocusRing};
 pub use crate::hover_card::{
     HoverCard, HoverCardColors, HoverCardContentKind, HoverCardDelayPolicy, HoverCardMetrics,
     HoverCardOpenIntent, HoverCardOpenMode, HoverCardState,
@@ -52,11 +38,7 @@ pub use crate::menu::{
     Menu, MenuColors, MenuItem, MenuItemDescriptor, MenuItemKind, MenuItemState, MenuMetrics,
     MenuOpenMode, MenuSelection, MenuState, menu_navigation_target,
 };
-pub use crate::overlay::{
-    DEFAULT_OVERLAY_SAFE_MARGIN, GpuiOverlayAdapterConfig, GpuiOverlayPlacement, GpuiOverlayState,
-    OverlayOpenChange, OverlayResolvedState, default_deferred_priority, escape_open_change,
-    gpui_anchor, outside_press_open_change, point_anchor_placement,
-};
+pub use crate::overlay::OverlayResolvedState;
 pub use crate::popover::{Popover, PopoverColors, PopoverMetrics, PopoverOpenMode, PopoverState};
 pub use crate::progress::{Progress, ProgressColors, ProgressMetrics, ProgressState};
 pub use crate::radio::{
@@ -93,10 +75,7 @@ pub use crate::tabs::{
     Tabs, TabsActivationMode, TabsColors, TabsItem, TabsItemDescriptor, TabsItemState, TabsMetrics,
     TabsSelection, TabsState,
 };
-pub use crate::text_input::{
-    TextInput, TextInputColors, TextInputController, TextInputMetrics, TextInputState,
-    init as init_text_input,
-};
+pub use crate::text_input::{TextInput, TextInputColors, TextInputMetrics, TextInputState};
 pub use crate::theme::{ThemeColor, ThemeMode, ThemeResolver, ThemeSnapshot};
 pub use crate::toggle::{Toggle, ToggleColors, ToggleMetrics, ToggleState, ToggleVariant};
 pub use crate::toolbar::{

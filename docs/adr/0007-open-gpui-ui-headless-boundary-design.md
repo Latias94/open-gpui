@@ -63,7 +63,7 @@ The following remain GPUI adapter-owned:
 1. Move pure helpers with no renderer dependency first: roving focus, listbox navigation helpers,
    scroll viewport intent, and splitter constraints.
 2. Move overlay policy after validating the public API shape for stack ordering and focus intent.
-   Keep `open_gpui_ui_components::overlay` as the concrete GPUI mapping layer.
+   Keep `open_gpui_ui_components::gpui_adapter` as the concrete public GPUI mapping layer.
 3. Keep component builders and render adapters in `open-gpui-ui-components`. They should depend on
    the behavior crate, not move wholesale.
 4. Add compatibility re-exports only when they preserve stable imports without making GPUI adapter

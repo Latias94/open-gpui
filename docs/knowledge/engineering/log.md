@@ -1,5 +1,26 @@
 # Engineering Memory Update Log
 
+## 2026-06-18
+* **Update**: Executed
+  `docs/plans/2026-06-18-001-refactor-ui-component-contract-alignment-plan.md`. The component
+  crate default root and prelude now avoid adapter-only GPUI helper exports; those helpers are
+  intentionally grouped under `open_gpui_ui_components::gpui_adapter`.
+* **Update**: Preserved `open_gpui_ui_components::text_input` as the official module for
+  `TextInput`, `TextInputState`, `TextInputColors`, and `TextInputMetrics`, while moving the
+  GPUI-backed `TextInputController` and text-input key binding initialization behind the internal
+  adapter module and public `gpui_adapter` facade.
+* **Update**: Added neutral `Role::Image`, mapped it through the GPUI a11y adapter, and changed
+  `AvatarState::role()` from label semantics to image semantics.
+* **Update**: Strengthened Components gallery contract automation so official catalog entries must
+  align with component/state signals, stable sample selectors, selector family prefixes, and the
+  rendered full-page smoke.
+* **Verification**: Passed `cargo fmt -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery`, `cargo check -p open-gpui-ui-core -p
+  open-gpui-ui-components -p open-gpui-ui-foundation-gallery`, full `cargo nextest run -p
+  open-gpui-ui-core -p open-gpui-ui-components -p open-gpui-ui-foundation-gallery` with 207
+  passing tests, local engineering-wiki structure validation, `git diff --check`, and
+  `cargo run -p xtask -- verify`.
+
 ## 2026-06-17
 * **Update**: Completed U5 of `docs/plans/2026-06-17-004-feat-ui-component-completion-plan.md`.
   Promoted `Separator`, `Kbd`, `Progress`, `Skeleton`, and `Avatar` from deferred catalog entries

@@ -166,9 +166,9 @@ impl AvatarState {
         self.size
     }
 
-    /// Returns the accessibility role used by the first GPUI adapter slice.
+    /// Returns the accessibility role used by the GPUI adapter.
     pub const fn role(&self) -> Role {
-        Role::Label
+        Role::Image
     }
 
     /// Returns resolved metrics.
