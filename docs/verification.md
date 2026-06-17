@@ -52,17 +52,19 @@ nested ScrollArea wheel scrolling, vertical Tabs rail scrolling, and horizontal 
 Splitter pointer dragging, and long Sidebar internal navigation scrolling. Run the gallery package
 tests before relying on manual dogfood for those paths.
 
-The components package includes runtime smoke coverage for RadioGroup, Listbox, Tabs, and Toolbar
-keyboard navigation. The focused RadioGroup test renders real radio items, rejects disabled clicks,
-skips disabled items with arrow navigation, verifies click and arrow-selection payloads, and
+The components package includes runtime smoke coverage for RadioGroup, Listbox, Select, Tabs, and
+Toolbar keyboard navigation. The focused RadioGroup test renders real radio items, rejects disabled
+clicks, skips disabled items with arrow navigation, verifies click and arrow-selection payloads, and
 confirms Space on an already selected radio does not emit a duplicate selection change. The focused
-Listbox test renders real standalone, separator, and grouped options, rejects disabled clicks,
-keeps arrow navigation selection-free, skips disabled/separator rows, and verifies Enter and Space
-dispatch both option-level and listbox-level selection callbacks. The focused Tabs test renders real
-tabs, preserves the builder-selected seed on the first frame, rejects disabled tab clicks, keeps
-manual arrow navigation as focus-only, and activates focused tabs with Enter and Space. The focused
-Toolbar test renders real toolbar items, moves roving focus with arrow/Home keys, skips disabled and
-separator items, and activates the focused item with Enter.
+Listbox test renders real standalone, separator, and grouped options, rejects disabled clicks, keeps
+arrow navigation selection-free, skips disabled/separator rows, and verifies Enter and Space dispatch
+both option-level and listbox-level selection callbacks. The focused Select test opens the real
+trigger, rejects disabled popup option clicks, verifies click and keyboard selection payloads,
+closes after selection, and confirms popup Listbox arrow navigation skips disabled rows. The focused
+Tabs test renders real tabs, preserves the builder-selected seed on the first frame, rejects
+disabled tab clicks, keeps manual arrow navigation as focus-only, and activates focused tabs with
+Enter and Space. The focused Toolbar test renders real toolbar items, moves roving focus with
+arrow/Home keys, skips disabled and separator items, and activates the focused item with Enter.
 
 The gallery package also includes a compact-shell runtime smoke that switches the gallery to the
 compact viewport policy, verifies the derived mobile shell and compact density, scrolls the left
@@ -199,9 +201,11 @@ cargo run -p open-gpui-ui-foundation-gallery -- --page components
    samples should expose closed, controlled-open, and disabled states; confirm the trigger label
    reflects the selected option, the open sample uses a non-modal dismissible listbox popup with a
    scrollable long option set, Escape/outside press dismisses it, and disabled empty select remains
-   closed. The Combobox samples should expose editable filtering, selected value metadata that does
-   not disappear when the query hides the selected option, an empty filtered state, and disabled
-   input/popup suppression. The Command samples should expose grouped command items, shortcut
+   closed. The component runtime smoke now verifies rendered Select trigger opening, disabled popup
+   option rejection, click selection, keyboard popup selection that skips disabled rows, selection
+   payloads, and ordered popup close callbacks. The Combobox samples should expose editable
+   filtering, selected value metadata that does not disappear when the query hides the selected
+   option, an empty filtered state, and disabled input/popup suppression. The Command samples should expose grouped command items, shortcut
    labels, loading and empty states, inline and dialog-backed presentation, and modal dialog
    outside/Escape dismissal while preserving the Components page scrollability. The default TextInput
    sample should accept real text editing through the

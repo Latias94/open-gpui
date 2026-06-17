@@ -13,8 +13,8 @@ use open_gpui_ui_components::{
     ListboxOptionKind, ListboxSelection, ListboxState, Menu, MenuItem, MenuItemKind, MenuOpenMode,
     Popover, PopoverOpenMode, RadioGroup, RadioGroupState, RadioItem, RadioItemDescriptor,
     RadioSelection, ScrollArea, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy, Select,
-    SelectOpenMode, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, Sidebar,
-    SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
+    SelectOpenMode, SelectSelection, Sheet, SheetCloseAffordance, SheetModalMode, SheetOpenMode,
+    SheetSide, Sidebar, SidebarCollapseMode, SidebarItem, SidebarItemDescriptor, SidebarSection,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Splitter, SplitterPanel,
     SplitterPanelDescriptor, SplitterState, Switch, Tabs, TabsActivationMode, TabsItem,
     TabsItemDescriptor, TabsSelection, TabsState, TextInput, TextInputController, ThemeColor,
@@ -2986,6 +2986,195 @@ fn select_state_models_disabled_empty_and_policy_overrides() {
     assert_eq!(state.initial_focus_intent(), &InitialFocusIntent::None);
     assert_eq!(state.focus_restore_intent(), &FocusRestoreIntent::None);
     assert!(!state.overlay().should_render_deferred_layer());
+}
+
+#[open_gpui::test]
+fn select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum SelectRuntimeEvent {
+        Open(bool),
+        Select(SelectSelection),
+    }
+
+    struct TestView {
+        events: Rc<RefCell<Vec<SelectRuntimeEvent>>>,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let open_events = self.events.clone();
+            let select_events = self.events.clone();
+
+            div().size_full().child(
+                Select::new("runtime-select", "Runtime select")
+                    .placeholder("Choose item")
+                    .option(ListboxOption::new("alpha", "Alpha"))
+                    .option(ListboxOption::new("bravo", "Bravo").disabled(true))
+                    .group(
+                        ListboxGroup::new("team", "Team")
+                            .option(ListboxOption::new("charlie", "Charlie"))
+                            .option(ListboxOption::new("delta", "Delta")),
+                    )
+                    .on_open_change(move |open, _, _| {
+                        open_events
+                            .borrow_mut()
+                            .push(SelectRuntimeEvent::Open(open));
+                    })
+                    .on_select(move |selection, _, _| {
+                        select_events
+                            .borrow_mut()
+                            .push(SelectRuntimeEvent::Select(selection));
+                    }),
+            )
+        }
+    }
+
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let (_, cx) = cx.add_window_view(|_, _| TestView {
+        events: events.clone(),
+    });
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+
+    assert!(
+        cx.debug_bounds("select:runtime-select:root").is_some(),
+        "select root should expose a stable debug selector"
+    );
+
+    let trigger = cx
+        .debug_bounds("select:runtime-select:trigger")
+        .expect("select trigger should be rendered");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![SelectRuntimeEvent::Open(true)]
+    );
+    assert!(
+        cx.debug_bounds("select:Runtime select:select-content-scroll:content")
+            .is_some(),
+        "select content should open from the real trigger"
+    );
+
+    let disabled_bravo = cx
+        .debug_bounds("listbox:runtime-select-listbox:option:bravo")
+        .expect("disabled Bravo option should be rendered in the popup listbox");
+    cx.simulate_click(disabled_bravo.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![SelectRuntimeEvent::Open(true)],
+        "disabled popup option click should not emit selection callbacks or close the popup"
+    );
+
+    let alpha = cx
+        .debug_bounds("listbox:runtime-select-listbox:option:alpha")
+        .expect("Alpha option should be rendered in the popup listbox");
+    cx.simulate_click(alpha.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(0, "alpha", "Alpha")),
+            SelectRuntimeEvent::Open(false),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("select:Runtime select:select-content-scroll:content")
+            .is_none(),
+        "enabled popup option click should close the content"
+    );
+
+    let trigger = cx
+        .debug_bounds("select:runtime-select:trigger")
+        .expect("select trigger should still be rendered after selection");
+    cx.simulate_click(trigger.center(), Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(0, "alpha", "Alpha")),
+            SelectRuntimeEvent::Open(false),
+            SelectRuntimeEvent::Open(true),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("select:Runtime select:select-content-scroll:content")
+            .is_some(),
+        "select content should reopen from the trigger after a prior selection"
+    );
+
+    let alpha = cx
+        .debug_bounds("listbox:runtime-select-listbox:option:alpha")
+        .expect("Alpha option should be rendered after reopening");
+    cx.simulate_mouse_down(alpha.center(), MouseButton::Left, Default::default());
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(0, "alpha", "Alpha")),
+            SelectRuntimeEvent::Open(false),
+            SelectRuntimeEvent::Open(true),
+        ],
+        "mouse down should focus the option without selecting until mouse up or keyboard activation"
+    );
+    assert!(
+        cx.debug_bounds("select:Runtime select:select-content-scroll:content")
+            .is_some(),
+        "mouse down focus should keep the popup open for keyboard activation"
+    );
+
+    cx.simulate_keystrokes("down");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(0, "alpha", "Alpha")),
+            SelectRuntimeEvent::Open(false),
+            SelectRuntimeEvent::Open(true),
+        ],
+        "arrow navigation in the popup listbox should not select"
+    );
+
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| {
+        window.draw(cx).clear();
+    });
+    assert_eq!(
+        events.borrow().clone(),
+        vec![
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(0, "alpha", "Alpha")),
+            SelectRuntimeEvent::Open(false),
+            SelectRuntimeEvent::Open(true),
+            SelectRuntimeEvent::Select(SelectSelection::new(2, "charlie", "Charlie")),
+            SelectRuntimeEvent::Open(false),
+        ]
+    );
+    assert!(
+        cx.debug_bounds("select:Runtime select:select-content-scroll:content")
+            .is_none(),
+        "keyboard popup selection should close the content"
+    );
 }
 
 #[test]

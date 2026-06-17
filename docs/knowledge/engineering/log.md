@@ -1,6 +1,18 @@
 # Engineering Memory Update Log
 
 ## 2026-06-17
+* **Update**: Added Select runtime keyboard automation. The focused smoke opens the real Select
+  trigger, verifies disabled popup options do not select or close the popup, selects an enabled
+  option by click, reopens the popup, moves through the embedded Listbox with keyboard navigation,
+  skips disabled rows, selects with Enter, and verifies `SelectSelection` payloads plus open-change
+  callbacks.
+* **Update**: Fixed Select popup keyboard navigation by no longer passing the parent-derived
+  `active_value` into the embedded Listbox as a controlled active prop. Explicit
+  `Select::active(...)` still controls popup Listbox active state, while the uncontrolled popup
+  runtime owns active-descendant movement after user navigation.
+* **Verification**: Focused Select runtime smoke passed with `cargo fmt -p
+  open-gpui-ui-components` and `cargo nextest run -p open-gpui-ui-components
+  select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`.
 * **Update**: Added Listbox runtime keyboard automation. `Listbox` now exposes stable runtime debug
   selectors for the root, empty state, groups, separators, and options, and
   `open-gpui-ui-components` has a real rendered Listbox smoke that rejects disabled option clicks,

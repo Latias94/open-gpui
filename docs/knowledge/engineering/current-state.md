@@ -50,6 +50,15 @@ status: "active"
 - Last verified for the Listbox runtime smoke: `cargo fmt -p open-gpui-ui-components` and `cargo
   nextest run -p open-gpui-ui-components
   listbox_runtime_click_and_keyboard_selection_skip_disabled_items`.
+- Done: Added a rendered Select smoke in `open-gpui-ui-components` and fixed Select popup keyboard
+  navigation by no longer passing the parent-derived active value as a controlled active prop to the
+  embedded Listbox while preserving explicit `Select::active(...)` control. The smoke opens the
+  real trigger, rejects disabled popup option clicks, verifies ordered click and keyboard selection
+  payloads, confirms popup Listbox arrows skip disabled rows, and checks selection closes the popup
+  with open-change callbacks.
+- Last verified for the Select runtime smoke: `cargo fmt -p open-gpui-ui-components` and `cargo
+  nextest run -p open-gpui-ui-components
+  select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`.
 - Done: Added Tabs runtime keyboard automation in `open-gpui-ui-components` and fixed the rendered
   `Tabs` runtime to honor the builder-selected seed on first render plus bind per-tab focus handles
   to actual trigger elements. The smoke rejects disabled tab clicks, keeps Manual arrow navigation

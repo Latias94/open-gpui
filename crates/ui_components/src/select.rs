@@ -721,6 +721,7 @@ impl RenderOnce for Select {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
+        let explicit_active_value = self.active_value.clone();
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
@@ -861,6 +862,7 @@ impl RenderOnce for Select {
                                 content_id.clone(),
                                 listbox_id.clone(),
                                 state.clone(),
+                                explicit_active_value.clone(),
                                 self.options,
                                 self.groups,
                                 runtime.clone(),
@@ -880,6 +882,7 @@ fn select_content_element(
     content_id: ElementId,
     listbox_id: ElementId,
     state: SelectState,
+    explicit_active_value: Option<String>,
     options: Vec<ListboxOption>,
     groups: Vec<ListboxGroup>,
     runtime: open_gpui::Entity<SelectRuntime>,
@@ -896,7 +899,6 @@ fn select_content_element(
     let listbox_open_change = on_open_change.clone();
     let listbox_select = on_select.clone();
     let selected_value = state.selected_value().map(str::to_owned);
-    let active_value = state.active_value().map(str::to_owned);
     let label = state.label().to_owned();
     let listbox = options
         .into_iter()
@@ -922,7 +924,7 @@ fn select_content_element(
                 on_open_change(false, window, cx);
             }
         });
-    let listbox = apply_optional_values(listbox, selected_value, active_value);
+    let listbox = apply_optional_values(listbox, selected_value, explicit_active_value);
 
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
 
