@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 #[test]
 fn ui_core_extraction_blockers_match_allowlist() {
     let expected = [("adaptive.rs", "Pixels as Px")];
@@ -22,6 +24,82 @@ fn ui_core_extraction_blockers_match_allowlist() {
     );
 }
 
+#[test]
+fn ui_core_strict_boundary_blockers_match_allowlist() {
+    let expected = [
+        BoundaryBlocker::new(
+            "cargo dependency",
+            "Cargo.toml",
+            "open_gpui.workspace = true",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "adaptive.rs",
+            "use open_gpui::{Pixels as Px, px};",
+        ),
+        BoundaryBlocker::new("adaptive pixels alias", "adaptive.rs", "Pixels as Px"),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::Pixels {",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "open_gpui::px(value.as_f32())",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::DefiniteLength {",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "open_gpui::Pixels::from(value).into()",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::AbsoluteLength {",
+        ),
+        BoundaryBlocker::new(
+            "source reference",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::Length {",
+        ),
+        BoundaryBlocker::new(
+            "ui px gpui conversion impl",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::Pixels {",
+        ),
+        BoundaryBlocker::new(
+            "ui px gpui conversion impl",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::DefiniteLength {",
+        ),
+        BoundaryBlocker::new(
+            "ui px gpui conversion impl",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::AbsoluteLength {",
+        ),
+        BoundaryBlocker::new(
+            "ui px gpui conversion impl",
+            "geometry.rs",
+            "impl From<UiPx> for open_gpui::Length {",
+        ),
+    ];
+    let expected = expected.into_iter().collect::<BTreeSet<_>>();
+    let actual = strict_boundary_blockers()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        actual, expected,
+        "ui_core strict headless boundary blockers changed; shrink this inventory only when the adapter boundary migration removes the corresponding GPUI dependency path"
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SourceBlocker {
     file: String,
@@ -32,6 +110,102 @@ impl SourceBlocker {
     fn new(file: String, token: String) -> Self {
         Self { file, token }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct BoundaryBlocker {
+    category: String,
+    file: String,
+    detail: String,
+}
+
+impl BoundaryBlocker {
+    fn new(
+        category: impl Into<String>,
+        file: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            category: category.into(),
+            file: file.into(),
+            detail: detail.into(),
+        }
+    }
+}
+
+fn strict_boundary_blockers() -> Vec<BoundaryBlocker> {
+    let mut blockers = cargo_dependency_blockers()
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    for (file, line) in source_lines_with("open_gpui") {
+        blockers.insert(BoundaryBlocker::new("source reference", file, line));
+    }
+
+    for blocker in source_blockers(&["Pixels as Px"]) {
+        blockers.insert(BoundaryBlocker::new(
+            "adaptive pixels alias",
+            blocker.file,
+            blocker.token,
+        ));
+    }
+
+    for (file, line) in source_lines_with("impl From<UiPx> for open_gpui::") {
+        blockers.insert(BoundaryBlocker::new(
+            "ui px gpui conversion impl",
+            file,
+            line,
+        ));
+    }
+
+    blockers.into_iter().collect()
+}
+
+fn cargo_dependency_blockers() -> Vec<BoundaryBlocker> {
+    let manifest_path = concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml");
+    let manifest = std::fs::read_to_string(manifest_path)
+        .unwrap_or_else(|error| panic!("failed to read {manifest_path}: {error}"));
+
+    uncommented_manifest_lines(&manifest)
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("open_gpui"))
+        .map(|line| BoundaryBlocker::new("cargo dependency", "Cargo.toml", line))
+        .collect()
+}
+
+fn source_lines_with(token: &str) -> Vec<(String, String)> {
+    let mut source_files = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))
+        .expect("ui_core src directory should be readable")
+        .map(|entry| {
+            entry
+                .expect("source directory entry should be readable")
+                .path()
+        })
+        .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+        .collect::<Vec<_>>();
+    source_files.sort();
+
+    let mut matches = BTreeSet::new();
+    for source_file in source_files {
+        let source = std::fs::read_to_string(&source_file)
+            .unwrap_or_else(|error| panic!("failed to read {source_file:?}: {error}"));
+        let source = uncommented_lines(&source);
+        let file_name = source_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>")
+            .to_owned();
+
+        for line in source.lines() {
+            let line = line.trim();
+            if line.contains(token) {
+                matches.insert((file_name.clone(), line.to_owned()));
+            }
+        }
+    }
+
+    matches.into_iter().collect()
 }
 
 fn source_blockers(tokens: &[&str]) -> Vec<SourceBlocker> {
@@ -74,6 +248,17 @@ fn uncommented_lines(source: &str) -> String {
         .filter(|line| {
             let trimmed = line.trim_start();
             !trimmed.starts_with("//") && !trimmed.starts_with("///")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn uncommented_manifest_lines(source: &str) -> String {
+    source
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with('#')
         })
         .collect::<Vec<_>>()
         .join("\n")

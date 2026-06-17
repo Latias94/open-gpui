@@ -61,9 +61,11 @@ Public component metrics and accessibility state now use neutral UI-core vocabul
 GPUI `Pixels`, `Bounds`, `Point`, or `Size` aliases to resolved-state contracts should fail the
 guard inventory. `UiPx` still carries GPUI style conversion impls in UI core as a transitional
 adapter convenience until the strict crate boundary is split.
-The `open-gpui-ui-core` blocker allowlist currently contains only adaptive viewport
+The `open-gpui-ui-core` public-contract blocker allowlist currently contains only adaptive viewport
 `Pixels as Px`; treat changes to that allowlist as an extraction-gate decision, not routine test
-maintenance.
+maintenance. The companion strict-boundary inventory also watches UI-core source references to
+`open_gpui`, `UiPx` conversion impls for GPUI style types, and the `open_gpui.workspace = true`
+manifest dependency so the boundary can shrink deliberately through the strict adapter migration.
 `adapter_only_public_surfaces_match_allowlist` and
 `gpui_adapter_exports_group_runtime_specific_surfaces` guard the intentionally public GPUI helper
 surface: `TextInputController`, externally supplied `ScrollHandle`, `focus_ring_shadow`,
