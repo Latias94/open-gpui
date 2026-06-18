@@ -8,6 +8,7 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 ---
 
 # Summary
+- Restored the Components gallery shell's `Select` / `Combobox` / `Command` active-state propagation so the visible samples consume `state.active_value()` instead of flattening the behavior to `selected`.
 - Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
 - The current workspace does not contain `repo-ref/fret`; the only local `repo-ref` checkout is `nako-scraper`, so the fret diag example could not be re-read here.
 - Continued after reviewing the local reference repo `repo-ref/fret`. The useful architecture lesson was layering: thin shell/entry points, real behavior in state/helper seams, and no extra helper extraction unless it removes duplicated policy.
@@ -25,6 +26,7 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 - Overlay menu/context-menu initial focus request is now sample-owned and optional; the shell falls back to resolved state when the sample does not request a specific starting focus.
 
 # Verified State
+- `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45 after the active-state propagation fix.
 - `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45.
 - `cargo fmt --all --check` passed.
 - `cargo check -p open-gpui-ui-components --tests` passed.

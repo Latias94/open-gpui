@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Restored the Components gallery shell's `Select` / `Combobox` / `Command` active-state propagation so the visible samples consume `state.active_value()` instead of silently flattening the behavior to `selected` alone.
+- Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45 after the active-state propagation fix.
+- Next action: keep the architecture pass evidence-backed; the remaining known seams still look narrower than the `active` contract gap that was just fixed.
+
 - Done: Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
 - Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45. `git diff --check` only reported the expected CRLF warning on the edited test file.
 - Next action: keep the gallery pass evidence-backed. The only remaining plausible seam from the latest review is `Menu` / `ContextMenu` entry-focus handling, but do not split it further unless a new test or subagent exposes real duplication.

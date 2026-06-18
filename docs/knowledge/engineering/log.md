@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Restored the Components gallery shell's `Select` / `Combobox` / `Command` active-state propagation so the visible samples consume `state.active_value()` instead of silently flattening the behavior to `selected` alone.
+* **Verification**: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45 after the active-state propagation fix.
+* **Decision**: Keep the architecture pass evidence-backed; the remaining known seams still look narrower than the `active` contract gap that was just fixed.
 * **Update**: Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
 * **Verification**: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45. `git diff --check` only reported the expected CRLF warning on the edited test file.
 * **Note**: The requested `repo-ref/fret` reference is not present in this workspace; the only local `repo-ref` checkout is `nako-scraper`, so the fret diag example could not be re-read here.

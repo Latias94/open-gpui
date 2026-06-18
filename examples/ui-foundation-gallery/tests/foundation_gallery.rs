@@ -1348,7 +1348,11 @@ fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
     let select_section = shell_source
         .split("fn component_select_samples_section(")
         .nth(1)
-        .and_then(|section| section.split("fn component_combobox_samples_section").next())
+        .and_then(|section| {
+            section
+                .split("fn component_combobox_samples_section")
+                .next()
+        })
         .expect("expected Select sample section in shell source");
     let combobox_section = shell_source
         .split("fn component_combobox_samples_section(")
