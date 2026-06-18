@@ -164,8 +164,6 @@ pub struct TooltipSample {
     pub label: &'static str,
     /// Text shown by the tooltip surface.
     pub tooltip_text: &'static str,
-    /// Whether the tooltip is initialized open.
-    pub default_open: bool,
     /// Resolved tooltip state.
     pub state: TooltipState,
 }
@@ -184,7 +182,6 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             id: "hover-focus",
             label: "Hover or focus",
             tooltip_text: "Visible from pointer hover or keyboard focus.",
-            default_open: false,
             state: Tooltip::new(
                 "overlay-tooltip:hover-focus",
                 "Visible from pointer hover or keyboard focus.",
@@ -198,7 +195,6 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             id: "focus-only",
             label: "Focus only",
             tooltip_text: "Keyboard focus can reveal this tooltip without pointer input.",
-            default_open: false,
             state: Tooltip::new(
                 "overlay-tooltip:focus-only",
                 "Keyboard focus can reveal this tooltip without pointer input.",
@@ -212,7 +208,6 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             id: "delayed-manual",
             label: "Manual delayed",
             tooltip_text: "Resolved state keeps explicit delay policy and controlled open.",
-            default_open: false,
             state: Tooltip::new(
                 "overlay-tooltip:delayed-manual",
                 "Resolved state keeps explicit delay policy and controlled open.",
@@ -233,7 +228,6 @@ pub fn tooltip_samples(tokens: ThemeTokens) -> [TooltipSample; 4] {
             id: "disabled",
             label: "Disabled",
             tooltip_text: "Disabled triggers do not expose a focusable tooltip target.",
-            default_open: false,
             state: Tooltip::new(
                 "overlay-tooltip:disabled",
                 "Disabled triggers do not expose a focusable tooltip target.",
@@ -258,8 +252,6 @@ pub struct HoverCardSample {
     pub content_text: &'static str,
     /// Open-state ownership.
     pub open_mode: open_gpui_ui_components::HoverCardOpenMode,
-    /// Whether the hover card starts open when uncontrolled.
-    pub default_open: bool,
     /// Resolved hover card state.
     pub state: HoverCardState,
 }
@@ -279,7 +271,6 @@ pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
             label: "Profile preview",
             content_text: "Interactive hover card opened from pointer hover or keyboard focus.",
             open_mode: open_gpui_ui_components::HoverCardOpenMode::Uncontrolled,
-            default_open: true,
             state: HoverCard::new(
                 "overlay-hover-card:profile-preview",
                 "Profile preview",
@@ -296,7 +287,6 @@ pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
             label: "Focus preview",
             content_text: "Focus-only hover card keeps pointer hover from opening it.",
             open_mode: open_gpui_ui_components::HoverCardOpenMode::Uncontrolled,
-            default_open: false,
             state: HoverCard::new(
                 "overlay-hover-card:focus-preview",
                 "Focus preview",
@@ -312,7 +302,6 @@ pub fn hover_card_samples(tokens: ThemeTokens) -> [HoverCardSample; 3] {
             label: "Manual card",
             content_text: "The gallery shell owns this manual hover card open state.",
             open_mode: open_gpui_ui_components::HoverCardOpenMode::Controlled,
-            default_open: false,
             state: HoverCard::new(
                 "overlay-hover-card:manual-controlled",
                 "Manual card",
@@ -396,7 +385,7 @@ pub fn popover_samples(tokens: ThemeTokens) -> [PopoverSample; 4] {
                 "Consume outside",
                 "Outside press dismisses and consumes the event.",
             )
-            .open(true)
+            .default_open(true)
             .outside_press_policy(OutsidePressPolicy::DismissAndConsume)
             .placement_alignment(OverlayPlacementAlignment::End)
             .tokens(tokens)
@@ -498,7 +487,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
                 "Sticky dialog",
                 "Outside press does not dismiss this dialog.",
             )
-            .open(true)
+            .default_open(true)
             .outside_press_policy(OutsidePressPolicy::Ignore)
             .tokens(tokens)
             .state(),
@@ -690,6 +679,8 @@ pub struct MenuSample {
     pub label: &'static str,
     /// Open-state ownership.
     pub open_mode: open_gpui_ui_components::MenuOpenMode,
+    /// Initial focused item intent.
+    pub focused_value: Option<&'static str>,
     /// Resolved menu state.
     pub state: MenuState,
 }
@@ -708,6 +699,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             id: "default-open",
             label: "Default open",
             open_mode: open_gpui_ui_components::MenuOpenMode::Uncontrolled,
+            focused_value: Some("save"),
             state: Menu::new("overlay-menu:default-open", "Default open")
                 .default_open(true)
                 .focused_value("save")
@@ -722,6 +714,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             id: "controlled",
             label: "Controlled",
             open_mode: open_gpui_ui_components::MenuOpenMode::Controlled,
+            focused_value: Some("copy"),
             state: Menu::new("overlay-menu:controlled", "Controlled")
                 .open(false)
                 .focused_value("copy")
@@ -735,8 +728,9 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             id: "outside-ignore",
             label: "Outside ignored",
             open_mode: open_gpui_ui_components::MenuOpenMode::Uncontrolled,
+            focused_value: None,
             state: Menu::new("overlay-menu:outside-ignore", "Outside ignored")
-                .open(true)
+                .default_open(true)
                 .outside_press_policy(OutsidePressPolicy::Ignore)
                 .item(MenuItem::action("rename", "Rename"))
                 .item(MenuItem::action("duplicate", "Duplicate"))
@@ -747,6 +741,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             id: "disabled",
             label: "Disabled",
             open_mode: open_gpui_ui_components::MenuOpenMode::Uncontrolled,
+            focused_value: None,
             state: Menu::new("overlay-menu:disabled", "Disabled")
                 .default_open(true)
                 .disabled(true)
@@ -766,6 +761,8 @@ pub struct ContextMenuSample {
     pub label: &'static str,
     /// Open-state ownership.
     pub open_mode: open_gpui_ui_components::MenuOpenMode,
+    /// Initial focused item intent.
+    pub focused_value: Option<&'static str>,
     /// Resolved context-menu state.
     pub state: ContextMenuState,
 }
@@ -784,8 +781,9 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             id: "point-anchor",
             label: "Point anchor",
             open_mode: open_gpui_ui_components::MenuOpenMode::Uncontrolled,
+            focused_value: Some("duplicate"),
             state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
-                .open(true)
+                .default_open(true)
                 .anchor_point(point(px(520.0), px(300.0)))
                 .focused_value("duplicate")
                 .item(MenuItem::action("duplicate", "Duplicate"))
@@ -798,6 +796,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             id: "controlled",
             label: "Controlled",
             open_mode: open_gpui_ui_components::MenuOpenMode::Controlled,
+            focused_value: Some("inspect"),
             state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
                 .open(false)
                 .anchor_point(point(px(280.0), px(160.0)))
@@ -811,6 +810,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             id: "default-open",
             label: "Default open",
             open_mode: open_gpui_ui_components::MenuOpenMode::Uncontrolled,
+            focused_value: None,
             state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
                 .default_open(true)
                 .anchor_point(point(px(96.0), px(96.0)))

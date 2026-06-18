@@ -11,6 +11,17 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Continued the overlay gallery contract cleanup by moving menu and context-menu initial
+  focused-item intent into explicit sample metadata. `MenuSample` and `ContextMenuSample` now
+  carry `focused_value`, and the gallery shell feeds that value into the rendered menu builders
+  instead of reconstructing it from resolved state.
+- Last verified for the focused-value cleanup: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, and focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+  overlay_page_context_menu_samples_expose_point_anchor_contracts`.
+- Next action: stop the overlay seam hunt unless a new evidence-backed asymmetry appears; the
+  remaining controlled branches are explicit sample ownership, not shell inference.
+
 - Done: Continued the overlay ownership cleanup by adding explicit `open_mode` metadata to the
   hover-card, popover, dialog, alert-dialog, and sheet samples, and by keeping `Command`'s loading
   metadata sample-owned instead of shell-inferred. The gallery shell now routes these cases from

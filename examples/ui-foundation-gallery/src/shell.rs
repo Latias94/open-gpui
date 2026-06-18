@@ -2608,7 +2608,10 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "manual-controlled" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::HoverCardOpenMode::Controlled
+        ) {
             HoverCard::new(
                 format!("overlay-hover-card-sample:{}", sample.id),
                 sample.label,
@@ -2651,13 +2654,7 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_hover_card_open(open, cx))
                         .ok();
                 }),
-            open_gpui_ui_components::HoverCardOpenMode::Uncontrolled => {
-                if sample.default_open {
-                    hover_card.default_open(true)
-                } else {
-                    hover_card
-                }
-            }
+            open_gpui_ui_components::HoverCardOpenMode::Uncontrolled => hover_card,
         };
 
         overlay_sample_card_shell(
@@ -2700,7 +2697,10 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "controlled" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::PopoverOpenMode::Controlled
+        ) {
             Popover::new(
                 format!("overlay-popover-sample:{}", sample.id),
                 sample.label,
@@ -2735,7 +2735,7 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_popover_open(open, cx))
                         .ok();
                 }),
-            open_gpui_ui_components::PopoverOpenMode::Uncontrolled => popover.default_open(false),
+            open_gpui_ui_components::PopoverOpenMode::Uncontrolled => popover,
         };
 
         overlay_sample_card_shell(
@@ -2782,7 +2782,10 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "controlled-modal" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::DialogOpenMode::Controlled
+        ) {
             Dialog::new(
                 format!("overlay-dialog-sample:{}", sample.id),
                 sample.label,
@@ -2821,7 +2824,7 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
                         .ok();
                 }),
-            open_gpui_ui_components::DialogOpenMode::Uncontrolled => dialog.default_open(false),
+            open_gpui_ui_components::DialogOpenMode::Uncontrolled => dialog,
         };
 
         overlay_sample_card_shell(
@@ -2868,7 +2871,10 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "destructive-confirm" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::AlertDialogOpenMode::Controlled
+        ) {
             AlertDialog::new(
                 format!("overlay-alert-dialog-sample:{}", sample.id),
                 sample.label,
@@ -2910,9 +2916,7 @@ impl GalleryShell {
                         })
                         .ok();
                 }),
-            open_gpui_ui_components::AlertDialogOpenMode::Uncontrolled => {
-                alert_dialog.default_open(false)
-            }
+            open_gpui_ui_components::AlertDialogOpenMode::Uncontrolled => alert_dialog,
         };
 
         overlay_sample_card_shell(
@@ -2959,7 +2963,10 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "right-non-modal" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::SheetOpenMode::Controlled
+        ) {
             Sheet::new(
                 format!("overlay-sheet-sample:{}", sample.id),
                 sample.label,
@@ -3008,7 +3015,7 @@ impl GalleryShell {
                         .ok();
                 })
             }
-            open_gpui_ui_components::SheetOpenMode::Uncontrolled => sheet.default_open(false),
+            open_gpui_ui_components::SheetOpenMode::Uncontrolled => sheet,
         };
 
         div()
@@ -3065,9 +3072,16 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "controlled" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::MenuOpenMode::Controlled
+        ) {
+            let focused_value = sample
+                .focused_value
+                .expect("controlled menu sample should define a focused value");
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open)
+                .focused_value(focused_value)
                 .items(menu_items_for_sample(sample.id))
                 .state()
         } else {
@@ -3082,6 +3096,11 @@ impl GalleryShell {
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
+        let menu = if let Some(focused_value) = sample.focused_value {
+            menu.focused_value(focused_value)
+        } else {
+            menu
+        };
         let menu = match sample.open_mode {
             open_gpui_ui_components::MenuOpenMode::Controlled => {
                 menu.open(state.open()).on_open_change(move |open, _, cx| {
@@ -3090,7 +3109,7 @@ impl GalleryShell {
                         .ok();
                 })
             }
-            open_gpui_ui_components::MenuOpenMode::Uncontrolled => menu.default_open(false),
+            open_gpui_ui_components::MenuOpenMode::Uncontrolled => menu,
         };
 
         div()
@@ -3108,30 +3127,36 @@ impl GalleryShell {
             .text_xs()
             .text_color(rgb(0x3f4a57))
             .child(menu)
-            .when(sample_id == "controlled", |card| {
-                card.child(
-                    div()
-                        .id("overlay-menu-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-menu-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_menu_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close menu"
-                        } else {
-                            "open menu"
-                        }),
-                )
-            })
+            .when(
+                matches!(
+                    sample.open_mode,
+                    open_gpui_ui_components::MenuOpenMode::Controlled
+                ),
+                |card| {
+                    card.child(
+                        div()
+                            .id("overlay-menu-controlled-toggle")
+                            .debug_selector({
+                                let sample_id = sample_id.to_owned();
+                                move || format!("gallery:overlay-menu-control:{sample_id}")
+                            })
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_controlled_menu_open(!controlled_open, cx);
+                            }))
+                            .child(if controlled_open {
+                                "close menu"
+                            } else {
+                                "open menu"
+                            }),
+                    )
+                },
+            )
             .child(menu_state_row(&state))
     }
 
@@ -3141,12 +3166,19 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state = if sample.id == "controlled" {
+        let state = if matches!(
+            sample.open_mode,
+            open_gpui_ui_components::MenuOpenMode::Controlled
+        ) {
+            let focused_value = sample
+                .focused_value
+                .expect("controlled context menu sample should define a focused value");
             ContextMenu::new(
                 format!("overlay-context-menu-sample:{}", sample.id),
                 sample.label,
             )
             .open(controlled_open)
+            .focused_value(focused_value)
             .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
             .items(context_menu_items_for_sample(sample.id))
             .state()
@@ -3163,6 +3195,11 @@ impl GalleryShell {
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
+        let context_menu = if let Some(focused_value) = sample.focused_value {
+            context_menu.focused_value(focused_value)
+        } else {
+            context_menu
+        };
         let context_menu = match sample.open_mode {
             open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())
@@ -3173,7 +3210,7 @@ impl GalleryShell {
                         })
                         .ok();
                 }),
-            open_gpui_ui_components::MenuOpenMode::Uncontrolled => context_menu.default_open(false),
+            open_gpui_ui_components::MenuOpenMode::Uncontrolled => context_menu,
         };
 
         div()
@@ -3191,30 +3228,36 @@ impl GalleryShell {
             .text_xs()
             .text_color(rgb(0x3f4a57))
             .child(context_menu)
-            .when(sample_id == "controlled", |card| {
-                card.child(
-                    div()
-                        .id("overlay-context-menu-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-context-menu-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_context_menu_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close context menu"
-                        } else {
-                            "open context menu"
-                        }),
-                )
-            })
+            .when(
+                matches!(
+                    sample.open_mode,
+                    open_gpui_ui_components::MenuOpenMode::Controlled
+                ),
+                |card| {
+                    card.child(
+                        div()
+                            .id("overlay-context-menu-controlled-toggle")
+                            .debug_selector({
+                                let sample_id = sample_id.to_owned();
+                                move || format!("gallery:overlay-context-menu-control:{sample_id}")
+                            })
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_controlled_context_menu_open(!controlled_open, cx);
+                            }))
+                            .child(if controlled_open {
+                                "close context menu"
+                            } else {
+                                "open context menu"
+                            }),
+                    )
+                },
+            )
             .child(context_menu_state_row(&state))
     }
 
