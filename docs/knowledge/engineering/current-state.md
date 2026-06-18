@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Moved the gallery left navigation off the ad hoc `navigation_scroll` handle and onto `ScrollArea` scroll semantics, so the shell no longer owns a second manual scroll path alongside page scrolling.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the navigation-scroll cleanup.
+- Next action: keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move to the next product slice.
+
 - Done: Moved the gallery page scroll reset off the `GalleryShell` ad hoc `page_scroll` handle and onto `ScrollArea` reset-key semantics, so page switching now reuses the same scroll contract the component stack already uses for inner scroll views.
 - Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the page-scroll cleanup.
 - Next action: keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move to the next product slice.

@@ -3,8 +3,8 @@
 use open_gpui::prelude::*;
 use open_gpui::{
     Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Render, ScrollHandle, StatefulInteractiveElement, Styled,
-    Window, WindowBounds, WindowOptions, anchored, deferred, div, px, rgb, size,
+    KeyDownEvent, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, Window,
+    WindowBounds, WindowOptions, anchored, deferred, div, px, rgb, size,
 };
 use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarState, Badge, BadgeState, Button, ButtonState, Checkbox,
@@ -79,7 +79,6 @@ pub fn foundation_snapshot(width: Pixels, selected_page: GalleryPage) -> Gallery
 pub struct GalleryShell {
     selected_page: GalleryPage,
     width: Pixels,
-    navigation_scroll: ScrollHandle,
     root_focus: FocusHandle,
     editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
@@ -103,7 +102,6 @@ impl GalleryShell {
         Self {
             selected_page,
             width: DEFAULT_GALLERY_WIDTH,
-            navigation_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             editable_text_input: cx.new(|cx| {
                 let mut controller = TextInputController::with_value("", cx);
@@ -295,7 +293,7 @@ impl Render for GalleryShell {
                     this.set_controlled_context_menu_open(false, cx);
                 }
             }))
-            .child(self.render_navigation(page, cx))
+            .child(self.render_navigation(snapshot, page, cx))
             .child(self.render_content(snapshot, window, cx))
     }
 }
@@ -303,6 +301,7 @@ impl Render for GalleryShell {
 impl GalleryShell {
     fn render_navigation(
         &self,
+        snapshot: GalleryShellSnapshot,
         selected_page: GalleryPage,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -346,54 +345,57 @@ impl GalleryShell {
                     .debug_selector(|| "gallery:navigation-scroll".into())
                     .flex_1()
                     .min_h(px(0.0))
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.navigation_scroll)
-                    .children(GALLERY_SECTIONS.into_iter().map(|section| {
-                        let selected = section.page == selected_page;
-                        div()
-                            .id(section.id)
-                            .debug_selector(move || {
-                                format!("gallery:navigation-item:{}", section.id)
-                            })
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(if selected {
-                                rgb(0x1f7a66)
-                            } else {
-                                rgb(0xe1e4da)
-                            })
-                            .bg(if selected {
-                                rgb(0xe8f3ef)
-                            } else {
-                                rgb(0xffffff)
-                            })
-                            .px_3()
-                            .py_2()
-                            .cursor_pointer()
-                            .hover(|style| style.bg(rgb(0xf1f5ee)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.select_page(section.page, cx);
-                            }))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(open_gpui::FontWeight::BOLD)
-                                    .child(section.title),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .line_height(px(18.0))
-                                    .text_color(rgb(0x5a6472))
-                                    .child(section.summary),
-                            )
-                    })),
+                    .child(
+                        ScrollArea::new(
+                            "gallery-navigation-scroll-viewport",
+                            div().flex().flex_col().gap_2().children(
+                                GALLERY_SECTIONS.into_iter().map(|section| {
+                                    let selected = section.page == selected_page;
+                                    div()
+                                        .id(section.id)
+                                        .debug_selector(move || {
+                                            format!("gallery:navigation-item:{}", section.id)
+                                        })
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(if selected {
+                                            rgb(0x1f7a66)
+                                        } else {
+                                            rgb(0xe1e4da)
+                                        })
+                                        .bg(if selected {
+                                            rgb(0xe8f3ef)
+                                        } else {
+                                            rgb(0xffffff)
+                                        })
+                                        .px_3()
+                                        .py_2()
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(rgb(0xf1f5ee)))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.select_page(section.page, cx);
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(open_gpui::FontWeight::BOLD)
+                                                .child(section.title),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .line_height(px(18.0))
+                                                .text_color(rgb(0x5a6472))
+                                                .child(section.summary),
+                                        )
+                                }),
+                            ),
+                        )
+                        .with_size(snapshot.control_size),
+                    ),
             )
     }
 

@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Moved the gallery left navigation off the ad hoc `navigation_scroll` handle and onto `ScrollArea` scroll semantics, so the shell no longer owns a second manual scroll path alongside page scrolling.
+* **Verification**: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the navigation-scroll cleanup.
+* **Decision**: Keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move on to the next product slice.
 * **Update**: Moved the gallery page scroll reset off the `GalleryShell` ad hoc `page_scroll` handle and onto `ScrollArea` reset-key semantics, so page switching now uses the same scroll contract as the inner scroll views.
 * **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the page-scroll cleanup.
 * **Decision**: Keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move on to the next product slice.
