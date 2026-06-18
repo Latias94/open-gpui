@@ -1,6 +1,27 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Removed the redundant sample-side `open_mode` fields from the Overlay gallery
+  samples (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`)
+  and made `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The
+  overlay sample structs now carry only resolved state plus display metadata, so the shell no
+  longer keeps a second open-ownership source.
+* **Verification**: `cargo fmt --all --check` and focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery overlay_page_hover_card_samples_expose_interactive_hover_contracts
+  overlay_page_popover_samples_expose_controlled_and_dismissal_contracts
+  overlay_page_dialog_samples_expose_modal_and_close_contracts
+  overlay_page_alert_dialog_samples_expose_critical_action_contracts
+  overlay_page_sheet_samples_expose_edge_and_policy_contracts
+  overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+  overlay_page_context_menu_samples_expose_point_anchor_contracts
+  components_page_samples_expose_component_metadata
+  components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
+  components_gallery_smoke_closes_select_popup_from_outside_press
+  components_gallery_smoke_closes_combobox_popup_from_outside_press
+  components_gallery_smoke_closes_command_popup_from_outside_press
+  official_component_catalog_entries_have_signals_and_sample_selectors`.
+* **Decision**: Treat overlay sample `open_mode` as a duplicate of resolved state in this gallery
+  shape; reopen the seam only if a second independent source of truth appears.
 * **Update**: Removed the redundant sample-side `open_mode` fields from the overlay gallery
   samples (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`)
   and made `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The
