@@ -3,7 +3,7 @@
 ## 2026-06-18
 * **Update**: Re-reviewed the Components page sample/state surface and found no evidence-backed deletion seam comparable to the overlay focus contract. `TabsSample`, `ToolbarSample`, `SidebarSample`, `ListboxSample`, `SelectSample`, `ComboboxSample`, `CommandSample`, `TextInputSample`, and `FieldSample` are already either pure sample material or resolved state.
 * **Decision**: Stop the seam hunt on Components for now and only revisit if a new sample/state mismatch is surfaced by tests or subagent review.
-* **Update**: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now reads that seed directly when rebuilding controlled demos.
+* **Update**: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples can request initial focus from the sample struct, and the gallery shell now treats that request as optional when rebuilding controlled demos.
 * **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the overlay sample-contract cleanup.
 * **Decision**: Keep the remaining overlay contract work scoped to the sample/shell boundary unless a stronger evidence-backed seam appears.
 * **Update**: Moved the gallery left navigation off the ad hoc `navigation_scroll` handle and onto `ScrollArea` scroll semantics, so the shell no longer owns a second manual scroll path alongside page scrolling.
