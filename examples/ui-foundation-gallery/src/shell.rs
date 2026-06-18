@@ -3031,9 +3031,13 @@ impl GalleryShell {
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
+            let focused_value = sample
+                .focused_value
+                .or_else(|| sample.state.focused_value())
+                .unwrap_or("none");
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open)
-                .focused_value(sample.state.focused_value().unwrap_or("none"))
+                .focused_value(focused_value)
                 .items(state_items.clone())
                 .state()
         } else {
@@ -3043,11 +3047,16 @@ impl GalleryShell {
         let debug_selector = sample.debug_selector();
         let label = sample.label;
         let shell = cx.entity().downgrade();
+        let focused_value = sample
+            .focused_value
+            .or_else(|| state.focused_value())
+            .unwrap_or("none");
         let menu = Menu::new(format!("overlay-menu-demo:{}", sample_id), label)
             .items(state_items)
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
+        let menu = menu.focused_value(focused_value);
         let menu = match state.open_mode() {
             open_gpui_ui_components::MenuOpenMode::Controlled => {
                 menu.open(state.open()).on_open_change(move |open, _, cx| {
@@ -3123,7 +3132,11 @@ impl GalleryShell {
                 sample.label,
             )
             .open(controlled_open)
-            .focused_value(sample.state.menu().focused_value().unwrap_or("none"))
+            .focused_value(
+                sample
+                    .focused_value
+                    .expect("controlled context menu sample should define focused_value"),
+            )
             .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
             .items(state_items.clone())
             .state()
@@ -3140,6 +3153,10 @@ impl GalleryShell {
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
+        let context_menu = context_menu
+            .when_some(sample.focused_value, |context_menu, focused_value| {
+                context_menu.focused_value(focused_value)
+            });
         let context_menu = match state.open_mode() {
             open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())

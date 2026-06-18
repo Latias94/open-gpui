@@ -835,6 +835,7 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
 
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "default-open");
+    assert_eq!(samples[0].focused_value, Some("save"));
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -848,6 +849,7 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert!(samples[0].state.overlay().wants_outside_press_handler());
 
     assert_eq!(samples[1].id, "controlled");
+    assert_eq!(samples[1].focused_value, Some("copy"));
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(
@@ -860,6 +862,7 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     );
 
     assert_eq!(samples[2].id, "outside-ignore");
+    assert_eq!(samples[2].focused_value, None);
     assert!(samples[2].state.open());
     assert_eq!(
         samples[2].state.outside_press_policy(),
@@ -874,6 +877,7 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     );
 
     assert_eq!(samples[3].id, "disabled");
+    assert_eq!(samples[3].focused_value, None);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
 }
@@ -884,6 +888,7 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
 
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "point-anchor");
+    assert_eq!(samples[0].focused_value, Some("duplicate"));
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -908,10 +913,12 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     assert_eq!(samples[0].state.placement_input().safe_bounds(), None);
 
     assert_eq!(samples[1].id, "controlled");
+    assert_eq!(samples[1].focused_value, Some("inspect"));
     assert!(!samples[1].state.open());
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
 
     assert_eq!(samples[2].id, "default-open");
+    assert_eq!(samples[2].focused_value, None);
     assert!(samples[2].state.default_open());
     assert!(samples[2].state.open());
     assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);

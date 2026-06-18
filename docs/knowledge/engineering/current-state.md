@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell reads that value directly when rebuilding controlled demos.
+- Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the overlay sample-contract cleanup.
+- Next action: wait for the remaining gallery drift review; if no stronger seam appears, commit the overlay contract alignment.
+
 - Done: Moved the gallery left navigation off the ad hoc `navigation_scroll` handle and onto `ScrollArea` scroll semantics, so the shell no longer owns a second manual scroll path alongside page scrolling.
 - Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the navigation-scroll cleanup.
 - Next action: keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move to the next product slice.
@@ -54,7 +58,7 @@ status: "active"
 - Done: Read `repo-ref/fret` as the local reference repo for this pass and confirmed the useful pattern is a thin entry point at the edge, a real implementation crate underneath, and pure helper layers for visibility / overflow / viewport math. `crates/fretboard/src/diag.rs` is just a forwarder; the substantive logic lives in `crates/fret-diag`, and the scroll/viewport pattern in `fret-ui` is the model to borrow when we deepen scrolling later.
 - Done: Confirmed the gallery does not need to re-derive scroll-area policy. `ScrollAreaState` already owns the relevant reset/axis/viewport decisions, so future scroll work should stay on that seam instead of growing more gallery-local boolean logic.
 - Done: Continued the gallery contract cleanup by making the command palette's synthetic standalone group explicit in resolved state and adding iterator views for standalone items, grouped groups, and group items. The shell now reconstructs the command UI from those state views instead of splitting on a local magic-string seam.
-- Done: Kept overlay menu/context-menu initial focus intent builder-local rather than duplicating it in sample structs. The sample types no longer own a second `focused_value` field, but the builders still receive explicit initial focus input, which preserved the roving-focus and dismiss contracts.
+- Done: Re-reviewed the overlay menu/context-menu contract and kept sample-owned `focused_value` metadata in the current shell implementation, because controlled reconstruction needs the original request value instead of reading it back from resolved state.
 - Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed.
 
 - Done: Re-reviewed the gallery Components/Overlay sample-state contract surface and confirmed there is no fresh evidence-backed deletion seam beyond the already-cleaned command standalone group and the current resolved-state ownership split. One earlier `TextInputSample.controller_driven` deletion attempt was rolled back after confirming that field is still the sample-side controller mount switch.

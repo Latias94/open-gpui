@@ -622,6 +622,8 @@ pub struct MenuSample {
     pub id: &'static str,
     /// User-facing trigger label.
     pub label: &'static str,
+    /// Requested initial focused item value.
+    pub focused_value: Option<&'static str>,
     /// Resolved menu state.
     pub state: MenuState,
 }
@@ -647,6 +649,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             MenuSample {
                 id: "default-open",
                 label: "Default open",
+                focused_value: Some("save"),
                 state: Menu::new("overlay-menu:default-open", "Default open")
                     .default_open(true)
                     .focused_value(focused_value)
@@ -665,6 +668,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             MenuSample {
                 id: "controlled",
                 label: "Controlled",
+                focused_value: Some("copy"),
                 state: Menu::new("overlay-menu:controlled", "Controlled")
                     .open(false)
                     .focused_value(focused_value)
@@ -681,6 +685,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             MenuSample {
                 id: "outside-ignore",
                 label: "Outside ignored",
+                focused_value: None,
                 state: Menu::new("overlay-menu:outside-ignore", "Outside ignored")
                     .default_open(true)
                     .outside_press_policy(OutsidePressPolicy::Ignore)
@@ -694,6 +699,7 @@ pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
             MenuSample {
                 id: "disabled",
                 label: "Disabled",
+                focused_value: None,
                 state: Menu::new("overlay-menu:disabled", "Disabled")
                     .default_open(true)
                     .disabled(true)
@@ -712,6 +718,8 @@ pub struct ContextMenuSample {
     pub id: &'static str,
     /// User-facing hotspot label.
     pub label: &'static str,
+    /// Requested initial focused item value.
+    pub focused_value: Option<&'static str>,
     /// Resolved context-menu state.
     pub state: ContextMenuState,
 }
@@ -736,6 +744,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             ContextMenuSample {
                 id: "point-anchor",
                 label: "Point anchor",
+                focused_value: Some("duplicate"),
                 state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
                     .default_open(true)
                     .anchor_point(point(px(520.0), px(300.0)))
@@ -754,6 +763,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             ContextMenuSample {
                 id: "controlled",
                 label: "Controlled",
+                focused_value: Some("inspect"),
                 state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
                     .open(false)
                     .anchor_point(point(px(280.0), px(160.0)))
@@ -771,6 +781,7 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
             ContextMenuSample {
                 id: "default-open",
                 label: "Default open",
+                focused_value: None,
                 state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
                     .default_open(true)
                     .anchor_point(point(px(96.0), px(96.0)))
