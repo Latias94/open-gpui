@@ -3031,16 +3031,12 @@ impl GalleryShell {
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
-            let focused_value = sample
-                .focused_value
-                .or_else(|| sample.state.focused_value());
+            let focused_value = sample.focused_value;
             let menu = Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open);
-            let menu = if let Some(focused_value) = focused_value {
+            let menu = menu.when_some(focused_value, |menu, focused_value| {
                 menu.focused_value(focused_value)
-            } else {
-                menu
-            };
+            });
             menu.items(state_items.clone()).state()
         } else {
             sample.state.clone()
@@ -3049,7 +3045,7 @@ impl GalleryShell {
         let debug_selector = sample.debug_selector();
         let label = sample.label;
         let shell = cx.entity().downgrade();
-        let focused_value = sample.focused_value.or_else(|| state.focused_value());
+        let focused_value = sample.focused_value;
         let menu = Menu::new(format!("overlay-menu-demo:{}", sample_id), label)
             .items(state_items)
             .disabled(state.disabled())
@@ -3128,19 +3124,16 @@ impl GalleryShell {
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
-            let focused_value = sample
-                .focused_value
-                .or_else(|| sample.state.menu().focused_value());
+            let focused_value = sample.focused_value;
             let context_menu = ContextMenu::new(
                 format!("overlay-context-menu-sample:{}", sample.id),
                 sample.label,
             )
             .open(controlled_open);
-            let context_menu = if let Some(focused_value) = focused_value {
-                context_menu.focused_value(focused_value)
-            } else {
-                context_menu
-            };
+            let context_menu = context_menu
+                .when_some(focused_value, |context_menu, focused_value| {
+                    context_menu.focused_value(focused_value)
+                });
             context_menu
                 .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
                 .items(state_items.clone())
@@ -3152,9 +3145,7 @@ impl GalleryShell {
         let debug_selector = sample.debug_selector();
         let label = sample.label;
         let shell = cx.entity().downgrade();
-        let focused_value = sample
-            .focused_value
-            .or_else(|| state.menu().focused_value());
+        let focused_value = sample.focused_value;
         let context_menu =
             ContextMenu::new(format!("overlay-context-menu-demo:{}", sample_id), label)
                 .items(state_items)
