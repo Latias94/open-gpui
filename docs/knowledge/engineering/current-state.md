@@ -14,8 +14,9 @@ status: "active"
 - Done: Removed the redundant sample-side `open_mode` fields from the Overlay gallery samples
   (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`) and made
   `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The overlay
-  sample structs now carry only resolved state plus display metadata, so the shell no longer keeps
-  a second open-ownership source.
+  sample structs now carry only resolved state plus display metadata. Menu and ContextMenu item
+  lists are now reconstructed from `MenuState` / `ContextMenuState` instead of carrying a second
+  sample-side descriptor tree, so the shell no longer keeps duplicate ownership or item sources.
 - Last verified: `cargo fmt --all --check` and focused `cargo nextest run -p
   open-gpui-ui-foundation-gallery overlay_page_hover_card_samples_expose_interactive_hover_contracts
   overlay_page_popover_samples_expose_controlled_and_dismissal_contracts
