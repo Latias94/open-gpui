@@ -3082,6 +3082,7 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let state_items = resolved_menu_item_descriptors(sample.state.items());
         let state = if matches!(
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
@@ -3089,7 +3090,7 @@ impl GalleryShell {
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open)
                 .focused_value(sample.state.focused_value().unwrap_or("none"))
-                .items(menu_items_for_sample(sample.id))
+                .items(state_items.clone())
                 .state()
         } else {
             sample.state.clone()
@@ -3099,7 +3100,7 @@ impl GalleryShell {
         let label = sample.label;
         let shell = cx.entity().downgrade();
         let menu = Menu::new(format!("overlay-menu-demo:{}", sample_id), label)
-            .items(menu_items_for_sample(sample_id))
+            .items(state_items)
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
@@ -3168,6 +3169,7 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let state_items = resolved_menu_item_descriptors(sample.state.menu().items());
         let state = if matches!(
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
@@ -3179,7 +3181,7 @@ impl GalleryShell {
             .open(controlled_open)
             .focused_value(sample.state.menu().focused_value().unwrap_or("none"))
             .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
-            .items(context_menu_items_for_sample(sample.id))
+            .items(state_items.clone())
             .state()
         } else {
             sample.state.clone()
@@ -3190,7 +3192,7 @@ impl GalleryShell {
         let shell = cx.entity().downgrade();
         let context_menu =
             ContextMenu::new(format!("overlay-context-menu-demo:{}", sample_id), label)
-                .items(context_menu_items_for_sample(sample_id))
+                .items(state_items)
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
@@ -5188,43 +5190,23 @@ fn sheet_state_row(state: &open_gpui_ui_components::SheetState) -> impl IntoElem
         ))
 }
 
-fn menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
-    match sample_id {
-        "controlled" => vec![
-            MenuItem::action("cut", "Cut"),
-            MenuItem::action("copy", "Copy"),
-            MenuItem::action("paste", "Paste").disabled(true),
-        ],
-        "outside-ignore" => vec![
-            MenuItem::action("rename", "Rename"),
-            MenuItem::action("duplicate", "Duplicate"),
-        ],
-        "disabled" => vec![MenuItem::action("open", "Open")],
-        _ => vec![
-            MenuItem::action("new", "New"),
-            MenuItem::action("save", "Save"),
-            MenuItem::separator("separator"),
-            MenuItem::action("delete", "Delete").disabled(true),
-        ],
-    }
-}
-
-fn context_menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
-    match sample_id {
-        "controlled" => vec![
-            MenuItem::action("inspect", "Inspect"),
-            MenuItem::action("copy-link", "Copy link"),
-        ],
-        "default-open" => vec![
-            MenuItem::action("open", "Open"),
-            MenuItem::action("close", "Close"),
-        ],
-        _ => vec![
-            MenuItem::action("duplicate", "Duplicate"),
-            MenuItem::separator("separator"),
-            MenuItem::action("delete", "Delete").disabled(true),
-        ],
-    }
+fn resolved_menu_item_descriptors(
+    items: &[open_gpui_ui_components::MenuItemState],
+) -> Vec<MenuItem> {
+    items
+        .iter()
+        .map(|item| match item.kind() {
+            open_gpui_ui_components::MenuItemKind::Action => {
+                let descriptor = MenuItem::action(item.value(), item.label());
+                if item.disabled() {
+                    descriptor.disabled(true)
+                } else {
+                    descriptor
+                }
+            }
+            open_gpui_ui_components::MenuItemKind::Separator => MenuItem::separator(item.value()),
+        })
+        .collect()
 }
 
 fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElement {
