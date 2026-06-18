@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Moved the gallery page scroll reset off the `GalleryShell` ad hoc `page_scroll` handle and onto `ScrollArea` reset-key semantics, so page switching now uses the same scroll contract as the inner scroll views.
+* **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the page-scroll cleanup.
+* **Decision**: Keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move on to the next product slice.
 * **Update**: Deleted the remaining `Select` helper wrapper that only forwarded `selected` / `active` values into `Listbox`; the render path now applies those values inline.
 * **Update**: Added direct tests that lock `Menu` / `ContextMenu` default open focus to the first focusable item, so the shared entry-focus rule is now covered by the component suite.
 * **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Select / Menu cleanup.

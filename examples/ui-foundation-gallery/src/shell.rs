@@ -4,7 +4,7 @@ use open_gpui::prelude::*;
 use open_gpui::{
     Anchor, App, AppContext, Bounds, Context, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, Render, ScrollHandle, StatefulInteractiveElement, Styled,
-    Window, WindowBounds, WindowOptions, anchored, deferred, div, point, px, rgb, size,
+    Window, WindowBounds, WindowOptions, anchored, deferred, div, px, rgb, size,
 };
 use open_gpui_ui_components::{
     AlertDialog, Avatar, AvatarState, Badge, BadgeState, Button, ButtonState, Checkbox,
@@ -80,7 +80,6 @@ pub struct GalleryShell {
     selected_page: GalleryPage,
     width: Pixels,
     navigation_scroll: ScrollHandle,
-    page_scroll: ScrollHandle,
     root_focus: FocusHandle,
     editable_text_input: open_gpui::Entity<TextInputController>,
     focus_controls: [FocusHandle; 3],
@@ -105,7 +104,6 @@ impl GalleryShell {
             selected_page,
             width: DEFAULT_GALLERY_WIDTH,
             navigation_scroll: ScrollHandle::new(),
-            page_scroll: ScrollHandle::new(),
             root_focus: cx.focus_handle(),
             editable_text_input: cx.new(|cx| {
                 let mut controller = TextInputController::with_value("", cx);
@@ -163,7 +161,6 @@ impl GalleryShell {
     fn select_page(&mut self, page: GalleryPage, cx: &mut Context<Self>) {
         if self.selected_page != page {
             self.selected_page = page;
-            self.page_scroll.set_offset(point(px(0.0), px(0.0)));
             self.hovered_tooltip_sample = None;
             self.overlay_controlled_popover_open = false;
             self.overlay_controlled_dialog_open = false;
@@ -454,9 +451,15 @@ impl GalleryShell {
                     .flex_1()
                     .min_w(px(0.0))
                     .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.page_scroll)
-                    .child(self.render_page_body(snapshot, window, cx)),
+                    .overflow_hidden()
+                    .child(
+                        ScrollArea::new(
+                            "gallery-page-scroll-viewport",
+                            self.render_page_body(snapshot, window, cx),
+                        )
+                        .with_size(snapshot.control_size)
+                        .reset_on_key(snapshot.selected_page.id()),
+                    ),
             )
     }
 
