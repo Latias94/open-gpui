@@ -41,6 +41,16 @@ pub enum AlertDialogOpenMode {
     Controlled,
 }
 
+impl AlertDialogOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Semantic intent for the primary alert dialog action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AlertDialogIntent {
@@ -52,6 +62,14 @@ pub enum AlertDialogIntent {
 }
 
 impl AlertDialogIntent {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Destructive => "destructive",
+        }
+    }
+
     /// Returns the button variant used for the primary action.
     pub const fn action_variant(self) -> ButtonVariant {
         match self {

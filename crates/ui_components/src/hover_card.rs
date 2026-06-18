@@ -36,6 +36,16 @@ pub enum HoverCardOpenMode {
     Controlled,
 }
 
+impl HoverCardOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Trigger affordance that can open a hover card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HoverCardOpenIntent {
@@ -51,6 +61,16 @@ pub enum HoverCardOpenIntent {
 }
 
 impl HoverCardOpenIntent {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HoverOrFocus => "hover or focus",
+            Self::Hover => "hover",
+            Self::Focus => "focus",
+            Self::Manual => "manual",
+        }
+    }
+
     /// Returns whether pointer hover may open the hover card.
     pub const fn opens_on_hover(self) -> bool {
         matches!(self, Self::HoverOrFocus | Self::Hover)
@@ -75,6 +95,16 @@ pub enum HoverCardContentKind {
     Text,
     /// Simple element content.
     Element,
+}
+
+impl HoverCardContentKind {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Element => "element",
+        }
+    }
 }
 
 /// Hover card delay policy.

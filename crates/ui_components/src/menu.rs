@@ -34,6 +34,16 @@ pub enum MenuOpenMode {
     Controlled,
 }
 
+impl MenuOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Menu item kind for the base menu model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuItemKind {
@@ -660,6 +670,14 @@ pub struct MenuItem {
 }
 
 impl MenuItem {
+    /// Creates a menu item from a pure descriptor.
+    pub fn from_descriptor(descriptor: MenuItemDescriptor) -> Self {
+        Self {
+            descriptor,
+            on_select: None,
+        }
+    }
+
     /// Creates an action menu item.
     pub fn action(value: impl Into<String>, label: impl Into<SharedString>) -> Self {
         let label = label.into();

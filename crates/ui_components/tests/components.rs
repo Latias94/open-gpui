@@ -204,6 +204,35 @@ fn overlay_open_change_helpers_match_core_policies() {
 }
 
 #[test]
+fn overlay_label_helpers_are_stable() {
+    assert_eq!(MenuOpenMode::Uncontrolled.as_str(), "uncontrolled");
+    assert_eq!(TooltipOpenIntent::Manual.as_str(), "manual");
+    assert_eq!(TooltipContentKind::Element.as_str(), "element");
+    assert_eq!(HoverCardOpenMode::Controlled.as_str(), "controlled");
+    assert_eq!(HoverCardOpenIntent::HoverOrFocus.as_str(), "hover or focus");
+    assert_eq!(HoverCardContentKind::Text.as_str(), "text");
+    assert_eq!(PopoverOpenMode::Uncontrolled.as_str(), "uncontrolled");
+    assert_eq!(DialogOpenMode::Controlled.as_str(), "controlled");
+    assert_eq!(AlertDialogOpenMode::Controlled.as_str(), "controlled");
+    assert_eq!(AlertDialogIntent::Destructive.as_str(), "destructive");
+    assert_eq!(SheetOpenMode::Controlled.as_str(), "controlled");
+    assert_eq!(SheetSide::Left.as_str(), "left");
+    assert_eq!(SheetModalMode::NonModal.as_str(), "non-modal");
+    assert_eq!(OverlayLayerKind::Menu.as_str(), "menu");
+    assert_eq!(
+        OutsidePressPolicy::DismissAndPassThrough.as_str(),
+        "dismiss + pass-through"
+    );
+    assert_eq!(EscapeKeyPolicy::Ignore.as_str(), "ignore");
+    assert_eq!(FocusRestoreIntent::None.as_str(), "none");
+    assert_eq!(
+        InitialFocusIntent::TargetOrFirstFocusable(open_gpui_ui_core::OverlayFocusTarget::new("x"))
+            .as_str(),
+        "target or first focusable"
+    );
+}
+
+#[test]
 fn tooltip_state_records_descriptive_overlay_policy() {
     let state = Tooltip::new("tip", "Save changes").open(true).state();
 

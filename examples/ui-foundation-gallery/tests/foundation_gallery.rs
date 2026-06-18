@@ -18,8 +18,7 @@ use open_gpui_ui_core::{
 };
 use open_gpui_ui_foundation_gallery::{
     DEFAULT_GALLERY_WIDTH, GALLERY_SECTIONS, GalleryPage, GalleryShell, GalleryShellSnapshot,
-    density_label, device_class_label, foundation_snapshot, pages, panel_class_label,
-    shell_mode_label, size_label,
+    foundation_snapshot, pages,
 };
 
 fn redraw(cx: &mut VisualTestContext) {
@@ -282,15 +281,12 @@ fn labels_are_stable_for_manual_dogfood_output() {
         Some(GalleryPage::Components)
     );
     assert_eq!(GalleryPage::from_id("missing"), None);
-    assert_eq!(shell_mode_label(DeviceShellMode::Desktop), "desktop");
-    assert_eq!(shell_mode_label(DeviceShellMode::Mobile), "mobile");
-    assert_eq!(density_label(Density::Spacious), "spacious");
-    assert_eq!(size_label(Size::XSmall), "xs");
-    assert_eq!(
-        device_class_label(DeviceAdaptiveClass::Expanded),
-        "expanded device"
-    );
-    assert_eq!(panel_class_label(PanelAdaptiveClass::Wide), "wide panel");
+    assert_eq!(DeviceShellMode::Desktop.as_str(), "desktop");
+    assert_eq!(DeviceShellMode::Mobile.as_str(), "mobile");
+    assert_eq!(Density::Spacious.as_str(), "spacious");
+    assert_eq!(Size::XSmall.as_str(), "xs");
+    assert_eq!(DeviceAdaptiveClass::Expanded.as_str(), "expanded device");
+    assert_eq!(PanelAdaptiveClass::Wide.as_str(), "wide panel");
 }
 
 #[test]
@@ -507,10 +503,7 @@ fn overlay_page_samples_expose_behavior_contracts() {
         samples[3].policy.outside_press_policy(),
         OutsidePressPolicy::DismissAndConsume
     );
-    assert_eq!(
-        pages::overlay::layer_kind_label(samples[3].policy.kind()),
-        "menu"
-    );
+    assert_eq!(samples[3].policy.kind().as_str(), "menu");
 }
 
 #[test]
@@ -1864,16 +1857,36 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
     let cx = open_components_gallery(cx);
 
     assert!(
-        cx.debug_bounds("component-catalog:Button").is_some(),
+        cx.debug_bounds(
+            &pages::components::COMPONENT_CATALOG
+                .iter()
+                .find(|entry| entry.name == "Button")
+                .unwrap_or_else(|| panic!("expected catalog entry `Button`"))
+                .catalog_selector()
+        )
+        .is_some(),
         "expected Components page to render official component catalog entries"
     );
     assert!(
-        cx.debug_bounds("component-catalog:TextInputController")
-            .is_some(),
+        cx.debug_bounds(
+            &pages::components::COMPONENT_CATALOG
+                .iter()
+                .find(|entry| entry.name == "TextInputController")
+                .unwrap_or_else(|| panic!("expected catalog entry `TextInputController`"))
+                .catalog_selector()
+        )
+        .is_some(),
         "expected Components page to classify adapter-only public surfaces"
     );
     assert!(
-        cx.debug_bounds("component-catalog:Avatar").is_some(),
+        cx.debug_bounds(
+            &pages::components::COMPONENT_CATALOG
+                .iter()
+                .find(|entry| entry.name == "Avatar")
+                .unwrap_or_else(|| panic!("expected catalog entry `Avatar`"))
+                .catalog_selector()
+        )
+        .is_some(),
         "expected Components page to show official primitive entries"
     );
     for (name, selector) in official_component_sample_selectors() {

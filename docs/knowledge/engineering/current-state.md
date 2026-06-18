@@ -11,6 +11,50 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Completed the latest overlay and gallery contract cleanup by moving menu and context-menu
+  initial focus intent into explicit sample metadata, deleting a leftover overlay helper import,
+  and centralizing stable labels through `as_str()` on the core and component vocabularies.
+- Last verified for the cleanup: `cargo fmt --all`, `cargo check -p open-gpui-ui-components`,
+  `cargo check -p open-gpui-ui-foundation-gallery`, `cargo nextest run -p
+  open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery`.
+- Next action: continue the architecture pass only if a new seam clearly earns it; the most likely
+  follow-up candidate is the Sidebar plus choice/search family.
+- Done: Completed the overlay gallery sample-contract cleanup by moving initial focused-item intent
+  into explicit `MenuSample` and `ContextMenuSample` metadata, so the shell no longer reconstructs
+  menu focus from closed runtime state. The same pass also removed duplicate overlay label helpers
+  by routing stable labels through `as_str()` on the core/component vocabularies.
+- Last verified for the overlay contract cleanup: `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo check -p open-gpui-ui-components --tests`, and
+  `cargo nextest run -p open-gpui-ui-core -p open-gpui-ui-components -p
+  open-gpui-ui-foundation-gallery` with 211 passing tests.
+- Done: Continued the overlay gallery architecture pass by moving `MenuSample` and
+  `ContextMenuSample` initial focused-item intent into explicit sample metadata, so the shell now
+  reads the sample-owned `focused_value` field instead of reconstructing intent from resolved
+  runtime state.
+- Last verified for the overlay sample intent cleanup: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, and focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+  overlay_page_context_menu_samples_expose_point_anchor_contracts`.
+- Done: Continued the gallery architecture pass by adding `as_str()` labels to the core adaptive
+  and sizing vocabularies (`Density`, `DeviceAdaptiveClass`, `PanelAdaptiveClass`, and
+  `DeviceShellMode`) and switching the Sizing & Density gallery page plus the gallery shell to
+  derive labels from the vocabulary itself instead of duplicate page-local label tables.
+- Last verified for the vocabulary label cleanup: `cargo fmt --all`, `cargo nextest run -p
+  open-gpui-ui-core --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests`, and
+  `cargo nextest run -p open-gpui-ui-components --tests`.
+- Done: Continued the gallery architecture pass by extracting a thin `gallery_card_shell` helper in
+  `examples/ui-foundation-gallery/src/shell.rs`. The Components catalog and low-state primitive
+  sample cards now reuse the shared shell instead of repeating the same rounded/bordered/padded
+  wrapper inline.
+- Done: The `gallery_card_shell` helper deliberately stays thin: it only owns `id`, optional
+  `debug_selector`, and the common white card chrome. The component-specific sample content and
+  state rows still live at the call site.
+- Done: Added `overlay_sample_card_shell` on top of `gallery_card_shell` so the overlay sample cards
+  share the same outer shell and text styling while their trigger and dismissal logic stay local.
+- Last verified for the shell helper extraction: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-components
+  --tests`.
 - Done: Moved the Components gallery catalog state-label fallback and status badge color mapping
   into `pages/components.rs`, so `shell.rs` now renders catalog entries from catalog-owned display
   helpers instead of re-deriving status presentation logic inline.

@@ -26,6 +26,15 @@ pub enum DeviceAdaptiveClass {
 }
 
 impl DeviceAdaptiveClass {
+    /// Returns a stable display label for the device class.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact device",
+            Self::Regular => "regular device",
+            Self::Expanded => "expanded device",
+        }
+    }
+
     /// Returns the preferred density for this device class.
     pub const fn density(self) -> Density {
         match self {
@@ -46,6 +55,17 @@ pub enum PanelAdaptiveClass {
     Medium,
     /// Wide panel.
     Wide,
+}
+
+impl PanelAdaptiveClass {
+    /// Returns a stable display label for the panel class.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact panel",
+            Self::Medium => "medium panel",
+            Self::Wide => "wide panel",
+        }
+    }
 }
 
 /// Shared policy for device-shell classification.
@@ -113,6 +133,14 @@ pub enum DeviceShellMode {
 }
 
 impl DeviceShellMode {
+    /// Returns a stable display label for the shell mode.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Desktop => "desktop",
+            Self::Mobile => "mobile",
+        }
+    }
+
     /// Returns true when the shell is desktop.
     pub const fn is_desktop(self) -> bool {
         matches!(self, Self::Desktop)
@@ -316,6 +344,8 @@ mod tests {
             device_shell_mode(ui_px(1000.0), policy),
             DeviceShellMode::Desktop
         );
+        assert_eq!(DeviceShellMode::Desktop.as_str(), "desktop");
+        assert_eq!(DeviceShellMode::Mobile.as_str(), "mobile");
     }
 
     #[test]
@@ -336,6 +366,12 @@ mod tests {
             panel_adaptive_class(ui_px(700.0), policy),
             PanelAdaptiveClass::Wide
         );
+        assert_eq!(PanelAdaptiveClass::Compact.as_str(), "compact panel");
+        assert_eq!(PanelAdaptiveClass::Medium.as_str(), "medium panel");
+        assert_eq!(PanelAdaptiveClass::Wide.as_str(), "wide panel");
+        assert_eq!(DeviceAdaptiveClass::Compact.as_str(), "compact device");
+        assert_eq!(DeviceAdaptiveClass::Regular.as_str(), "regular device");
+        assert_eq!(DeviceAdaptiveClass::Expanded.as_str(), "expanded device");
     }
 
     #[test]

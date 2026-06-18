@@ -6,16 +6,15 @@ use std::time::Duration;
 use open_gpui_ui_components::{
     AlertDialog, AlertDialogIntent, AlertDialogState, ContextMenu, ContextMenuState, Dialog,
     DialogState, HoverCard, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardState, Menu,
-    MenuItem, MenuOpenMode, MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance,
-    SheetModalMode, SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent,
-    TooltipState,
+    MenuItem, MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance, SheetModalMode,
+    SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
     gpui_adapter::{GpuiOverlayAdapterConfig, GpuiOverlayState},
 };
 use open_gpui_ui_core::{
-    EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, OutsidePressPolicy, OverlayLayerKind,
-    OverlayLayerPolicy, OverlayPlacementAlignment, OverlayPlacementSide, OverlayPresence, Rect,
-    Sizable, Size, ThemeTokens, anchor_rect_from_point, outer_bounds_with_window_margin,
-    prefer_visual_bounds, rect, ui_point, ui_px, ui_size,
+    OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
+    OverlayPlacementSide, OverlayPresence, Rect, Sizable, Size, ThemeTokens,
+    anchor_rect_from_point, outer_bounds_with_window_margin, prefer_visual_bounds, rect, ui_point,
+    ui_px, ui_size,
 };
 
 /// Page title.
@@ -410,6 +409,8 @@ pub struct DialogSample {
     pub title: &'static str,
     /// Text shown by the dialog surface.
     pub content_text: &'static str,
+    /// Optional description shown by the dialog surface.
+    pub description: Option<&'static str>,
     /// Resolved dialog state.
     pub state: DialogState,
 }
@@ -429,6 +430,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             label: "Controlled modal",
             title: "Controlled dialog",
             content_text: "The gallery shell owns this modal open state.",
+            description: Some("Escape and the modal barrier can close it."),
             state: Dialog::new(
                 "overlay-dialog:controlled-modal",
                 "Controlled modal",
@@ -446,6 +448,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             label: "Default open",
             title: "Default open dialog",
             content_text: "Uncontrolled modal initialized open.",
+            description: None,
             state: Dialog::new(
                 "overlay-dialog:default-open",
                 "Default open",
@@ -461,6 +464,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             label: "Outside ignored",
             title: "Sticky dialog",
             content_text: "Outside press does not dismiss this dialog.",
+            description: None,
             state: Dialog::new(
                 "overlay-dialog:outside-ignore",
                 "Outside ignored",
@@ -477,6 +481,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
             label: "Disabled",
             title: "Disabled dialog",
             content_text: "Disabled triggers stay closed and unfocusable.",
+            description: None,
             state: Dialog::new(
                 "overlay-dialog:disabled",
                 "Disabled",
@@ -767,60 +772,4 @@ pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
                 .state(),
         },
     ]
-}
-
-/// Returns a stable label for menu open-state ownership.
-pub const fn menu_open_mode_label(mode: MenuOpenMode) -> &'static str {
-    match mode {
-        MenuOpenMode::Uncontrolled => "uncontrolled",
-        MenuOpenMode::Controlled => "controlled",
-    }
-}
-
-/// Returns a stable label for overlay layer kind.
-pub const fn layer_kind_label(kind: OverlayLayerKind) -> &'static str {
-    match kind {
-        OverlayLayerKind::Tooltip => "tooltip",
-        OverlayLayerKind::NonModalDismissible => "non-modal dismissible",
-        OverlayLayerKind::Modal => "modal",
-        OverlayLayerKind::Menu => "menu",
-    }
-}
-
-/// Returns a stable label for outside-press policy.
-pub const fn outside_press_label(policy: OutsidePressPolicy) -> &'static str {
-    match policy {
-        OutsidePressPolicy::Ignore => "ignore",
-        OutsidePressPolicy::Consume => "consume",
-        OutsidePressPolicy::DismissAndConsume => "dismiss + consume",
-        OutsidePressPolicy::DismissAndPassThrough => "dismiss + pass-through",
-    }
-}
-
-/// Returns a stable label for Escape-key policy.
-pub const fn escape_key_label(policy: EscapeKeyPolicy) -> &'static str {
-    match policy {
-        EscapeKeyPolicy::Ignore => "ignore",
-        EscapeKeyPolicy::Dismiss => "dismiss",
-    }
-}
-
-/// Returns a stable label for focus restoration intent.
-pub fn focus_restore_label(intent: &FocusRestoreIntent) -> &'static str {
-    match intent {
-        FocusRestoreIntent::None => "none",
-        FocusRestoreIntent::Trigger => "trigger",
-        FocusRestoreIntent::Fallback(_) => "fallback",
-        FocusRestoreIntent::TriggerOrFallback(_) => "trigger or fallback",
-    }
-}
-
-/// Returns a stable label for initial focus intent.
-pub fn initial_focus_label(intent: &InitialFocusIntent) -> &'static str {
-    match intent {
-        InitialFocusIntent::None => "none",
-        InitialFocusIntent::FirstFocusable => "first focusable",
-        InitialFocusIntent::Target(_) => "target",
-        InitialFocusIntent::TargetOrFirstFocusable(_) => "target or first focusable",
-    }
 }

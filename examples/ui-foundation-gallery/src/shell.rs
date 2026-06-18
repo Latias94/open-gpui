@@ -7,28 +7,25 @@ use open_gpui::{
     Window, WindowBounds, WindowOptions, anchored, deferred, div, point, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    AlertDialog, AlertDialogIntent, AlertDialogOpenMode, Avatar, AvatarState, Badge, BadgeState,
-    Button, ButtonState, Checkbox, CheckboxState, ColorIntent, Combobox, ComboboxGroup,
-    ComboboxOpenMode, ComboboxOption, ComboboxState, Command, CommandGroup, CommandItem,
-    CommandOpenMode, CommandState, ContextMenu, Dialog, DialogOpenMode, Field, FieldState,
-    FocusRing, HoverCard, HoverCardOpenIntent, HoverCardOpenMode, IconButton, IconButtonState, Kbd,
-    KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu,
-    MenuItem, Popover, PopoverOpenMode, Progress, ProgressState, RadioGroup, RadioItem, ScrollArea,
-    ScrollAreaAxis, ScrollAreaState, Select, SelectOpenMode, SelectState, Separator,
-    SeparatorState, Sheet, SheetModalMode, SheetOpenMode, SheetSide, Sidebar, SidebarItem,
+    AlertDialog, Avatar, AvatarState, Badge, BadgeState, Button, ButtonState, Checkbox,
+    CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
+    ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu,
+    Dialog, Field, FieldState, FocusRing, HoverCard, IconButton, IconButtonState, Kbd, KbdState,
+    Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover,
+    Progress, ProgressState, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState,
+    Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Sidebar, SidebarItem,
     SidebarSection, SidebarSide, SidebarState, Skeleton, SkeletonState, Splitter, SplitterPanel,
     SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
     TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
-    Tooltip, TooltipContentKind, TooltipOpenIntent,
+    Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_point_from_ui, gpui_px_from_ui, init_text_input,
     },
 };
 use open_gpui_ui_core::{
-    AccessibleAction, Density, DeviceAdaptiveClass, DeviceAdaptivePolicy, DeviceShellMode,
-    DeviceShellSwitchPolicy, Orientation, PanelAdaptiveClass, Rect, Role, Sizable, Size,
-    ThemeTokens, Toggled, UiPx,
+    AccessibleAction, Density, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
+    Orientation, Rect, Role, Sizable, Size, ThemeTokens, Toggled, UiPx,
 };
 
 use crate::pages::{self, GALLERY_SECTIONS, GalleryPage};
@@ -604,21 +601,12 @@ impl GalleryShell {
     fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
         let component_catalog = pages::components::COMPONENT_CATALOG;
         let component_catalog_cards = component_catalog.iter().map(|entry| {
-            div()
-                .id(format!("component-catalog:{}", entry.name))
-                .debug_selector({
-                    let component_name = entry.name;
-                    move || format!("component-catalog:{component_name}")
-                })
+            let catalog_selector = entry.catalog_selector();
+            gallery_card_shell(catalog_selector.clone(), Some(catalog_selector))
                 .min_w(px(180.0))
                 .flex()
                 .flex_col()
                 .gap_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(0xd6d8ce))
-                .bg(rgb(0xffffff))
-                .p_3()
                 .child(
                     div()
                         .flex()
@@ -655,21 +643,12 @@ impl GalleryShell {
         });
         let conformance_gates = pages::components::CONFORMANCE_GATES;
         let conformance_gate_cards = conformance_gates.iter().map(|gate| {
-            div()
-                .id(format!("component-gate:{}", gate.id))
-                .debug_selector({
-                    let gate_id = gate.id;
-                    move || format!("component-gate:{gate_id}")
-                })
+            let gate_selector = format!("component-gate:{}", gate.id);
+            gallery_card_shell(gate_selector.clone(), Some(gate_selector))
                 .min_w(px(220.0))
                 .flex()
                 .flex_col()
                 .gap_2()
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(0xd6d8ce))
-                .bg(rgb(0xffffff))
-                .p_3()
                 .child(
                     div()
                         .text_sm()
@@ -1825,7 +1804,7 @@ impl GalleryShell {
                                 )
                                 .child(div().text_xs().text_color(rgb(0x5a6472)).child(format!(
                                     "default size: {}",
-                                    size_label(sample.default_size)
+                                    sample.default_size.as_str()
                                 )))
                         }),
                     )),
@@ -1883,9 +1862,9 @@ impl GalleryShell {
                                     .font_weight(open_gpui::FontWeight::BOLD)
                                     .child(format_ui_px(sample.width)),
                             )
-                            .child(label_pill(shell_mode_label(sample.shell_mode)))
-                            .child(label_pill(device_class_label(sample.class)))
-                            .child(label_pill(density_label(sample.density)))
+                            .child(label_pill(sample.shell_mode.as_str()))
+                            .child(label_pill(sample.class.as_str()))
+                            .child(label_pill(sample.density.as_str()))
                     })),
             )
             .child(
@@ -1922,7 +1901,7 @@ impl GalleryShell {
                                     div()
                                         .text_xs()
                                         .text_color(rgb(0x5a6472))
-                                        .child(panel_class_label(sample.class)),
+                                        .child(label_pill(sample.class.as_str())),
                                 )
                         }),
                     )),
@@ -2570,67 +2549,57 @@ impl GalleryShell {
             0x2f80ed,
         ));
 
-        div()
-            .id(format!("overlay-tooltip-sample:{}", sample_id))
-            .debug_selector(move || debug_selector)
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
-            .p_3()
-            .text_xs()
-            .text_color(rgb(0x3f4a57))
-            .child(
-                div()
-                    .id(format!("overlay-tooltip-trigger:{}", sample_id))
-                    .min_h(px(44.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(if open { rgb(0x1f7a66) } else { rgb(0xd6d8ce) })
-                    .bg(if state.disabled() {
-                        rgb(0xf1f2ed)
-                    } else if open {
-                        rgb(0xe8f3ef)
-                    } else {
-                        rgb(0xffffff)
-                    })
-                    .px_3()
-                    .py_2()
-                    .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
-                    .track_focus(focus_handle)
-                    .focusable()
-                    .tab_stop(!state.disabled())
-                    .ui_role(Role::Button)
-                    .aria_label(label)
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0xf1f5ee)))
-                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        this.set_hovered_tooltip_sample(hovered.then_some(sample_id), cx);
-                    }))
-                    .child(label),
-            )
-            .when(open, |card| {
-                card.child(
-                    Tooltip::new(
-                        format!("overlay-tooltip-content:{}", sample_id),
-                        tooltip_text,
-                    )
-                    .open(true)
-                    .open_intent(state.open_intent())
-                    .placement_side(state.placement_side())
-                    .placement_alignment(state.placement_alignment())
-                    .delay(state.delay())
-                    .with_size(state.size()),
+        overlay_sample_card_shell(
+            format!("overlay-tooltip-sample:{}", sample_id),
+            Some(debug_selector),
+        )
+        .child(
+            div()
+                .id(format!("overlay-tooltip-trigger:{}", sample_id))
+                .min_h(px(44.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .border_1()
+                .border_color(if open { rgb(0x1f7a66) } else { rgb(0xd6d8ce) })
+                .bg(if state.disabled() {
+                    rgb(0xf1f2ed)
+                } else if open {
+                    rgb(0xe8f3ef)
+                } else {
+                    rgb(0xffffff)
+                })
+                .px_3()
+                .py_2()
+                .focus_visible(move |style| style.shadow(focus_ring_shadow(focus_ring)))
+                .track_focus(focus_handle)
+                .focusable()
+                .tab_stop(!state.disabled())
+                .ui_role(Role::Button)
+                .aria_label(label)
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(0xf1f5ee)))
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.set_hovered_tooltip_sample(hovered.then_some(sample_id), cx);
+                }))
+                .child(label),
+        )
+        .when(open, |card| {
+            card.child(
+                Tooltip::new(
+                    format!("overlay-tooltip-content:{}", sample_id),
+                    tooltip_text,
                 )
-            })
-            .child(tooltip_state_row(&state, open))
+                .open(true)
+                .open_intent(state.open_intent())
+                .placement_side(state.placement_side())
+                .placement_alignment(state.placement_alignment())
+                .delay(state.delay())
+                .with_size(state.size()),
+            )
+        })
+        .child(tooltip_state_row(&state, open))
     }
 
     fn render_hover_card_sample_card(
@@ -2688,42 +2657,32 @@ impl GalleryShell {
             _ => hover_card,
         };
 
-        div()
-            .id(format!("overlay-hover-card-sample-card:{}", sample_id))
-            .debug_selector(move || debug_selector)
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
-            .p_3()
-            .text_xs()
-            .text_color(rgb(0x3f4a57))
-            .child(hover_card)
-            .when(sample_id == "manual-controlled", |card| {
-                card.child(
-                    div()
-                        .id("overlay-hover-card-controlled-toggle")
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_hover_card_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close hover card"
-                        } else {
-                            "open hover card"
-                        }),
-                )
-            })
-            .child(hover_card_state_row(&state, effective_open))
+        overlay_sample_card_shell(
+            format!("overlay-hover-card-sample-card:{}", sample_id),
+            Some(debug_selector),
+        )
+        .child(hover_card)
+        .when(sample_id == "manual-controlled", |card| {
+            card.child(
+                div()
+                    .id("overlay-hover-card-controlled-toggle")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0xd6d8ce))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_controlled_hover_card_open(!controlled_open, cx);
+                    }))
+                    .child(if controlled_open {
+                        "close hover card"
+                    } else {
+                        "open hover card"
+                    }),
+            )
+        })
+        .child(hover_card_state_row(&state, effective_open))
     }
 
     fn render_popover_sample_card(
@@ -2770,46 +2729,36 @@ impl GalleryShell {
             _ => popover.default_open(false),
         };
 
-        div()
-            .id(format!("overlay-popover-sample-card:{}", sample_id))
-            .debug_selector(move || debug_selector)
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
-            .p_3()
-            .text_xs()
-            .text_color(rgb(0x3f4a57))
-            .child(popover)
-            .when(sample_id == "controlled", |card| {
-                card.child(
-                    div()
-                        .id("overlay-popover-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-popover-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_popover_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close controlled"
-                        } else {
-                            "open controlled"
-                        }),
-                )
-            })
-            .child(popover_state_row(&state))
+        overlay_sample_card_shell(
+            format!("overlay-popover-sample-card:{}", sample_id),
+            Some(debug_selector),
+        )
+        .child(popover)
+        .when(sample_id == "controlled", |card| {
+            card.child(
+                div()
+                    .id("overlay-popover-controlled-toggle")
+                    .debug_selector({
+                        let sample_id = sample_id.to_owned();
+                        move || format!("gallery:overlay-popover-control:{sample_id}")
+                    })
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0xd6d8ce))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_controlled_popover_open(!controlled_open, cx);
+                    }))
+                    .child(if controlled_open {
+                        "close controlled"
+                    } else {
+                        "open controlled"
+                    }),
+            )
+        })
+        .child(popover_state_row(&state))
     }
 
     fn render_dialog_sample_card(
@@ -2860,46 +2809,36 @@ impl GalleryShell {
             _ => dialog.default_open(false),
         };
 
-        div()
-            .id(format!("overlay-dialog-sample-card:{}", sample_id))
-            .debug_selector(move || debug_selector)
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
-            .p_3()
-            .text_xs()
-            .text_color(rgb(0x3f4a57))
-            .child(dialog)
-            .when(sample_id == "controlled-modal", |card| {
-                card.child(
-                    div()
-                        .id("overlay-dialog-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-dialog-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_dialog_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close dialog"
-                        } else {
-                            "open dialog"
-                        }),
-                )
-            })
-            .child(dialog_state_row(&state))
+        overlay_sample_card_shell(
+            format!("overlay-dialog-sample-card:{}", sample_id),
+            Some(debug_selector),
+        )
+        .child(dialog)
+        .when(sample_id == "controlled-modal", |card| {
+            card.child(
+                div()
+                    .id("overlay-dialog-controlled-toggle")
+                    .debug_selector({
+                        let sample_id = sample_id.to_owned();
+                        move || format!("gallery:overlay-dialog-control:{sample_id}")
+                    })
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0xd6d8ce))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_controlled_dialog_open(!controlled_open, cx);
+                    }))
+                    .child(if controlled_open {
+                        "close dialog"
+                    } else {
+                        "open dialog"
+                    }),
+            )
+        })
+        .child(dialog_state_row(&state))
     }
 
     fn render_alert_dialog_sample_card(
@@ -2955,46 +2894,36 @@ impl GalleryShell {
             _ => alert_dialog.default_open(false),
         };
 
-        div()
-            .id(format!("overlay-alert-dialog-sample-card:{}", sample_id))
-            .debug_selector(move || debug_selector)
-            .min_w(px(0.0))
-            .flex()
-            .flex_col()
-            .gap_3()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0xd6d8ce))
-            .bg(rgb(0xffffff))
-            .p_3()
-            .text_xs()
-            .text_color(rgb(0x3f4a57))
-            .child(alert_dialog)
-            .when(sample_id == "destructive-confirm", |card| {
-                card.child(
-                    div()
-                        .id("overlay-alert-dialog-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-alert-dialog-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_alert_dialog_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close alert"
-                        } else {
-                            "open alert"
-                        }),
-                )
-            })
-            .child(alert_dialog_state_row(&state))
+        overlay_sample_card_shell(
+            format!("overlay-alert-dialog-sample-card:{}", sample_id),
+            Some(debug_selector),
+        )
+        .child(alert_dialog)
+        .when(sample_id == "destructive-confirm", |card| {
+            card.child(
+                div()
+                    .id("overlay-alert-dialog-controlled-toggle")
+                    .debug_selector({
+                        let sample_id = sample_id.to_owned();
+                        move || format!("gallery:overlay-alert-dialog-control:{sample_id}")
+                    })
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(rgb(0xd6d8ce))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_controlled_alert_dialog_open(!controlled_open, cx);
+                    }))
+                    .child(if controlled_open {
+                        "close alert"
+                    } else {
+                        "open alert"
+                    }),
+            )
+        })
+        .child(alert_dialog_state_row(&state))
     }
 
     fn render_sheet_sample_card(
@@ -3014,7 +2943,7 @@ impl GalleryShell {
                 sample
                     .state
                     .description()
-                    .unwrap_or("Outside press policy is explicit."),
+                    .expect("right-non-modal sheet sample should define a description"),
             )
             .open(controlled_open)
             .side(sample.state.side())
@@ -3104,7 +3033,6 @@ impl GalleryShell {
         let state = if sample.id == "controlled" {
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open)
-                .focused_value(state_focused_value(&sample.state).unwrap_or("copy"))
                 .items(menu_items_for_sample(sample.id))
                 .state()
         } else {
@@ -3120,17 +3048,12 @@ impl GalleryShell {
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
         let menu = match sample_id {
-            "controlled" => menu
-                .open(state.open())
-                .focused_value(state_focused_value(&state).unwrap_or("copy"))
-                .on_open_change(move |open, _, cx| {
-                    shell
-                        .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
-                        .ok();
-                }),
-            "default-open" => menu
-                .default_open(false)
-                .focused_value(state_focused_value(&state).unwrap_or("save")),
+            "controlled" => menu.open(state.open()).on_open_change(move |open, _, cx| {
+                shell
+                    .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
+                    .ok();
+            }),
+            "default-open" => menu.default_open(false),
             _ => menu.default_open(false),
         };
 
@@ -3189,7 +3112,6 @@ impl GalleryShell {
             )
             .open(controlled_open)
             .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
-            .focused_value(state_focused_value(sample.state.menu()).unwrap_or("inspect"))
             .items(context_menu_items_for_sample(sample.id))
             .state()
         } else {
@@ -3208,7 +3130,6 @@ impl GalleryShell {
         let context_menu = match sample_id {
             "controlled" => context_menu
                 .open(state.open())
-                .focused_value(state_focused_value(state.menu()).unwrap_or("inspect"))
                 .on_open_change(move |open, _, cx| {
                     shell
                         .update(cx, |this, cx| {
@@ -3350,9 +3271,9 @@ impl GalleryShell {
             .text_color(rgb(0x3f4a57))
             .child(self.render_viewport_switch(snapshot.viewport_width, cx))
             .child(format!("width: {}", format_px(snapshot.viewport_width)))
-            .child(format!("shell: {}", shell_mode_label(snapshot.shell_mode)))
-            .child(format!("density: {}", density_label(snapshot.density)))
-            .child(format!("size: {}", size_label(snapshot.control_size)))
+            .child(format!("shell: {}", snapshot.shell_mode.as_str()))
+            .child(format!("density: {}", snapshot.density.as_str()))
+            .child(format!("size: {}", snapshot.control_size.as_str()))
             .child(format!("focus token: {}", snapshot.tokens.focus_ring))
     }
 
@@ -3433,51 +3354,6 @@ pub fn open_gallery_page(page: GalleryPage, cx: &mut App) {
     cx.activate(true);
 }
 
-/// Returns a stable shell-mode label.
-pub const fn shell_mode_label(mode: DeviceShellMode) -> &'static str {
-    match mode {
-        DeviceShellMode::Desktop => "desktop",
-        DeviceShellMode::Mobile => "mobile",
-    }
-}
-
-/// Returns a stable density label.
-pub const fn density_label(density: Density) -> &'static str {
-    match density {
-        Density::Compact => "compact",
-        Density::Comfortable => "comfortable",
-        Density::Spacious => "spacious",
-    }
-}
-
-/// Returns a stable size label.
-pub const fn size_label(size: Size) -> &'static str {
-    match size {
-        Size::XSmall => "xs",
-        Size::Small => "sm",
-        Size::Medium => "md",
-        Size::Large => "lg",
-    }
-}
-
-/// Returns a stable device class label.
-pub const fn device_class_label(class: DeviceAdaptiveClass) -> &'static str {
-    match class {
-        DeviceAdaptiveClass::Compact => "compact device",
-        DeviceAdaptiveClass::Regular => "regular device",
-        DeviceAdaptiveClass::Expanded => "expanded device",
-    }
-}
-
-/// Returns a stable panel class label.
-pub const fn panel_class_label(class: PanelAdaptiveClass) -> &'static str {
-    match class {
-        PanelAdaptiveClass::Compact => "compact panel",
-        PanelAdaptiveClass::Medium => "medium panel",
-        PanelAdaptiveClass::Wide => "wide panel",
-    }
-}
-
 fn label_pill(label: &'static str) -> impl IntoElement {
     div()
         .px_2()
@@ -3531,7 +3407,7 @@ fn component_button_state_row(state: ButtonState) -> impl IntoElement {
         .child(format!(
             "{} / {} / {}",
             state.variant().as_str(),
-            size_label(state.size()),
+            state.size().as_str(),
             if state.activation_enabled() {
                 "enabled"
             } else {
@@ -3555,7 +3431,7 @@ fn component_badge_state_row(state: BadgeState) -> impl IntoElement {
         .child(format!(
             "{} / {} / display",
             state.variant().as_str(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "h {} px {}",
@@ -3582,7 +3458,7 @@ fn component_separator_state_row(state: SeparatorState) -> impl IntoElement {
             } else {
                 "semantic"
             },
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "role {} / thickness {}",
@@ -3601,7 +3477,7 @@ fn component_kbd_state_row(state: KbdState) -> impl IntoElement {
         .gap_1()
         .text_xs()
         .text_color(rgb(0x5a6472))
-        .child(format!("{} / {}", state.label(), size_label(state.size())))
+        .child(format!("{} / {}", state.label(), state.size().as_str()))
         .child(format!(
             "min {} px {}",
             format_px(state.metrics().min_width()),
@@ -3619,7 +3495,7 @@ fn component_progress_state_row(state: ProgressState) -> impl IntoElement {
         .child(format!(
             "{:?} / {} / {}",
             state.role(),
-            size_label(state.size()),
+            state.size().as_str(),
             if state.indeterminate() {
                 "indeterminate".to_owned()
             } else {
@@ -3647,7 +3523,7 @@ fn component_skeleton_state_row(state: SkeletonState) -> impl IntoElement {
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / {}",
-            size_label(state.size()),
+            state.size().as_str(),
             if state.subtle() { "subtle" } else { "default" }
         ))
         .child(format!(
@@ -3667,7 +3543,7 @@ fn component_avatar_state_row(state: &AvatarState) -> impl IntoElement {
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / fallback {} / {}",
-            size_label(state.size()),
+            state.size().as_str(),
             state.fallback(),
             if state.has_source() {
                 "source"
@@ -3696,7 +3572,7 @@ fn component_icon_button_state_row(
         .child(format!(
             "{} / {} / {}",
             state.variant().as_str(),
-            size_label(state.size()),
+            state.size().as_str(),
             if state.activation_enabled() {
                 "enabled"
             } else {
@@ -3721,7 +3597,7 @@ fn component_switch_state_row(state: SwitchState) -> impl IntoElement {
         .child(format!(
             "{} / {} / {}",
             toggled_label_text(state.toggled()),
-            size_label(state.size()),
+            state.size().as_str(),
             if state.activation_enabled() {
                 "enabled"
             } else {
@@ -3763,7 +3639,7 @@ fn component_checkbox_state_row(state: CheckboxState) -> impl IntoElement {
         .child(format!(
             "{} / {} / {}",
             toggled_label_text(state.toggled()),
-            size_label(state.size()),
+            state.size().as_str(),
             if state.activation_enabled() {
                 "enabled"
             } else {
@@ -3809,7 +3685,7 @@ fn component_label_state_row(state: &LabelState) -> impl IntoElement {
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / {} / {}",
-            size_label(state.size()),
+            state.size().as_str(),
             if state.required() {
                 "required"
             } else {
@@ -3893,7 +3769,7 @@ fn component_text_input_state_row(
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / {} / {}",
-            size_label(state.size()),
+            state.size().as_str(),
             if state.editable() {
                 "editable"
             } else {
@@ -3928,7 +3804,7 @@ fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / {} / {}",
-            size_label(field.size()),
+            field.size().as_str(),
             if field.required() {
                 "required"
             } else {
@@ -3976,7 +3852,7 @@ fn component_tabs_state_row(
                 Orientation::Vertical => "vertical",
             },
             activation_mode.as_str(),
-            size_label(size)
+            size.as_str()
         ))
         .child(format!(
             "selected {} / focus {} / tab stop {}",
@@ -4000,7 +3876,7 @@ fn component_scroll_area_state_row(state: &ScrollAreaState) -> impl IntoElement 
             "{} / {} / {}",
             state.axis().as_str(),
             state.reset_policy().as_str(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "viewport {} / scrollbar {}",
@@ -4051,6 +3927,36 @@ fn component_splitter_state_row(state: &SplitterState) -> impl IntoElement {
         ))
 }
 
+fn gallery_card_shell(
+    id: impl Into<open_gpui::ElementId>,
+    debug_selector: Option<String>,
+) -> open_gpui::Stateful<open_gpui::Div> {
+    let card = div().id(id);
+    let card = match debug_selector {
+        Some(debug_selector) => card.debug_selector(move || debug_selector),
+        None => card,
+    };
+
+    card.rounded_sm()
+        .border_1()
+        .border_color(rgb(0xd6d8ce))
+        .bg(rgb(0xffffff))
+        .p_3()
+}
+
+fn overlay_sample_card_shell(
+    id: impl Into<open_gpui::ElementId>,
+    debug_selector: Option<String>,
+) -> open_gpui::Stateful<open_gpui::Div> {
+    gallery_card_shell(id, debug_selector)
+        .min_w(px(0.0))
+        .flex()
+        .flex_col()
+        .gap_3()
+        .text_xs()
+        .text_color(rgb(0x3f4a57))
+}
+
 fn component_primitive_samples_section(
     separators: [pages::components::SeparatorSample; 3],
     kbds: [pages::components::KbdSample; 3],
@@ -4083,53 +3989,49 @@ fn component_primitive_samples_section(
                         .with_size(sample.size)
                         .tokens(tokens);
 
-                    div()
-                        .id(format!("component-separator-sample:{}", sample.id))
-                        .debug_selector(move || debug_selector)
-                        .w(px(220.0))
-                        .min_h(px(132.0))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .p_3()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(sample.title),
-                                )
-                                .child(label_pill(match sample.orientation {
-                                    Orientation::Horizontal => "horizontal",
-                                    Orientation::Vertical => "vertical",
-                                })),
-                        )
-                        .child(
-                            div()
-                                .h(px(46.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(rgb(0xe2e4dc))
-                                .bg(rgb(0xfcfcf8))
-                                .child(if sample.orientation == Orientation::Vertical {
-                                    div().h_full().child(separator).into_any_element()
-                                } else {
-                                    div().w_full().child(separator).into_any_element()
-                                }),
-                        )
-                        .child(component_separator_state_row(state))
+                    gallery_card_shell(
+                        format!("component-separator-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .w(px(220.0))
+                    .min_h(px(132.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(sample.title),
+                            )
+                            .child(label_pill(match sample.orientation {
+                                Orientation::Horizontal => "horizontal",
+                                Orientation::Vertical => "vertical",
+                            })),
+                    )
+                    .child(
+                        div()
+                            .h(px(46.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xe2e4dc))
+                            .bg(rgb(0xfcfcf8))
+                            .child(if sample.orientation == Orientation::Vertical {
+                                div().h_full().child(separator).into_any_element()
+                            } else {
+                                div().w_full().child(separator).into_any_element()
+                            }),
+                    )
+                    .child(component_separator_state_row(state))
                 })),
         )
         .child(
@@ -4140,25 +4042,21 @@ fn component_primitive_samples_section(
                 .children(kbds.into_iter().map(move |sample| {
                     let debug_selector = sample.debug_selector();
                     let state = sample.state;
-                    div()
-                        .id(format!("component-kbd-sample:{}", sample.id))
-                        .debug_selector(move || debug_selector)
-                        .min_w(px(170.0))
-                        .flex()
-                        .flex_col()
-                        .items_start()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .p_3()
-                        .child(
-                            Kbd::new(format!("component-kbd:{}", sample.id), sample.label)
-                                .with_size(sample.size)
-                                .tokens(tokens),
-                        )
-                        .child(component_kbd_state_row(state))
+                    gallery_card_shell(
+                        format!("component-kbd-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(170.0))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        Kbd::new(format!("component-kbd:{}", sample.id), sample.label)
+                            .with_size(sample.size)
+                            .tokens(tokens),
+                    )
+                    .child(component_kbd_state_row(state))
                 })),
         )
         .child(
@@ -4178,26 +4076,22 @@ fn component_primitive_samples_section(
                         None => progress.indeterminate(),
                     };
 
-                    div()
-                        .id(format!("component-progress-sample:{}", sample.id))
-                        .debug_selector(move || debug_selector)
-                        .w(px(280.0))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .p_3()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(open_gpui::FontWeight::BOLD)
-                                .child(sample.label),
-                        )
-                        .child(progress)
-                        .child(component_progress_state_row(state))
+                    gallery_card_shell(
+                        format!("component-progress-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .w(px(280.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child(sample.label),
+                    )
+                    .child(progress)
+                    .child(component_progress_state_row(state))
                 })),
         )
         .child(
@@ -4208,31 +4102,27 @@ fn component_primitive_samples_section(
                 .children(skeletons.into_iter().map(move |sample| {
                     let state = sample.state;
                     let debug_selector = sample.debug_selector();
-                    div()
-                        .id(format!("component-skeleton-sample:{}", sample.id))
-                        .debug_selector(move || debug_selector)
-                        .min_w(px(250.0))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .p_3()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(open_gpui::FontWeight::BOLD)
-                                .child(sample.title),
-                        )
-                        .child(
-                            Skeleton::new(format!("component-skeleton:{}", sample.id))
-                                .subtle(sample.subtle)
-                                .with_size(sample.size)
-                                .tokens(tokens),
-                        )
-                        .child(component_skeleton_state_row(state))
+                    gallery_card_shell(
+                        format!("component-skeleton-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(250.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(open_gpui::FontWeight::BOLD)
+                            .child(sample.title),
+                    )
+                    .child(
+                        Skeleton::new(format!("component-skeleton:{}", sample.id))
+                            .subtle(sample.subtle)
+                            .with_size(sample.size)
+                            .tokens(tokens),
+                    )
+                    .child(component_skeleton_state_row(state))
                 })),
         )
         .child(
@@ -4257,43 +4147,39 @@ fn component_primitive_samples_section(
                         None => avatar,
                     };
 
-                    div()
-                        .id(format!("component-avatar-sample:{}", sample.id))
-                        .debug_selector(move || debug_selector)
-                        .min_w(px(220.0))
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .bg(rgb(0xffffff))
-                        .p_3()
-                        .child(
-                            div().flex().items_center().gap_3().child(avatar).child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_weight(open_gpui::FontWeight::BOLD)
-                                            .child(if sample.name.trim().is_empty() {
-                                                "Empty name"
-                                            } else {
-                                                sample.name
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(0x5a6472))
-                                            .child(sample.accessible_label),
-                                    ),
-                            ),
-                        )
-                        .child(component_avatar_state_row(&state))
+                    gallery_card_shell(
+                        format!("component-avatar-sample:{}", sample.id),
+                        Some(debug_selector),
+                    )
+                    .min_w(px(220.0))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div().flex().items_center().gap_3().child(avatar).child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(open_gpui::FontWeight::BOLD)
+                                        .child(if sample.name.trim().is_empty() {
+                                            "Empty name"
+                                        } else {
+                                            sample.name
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x5a6472))
+                                        .child(sample.accessible_label),
+                                ),
+                        ),
+                    )
+                    .child(component_avatar_state_row(&state))
                 })),
         )
 }
@@ -4363,7 +4249,7 @@ fn component_listbox_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(size_label(sample.size))),
+                                .child(label_pill(sample.size.as_str())),
                         )
                         .child(
                             div()
@@ -4701,7 +4587,7 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
         .gap_1()
         .text_xs()
         .text_color(rgb(0x5a6472))
-        .child(format!("{:?} / {}", state.role(), size_label(state.size())))
+        .child(format!("{:?} / {}", state.role(), state.size().as_str()))
         .child(format!(
             "selected {} / active {} / tab stop {}",
             selected, active, tab_stop
@@ -4728,7 +4614,7 @@ fn component_select_state_row(state: &SelectState) -> impl IntoElement {
             "{:?} / {:?} / {}",
             state.trigger_role(),
             state.content_role(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "{} / selected {} / active {}",
@@ -4762,7 +4648,7 @@ fn component_combobox_state_row(state: &ComboboxState) -> impl IntoElement {
             "{:?} / {:?} / {}",
             state.input_role(),
             state.content_role(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "query '{}' / selected {} / active {}",
@@ -4792,7 +4678,7 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
             "{:?} / {:?} / {}",
             state.input_role(),
             state.list_role(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "query '{}' / selected {} / active {}",
@@ -4868,7 +4754,7 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
                 "released"
             },
             state.variant().as_str(),
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!(
             "h {} px {}",
@@ -4933,7 +4819,7 @@ fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
                 Orientation::Horizontal => "horizontal",
                 Orientation::Vertical => "vertical",
             },
-            size_label(state.size())
+            state.size().as_str()
         ))
         .child(format!("focus {} / tab stop {}", focused, tab_stop))
         .child(format!(
@@ -4969,10 +4855,7 @@ fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl
                 .text_color(rgb(0x24313f))
                 .child(sample.label),
         )
-        .child(format!(
-            "kind: {}",
-            pages::overlay::layer_kind_label(policy.kind())
-        ))
+        .child(format!("kind: {}", policy.kind().as_str()))
         .child(format!(
             "presence: open {} / present {} / interactive {}",
             bool_label(presence.is_open()),
@@ -4981,16 +4864,13 @@ fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl
         ))
         .child(format!(
             "outside: {}",
-            pages::overlay::outside_press_label(policy.outside_press_policy())
+            policy.outside_press_policy().as_str()
         ))
-        .child(format!(
-            "escape: {}",
-            pages::overlay::escape_key_label(policy.escape_key_policy())
-        ))
+        .child(format!("escape: {}", policy.escape_key_policy().as_str()))
         .child(format!(
             "focus: open {} / close {}",
-            pages::overlay::initial_focus_label(policy.initial_focus_intent()),
-            pages::overlay::focus_restore_label(policy.focus_restore_intent())
+            policy.initial_focus_intent().as_str(),
+            policy.focus_restore_intent().as_str()
         ))
         .child(format!(
             "layer: visible {} / hit {} / underlay {} / outside {}",
@@ -5027,13 +4907,13 @@ fn tooltip_state_row(
         .child(format!(
             "state: open {} / intent {} / content {}",
             bool_label(open),
-            tooltip_open_intent_label(state.open_intent()),
-            tooltip_content_kind_label(state.content_kind())
+            state.open_intent().as_str(),
+            state.content_kind().as_str()
         ))
         .child(format!(
             "placement: {} {} / disabled {} / descriptive {}",
-            pages::overlay::layer_kind_label(state.overlay().policy().kind()),
-            tooltip_placement_label(state.placement_side()),
+            state.overlay().policy().kind().as_str(),
+            state.placement_side().as_str(),
             bool_label(state.disabled()),
             bool_label(state.descriptive())
         ))
@@ -5060,13 +4940,13 @@ fn hover_card_state_row(
         .child(format!(
             "state: open {} / mode {} / intent {}",
             bool_label(effective_open),
-            hover_card_open_mode_label(state.open_mode()),
-            hover_card_open_intent_label(state.open_intent())
+            state.open_mode().as_str(),
+            state.open_intent().as_str()
         ))
         .child(format!(
             "placement: {} {} / interactive {} / descriptive {}",
-            tooltip_placement_label(state.placement_side()),
-            popover_alignment_label(state.placement_alignment()),
+            state.placement_side().as_str(),
+            state.placement_alignment().as_str(),
             bool_label(state.interactive_content()),
             bool_label(state.descriptive())
         ))
@@ -5078,7 +4958,7 @@ fn hover_card_state_row(
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
@@ -5097,45 +4977,28 @@ fn popover_state_row(state: &open_gpui_ui_components::PopoverState) -> impl Into
         .child(format!(
             "state: open {} / mode {} / disabled {}",
             bool_label(state.open()),
-            popover_open_mode_label(state.open_mode()),
+            state.open_mode().as_str(),
             bool_label(state.disabled())
         ))
         .child(format!(
             "placement: {} {} / trigger selected {}",
-            tooltip_placement_label(state.placement_side()),
-            popover_alignment_label(state.placement_alignment()),
+            state.placement_side().as_str(),
+            state.placement_alignment().as_str(),
             bool_label(state.trigger_selected())
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
         ))
         .child(format!(
             "focus: open {} / close {} / layer {}",
-            pages::overlay::initial_focus_label(state.initial_focus_intent()),
-            pages::overlay::focus_restore_label(state.focus_restore_intent()),
-            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+            state.initial_focus_intent().as_str(),
+            state.focus_restore_intent().as_str(),
+            state.overlay().policy().kind().as_str()
         ))
-}
-
-fn popover_open_mode_label(mode: PopoverOpenMode) -> &'static str {
-    match mode {
-        PopoverOpenMode::Uncontrolled => "uncontrolled",
-        PopoverOpenMode::Controlled => "controlled",
-    }
-}
-
-fn popover_alignment_label(
-    alignment: open_gpui_ui_core::OverlayPlacementAlignment,
-) -> &'static str {
-    match alignment {
-        open_gpui_ui_core::OverlayPlacementAlignment::Start => "start",
-        open_gpui_ui_core::OverlayPlacementAlignment::Center => "center",
-        open_gpui_ui_core::OverlayPlacementAlignment::End => "end",
-    }
 }
 
 fn dialog_state_row(state: &open_gpui_ui_components::DialogState) -> impl IntoElement {
@@ -5151,7 +5014,7 @@ fn dialog_state_row(state: &open_gpui_ui_components::DialogState) -> impl IntoEl
         .child(format!(
             "state: open {} / mode {} / disabled {}",
             bool_label(state.open()),
-            dialog_open_mode_label(state.open_mode()),
+            state.open_mode().as_str(),
             bool_label(state.disabled())
         ))
         .child(format!(
@@ -5162,24 +5025,17 @@ fn dialog_state_row(state: &open_gpui_ui_components::DialogState) -> impl IntoEl
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
         ))
         .child(format!(
             "escape: {} / blocks underlay {} / layer {}",
-            pages::overlay::escape_key_label(state.escape_key_policy()),
+            state.escape_key_policy().as_str(),
             bool_label(layer_state.blocks_underlay_input()),
-            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+            state.overlay().policy().kind().as_str()
         ))
-}
-
-fn dialog_open_mode_label(mode: DialogOpenMode) -> &'static str {
-    match mode {
-        DialogOpenMode::Uncontrolled => "uncontrolled",
-        DialogOpenMode::Controlled => "controlled",
-    }
 }
 
 fn alert_dialog_state_row(state: &open_gpui_ui_components::AlertDialogState) -> impl IntoElement {
@@ -5195,8 +5051,8 @@ fn alert_dialog_state_row(state: &open_gpui_ui_components::AlertDialogState) -> 
         .child(format!(
             "state: open {} / mode {} / intent {}",
             bool_label(state.open()),
-            alert_dialog_open_mode_label(state.open_mode()),
-            alert_dialog_intent_label(state.intent())
+            state.open_mode().as_str(),
+            state.intent().as_str()
         ))
         .child(format!(
             "actions: cancel {} / action {} / cancel focus {}",
@@ -5206,31 +5062,17 @@ fn alert_dialog_state_row(state: &open_gpui_ui_components::AlertDialogState) -> 
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
         ))
         .child(format!(
             "escape: {} / blocks underlay {} / role alert {}",
-            pages::overlay::escape_key_label(state.escape_key_policy()),
+            state.escape_key_policy().as_str(),
             bool_label(layer_state.blocks_underlay_input()),
             bool_label(state.content_role() == Role::AlertDialog)
         ))
-}
-
-fn alert_dialog_open_mode_label(mode: AlertDialogOpenMode) -> &'static str {
-    match mode {
-        AlertDialogOpenMode::Uncontrolled => "uncontrolled",
-        AlertDialogOpenMode::Controlled => "controlled",
-    }
-}
-
-fn alert_dialog_intent_label(intent: AlertDialogIntent) -> &'static str {
-    match intent {
-        AlertDialogIntent::Default => "default",
-        AlertDialogIntent::Destructive => "destructive",
-    }
 }
 
 fn sheet_state_row(state: &open_gpui_ui_components::SheetState) -> impl IntoElement {
@@ -5246,43 +5088,28 @@ fn sheet_state_row(state: &open_gpui_ui_components::SheetState) -> impl IntoElem
         .child(format!(
             "state: open {} / mode {} / side {}",
             bool_label(state.open()),
-            sheet_open_mode_label(state.open_mode()),
-            sheet_side_label(state.side())
+            state.open_mode().as_str(),
+            state.side().as_str()
         ))
         .child(format!(
             "surface: {} / close {} / title {}",
-            sheet_modal_mode_label(state.modal_mode()),
+            state.modal_mode().as_str(),
             bool_label(state.close_affordance().visible()),
             state.title()
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {} / underlay {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event()),
             bool_label(outside.allows_underlay_dispatch())
         ))
         .child(format!(
             "escape: {} / blocks underlay {} / layer {}",
-            pages::overlay::escape_key_label(state.escape_key_policy()),
+            state.escape_key_policy().as_str(),
             bool_label(layer_state.blocks_underlay_input()),
-            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+            state.overlay().policy().kind().as_str()
         ))
-}
-
-fn sheet_open_mode_label(mode: SheetOpenMode) -> &'static str {
-    match mode {
-        SheetOpenMode::Uncontrolled => "uncontrolled",
-        SheetOpenMode::Controlled => "controlled",
-    }
-}
-
-fn sheet_side_label(side: SheetSide) -> &'static str {
-    side.as_str()
-}
-
-fn sheet_modal_mode_label(mode: SheetModalMode) -> &'static str {
-    mode.as_str()
 }
 
 fn menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
@@ -5324,10 +5151,6 @@ fn context_menu_items_for_sample(sample_id: &str) -> Vec<MenuItem> {
     }
 }
 
-fn state_focused_value(state: &open_gpui_ui_components::MenuState) -> Option<&str> {
-    state.focused_value()
-}
-
 fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElement {
     let outside = state.outside_press_policy().resolve();
     let focused = state.focused_value().unwrap_or("none");
@@ -5342,7 +5165,7 @@ fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElemen
         .child(format!(
             "state: open {} / mode {} / disabled {}",
             bool_label(state.open()),
-            pages::overlay::menu_open_mode_label(state.open_mode()),
+            state.open_mode().as_str(),
             bool_label(state.disabled())
         ))
         .child(format!(
@@ -5353,14 +5176,14 @@ fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElemen
         ))
         .child(format!(
             "outside: {} / dismiss {} / consume {}",
-            pages::overlay::outside_press_label(state.outside_press_policy()),
+            state.outside_press_policy().as_str(),
             bool_label(outside.dismisses()),
             bool_label(outside.consumes_event())
         ))
         .child(format!(
             "escape: {} / layer {}",
-            pages::overlay::escape_key_label(state.escape_key_policy()),
-            pages::overlay::layer_kind_label(state.overlay().policy().kind())
+            state.escape_key_policy().as_str(),
+            state.overlay().policy().kind().as_str()
         ))
 }
 
@@ -5377,7 +5200,7 @@ fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> 
         .child(format!(
             "state: open {} / mode {} / focused {}",
             bool_label(state.open()),
-            pages::overlay::menu_open_mode_label(state.open_mode()),
+            state.open_mode().as_str(),
             focused
         ))
         .child(format!(
@@ -5389,50 +5212,9 @@ fn context_menu_state_row(state: &open_gpui_ui_components::ContextMenuState) -> 
         .child(format!(
             "items: {} / layer {} / outside {}",
             menu.items().len(),
-            pages::overlay::layer_kind_label(state.overlay().policy().kind()),
-            pages::overlay::outside_press_label(menu.outside_press_policy())
+            state.overlay().policy().kind().as_str(),
+            menu.outside_press_policy().as_str()
         ))
-}
-
-fn tooltip_open_intent_label(intent: TooltipOpenIntent) -> &'static str {
-    match intent {
-        TooltipOpenIntent::HoverOrFocus => "hover or focus",
-        TooltipOpenIntent::Hover => "hover",
-        TooltipOpenIntent::Focus => "focus",
-        TooltipOpenIntent::Manual => "manual",
-    }
-}
-
-fn hover_card_open_mode_label(mode: HoverCardOpenMode) -> &'static str {
-    match mode {
-        HoverCardOpenMode::Uncontrolled => "uncontrolled",
-        HoverCardOpenMode::Controlled => "controlled",
-    }
-}
-
-fn hover_card_open_intent_label(intent: HoverCardOpenIntent) -> &'static str {
-    match intent {
-        HoverCardOpenIntent::HoverOrFocus => "hover or focus",
-        HoverCardOpenIntent::Hover => "hover",
-        HoverCardOpenIntent::Focus => "focus",
-        HoverCardOpenIntent::Manual => "manual",
-    }
-}
-
-fn tooltip_content_kind_label(kind: TooltipContentKind) -> &'static str {
-    match kind {
-        TooltipContentKind::Text => "text",
-        TooltipContentKind::Element => "element",
-    }
-}
-
-fn tooltip_placement_label(side: open_gpui_ui_core::OverlayPlacementSide) -> &'static str {
-    match side {
-        open_gpui_ui_core::OverlayPlacementSide::Top => "top",
-        open_gpui_ui_core::OverlayPlacementSide::Right => "right",
-        open_gpui_ui_core::OverlayPlacementSide::Bottom => "bottom",
-        open_gpui_ui_core::OverlayPlacementSide::Left => "left",
-    }
 }
 
 fn format_duration_ms(duration: std::time::Duration) -> String {

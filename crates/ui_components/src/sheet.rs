@@ -40,6 +40,16 @@ pub enum SheetOpenMode {
     Controlled,
 }
 
+impl SheetOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Edge where the sheet surface attaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SheetSide {

@@ -34,6 +34,16 @@ pub enum PopoverOpenMode {
     Controlled,
 }
 
+impl PopoverOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Resolved popover color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PopoverColors {

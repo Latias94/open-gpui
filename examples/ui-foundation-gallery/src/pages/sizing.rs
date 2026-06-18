@@ -57,10 +57,10 @@ pub struct DensitySample {
 }
 
 impl DensitySample {
-    const fn new(density: Density, label: &'static str) -> Self {
+    const fn new(density: Density) -> Self {
         Self {
             density,
-            label,
+            label: density.as_str(),
             default_size: density.default_size(),
         }
     }
@@ -76,7 +76,7 @@ pub const SIZE_SAMPLES: [SizeSample; 4] = [
 
 /// Canonical density samples.
 pub const DENSITY_SAMPLES: [DensitySample; 3] = [
-    DensitySample::new(Density::Compact, "compact"),
-    DensitySample::new(Density::Comfortable, "comfortable"),
-    DensitySample::new(Density::Spacious, "spacious"),
+    DensitySample::new(Density::Compact),
+    DensitySample::new(Density::Comfortable),
+    DensitySample::new(Density::Spacious),
 ];

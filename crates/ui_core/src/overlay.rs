@@ -54,6 +54,16 @@ pub enum OverlayLayerKind {
 }
 
 impl OverlayLayerKind {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tooltip => "tooltip",
+            Self::NonModalDismissible => "non-modal dismissible",
+            Self::Modal => "modal",
+            Self::Menu => "menu",
+        }
+    }
+
     /// Returns the default outside-press policy for this overlay kind.
     pub const fn default_outside_press_policy(self) -> OutsidePressPolicy {
         match self {
@@ -186,6 +196,16 @@ pub enum OutsidePressPolicy {
 }
 
 impl OutsidePressPolicy {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ignore => "ignore",
+            Self::Consume => "consume",
+            Self::DismissAndConsume => "dismiss + consume",
+            Self::DismissAndPassThrough => "dismiss + pass-through",
+        }
+    }
+
     /// Resolves the observable outside-press outcome.
     pub const fn resolve(self) -> OutsidePressOutcome {
         match self {
@@ -257,6 +277,16 @@ pub enum EscapeKeyPolicy {
     Dismiss,
 }
 
+impl EscapeKeyPolicy {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ignore => "ignore",
+            Self::Dismiss => "dismiss",
+        }
+    }
+}
+
 /// Focus restoration behavior after an overlay closes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FocusRestoreIntent {
@@ -271,6 +301,16 @@ pub enum FocusRestoreIntent {
 }
 
 impl FocusRestoreIntent {
+    /// Returns a stable label.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Trigger => "trigger",
+            Self::Fallback(_) => "fallback",
+            Self::TriggerOrFallback(_) => "trigger or fallback",
+        }
+    }
+
     /// Resolves the preferred focus target from the current live trigger identity.
     pub fn resolve_target(
         &self,
@@ -296,6 +336,18 @@ pub enum InitialFocusIntent {
     Target(OverlayFocusTarget),
     /// Prefer a specific target and fall back to the first focusable descendant.
     TargetOrFirstFocusable(OverlayFocusTarget),
+}
+
+impl InitialFocusIntent {
+    /// Returns a stable label.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::FirstFocusable => "first focusable",
+            Self::Target(_) => "target",
+            Self::TargetOrFirstFocusable(_) => "target or first focusable",
+        }
+    }
 }
 
 /// Renderer-neutral behavior policy for one overlay layer.
@@ -703,6 +755,18 @@ pub enum OverlayPlacementSide {
     Left,
 }
 
+impl OverlayPlacementSide {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Right => "right",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+        }
+    }
+}
+
 /// Preferred alignment for overlay content along the anchor edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayPlacementAlignment {
@@ -712,6 +776,17 @@ pub enum OverlayPlacementAlignment {
     Center,
     /// Align to the end edge.
     End,
+}
+
+impl OverlayPlacementAlignment {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Center => "center",
+            Self::End => "end",
+        }
+    }
 }
 
 /// Renderer-neutral placement input for anchored overlay content.
@@ -952,6 +1027,34 @@ mod tests {
             menu.initial_focus_intent(),
             &InitialFocusIntent::FirstFocusable
         );
+    }
+
+    #[test]
+    fn overlay_labels_are_stable() {
+        assert_eq!(OverlayLayerKind::Tooltip.as_str(), "tooltip");
+        assert_eq!(
+            OverlayLayerKind::NonModalDismissible.as_str(),
+            "non-modal dismissible"
+        );
+        assert_eq!(OverlayLayerKind::Modal.as_str(), "modal");
+        assert_eq!(OverlayLayerKind::Menu.as_str(), "menu");
+        assert_eq!(OutsidePressPolicy::Ignore.as_str(), "ignore");
+        assert_eq!(
+            OutsidePressPolicy::DismissAndConsume.as_str(),
+            "dismiss + consume"
+        );
+        assert_eq!(EscapeKeyPolicy::Dismiss.as_str(), "dismiss");
+        assert_eq!(FocusRestoreIntent::Trigger.as_str(), "trigger");
+        assert_eq!(
+            FocusRestoreIntent::TriggerOrFallback(OverlayFocusTarget::new("fallback")).as_str(),
+            "trigger or fallback"
+        );
+        assert_eq!(
+            InitialFocusIntent::FirstFocusable.as_str(),
+            "first focusable"
+        );
+        assert_eq!(OverlayPlacementSide::Left.as_str(), "left");
+        assert_eq!(OverlayPlacementAlignment::Center.as_str(), "center");
     }
 
     #[test]

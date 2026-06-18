@@ -33,6 +33,16 @@ pub enum DialogOpenMode {
     Controlled,
 }
 
+impl DialogOpenMode {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Uncontrolled => "uncontrolled",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
 /// Resolved dialog color intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DialogColors {

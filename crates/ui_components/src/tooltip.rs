@@ -33,6 +33,16 @@ pub enum TooltipOpenIntent {
 }
 
 impl TooltipOpenIntent {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HoverOrFocus => "hover or focus",
+            Self::Hover => "hover",
+            Self::Focus => "focus",
+            Self::Manual => "manual",
+        }
+    }
+
     /// Returns whether pointer hover may open the tooltip.
     pub const fn opens_on_hover(self) -> bool {
         matches!(self, Self::HoverOrFocus | Self::Hover)
@@ -96,6 +106,16 @@ pub enum TooltipContentKind {
     Text,
     /// Simple element content.
     Element,
+}
+
+impl TooltipContentKind {
+    /// Returns a stable label.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Element => "element",
+        }
+    }
 }
 
 /// Resolved tooltip color intents.

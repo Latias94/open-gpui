@@ -171,6 +171,15 @@ pub enum Density {
 }
 
 impl Density {
+    /// Returns a short stable label for the density.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compact => "compact",
+            Self::Comfortable => "comfortable",
+            Self::Spacious => "spacious",
+        }
+    }
+
     /// Returns the default size associated with this density.
     pub const fn default_size(self) -> Size {
         match self {
@@ -221,6 +230,9 @@ mod tests {
 
     #[test]
     fn density_maps_to_reasonable_default_sizes() {
+        assert_eq!(Density::Compact.as_str(), "compact");
+        assert_eq!(Density::Comfortable.as_str(), "comfortable");
+        assert_eq!(Density::Spacious.as_str(), "spacious");
         assert_eq!(Density::Compact.default_size(), Size::Small);
         assert_eq!(Density::Comfortable.default_size(), Size::Medium);
         assert_eq!(Density::Spacious.default_size(), Size::Large);

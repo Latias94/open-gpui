@@ -236,6 +236,11 @@ impl ComponentCatalogEntry {
             },
         }
     }
+
+    /// Returns the stable selector used for the visible catalog card.
+    pub fn catalog_selector(self) -> String {
+        format!("component-catalog:{}", self.name)
+    }
 }
 
 /// Official component catalog and adjacent public surfaces.
