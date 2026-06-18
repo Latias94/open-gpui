@@ -58,10 +58,6 @@ fn open_overlay_gallery(cx: &mut open_gpui::TestAppContext) -> &mut VisualTestCo
     open_gallery_page(cx, GalleryPage::Overlay)
 }
 
-fn official_component_sample_selectors() -> Vec<(&'static str, &'static str)> {
-    pages::components::official_sample_selector_pairs().collect()
-}
-
 fn shell_snapshot(
     shell: &Entity<GalleryShell>,
     cx: &mut VisualTestContext,
@@ -1340,17 +1336,14 @@ fn official_component_catalog_entries_have_signals_and_sample_selectors() {
         .filter(|entry| entry.status == pages::components::ComponentCatalogStatus::Official)
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
-    let sample_names = official_component_sample_selectors()
-        .iter()
-        .map(|(name, _)| *name)
+    let sample_names = pages::components::official_sample_selector_pairs()
+        .map(|(name, _)| name)
         .collect::<BTreeSet<_>>();
 
     assert_eq!(sample_names, official_names);
 
-    let selectors = official_component_sample_selectors();
-    let selector_values = selectors
-        .iter()
-        .map(|(_, selector)| *selector)
+    let selector_values = pages::components::official_sample_selector_pairs()
+        .map(|(_, selector)| selector)
         .collect::<Vec<_>>();
     let unique_selectors = selector_values.iter().copied().collect::<BTreeSet<_>>();
     assert_eq!(unique_selectors.len(), selector_values.len());
@@ -1911,7 +1904,7 @@ fn components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation
         .is_some(),
         "expected Components page to show official primitive entries"
     );
-    for (name, selector) in official_component_sample_selectors() {
+    for (name, selector) in pages::components::official_sample_selector_pairs() {
         assert!(
             cx.debug_bounds(selector).is_some(),
             "expected Components page to render official {name} sample `{selector}`"

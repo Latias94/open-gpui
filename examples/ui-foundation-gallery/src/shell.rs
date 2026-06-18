@@ -4369,7 +4369,7 @@ fn component_select_samples_section(
                     if let Some(selected) = sample.selected {
                         select = select.selected(selected);
                     }
-                    select = match sample.open_mode {
+                    select = match state.open_mode() {
                         SelectOpenMode::Controlled => select.open(gallery_mount_open),
                         SelectOpenMode::Uncontrolled => select.default_open(gallery_mount_open),
                     };
@@ -4405,9 +4405,9 @@ fn component_select_samples_section(
                                         .child(sample.title),
                                 )
                                 .child(label_pill(if gallery_mount_open {
-                                    "popup open"
+                                    "mount open"
                                 } else {
-                                    "popup closed"
+                                    "mount closed"
                                 })),
                         )
                         .child(
@@ -4457,7 +4457,7 @@ fn component_combobox_samples_section(
                     if let Some(selected) = sample.selected {
                         combobox = combobox.selected(selected);
                     }
-                    combobox = match sample.open_mode {
+                    combobox = match state.open_mode() {
                         ComboboxOpenMode::Controlled => combobox.open(gallery_mount_open),
                         ComboboxOpenMode::Uncontrolled => combobox.default_open(gallery_mount_open),
                     };
@@ -4493,9 +4493,9 @@ fn component_combobox_samples_section(
                                         .child(sample.title),
                                 )
                                 .child(label_pill(if gallery_mount_open {
-                                    "popup open"
+                                    "mount open"
                                 } else {
-                                    "popup closed"
+                                    "mount closed"
                                 })),
                         )
                         .child(
@@ -4553,7 +4553,7 @@ fn component_command_samples_section(
                     if let Some(loading) = sample.loading.as_ref() {
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
-                    command = match sample.open_mode {
+                    command = match state.open_mode() {
                         CommandOpenMode::Controlled => command.open(gallery_mount_open),
                         CommandOpenMode::Uncontrolled => command.default_open(gallery_mount_open),
                     };

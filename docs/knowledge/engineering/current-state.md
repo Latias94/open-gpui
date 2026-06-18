@@ -11,6 +11,27 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Tightened the Components gallery mount policy so the Select / Combobox / Command samples
+  no longer mount in an open state during the gallery shell render. The page now keeps those
+  transient surfaces closed on mount, while the resolved component state still remains visible in
+  the state rows. This restored page scrolling and fixed the gallery smoke regressions that were
+  failing on short-vs-tall viewport navigation.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`,
+  and full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
+- Next action: decide whether to keep refining the gallery adapter policy labels or move on to the
+  next visible contract seam.
+
+- Done: Removed the redundant sample-side `open_mode` fields from the Select / Combobox / Command
+  gallery samples and made `shell.rs` read `state.open_mode()` for mount policy. The gallery shell
+  still keeps those surfaces closed on mount, but the source of truth now lives with the resolved
+  state instead of the sample shell. The component conformance test also dropped the pure
+  `official_component_sample_selectors()` wrapper and now iterates the canonical selector source
+  directly.
+- Last verified for the follow-up cleanup: `cargo fmt --all --check`, focused
+  `cargo nextest run -p open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation --no-capture`, and full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
+- Next action: continue the architecture pass on overlay/menu and the remaining sample/state seams
+  only if new evidence appears.
+
 - Done: Read `repo-ref/fret` as the local reference repository. The main takeaways are that
   `crates/fretboard/src/diag.rs` is only a thin public-CLI forwarder, the real diagnostics
   implementation lives in `crates/fret-diag`, and viewport-aware scroll handling lives in

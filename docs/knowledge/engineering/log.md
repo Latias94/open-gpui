@@ -1,6 +1,19 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Tightened the Components gallery mount policy so Select / Combobox / Command do not
+  mount open during gallery shell render. The resolved component state still shows in the state
+  rows, but the transient surfaces stay closed on mount so page scroll works again.
+* **Verification**: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`,
+  and full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
+* **Update**: Removed the redundant sample-side `open_mode` fields from the Select / Combobox /
+  Command gallery samples and made `shell.rs` read `state.open_mode()` for mount policy. Also
+  deleted the pure `official_component_sample_selectors()` test wrapper so the conformance test
+  iterates the canonical selector source directly.
+* **Verification**: `cargo fmt --all --check`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery official_component_catalog_entries_have_signals_and_sample_selectors
+  components_gallery_smoke_scrolls_short_viewport_and_resets_page_on_navigation --no-capture`, and
+  full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
 * **Update**: Read `repo-ref/fret` as the local reference repository. The important boundary is
   that `crates/fretboard/src/diag.rs` is only a thin public-CLI forwarder, the real diagnostics
   implementation sits in `crates/fret-diag`, and viewport-aware scroll handling lives in

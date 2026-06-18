@@ -2,16 +2,16 @@
 
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
-    Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOpenMode, ComboboxOptionDescriptor,
-    ComboboxState, CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState,
-    CommandOpenMode, CommandState, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
-    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
-    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
-    ScrollResetPolicy, SelectOpenMode, SelectState, Separator, SeparatorState, SidebarCollapseMode,
-    SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
-    Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, Switch, SwitchState,
-    TabsActivationMode, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
-    ToggleState, ToggleVariant, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
+    CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState, CommandState, Field,
+    FieldState, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState,
+    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress, ProgressState,
+    RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
+    SelectState, Separator, SeparatorState, SidebarCollapseMode, SidebarItemDescriptor,
+    SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, SkeletonState,
+    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
+    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
+    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -948,8 +948,6 @@ pub struct SelectSample {
     pub selected: Option<&'static str>,
     /// Whether the select is disabled.
     pub disabled: bool,
-    /// Open-state ownership.
-    pub open_mode: SelectOpenMode,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -977,8 +975,6 @@ pub struct ComboboxSample {
     pub selected: Option<&'static str>,
     /// Whether the combobox is disabled.
     pub disabled: bool,
-    /// Open-state ownership.
-    pub open_mode: ComboboxOpenMode,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -1030,8 +1026,6 @@ pub struct CommandSample {
     pub selected: Option<&'static str>,
     /// Whether the command surface is disabled.
     pub disabled: bool,
-    /// Open-state ownership.
-    pub open_mode: CommandOpenMode,
     /// Whether the surface models command dialog policy.
     pub dialog: bool,
     /// Optional loading metadata shown when the sample models deferred content.
@@ -2661,7 +2655,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             size: Size::Medium,
             selected: Some("critical"),
             disabled: false,
-            open_mode: SelectOpenMode::Controlled,
             state: select_state(
                 Size::Medium,
                 false,
@@ -2685,7 +2678,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             size: Size::Small,
             selected: Some("doing"),
             disabled: false,
-            open_mode: SelectOpenMode::Uncontrolled,
             state: select_state(
                 Size::Small,
                 false,
@@ -2709,7 +2701,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             size: Size::Small,
             selected: None,
             disabled: true,
-            open_mode: SelectOpenMode::Uncontrolled,
             state: select_state(
                 Size::Small,
                 true,
@@ -2780,7 +2771,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             query: "re",
             selected: Some("solid"),
             disabled: false,
-            open_mode: ComboboxOpenMode::Controlled,
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -2806,7 +2796,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             query: "zz",
             selected: None,
             disabled: false,
-            open_mode: ComboboxOpenMode::Controlled,
             state: combobox_state(
                 Size::Small,
                 false,
@@ -2832,7 +2821,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             query: "",
             selected: None,
             disabled: true,
-            open_mode: ComboboxOpenMode::Uncontrolled,
             state: combobox_state(
                 Size::Small,
                 true,
@@ -2909,7 +2897,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             query: "file",
             selected: Some("new-file"),
             disabled: false,
-            open_mode: CommandOpenMode::Controlled,
             dialog: true,
             loading: None,
             state: command_state(
@@ -2939,7 +2926,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             query: "deploy",
             selected: None,
             disabled: false,
-            open_mode: CommandOpenMode::Controlled,
             dialog: false,
             loading: Some(loading.clone()),
             state: command_state(
@@ -2969,7 +2955,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             query: "",
             selected: None,
             disabled: true,
-            open_mode: CommandOpenMode::Uncontrolled,
             dialog: false,
             loading: None,
             state: command_state(
