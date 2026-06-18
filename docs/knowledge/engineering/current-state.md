@@ -11,7 +11,7 @@ status: "active"
 
 ## 2026-06-18
 
-- Done: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now consumes that request value when present while falling back to resolved state when it is absent.
+- Done: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now reads that seed directly when rebuilding controlled demos.
 - Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the overlay sample-contract cleanup.
 - Next action: wait for the remaining gallery drift review; if no stronger seam appears, commit the overlay contract alignment.
 

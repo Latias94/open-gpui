@@ -1,7 +1,7 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
-* **Update**: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now consumes that request value when present while falling back to resolved state when it is absent.
+* **Update**: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now reads that seed directly when rebuilding controlled demos.
 * **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the overlay sample-contract cleanup.
 * **Decision**: Keep the remaining overlay contract work scoped to the sample/shell boundary unless a stronger evidence-backed seam appears.
 * **Update**: Moved the gallery left navigation off the ad hoc `navigation_scroll` handle and onto `ScrollArea` scroll semantics, so the shell no longer owns a second manual scroll path alongside page scrolling.
