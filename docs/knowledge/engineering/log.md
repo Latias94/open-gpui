@@ -1,6 +1,14 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Re-read `repo-ref/fret`'s diag layering pattern and compared it with the gallery overlay `Menu` / `ContextMenu` line (`render_menu_sample_card` / `render_context_menu_sample_card`).
+* **Finding**: The diag repo is a thin-entry-point / deep-implementation example, but the overlay menu/context-menu code is still page-local reconstruction glue, not a stable shared contract seam.
+* **Decision**: Do not extract a page-local helper/module for overlay menus in this pass. Keep the gallery code as-is and look for a stronger seam if future reuse work creates one.
+
+* **Update**: Re-read `repo-ref/fret`'s diag layering pattern and compared it with the gallery Components choice family (`Select` / `Combobox` / `Command`).
+* **Finding**: The diag repo is a thin-entry-point / deep-implementation example, but the gallery choice family is still page-local reconstruction glue, not a stable shared contract seam.
+* **Decision**: Do not extract a page-local choice module in this pass. Keep the gallery code as-is and look for a stronger seam if future headless or cross-platform reuse work creates one.
+
 * **Update**: Rechecked the `Tabs` / `ScrollArea` / `Splitter` seam against the gallery smoke tests and the page composition layer.
 * **Finding**: These three components are already deep enough on their own; the real scroll, viewport, and vertical-layout rules live in gallery shell composition rather than a shared component helper.
 * **Verification**: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45.

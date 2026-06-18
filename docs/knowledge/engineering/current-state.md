@@ -11,6 +11,12 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Re-read `repo-ref/fret`'s diag layering pattern and compared it with the gallery overlay `Menu` / `ContextMenu` line (`render_menu_sample_card` / `render_context_menu_sample_card`). The diag example is a useful thin-entry-point / deep-implementation reference, but this overlay code is still gallery-specific reconstruction glue; extracting a page-local helper/module would mostly move code, not increase leverage.
+- Next action: move to the next evidence-backed seam instead of deepening the overlay menu/context-menu line for layering symmetry.
+
+- Done: Re-read `repo-ref/fret`'s diag layering pattern and compared it with the Components gallery choice family. The diag example is a useful thin-entry-point / deep-implementation reference, but it does not justify extracting `Select` / `Combobox` / `Command` into a page-local module right now; that code is still gallery-specific reconstruction glue.
+- Next action: move to the next evidence-backed seam instead of deepening the choice family purely for layering symmetry.
+
 - Done: Rechecked the `Tabs` / `ScrollArea` / `Splitter` component seam against the gallery smoke tests and the page composition layer. The current evidence says these three components are already deep enough on their own; the actual scroll/viewport/vertical-layout behavior lives in gallery shell composition, not in a shared component helper.
 - Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45 after the review pass.
 - Next action: keep the architecture pass focused on `render_components_page` / gallery shell composition only if a new evidence-backed seam appears; otherwise stop chasing a shared layout helper here.
@@ -24,7 +30,7 @@ status: "active"
 - Done: Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
 - Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45. `git diff --check` only reported the expected CRLF warning on the edited test file.
 - Next action: keep the gallery pass evidence-backed. The only remaining plausible seam from the latest review is `Menu` / `ContextMenu` entry-focus handling, but do not split it further unless a new test or subagent exposes real duplication.
-- Note: the requested `repo-ref/fret` reference is not present in this workspace; the only local `repo-ref` checkout is `nako-scraper`, so the fret diag example could not be re-read here.
+- Note: `repo-ref/fret` is present in this workspace and was re-read for the current layering comparison; earlier absence notes are stale.
 
 - Done: Re-reviewed the Components page sample/state surface and found no evidence-backed deletion seam comparable to the overlay focus contract. `TabsSample`, `ToolbarSample`, `SidebarSample`, `ListboxSample`, `SelectSample`, `ComboboxSample`, `CommandSample`, `TextInputSample`, and `FieldSample` are already either pure sample material or resolved state, so the next pass should move on unless new drift appears.
 - Next action: stop the seam hunt on Components for now and only revisit if a new sample/state mismatch is surfaced by tests or subagent review.
