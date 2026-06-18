@@ -4348,6 +4348,9 @@ fn component_select_samples_section(
                     if let Some(selected) = state.selected_value() {
                         select = select.selected(selected);
                     }
+                    if let Some(active) = state.active_value() {
+                        select = select.active(active);
+                    }
                     select = match state.open_mode() {
                         SelectOpenMode::Controlled => select.open(GALLERY_SAMPLE_MOUNT_OPEN),
                         SelectOpenMode::Uncontrolled => {
@@ -4450,6 +4453,9 @@ fn component_combobox_samples_section(
                     if let Some(selected) = state.selected_value() {
                         combobox = combobox.selected(selected);
                     }
+                    if let Some(active) = state.active_value() {
+                        combobox = combobox.active(active);
+                    }
                     combobox = match state.open_mode() {
                         ComboboxOpenMode::Controlled => combobox.open(GALLERY_SAMPLE_MOUNT_OPEN),
                         ComboboxOpenMode::Uncontrolled => {
@@ -4548,6 +4554,9 @@ fn component_command_samples_section(
                             .tokens(tokens);
                     if let Some(selected) = state.selected_value() {
                         command = command.selected(selected);
+                    }
+                    if let Some(active) = state.active_value() {
+                        command = command.active(active);
                     }
                     if let Some(dialog) = state.dialog() {
                         command = command.dialog(dialog.title());

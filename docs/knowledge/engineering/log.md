@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
+* **Verification**: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45. `git diff --check` only reported the expected CRLF warning on the edited test file.
+* **Note**: The requested `repo-ref/fret` reference is not present in this workspace; the only local `repo-ref` checkout is `nako-scraper`, so the fret diag example could not be re-read here.
 * **Update**: Re-reviewed the Components page sample/state surface and found no evidence-backed deletion seam comparable to the overlay focus contract. `TabsSample`, `ToolbarSample`, `SidebarSample`, `ListboxSample`, `SelectSample`, `ComboboxSample`, `CommandSample`, `TextInputSample`, and `FieldSample` are already either pure sample material or resolved state.
 * **Decision**: Stop the seam hunt on Components for now and only revisit if a new sample/state mismatch is surfaced by tests or subagent review.
 * **Update**: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples can request initial focus from the sample struct, and the gallery shell now treats that request as optional when rebuilding controlled demos.

@@ -8,6 +8,8 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 ---
 
 # Summary
+- Added `component_gallery_shell_reads_choice_active_metadata_from_resolved_state()` to lock the Components gallery shell rows to resolved-state `selected` / `active` metadata for `Listbox`, `Select`, `Combobox`, and `Command`.
+- The current workspace does not contain `repo-ref/fret`; the only local `repo-ref` checkout is `nako-scraper`, so the fret diag example could not be re-read here.
 - Continued after reviewing the local reference repo `repo-ref/fret`. The useful architecture lesson was layering: thin shell/entry points, real behavior in state/helper seams, and no extra helper extraction unless it removes duplicated policy.
 - Rechecked the current candidates and confirmed `Menu` / `ContextMenu` first-focus handling is no longer a strong deletion target for this pass. `ScrollAreaState`, `ListboxState`, `SelectState`, `ComboboxState`, and `CommandState` are already deep enough for this pass.
 - Confirmed that `TabsSample.title` is page-card copy rather than duplicated resolved state, and that the remaining overlay titles / descriptions / action labels are still constructor inputs or display content.
@@ -23,6 +25,7 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 - Overlay menu/context-menu initial focus request is now sample-owned and optional; the shell falls back to resolved state when the sample does not request a specific starting focus.
 
 # Verified State
+- `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45.
 - `cargo fmt --all --check` passed.
 - `cargo check -p open-gpui-ui-components --tests` passed.
 - `cargo check -p open-gpui-ui-foundation-gallery --tests` passed.
@@ -30,6 +33,7 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 - Full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed.
 
 # Open Threads
+- `repo-ref/fret` is unavailable in this checkout, so any future diag/scroll reference work needs a different local source or the actual repo path.
 - The Components page still has raw descriptor inputs for sample construction, but Listbox / Select / Combobox / Command shell reconstruction now consumes resolved-state grouping views.
 - `SelectState` and `ComboboxState` still appear to need the raw descriptor trees for interactive rebuilds.
 - Overlay `MenuSample` / `ContextMenuSample` now carry optional focus requests, and the shell keeps the fallback path explicit so controlled samples that omit a seed still work.

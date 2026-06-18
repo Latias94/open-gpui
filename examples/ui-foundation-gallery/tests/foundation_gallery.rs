@@ -1343,6 +1343,33 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
 }
 
 #[test]
+fn component_gallery_shell_reads_choice_active_metadata_from_resolved_state() {
+    let shell_source = include_str!("../src/shell.rs");
+    let select_section = shell_source
+        .split("fn component_select_samples_section(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_combobox_samples_section").next())
+        .expect("expected Select sample section in shell source");
+    let combobox_section = shell_source
+        .split("fn component_combobox_samples_section(")
+        .nth(1)
+        .and_then(|section| section.split("fn component_command_samples_section").next())
+        .expect("expected Combobox sample section in shell source");
+    let command_section = shell_source
+        .split("fn component_command_samples_section(")
+        .nth(1)
+        .and_then(|section| section.split("fn resolved_listbox_option").next())
+        .expect("expected Command sample section in shell source");
+
+    assert!(select_section.contains("if let Some(active) = state.active_value()"));
+    assert!(select_section.contains("select = select.active(active);"));
+    assert!(combobox_section.contains("if let Some(active) = state.active_value()"));
+    assert!(combobox_section.contains("combobox = combobox.active(active);"));
+    assert!(command_section.contains("if let Some(active) = state.active_value()"));
+    assert!(command_section.contains("command = command.active(active);"));
+}
+
+#[test]
 fn official_component_catalog_entries_have_signals_and_sample_selectors() {
     use std::collections::BTreeSet;
 
