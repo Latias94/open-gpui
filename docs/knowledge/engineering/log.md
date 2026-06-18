@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Removed the last implicit `sample_id` branching from the overlay gallery shell for
+  menu and context-menu open ownership. Overlay samples now carry explicit `open_mode` metadata,
+  and the shell routes controlled versus uncontrolled behavior from the sample-owned contract
+  instead of inferring it from ids.
+* **Verification**: The overlay open-mode cleanup passed `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+  overlay_page_context_menu_samples_expose_point_anchor_contracts`, and full `cargo nextest run
+  -p open-gpui-ui-foundation-gallery` with 43 passing tests.
 * **Update**: Completed the latest overlay and gallery contract cleanup by moving menu and
   context-menu initial focus intent into explicit sample metadata, deleting a leftover overlay
   helper import, and centralizing stable labels through `as_str()` on the core and component

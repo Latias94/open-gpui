@@ -11,6 +11,18 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Continued the component productization pass by removing the last implicit `sample_id`
+  branching from the overlay gallery shell for menu and context-menu open ownership. The overlay
+  sample data now carries explicit `open_mode` metadata, and the shell routes controlled versus
+  uncontrolled behavior from that sample-owned contract instead of inferring it from ids.
+- Last verified for the overlay open-mode cleanup: `cargo fmt --all`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts
+  overlay_page_context_menu_samples_expose_point_anchor_contracts`, and full `cargo nextest run
+  -p open-gpui-ui-foundation-gallery` with 43 passing tests.
+- Next action: stop the current seam hunt unless a new evidence-backed asymmetry appears; the
+  Sidebar and choice/search pages now read as sample/value shells rather than a missing deep
+  abstraction.
 - Done: Completed the latest overlay and gallery contract cleanup by moving menu and context-menu
   initial focus intent into explicit sample metadata, deleting a leftover overlay helper import,
   and centralizing stable labels through `as_str()` on the core and component vocabularies.
