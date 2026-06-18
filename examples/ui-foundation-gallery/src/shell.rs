@@ -3047,14 +3047,15 @@ impl GalleryShell {
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
-        let menu = match sample_id {
-            "controlled" => menu.open(state.open()).on_open_change(move |open, _, cx| {
-                shell
-                    .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
-                    .ok();
-            }),
-            "default-open" => menu.default_open(false),
-            _ => menu.default_open(false),
+        let menu = match sample.open_mode {
+            open_gpui_ui_components::MenuOpenMode::Controlled => {
+                menu.open(state.open()).on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
+                        .ok();
+                })
+            }
+            open_gpui_ui_components::MenuOpenMode::Uncontrolled => menu.default_open(false),
         };
 
         div()
@@ -3127,8 +3128,8 @@ impl GalleryShell {
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
-        let context_menu = match sample_id {
-            "controlled" => context_menu
+        let context_menu = match sample.open_mode {
+            open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
                     shell
@@ -3137,7 +3138,7 @@ impl GalleryShell {
                         })
                         .ok();
                 }),
-            _ => context_menu.default_open(false),
+            open_gpui_ui_components::MenuOpenMode::Uncontrolled => context_menu.default_open(false),
         };
 
         div()
