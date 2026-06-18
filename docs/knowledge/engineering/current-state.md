@@ -11,6 +11,26 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Read `repo-ref/fret` as the local reference repository. The main takeaways are that
+  `crates/fretboard/src/diag.rs` is only a thin public-CLI forwarder, the real diagnostics
+  implementation lives in `crates/fret-diag`, and viewport-aware scroll handling lives in
+  `crates/fret-ui/src/declarative/host_widget.rs` with coverage in
+  `crates/fret-ui/src/tree/tests/scroll_into_view.rs`. The reuse pattern is stable `test_id`
+  targeting plus explicit viewport containment checks before scrolling.
+- Next action: apply that reference pattern back to the gallery helpers and continue the contract
+  cleanup only where there is still evidence of drift.
+
+- Done: Continued the gallery contract pass by removing the redundant sample-side open-state
+  fields from the Components page and keeping select/combobox/command mount-state behavior as a
+  gallery-local adapter policy. The gallery shell no longer stores a duplicate `page_load_open`
+  field; the page tests now only assert the resolved state while the shell keeps those popups
+  closed on mount.
+- Last verified for the open-state cleanup: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` with 43 passing tests.
+- Next action: continue the architecture pass only if a new evidence-backed asymmetry appears;
+  otherwise keep tightening the current contract surface.
+
 - Done: Continued the gallery contract pass by deleting the duplicated Sidebar sample-side field
   set, adding `size` to the resolved `SidebarState` contract, and making the gallery shell render
   sections/items from `SidebarState.sections()` and `SidebarState.items()` instead of a second

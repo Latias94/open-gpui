@@ -4358,6 +4358,8 @@ fn component_select_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    // Keep the gallery sample closed on mount so the page stays scrollable.
+                    let gallery_mount_open = false;
                     let mut select =
                         Select::new(format!("component-select:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4368,8 +4370,8 @@ fn component_select_samples_section(
                         select = select.selected(selected);
                     }
                     select = match sample.open_mode {
-                        SelectOpenMode::Controlled => select.open(state.open()),
-                        SelectOpenMode::Uncontrolled => select.default_open(state.default_open()),
+                        SelectOpenMode::Controlled => select.open(gallery_mount_open),
+                        SelectOpenMode::Uncontrolled => select.default_open(gallery_mount_open),
                     };
                     for option in sample.options.iter() {
                         select = select.option(component_listbox_option(option));
@@ -4402,7 +4404,7 @@ fn component_select_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if state.open() {
+                                .child(label_pill(if gallery_mount_open {
                                     "popup open"
                                 } else {
                                     "popup closed"
@@ -4443,6 +4445,8 @@ fn component_combobox_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    // Keep the gallery sample closed on mount so the page stays scrollable.
+                    let gallery_mount_open = false;
                     let mut combobox =
                         Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4454,10 +4458,8 @@ fn component_combobox_samples_section(
                         combobox = combobox.selected(selected);
                     }
                     combobox = match sample.open_mode {
-                        ComboboxOpenMode::Controlled => combobox.open(state.open()),
-                        ComboboxOpenMode::Uncontrolled => {
-                            combobox.default_open(state.default_open())
-                        }
+                        ComboboxOpenMode::Controlled => combobox.open(gallery_mount_open),
+                        ComboboxOpenMode::Uncontrolled => combobox.default_open(gallery_mount_open),
                     };
                     for option in sample.options.iter() {
                         combobox = combobox.option(component_combobox_option(option));
@@ -4490,7 +4492,7 @@ fn component_combobox_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if state.open() {
+                                .child(label_pill(if gallery_mount_open {
                                     "popup open"
                                 } else {
                                     "popup closed"
@@ -4531,6 +4533,8 @@ fn component_command_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    // Keep the gallery sample closed on mount so the page stays scrollable.
+                    let gallery_mount_open = false;
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4550,8 +4554,8 @@ fn component_command_samples_section(
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
                     command = match sample.open_mode {
-                        CommandOpenMode::Controlled => command.open(state.open()),
-                        CommandOpenMode::Uncontrolled => command.default_open(state.default_open()),
+                        CommandOpenMode::Controlled => command.open(gallery_mount_open),
+                        CommandOpenMode::Uncontrolled => command.default_open(gallery_mount_open),
                     };
                     for item in sample.items.iter() {
                         command = command.item(component_command_item(item));

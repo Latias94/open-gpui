@@ -1,6 +1,20 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Read `repo-ref/fret` as the local reference repository. The important boundary is
+  that `crates/fretboard/src/diag.rs` is only a thin public-CLI forwarder, the real diagnostics
+  implementation sits in `crates/fret-diag`, and viewport-aware scroll handling lives in
+  `crates/fret-ui/src/declarative/host_widget.rs` with no-drift coverage in
+  `crates/fret-ui/src/tree/tests/scroll_into_view.rs`.
+* **Decision**: Use the reference pattern as the model for gallery helpers: stable `test_id`
+  targeting plus explicit viewport containment checks before scrolling.
+* **Update**: Continued the gallery contract pass by removing the redundant sample-side open-state
+  fields from the Components page and keeping select/combobox/command mount-state behavior as a
+  gallery-local adapter policy. The gallery shell no longer stores a duplicate `page_load_open`
+  field; the page tests now only assert the resolved state while the shell keeps those popups
+  closed on mount.
+* **Verification**: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery
+  --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery` with 43 passing tests.
 * **Update**: Continued the gallery contract pass by deleting the duplicated Sidebar sample-side
   field set, adding `size` to the resolved `SidebarState` contract, and making the gallery shell
   render sections/items from `SidebarState.sections()` and `SidebarState.items()` instead of a
