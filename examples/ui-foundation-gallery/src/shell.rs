@@ -38,6 +38,7 @@ pub const DEFAULT_GALLERY_HEIGHT: Pixels = px(680.0);
 pub const COMPACT_GALLERY_WIDTH: Pixels = px(720.0);
 /// Desktop gallery width used by the manual adaptive switch.
 pub const DESKTOP_GALLERY_WIDTH: Pixels = DEFAULT_GALLERY_WIDTH;
+const GALLERY_SAMPLE_MOUNT_OPEN: bool = false;
 
 /// Derived foundation state shown by the gallery shell.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2618,7 +2619,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::HoverCardOpenMode::Controlled
         ) {
             HoverCard::new(
@@ -2655,7 +2656,7 @@ impl GalleryShell {
         .placement_side(state.placement_side())
         .placement_alignment(state.placement_alignment())
         .with_size(state.size());
-        let hover_card = match sample.open_mode {
+        let hover_card = match state.open_mode() {
             open_gpui_ui_components::HoverCardOpenMode::Controlled => hover_card
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
@@ -2673,7 +2674,7 @@ impl GalleryShell {
         .child(hover_card)
         .when(
             matches!(
-                sample.open_mode,
+                state.open_mode(),
                 open_gpui_ui_components::HoverCardOpenMode::Controlled
             ),
             |card| {
@@ -2707,7 +2708,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::PopoverOpenMode::Controlled
         ) {
             Popover::new(
@@ -2736,7 +2737,7 @@ impl GalleryShell {
         .placement_side(state.placement_side())
         .placement_alignment(state.placement_alignment())
         .outside_press_policy(state.outside_press_policy());
-        let popover = match sample.open_mode {
+        let popover = match state.open_mode() {
             open_gpui_ui_components::PopoverOpenMode::Controlled => popover
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
@@ -2754,7 +2755,7 @@ impl GalleryShell {
         .child(popover)
         .when(
             matches!(
-                sample.open_mode,
+                state.open_mode(),
                 open_gpui_ui_components::PopoverOpenMode::Controlled
             ),
             |card| {
@@ -2792,7 +2793,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::DialogOpenMode::Controlled
         ) {
             Dialog::new(
@@ -2824,7 +2825,7 @@ impl GalleryShell {
         .disabled(state.disabled())
         .outside_press_policy(state.outside_press_policy())
         .escape_key_policy(state.escape_key_policy());
-        let dialog = match sample.open_mode {
+        let dialog = match state.open_mode() {
             open_gpui_ui_components::DialogOpenMode::Controlled => dialog
                 .open(state.open())
                 .description("Escape and the modal barrier can close it.")
@@ -2843,7 +2844,7 @@ impl GalleryShell {
         .child(dialog)
         .when(
             matches!(
-                sample.open_mode,
+                state.open_mode(),
                 open_gpui_ui_components::DialogOpenMode::Controlled
             ),
             |card| {
@@ -2881,7 +2882,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::AlertDialogOpenMode::Controlled
         ) {
             AlertDialog::new(
@@ -2915,7 +2916,7 @@ impl GalleryShell {
         .disabled(state.disabled())
         .outside_press_policy(state.outside_press_policy())
         .escape_key_policy(state.escape_key_policy());
-        let alert_dialog = match sample.open_mode {
+        let alert_dialog = match state.open_mode() {
             open_gpui_ui_components::AlertDialogOpenMode::Controlled => alert_dialog
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
@@ -2935,7 +2936,7 @@ impl GalleryShell {
         .child(alert_dialog)
         .when(
             matches!(
-                sample.open_mode,
+                state.open_mode(),
                 open_gpui_ui_components::AlertDialogOpenMode::Controlled
             ),
             |card| {
@@ -2973,7 +2974,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::SheetOpenMode::Controlled
         ) {
             Sheet::new(
@@ -3016,7 +3017,7 @@ impl GalleryShell {
         } else {
             sheet
         };
-        let sheet = match sample.open_mode {
+        let sheet = match state.open_mode() {
             open_gpui_ui_components::SheetOpenMode::Controlled => {
                 sheet.open(state.open()).on_open_change(move |open, _, cx| {
                     shell
@@ -3044,7 +3045,7 @@ impl GalleryShell {
             .child(sheet)
             .when(
                 matches!(
-                    sample.open_mode,
+                    state.open_mode(),
                     open_gpui_ui_components::SheetOpenMode::Controlled
                 ),
                 |card| {
@@ -3082,7 +3083,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
@@ -3102,7 +3103,7 @@ impl GalleryShell {
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
-        let menu = match sample.open_mode {
+        let menu = match state.open_mode() {
             open_gpui_ui_components::MenuOpenMode::Controlled => {
                 menu.open(state.open()).on_open_change(move |open, _, cx| {
                     shell
@@ -3130,7 +3131,7 @@ impl GalleryShell {
             .child(menu)
             .when(
                 matches!(
-                    sample.open_mode,
+                    state.open_mode(),
                     open_gpui_ui_components::MenuOpenMode::Controlled
                 ),
                 |card| {
@@ -3168,7 +3169,7 @@ impl GalleryShell {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let state = if matches!(
-            sample.open_mode,
+            sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
             ContextMenu::new(
@@ -3193,7 +3194,7 @@ impl GalleryShell {
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
-        let context_menu = match sample.open_mode {
+        let context_menu = match state.open_mode() {
             open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
@@ -3223,7 +3224,7 @@ impl GalleryShell {
             .child(context_menu)
             .when(
                 matches!(
-                    sample.open_mode,
+                    state.open_mode(),
                     open_gpui_ui_components::MenuOpenMode::Controlled
                 ),
                 |card| {
@@ -4359,7 +4360,6 @@ fn component_select_samples_section(
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
-                    let gallery_mount_open = false;
                     let mut select =
                         Select::new(format!("component-select:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4370,8 +4370,10 @@ fn component_select_samples_section(
                         select = select.selected(selected);
                     }
                     select = match state.open_mode() {
-                        SelectOpenMode::Controlled => select.open(gallery_mount_open),
-                        SelectOpenMode::Uncontrolled => select.default_open(gallery_mount_open),
+                        SelectOpenMode::Controlled => select.open(GALLERY_SAMPLE_MOUNT_OPEN),
+                        SelectOpenMode::Uncontrolled => {
+                            select.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
+                        }
                     };
                     for option in sample.options.iter() {
                         select = select.option(component_listbox_option(option));
@@ -4404,7 +4406,7 @@ fn component_select_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if gallery_mount_open {
+                                .child(label_pill(if GALLERY_SAMPLE_MOUNT_OPEN {
                                     "mount open"
                                 } else {
                                     "mount closed"
@@ -4446,7 +4448,6 @@ fn component_combobox_samples_section(
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
-                    let gallery_mount_open = false;
                     let mut combobox =
                         Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4458,8 +4459,10 @@ fn component_combobox_samples_section(
                         combobox = combobox.selected(selected);
                     }
                     combobox = match state.open_mode() {
-                        ComboboxOpenMode::Controlled => combobox.open(gallery_mount_open),
-                        ComboboxOpenMode::Uncontrolled => combobox.default_open(gallery_mount_open),
+                        ComboboxOpenMode::Controlled => combobox.open(GALLERY_SAMPLE_MOUNT_OPEN),
+                        ComboboxOpenMode::Uncontrolled => {
+                            combobox.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
+                        }
                     };
                     for option in sample.options.iter() {
                         combobox = combobox.option(component_combobox_option(option));
@@ -4492,7 +4495,7 @@ fn component_combobox_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if gallery_mount_open {
+                                .child(label_pill(if GALLERY_SAMPLE_MOUNT_OPEN {
                                     "mount open"
                                 } else {
                                     "mount closed"
@@ -4534,7 +4537,6 @@ fn component_command_samples_section(
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
-                    let gallery_mount_open = false;
                     let mut command =
                         Command::new(format!("component-command:{}", sample.id), sample.title)
                             .placeholder(sample.placeholder)
@@ -4554,8 +4556,10 @@ fn component_command_samples_section(
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
                     command = match state.open_mode() {
-                        CommandOpenMode::Controlled => command.open(gallery_mount_open),
-                        CommandOpenMode::Uncontrolled => command.default_open(gallery_mount_open),
+                        CommandOpenMode::Controlled => command.open(GALLERY_SAMPLE_MOUNT_OPEN),
+                        CommandOpenMode::Uncontrolled => {
+                            command.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
+                        }
                     };
                     for item in sample.items.iter() {
                         command = command.item(component_command_item(item));

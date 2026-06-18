@@ -1,6 +1,15 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Removed the redundant sample-side `open_mode` fields from the overlay gallery
+  samples (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`)
+  and made `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The
+  overlay sample structs now carry only resolved state plus display metadata, so the shell no
+  longer keeps a second open-ownership source.
+* **Verification**: `cargo fmt --all` and `cargo nextest run -p
+  open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
+* **Decision**: Keep the architecture pass moving only if a new evidence-backed asymmetry appears;
+  otherwise move to the next visible sample/state seam.
 * **Update**: Tightened the Components gallery mount policy so Select / Combobox / Command do not
   mount open during gallery shell render. The resolved component state still shows in the state
   rows, but the transient surfaces stay closed on mount so page scroll works again.

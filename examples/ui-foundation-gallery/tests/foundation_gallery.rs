@@ -112,23 +112,6 @@ fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str)
     )
 }
 
-fn scroll_page_until_vertically_visible(
-    cx: &mut VisualTestContext,
-    selector: &'static str,
-) -> Bounds<Pixels> {
-    scroll_until_visible(
-        cx,
-        "gallery:page-scroll",
-        selector,
-        96,
-        point(px(0.0), px(-220.0)),
-        bounds_overlap_y,
-        format!(
-            "expected `{selector}` to become vertically visible after scrolling the gallery page"
-        ),
-    )
-}
-
 fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
     target.bottom() >= container.top() && target.top() <= container.bottom()
 }
@@ -552,7 +535,6 @@ fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
 
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "profile-preview");
-    assert_eq!(samples[0].open_mode, HoverCardOpenMode::Uncontrolled);
     assert_eq!(
         samples[0].state.open_mode(),
         HoverCardOpenMode::Uncontrolled
@@ -578,7 +560,6 @@ fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
     );
 
     assert_eq!(samples[1].id, "focus-preview");
-    assert_eq!(samples[1].open_mode, HoverCardOpenMode::Uncontrolled);
     assert_eq!(samples[1].state.open_intent(), HoverCardOpenIntent::Focus);
     assert!(!samples[1].state.open_intent().opens_on_hover());
     assert!(samples[1].state.open_intent().opens_on_focus());
@@ -588,7 +569,6 @@ fn overlay_page_hover_card_samples_expose_interactive_hover_contracts() {
     );
 
     assert_eq!(samples[2].id, "manual-controlled");
-    assert_eq!(samples[2].open_mode, HoverCardOpenMode::Controlled);
     assert_eq!(samples[2].state.open_mode(), HoverCardOpenMode::Controlled);
     assert_eq!(samples[2].state.open_intent(), HoverCardOpenIntent::Manual);
     assert!(!samples[2].state.open());
@@ -605,7 +585,6 @@ fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
 
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "default-open");
-    assert_eq!(samples[0].open_mode, PopoverOpenMode::Uncontrolled);
     assert_eq!(samples[0].state.open_mode(), PopoverOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -619,7 +598,6 @@ fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
     );
 
     assert_eq!(samples[1].id, "controlled");
-    assert_eq!(samples[1].open_mode, PopoverOpenMode::Controlled);
     assert_eq!(samples[1].state.open_mode(), PopoverOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(
@@ -628,7 +606,6 @@ fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
     );
 
     assert_eq!(samples[2].id, "consume-outside");
-    assert_eq!(samples[2].open_mode, PopoverOpenMode::Uncontrolled);
     assert!(samples[2].state.open());
     assert_eq!(
         samples[2].state.outside_press_policy(),
@@ -643,7 +620,6 @@ fn overlay_page_popover_samples_expose_controlled_and_dismissal_contracts() {
     );
 
     assert_eq!(samples[3].id, "disabled");
-    assert_eq!(samples[3].open_mode, PopoverOpenMode::Uncontrolled);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
     assert!(!samples[3].state.activation_enabled());
@@ -655,7 +631,6 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
 
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "controlled-modal");
-    assert_eq!(samples[0].open_mode, DialogOpenMode::Controlled);
     assert_eq!(samples[0].state.open_mode(), DialogOpenMode::Controlled);
     assert!(!samples[0].state.open());
     assert_eq!(samples[0].state.title(), "Controlled dialog");
@@ -681,7 +656,6 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
     );
 
     assert_eq!(samples[1].id, "default-open");
-    assert_eq!(samples[1].open_mode, DialogOpenMode::Uncontrolled);
     assert_eq!(samples[1].state.open_mode(), DialogOpenMode::Uncontrolled);
     assert!(samples[1].state.default_open());
     assert!(samples[1].state.open());
@@ -699,7 +673,6 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
     );
 
     assert_eq!(samples[2].id, "outside-ignore");
-    assert_eq!(samples[2].open_mode, DialogOpenMode::Uncontrolled);
     assert!(samples[2].state.open());
     assert_eq!(
         samples[2].state.outside_press_policy(),
@@ -714,7 +687,6 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
     );
 
     assert_eq!(samples[3].id, "disabled");
-    assert_eq!(samples[3].open_mode, DialogOpenMode::Uncontrolled);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
     assert!(!samples[3].state.activation_enabled());
@@ -726,7 +698,6 @@ fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
 
     assert_eq!(samples.len(), 2);
     assert_eq!(samples[0].id, "destructive-confirm");
-    assert_eq!(samples[0].open_mode, AlertDialogOpenMode::Controlled);
     assert_eq!(
         samples[0].state.open_mode(),
         AlertDialogOpenMode::Controlled
@@ -754,7 +725,6 @@ fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
     );
 
     assert_eq!(samples[1].id, "safe-cancel");
-    assert_eq!(samples[1].open_mode, AlertDialogOpenMode::Uncontrolled);
     assert_eq!(
         samples[1].state.open_mode(),
         AlertDialogOpenMode::Uncontrolled
@@ -782,7 +752,6 @@ fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
 
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "left-modal");
-    assert_eq!(samples[0].open_mode, SheetOpenMode::Uncontrolled);
     assert_eq!(samples[0].state.open_mode(), SheetOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -805,7 +774,6 @@ fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
     );
 
     assert_eq!(samples[1].id, "right-non-modal");
-    assert_eq!(samples[1].open_mode, SheetOpenMode::Controlled);
     assert_eq!(samples[1].state.open_mode(), SheetOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(samples[1].state.side(), SheetSide::Right);
@@ -834,7 +802,6 @@ fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
     );
 
     assert_eq!(samples[2].id, "bottom-sticky");
-    assert_eq!(samples[2].open_mode, SheetOpenMode::Uncontrolled);
     assert_eq!(samples[2].state.side(), SheetSide::Bottom);
     assert_eq!(
         samples[2].state.close_affordance(),
@@ -853,7 +820,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
 
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "default-open");
-    assert_eq!(samples[0].open_mode, MenuOpenMode::Uncontrolled);
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -867,7 +833,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert!(samples[0].state.overlay().wants_outside_press_handler());
 
     assert_eq!(samples[1].id, "controlled");
-    assert_eq!(samples[1].open_mode, MenuOpenMode::Controlled);
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(
@@ -880,7 +845,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     );
 
     assert_eq!(samples[2].id, "outside-ignore");
-    assert_eq!(samples[2].open_mode, MenuOpenMode::Uncontrolled);
     assert!(samples[2].state.open());
     assert_eq!(
         samples[2].state.outside_press_policy(),
@@ -895,7 +859,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     );
 
     assert_eq!(samples[3].id, "disabled");
-    assert_eq!(samples[3].open_mode, MenuOpenMode::Uncontrolled);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
 }
@@ -906,7 +869,6 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
 
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "point-anchor");
-    assert_eq!(samples[0].open_mode, MenuOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -931,12 +893,10 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     assert_eq!(samples[0].state.placement_input().safe_bounds(), None);
 
     assert_eq!(samples[1].id, "controlled");
-    assert_eq!(samples[1].open_mode, MenuOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
 
     assert_eq!(samples[2].id, "default-open");
-    assert_eq!(samples[2].open_mode, MenuOpenMode::Uncontrolled);
     assert!(samples[2].state.default_open());
     assert!(samples[2].state.open());
     assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -1971,8 +1931,15 @@ fn gallery_smoke_compact_shell_scrolls_navigation_and_resets_page_on_navigation(
         GalleryPage::Components
     );
 
-    let scroll_area_sample =
-        scroll_page_until_vertically_visible(cx, "gallery:component-scroll-area-sample:data-grid");
+    let scroll_area_sample = scroll_until_visible(
+        cx,
+        "gallery:page-scroll",
+        "gallery:component-scroll-area-sample:data-grid",
+        96,
+        point(px(0.0), px(-220.0)),
+        bounds_overlap_y,
+        "expected `gallery:component-scroll-area-sample:data-grid` to become vertically visible after scrolling the gallery page".to_string(),
+    );
     let page_scroll = bounds(cx, "gallery:page-scroll");
     assert!(
         bounds_overlap_y(page_scroll, scroll_area_sample),

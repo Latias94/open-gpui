@@ -11,6 +11,25 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Removed the last pure Components-gallery helper wrappers from the test file and folded the
+  gallery mount flag into a single module constant in `shell.rs`. The remaining scroll helper now
+  carries the full visibility contract inline at the one call site that needs vertical containment,
+  and the shell no longer repeats `false` as three separate locals.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`,
+  and full `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` with 43/43 passing.
+- Next action: keep the architecture pass moving only if a new evidence-backed asymmetry appears;
+  otherwise move to the next visible sample/state seam.
+
+- Done: Removed the redundant sample-side `open_mode` fields from the overlay gallery samples
+  (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`) and made
+  `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The overlay
+  sample structs now carry only resolved state plus display metadata, so the shell no longer keeps
+  a second open-ownership source.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery
+  --tests` with 43/43 passing.
+- Next action: keep the architecture pass moving only if a new evidence-backed asymmetry appears;
+  otherwise move to the next visible sample/state seam.
+
 - Done: Tightened the Components gallery mount policy so the Select / Combobox / Command samples
   no longer mount in an open state during the gallery shell render. The page now keeps those
   transient surfaces closed on mount, while the resolved component state still remains visible in
