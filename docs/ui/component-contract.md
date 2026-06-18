@@ -290,7 +290,7 @@ contract.
 
 ## Sidebar Contract
 
-`SidebarState` describes renderer-neutral shell navigation: side, variant, collapse mode,
+`SidebarState` describes renderer-neutral shell navigation: side, variant, size, collapse mode,
 effective collapsed state, accessible label, sections, flattened navigation items, disabled state,
 selected item, focused item, tab stop, scrollability, metrics, colors, and focus-ring intent. It
 keeps selection app-owned; activating an item produces a `SidebarSelection` payload but does not

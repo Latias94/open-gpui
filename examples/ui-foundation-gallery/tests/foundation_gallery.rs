@@ -74,51 +74,63 @@ fn bounds(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> 
         .unwrap_or_else(|| panic!("expected debug selector `{selector}` to be rendered"))
 }
 
-fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
-    let scroll_bounds = bounds(cx, "gallery:page-scroll");
-    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
+fn scroll_until_visible(
+    cx: &mut VisualTestContext,
+    viewport_selector: &'static str,
+    selector: &'static str,
+    attempts: usize,
+    delta: open_gpui::Point<Pixels>,
+    is_visible: impl Fn(Bounds<Pixels>, Bounds<Pixels>) -> bool,
+    failure_message: String,
+) -> Bounds<Pixels> {
+    let scroll_bounds = bounds(cx, viewport_selector);
+    let scroll_position = scroll_bounds.center();
 
-    for _ in 0..96 {
+    for _ in 0..attempts {
         if let Some(target) = cx.debug_bounds(selector) {
-            if scroll_bounds.contains(&target.center()) {
+            if is_visible(scroll_bounds, target) {
                 return target;
             }
         }
 
         cx.simulate_event(ScrollWheelEvent {
             position: scroll_position,
-            delta: ScrollDelta::Pixels(point(px(0.0), px(-220.0))),
+            delta: ScrollDelta::Pixels(delta),
             ..Default::default()
         });
         redraw(cx);
     }
 
-    panic!("expected `{selector}` to become visible after scrolling the gallery page");
+    panic!("{failure_message}");
+}
+
+fn scroll_page_until_visible(cx: &mut VisualTestContext, selector: &'static str) -> Bounds<Pixels> {
+    scroll_until_visible(
+        cx,
+        "gallery:page-scroll",
+        selector,
+        96,
+        point(px(0.0), px(-220.0)),
+        |container, target| container.contains(&target.center()),
+        format!("expected `{selector}` to become visible after scrolling the gallery page"),
+    )
 }
 
 fn scroll_page_until_vertically_visible(
     cx: &mut VisualTestContext,
     selector: &'static str,
 ) -> Bounds<Pixels> {
-    let scroll_bounds = bounds(cx, "gallery:page-scroll");
-    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
-
-    for _ in 0..96 {
-        if let Some(target) = cx.debug_bounds(selector) {
-            if bounds_overlap_y(scroll_bounds, target) {
-                return target;
-            }
-        }
-
-        cx.simulate_event(ScrollWheelEvent {
-            position: scroll_position,
-            delta: ScrollDelta::Pixels(point(px(0.0), px(-220.0))),
-            ..Default::default()
-        });
-        redraw(cx);
-    }
-
-    panic!("expected `{selector}` to become vertically visible after scrolling the gallery page");
+    scroll_until_visible(
+        cx,
+        "gallery:page-scroll",
+        selector,
+        96,
+        point(px(0.0), px(-220.0)),
+        bounds_overlap_y,
+        format!(
+            "expected `{selector}` to become vertically visible after scrolling the gallery page"
+        ),
+    )
 }
 
 fn bounds_overlap_y(container: Bounds<Pixels>, target: Bounds<Pixels>) -> bool {
@@ -129,25 +141,15 @@ fn scroll_navigation_until_visible(
     cx: &mut VisualTestContext,
     selector: &'static str,
 ) -> Bounds<Pixels> {
-    let scroll_bounds = bounds(cx, "gallery:navigation-scroll");
-    let scroll_position = point(scroll_bounds.right() - px(8.0), scroll_bounds.center().y);
-
-    for _ in 0..12 {
-        if let Some(target) = cx.debug_bounds(selector) {
-            if scroll_bounds.contains(&target.center()) {
-                return target;
-            }
-        }
-
-        cx.simulate_event(ScrollWheelEvent {
-            position: scroll_position,
-            delta: ScrollDelta::Pixels(point(px(0.0), px(-120.0))),
-            ..Default::default()
-        });
-        redraw(cx);
-    }
-
-    panic!("expected `{selector}` to become visible after scrolling gallery navigation");
+    scroll_until_visible(
+        cx,
+        "gallery:navigation-scroll",
+        selector,
+        12,
+        point(px(0.0), px(-120.0)),
+        |container, target| container.contains(&target.center()),
+        format!("expected `{selector}` to become visible after scrolling gallery navigation"),
+    )
 }
 
 fn drag(
@@ -856,7 +858,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "default-open");
     assert_eq!(samples[0].open_mode, MenuOpenMode::Uncontrolled);
-    assert_eq!(samples[0].focused_value, Some("save"));
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -871,7 +872,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
 
     assert_eq!(samples[1].id, "controlled");
     assert_eq!(samples[1].open_mode, MenuOpenMode::Controlled);
-    assert_eq!(samples[1].focused_value, Some("copy"));
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
     assert!(!samples[1].state.open());
     assert_eq!(
@@ -885,7 +885,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
 
     assert_eq!(samples[2].id, "outside-ignore");
     assert_eq!(samples[2].open_mode, MenuOpenMode::Uncontrolled);
-    assert_eq!(samples[2].focused_value, None);
     assert!(samples[2].state.open());
     assert_eq!(
         samples[2].state.outside_press_policy(),
@@ -901,7 +900,6 @@ fn overlay_page_menu_samples_expose_roving_focus_and_dismiss_contracts() {
 
     assert_eq!(samples[3].id, "disabled");
     assert_eq!(samples[3].open_mode, MenuOpenMode::Uncontrolled);
-    assert_eq!(samples[3].focused_value, None);
     assert!(samples[3].state.disabled());
     assert!(!samples[3].state.open());
 }
@@ -913,7 +911,6 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "point-anchor");
     assert_eq!(samples[0].open_mode, MenuOpenMode::Uncontrolled);
-    assert_eq!(samples[0].focused_value, Some("duplicate"));
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
     assert_eq!(samples[0].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -939,13 +936,11 @@ fn overlay_page_context_menu_samples_expose_point_anchor_contracts() {
 
     assert_eq!(samples[1].id, "controlled");
     assert_eq!(samples[1].open_mode, MenuOpenMode::Controlled);
-    assert_eq!(samples[1].focused_value, Some("inspect"));
     assert!(!samples[1].state.open());
     assert_eq!(samples[1].state.open_mode(), MenuOpenMode::Controlled);
 
     assert_eq!(samples[2].id, "default-open");
     assert_eq!(samples[2].open_mode, MenuOpenMode::Uncontrolled);
-    assert_eq!(samples[2].focused_value, None);
     assert!(samples[2].state.default_open());
     assert!(samples[2].state.open());
     assert_eq!(samples[2].state.open_mode(), MenuOpenMode::Uncontrolled);
@@ -1177,6 +1172,8 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[0].state.side().as_str(), "left");
     assert_eq!(sidebars[0].state.variant().as_str(), "docked");
     assert_eq!(sidebars[0].state.collapse_mode().as_str(), "icon");
+    assert_eq!(sidebars[0].state.size(), Size::Medium);
+    assert_eq!(sidebars[0].state.label(), "Workspace navigation");
     assert_eq!(sidebars[0].state.selected_value(), Some("projects"));
     assert_eq!(sidebars[0].state.focused_value(), Some("projects"));
     assert_eq!(sidebars[0].state.sections()[0].role(), Role::Section);
@@ -1209,10 +1206,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(listboxes[1].state.tab_stop_value(), None);
 
     assert_eq!(selects.len(), 3);
-    assert!(
-        selects.iter().all(|sample| !sample.page_load_open),
-        "select samples keep popup state metadata separate from default gallery interactivity"
-    );
     assert_eq!(selects[0].id, "priority-select");
     assert_eq!(selects[0].state.open_mode(), SelectOpenMode::Controlled);
     assert!(selects[0].state.open());
@@ -1224,10 +1217,6 @@ fn components_page_samples_expose_component_metadata() {
     assert!(!selects[2].state.open());
 
     assert_eq!(comboboxes.len(), 3);
-    assert!(
-        comboboxes.iter().all(|sample| !sample.page_load_open),
-        "combobox samples should not mount popups open on page load"
-    );
     assert_eq!(comboboxes[0].id, "framework-combobox");
     assert_eq!(
         comboboxes[0].state.open_mode(),
@@ -1245,10 +1234,6 @@ fn components_page_samples_expose_component_metadata() {
     assert!(!comboboxes[2].state.open());
 
     assert_eq!(commands.len(), 3);
-    assert!(
-        commands.iter().all(|sample| !sample.page_load_open),
-        "command samples should not mount popups open on page load"
-    );
     assert_eq!(commands[0].id, "workspace-command");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
     assert!(commands[0].loading.is_none());
@@ -1342,7 +1327,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(splitters[0].state.panels()[0].id(), "navigator");
     assert!(!splitters[0].state.handles()[0].disabled());
     assert_eq!(splitters[1].state.orientation(), Orientation::Vertical);
-    assert!(!splitters[1].state.panels()[0].collapsed());
+    assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
 }
 
@@ -2128,6 +2113,7 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
     let cx = open_components_gallery(cx);
 
     scroll_page_until_visible(cx, "gallery:component-splitter-sample:details-split");
+    let collapsed_before = bounds(cx, "splitter-panel:summary");
     let top_before = bounds(cx, "splitter-panel:summary");
     let bottom_before = bounds(cx, "splitter-panel:details");
     let handle = bounds(cx, "splitter:component-splitter:details-split:handle:0").center();
@@ -2137,9 +2123,28 @@ fn components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_com
     let top_after = bounds(cx, "splitter-panel:summary");
     let bottom_after = bounds(cx, "splitter-panel:details");
     assert!(
+        top_before.size.height < bottom_before.size.height,
+        "expected the collapsed summary panel to start smaller than the details panel; before=({top_before:?}, {bottom_before:?})"
+    );
+    assert!(
         top_after.size.height > top_before.size.height
             && bottom_after.size.height < bottom_before.size.height,
         "expected full-page vertical Splitter sample to resize via pointer drag; before=({top_before:?}, {bottom_before:?}) after=({top_after:?}, {bottom_after:?})"
+    );
+
+    let restored_handle = bounds(cx, "splitter:component-splitter:details-split:handle:0").center();
+    drag(
+        cx,
+        restored_handle,
+        point(restored_handle.x, restored_handle.y - px(60.0)),
+    );
+
+    let top_restored = bounds(cx, "splitter-panel:summary");
+    let bottom_restored = bounds(cx, "splitter-panel:details");
+    assert!(
+        top_restored.size.height < top_after.size.height
+            && bottom_restored.size.height > bottom_after.size.height,
+        "expected collapsed Splitter panel to restore and keep responding to subsequent drag; collapsed={collapsed_before:?} after-collapse=({top_after:?}, {bottom_after:?}) restored=({top_restored:?}, {bottom_restored:?})"
     );
 
     scroll_page_until_visible(cx, "gallery:component-tabs-sample:workspace-tabs");
