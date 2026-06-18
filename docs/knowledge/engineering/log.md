@@ -1,11 +1,37 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Continued the gallery contract pass by deleting the duplicated Sidebar sample-side
+  field set, adding `size` to the resolved `SidebarState` contract, and making the gallery shell
+  render sections/items from `SidebarState.sections()` and `SidebarState.items()` instead of a
+  second sample tree. The vertical Splitter sample now starts in a real collapsed state and the
+  gallery smoke proves it can restore and keep resizing after a second drag.
+* **Verification**: The Sidebar/Splitter cleanup passed `cargo fmt --all --check`, `cargo check -
+  p open-gpui-ui-foundation-gallery --tests`, and focused `cargo nextest run -p
+  open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata
+  components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition
+  components_gallery_smoke_scroll_area_samples_scroll_inside_page
+  components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample`.
+* **Update**: Inspected `repo-ref/fret` to map the diagnostics and scroll automation design.
+  `crates/fretboard/src/diag.rs` is only a thin CLI forwarder; the actual implementation sits in
+  `crates/fret-diag`, while viewport-aware scroll handling lives in
+  `crates/fret-ui/src/declarative/host_widget.rs` (`scroll_viewport_bounds` and
+  `scroll_handle_into_view`) and the no-drift coverage lives in
+  `crates/fret-ui/src/tree/tests/scroll_into_view.rs`. The important automation pattern is stable
+  `test_id` targeting plus explicit viewport containment checks before issuing scrolls.
+* **Decision**: Use the `fret` pattern as the reference model for our gallery helpers and
+  automation. Prefer a unified scroll-into-view helper over accumulating more wheel-event loops.
 * **Update**: Continued the Components gallery contract pass by making `CommandSample` loading
   metadata the single source of truth for both the sample and its resolved `CommandState`. The
-  gallery no longer reconstructs loading state from the `query == "deploy"` sentinel;
-  `page_load_open` remains explicit gallery mounting policy for Select, Combobox, and Command
-  popups.
+  gallery no longer reconstructs loading state from the `query == "deploy"` sentinel; popup mount
+  state is now derived directly from each sample's resolved component state.
+* **Update**: Continued the Sidebar gallery contract pass by deleting the duplicated sample-side
+  section tree. `SidebarSample` now keeps only display metadata plus resolved `SidebarState`, and
+  `shell.rs` rebuilds section/item rendering from `SidebarState.sections()` and
+  `SidebarState.items()` instead of reading a second sample structure.
+* **Verification**: The Sidebar contract cleanup passed `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, focused Sidebar nextest coverage, and full `cargo
+  nextest run -p open-gpui-ui-foundation-gallery`.
 * **Verification**: The Command loading cleanup passed `cargo fmt --all --check`, `cargo check -p
   open-gpui-ui-foundation-gallery --tests`, focused Components gallery nextest coverage for
   metadata/choice/search/scroll reset, full `cargo nextest run -p

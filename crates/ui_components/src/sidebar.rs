@@ -701,6 +701,7 @@ pub struct SidebarState {
     collapsed: bool,
     disabled: bool,
     label: String,
+    size: Size,
     sections: Vec<SidebarSectionState>,
     items: Vec<SidebarItemState>,
     selected_index: Option<usize>,
@@ -821,6 +822,7 @@ impl SidebarState {
             collapsed,
             disabled,
             label: label.into(),
+            size,
             sections: section_states,
             items: item_states,
             selected_index,
@@ -851,6 +853,11 @@ impl SidebarState {
     /// Returns effective collapsed state.
     pub const fn collapsed(&self) -> bool {
         self.collapsed
+    }
+
+    /// Returns the foundation size.
+    pub const fn size(&self) -> Size {
+        self.size
     }
 
     /// Returns whether the sidebar is icon-collapsed.

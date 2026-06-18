@@ -880,22 +880,6 @@ pub struct SidebarSample {
     pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Sidebar side.
-    pub side: SidebarSide,
-    /// Visual variant.
-    pub variant: SidebarVariant,
-    /// Collapse mode.
-    pub collapse_mode: SidebarCollapseMode,
-    /// Collapsed state.
-    pub collapsed: bool,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Selected item value.
-    pub selected: &'static str,
-    /// Seeded focused item value.
-    pub focused: Option<&'static str>,
-    /// Sidebar sections.
-    pub sections: Vec<SidebarSectionSample>,
     /// Resolved state.
     pub state: SidebarState,
 }
@@ -966,8 +950,6 @@ pub struct SelectSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: SelectOpenMode,
-    /// Whether the gallery mounts the popup open on page load.
-    pub page_load_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -997,8 +979,6 @@ pub struct ComboboxSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: ComboboxOpenMode,
-    /// Whether the gallery mounts the popup open on page load.
-    pub page_load_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -1052,8 +1032,6 @@ pub struct CommandSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: CommandOpenMode,
-    /// Whether the gallery mounts the popup open on page load.
-    pub page_load_open: bool,
     /// Whether the surface models command dialog policy.
     pub dialog: bool,
     /// Optional loading metadata shown when the sample models deferred content.
@@ -1960,6 +1938,7 @@ pub fn splitter_samples(_tokens: ThemeTokens) -> [SplitterSample; 2] {
                 .min_fraction(0.2)
                 .max_fraction(0.45)
                 .collapsible(true)
+                .collapsed(true)
                 .collapsed_fraction(0.08),
         },
         SplitterPanelSample {
@@ -2451,13 +2430,6 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
             id: "workspace-sidebar",
             title: "Workspace sidebar",
             summary: "Expanded docked navigation with sections, badges, and one disabled item.",
-            side: SidebarSide::Left,
-            variant: SidebarVariant::Docked,
-            collapse_mode: SidebarCollapseMode::Icon,
-            collapsed: false,
-            size: Size::Medium,
-            selected: "projects",
-            focused: None,
             state: sidebar_state(
                 SidebarSide::Left,
                 SidebarVariant::Docked,
@@ -2470,19 +2442,11 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
                 &workspace_sections,
                 tokens,
             ),
-            sections: workspace_sections,
         },
         SidebarSample {
             id: "icon-sidebar",
             title: "Icon rail",
             summary: "Icon collapse hides visible text while preserving explicit item labels.",
-            side: SidebarSide::Left,
-            variant: SidebarVariant::Inset,
-            collapse_mode: SidebarCollapseMode::Icon,
-            collapsed: true,
-            size: Size::Small,
-            selected: "reports",
-            focused: Some("reports"),
             state: sidebar_state(
                 SidebarSide::Left,
                 SidebarVariant::Inset,
@@ -2495,19 +2459,11 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
                 &icon_sections,
                 tokens,
             ),
-            sections: icon_sections,
         },
         SidebarSample {
             id: "long-sidebar",
             title: "Scrollable reports",
             summary: "Constrained long navigation remains scrollable and skips disabled items.",
-            side: SidebarSide::Right,
-            variant: SidebarVariant::Floating,
-            collapse_mode: SidebarCollapseMode::None,
-            collapsed: false,
-            size: Size::Small,
-            selected: "alerts",
-            focused: Some("quality"),
             state: sidebar_state(
                 SidebarSide::Right,
                 SidebarVariant::Floating,
@@ -2520,7 +2476,6 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
                 &long_sections,
                 tokens,
             ),
-            sections: long_sections,
         },
     ]
 }
@@ -2707,7 +2662,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("critical"),
             disabled: false,
             open_mode: SelectOpenMode::Controlled,
-            page_load_open: false,
             state: select_state(
                 Size::Medium,
                 false,
@@ -2732,7 +2686,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("doing"),
             disabled: false,
             open_mode: SelectOpenMode::Uncontrolled,
-            page_load_open: false,
             state: select_state(
                 Size::Small,
                 false,
@@ -2757,7 +2710,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: None,
             disabled: true,
             open_mode: SelectOpenMode::Uncontrolled,
-            page_load_open: false,
             state: select_state(
                 Size::Small,
                 true,
@@ -2829,7 +2781,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: Some("solid"),
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
-            page_load_open: false,
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -2856,7 +2807,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
-            page_load_open: false,
             state: combobox_state(
                 Size::Small,
                 false,
@@ -2883,7 +2833,6 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: true,
             open_mode: ComboboxOpenMode::Uncontrolled,
-            page_load_open: false,
             state: combobox_state(
                 Size::Small,
                 true,
@@ -2961,7 +2910,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: Some("new-file"),
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
-            page_load_open: false,
             dialog: true,
             loading: None,
             state: command_state(
@@ -2992,7 +2940,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
-            page_load_open: false,
             dialog: false,
             loading: Some(loading.clone()),
             state: command_state(
@@ -3023,7 +2970,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: true,
             open_mode: CommandOpenMode::Uncontrolled,
-            page_load_open: false,
             dialog: false,
             loading: None,
             state: command_state(

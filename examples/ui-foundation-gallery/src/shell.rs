@@ -757,32 +757,41 @@ impl GalleryShell {
                             let state = sample.state.clone();
                             let mut sidebar = Sidebar::new(
                                 format!("component-sidebar:{}", sample.id),
-                                sample.title,
+                                state.label(),
                             )
-                            .side(sample.side)
-                            .variant(sample.variant)
-                            .collapse_mode(sample.collapse_mode)
-                            .collapsed(sample.collapsed)
-                            .selected(sample.selected)
-                            .with_size(sample.size)
+                            .side(state.side())
+                            .variant(state.variant())
+                            .collapse_mode(state.collapse_mode())
+                            .collapsed(state.collapsed())
+                            .with_size(state.size())
                             .tokens(snapshot.tokens);
-                            if let Some(focused) = sample.focused {
+                            if let Some(selected) = state.selected_value() {
+                                sidebar = sidebar.selected(selected);
+                            }
+                            if let Some(focused) = state.focused_value() {
                                 sidebar = sidebar.focused(focused);
                             }
-                            for section in sample.sections.iter() {
+                            for section in state.sections() {
                                 let mut sidebar_section =
-                                    SidebarSection::new(section.value, section.label);
-                                for item in section.items.iter() {
+                                    SidebarSection::new(section.value(), section.label());
+                                for item in state
+                                    .items()
+                                    .iter()
+                                    .filter(|item| item.section_index() == section.index())
+                                {
                                     let mut sidebar_item =
-                                        SidebarItem::new(item.value, item.label).icon(item.icon);
-                                    if let Some(badge) = item.badge {
+                                        SidebarItem::new(item.value(), item.label());
+                                    if let Some(icon) = item.icon_label() {
+                                        sidebar_item = sidebar_item.icon(icon);
+                                    }
+                                    if let Some(badge) = item.badge_label() {
                                         sidebar_item = sidebar_item.badge(badge);
                                     }
-                                    if let Some(action_label) = item.action_label {
+                                    if let Some(action_label) = item.action_label_text() {
                                         sidebar_item = sidebar_item.action_label(action_label);
                                     }
                                     sidebar_section =
-                                        sidebar_section.item(sidebar_item.disabled(item.disabled));
+                                        sidebar_section.item(sidebar_item.disabled(item.disabled()));
                                 }
                                 sidebar = sidebar.section(sidebar_section);
                             }
@@ -831,7 +840,7 @@ impl GalleryShell {
                                         .border_1()
                                         .border_color(rgb(0xe2e4dc))
                                         .bg(rgb(0xfcfcf8))
-                                        .when(sample.side == SidebarSide::Right, |this| {
+                                        .when(state.side() == SidebarSide::Right, |this| {
                                             this.justify_end()
                                         })
                                         .child(sidebar),
@@ -3076,12 +3085,9 @@ impl GalleryShell {
             sample.open_mode,
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
-            let focused_value = sample
-                .focused_value
-                .expect("controlled menu sample should define a focused value");
             Menu::new(format!("overlay-menu-sample:{}", sample.id), sample.label)
                 .open(controlled_open)
-                .focused_value(focused_value)
+                .focused_value(sample.state.focused_value().unwrap_or("none"))
                 .items(menu_items_for_sample(sample.id))
                 .state()
         } else {
@@ -3096,11 +3102,6 @@ impl GalleryShell {
             .disabled(state.disabled())
             .outside_press_policy(state.outside_press_policy())
             .escape_key_policy(state.escape_key_policy());
-        let menu = if let Some(focused_value) = sample.focused_value {
-            menu.focused_value(focused_value)
-        } else {
-            menu
-        };
         let menu = match sample.open_mode {
             open_gpui_ui_components::MenuOpenMode::Controlled => {
                 menu.open(state.open()).on_open_change(move |open, _, cx| {
@@ -3170,15 +3171,12 @@ impl GalleryShell {
             sample.open_mode,
             open_gpui_ui_components::MenuOpenMode::Controlled
         ) {
-            let focused_value = sample
-                .focused_value
-                .expect("controlled context menu sample should define a focused value");
             ContextMenu::new(
                 format!("overlay-context-menu-sample:{}", sample.id),
                 sample.label,
             )
             .open(controlled_open)
-            .focused_value(focused_value)
+            .focused_value(sample.state.menu().focused_value().unwrap_or("none"))
             .anchor_point(gpui_point_from_ui(sample.state.anchor_point()))
             .items(context_menu_items_for_sample(sample.id))
             .state()
@@ -3195,11 +3193,6 @@ impl GalleryShell {
                 .anchor_point(gpui_point_from_ui(state.anchor_point()))
                 .outside_press_policy(state.menu().outside_press_policy())
                 .escape_key_policy(state.menu().escape_key_policy());
-        let context_menu = if let Some(focused_value) = sample.focused_value {
-            context_menu.focused_value(focused_value)
-        } else {
-            context_menu
-        };
         let context_menu = match sample.open_mode {
             open_gpui_ui_components::MenuOpenMode::Controlled => context_menu
                 .open(state.open())
@@ -4375,8 +4368,8 @@ fn component_select_samples_section(
                         select = select.selected(selected);
                     }
                     select = match sample.open_mode {
-                        SelectOpenMode::Controlled => select.open(sample.page_load_open),
-                        SelectOpenMode::Uncontrolled => select.default_open(sample.page_load_open),
+                        SelectOpenMode::Controlled => select.open(state.open()),
+                        SelectOpenMode::Uncontrolled => select.default_open(state.default_open()),
                     };
                     for option in sample.options.iter() {
                         select = select.option(component_listbox_option(option));
@@ -4409,7 +4402,7 @@ fn component_select_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if sample.page_load_open {
+                                .child(label_pill(if state.open() {
                                     "popup open"
                                 } else {
                                     "popup closed"
@@ -4461,9 +4454,9 @@ fn component_combobox_samples_section(
                         combobox = combobox.selected(selected);
                     }
                     combobox = match sample.open_mode {
-                        ComboboxOpenMode::Controlled => combobox.open(sample.page_load_open),
+                        ComboboxOpenMode::Controlled => combobox.open(state.open()),
                         ComboboxOpenMode::Uncontrolled => {
-                            combobox.default_open(sample.page_load_open)
+                            combobox.default_open(state.default_open())
                         }
                     };
                     for option in sample.options.iter() {
@@ -4497,7 +4490,7 @@ fn component_combobox_samples_section(
                                         .font_weight(open_gpui::FontWeight::BOLD)
                                         .child(sample.title),
                                 )
-                                .child(label_pill(if sample.page_load_open {
+                                .child(label_pill(if state.open() {
                                     "popup open"
                                 } else {
                                     "popup closed"
@@ -4557,10 +4550,8 @@ fn component_command_samples_section(
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
                     command = match sample.open_mode {
-                        CommandOpenMode::Controlled => command.open(sample.page_load_open),
-                        CommandOpenMode::Uncontrolled => {
-                            command.default_open(sample.page_load_open)
-                        }
+                        CommandOpenMode::Controlled => command.open(state.open()),
+                        CommandOpenMode::Uncontrolled => command.default_open(state.default_open()),
                     };
                     for item in sample.items.iter() {
                         command = command.item(component_command_item(item));
