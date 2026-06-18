@@ -9,6 +9,12 @@ status: "active"
 
 # Current State
 
+## 2026-06-19
+
+- Done: Rechecked the `Tabs` / `ScrollArea` / `Splitter` component seam against the gallery smoke tests and the page composition layer. The current evidence says these three components are already deep enough on their own; the actual scroll/viewport/vertical-layout behavior lives in gallery shell composition, not in a shared component helper.
+- Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed 45/45 after the review pass.
+- Next action: keep the architecture pass focused on `render_components_page` / gallery shell composition only if a new evidence-backed seam appears; otherwise stop chasing a shared layout helper here.
+
 ## 2026-06-18
 
 - Done: Restored the Components gallery shell's `Select` / `Combobox` / `Command` active-state propagation so the visible samples consume `state.active_value()` instead of silently flattening the behavior to `selected` alone.
