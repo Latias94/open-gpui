@@ -11,6 +11,9 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Re-reviewed the Components page sample/state surface and found no evidence-backed deletion seam comparable to the overlay focus contract. `TabsSample`, `ToolbarSample`, `SidebarSample`, `ListboxSample`, `SelectSample`, `ComboboxSample`, `CommandSample`, `TextInputSample`, and `FieldSample` are already either pure sample material or resolved state, so the next pass should move on unless new drift appears.
+- Next action: stop the seam hunt on Components for now and only revisit if a new sample/state mismatch is surfaced by tests or subagent review.
+
 - Done: Restored overlay menu/context-menu sample-owned `focused_value` metadata so controlled examples keep their requested initial focus in the sample struct, and the gallery shell now reads that seed directly when rebuilding controlled demos.
 - Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the overlay sample-contract cleanup.
 - Next action: wait for the remaining gallery drift review; if no stronger seam appears, commit the overlay contract alignment.
