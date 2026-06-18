@@ -11,6 +11,25 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Continued the Components gallery contract pass by making `CommandSample` loading metadata
+  the single source of truth for both the sample and its resolved `CommandState`. The gallery no
+  longer reconstructs the loading state from the `query == "deploy"` sentinel; `page_load_open`
+  remains explicit gallery mounting policy for Select, Combobox, and Command popups.
+- Last verified for the Command loading cleanup: `cargo fmt --all --check`, `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`, focused Components gallery nextest coverage for
+  metadata/choice/search/scroll reset, `cargo nextest run -p open-gpui-ui-foundation-gallery`, and
+  `git diff --check`.
+- Next action: continue the architecture pass on Sidebar/ScrollArea and only change page-level
+  state when it removes a real contract split.
+
+- Done: Closed the overlay gallery scroll/navigation regression by stopping the gallery shell from
+  auto-expanding uncontrolled overlay previews that interfere with page interaction. The sample
+  contracts still keep `default_open` metadata, but the gallery now leaves those previews closed
+  so the page can scroll and navigation can switch cleanly.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery
+  --tests` with 43 passing tests.
+- Next action: only revisit if a new overlay sample regresses hit-testing or page scroll.
+
 - Done: Continued the overlay gallery contract cleanup by moving menu and context-menu initial
   focused-item intent into explicit sample metadata. `MenuSample` and `ContextMenuSample` now
   carry `focused_value`, and the gallery shell feeds that value into the rendered menu builders

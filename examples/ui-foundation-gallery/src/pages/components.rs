@@ -966,8 +966,8 @@ pub struct SelectSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: SelectOpenMode,
-    /// Whether the interactive gallery control mounts its popup open.
-    pub interactive_open: bool,
+    /// Whether the gallery mounts the popup open on page load.
+    pub page_load_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -997,8 +997,8 @@ pub struct ComboboxSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: ComboboxOpenMode,
-    /// Whether the interactive gallery control mounts its popup open.
-    pub interactive_open: bool,
+    /// Whether the gallery mounts the popup open on page load.
+    pub page_load_open: bool,
     /// Standalone options.
     pub options: Vec<ListboxOptionSample>,
     /// Grouped options.
@@ -1052,8 +1052,8 @@ pub struct CommandSample {
     pub disabled: bool,
     /// Open-state ownership.
     pub open_mode: CommandOpenMode,
-    /// Whether the interactive gallery control mounts its popup open.
-    pub interactive_open: bool,
+    /// Whether the gallery mounts the popup open on page load.
+    pub page_load_open: bool,
     /// Whether the surface models command dialog policy.
     pub dialog: bool,
     /// Optional loading metadata shown when the sample models deferred content.
@@ -2707,7 +2707,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("critical"),
             disabled: false,
             open_mode: SelectOpenMode::Controlled,
-            interactive_open: false,
+            page_load_open: false,
             state: select_state(
                 Size::Medium,
                 false,
@@ -2732,7 +2732,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: Some("doing"),
             disabled: false,
             open_mode: SelectOpenMode::Uncontrolled,
-            interactive_open: false,
+            page_load_open: false,
             state: select_state(
                 Size::Small,
                 false,
@@ -2757,7 +2757,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
             selected: None,
             disabled: true,
             open_mode: SelectOpenMode::Uncontrolled,
-            interactive_open: false,
+            page_load_open: false,
             state: select_state(
                 Size::Small,
                 true,
@@ -2829,7 +2829,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: Some("solid"),
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
-            interactive_open: false,
+            page_load_open: false,
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -2856,7 +2856,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: false,
             open_mode: ComboboxOpenMode::Controlled,
-            interactive_open: false,
+            page_load_open: false,
             state: combobox_state(
                 Size::Small,
                 false,
@@ -2883,7 +2883,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
             selected: None,
             disabled: true,
             open_mode: ComboboxOpenMode::Uncontrolled,
-            interactive_open: false,
+            page_load_open: false,
             state: combobox_state(
                 Size::Small,
                 true,
@@ -2948,6 +2948,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
         disabled: false,
     }];
     let disabled_items = Vec::new();
+    let loading = CommandLoadingState::new("Indexing commands", None);
 
     [
         CommandSample {
@@ -2960,7 +2961,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: Some("new-file"),
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
-            interactive_open: false,
+            page_load_open: false,
             dialog: true,
             loading: None,
             state: command_state(
@@ -2972,6 +2973,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 "Type a command",
                 "file",
                 Some("new-file"),
+                None,
                 &quick_items,
                 &command_groups,
                 true,
@@ -2990,9 +2992,9 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: false,
             open_mode: CommandOpenMode::Controlled,
-            interactive_open: false,
+            page_load_open: false,
             dialog: false,
-            loading: Some(CommandLoadingState::new("Indexing commands", None)),
+            loading: Some(loading.clone()),
             state: command_state(
                 Size::Small,
                 false,
@@ -3002,6 +3004,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 "Search commands",
                 "deploy",
                 None,
+                Some(loading.clone()),
                 &empty_items,
                 &[],
                 false,
@@ -3020,7 +3023,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             selected: None,
             disabled: true,
             open_mode: CommandOpenMode::Uncontrolled,
-            interactive_open: false,
+            page_load_open: false,
             dialog: false,
             loading: None,
             state: command_state(
@@ -3031,6 +3034,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 "Disabled commands",
                 "Unavailable",
                 "",
+                None,
                 None,
                 &disabled_items,
                 &[],
@@ -3237,6 +3241,7 @@ fn command_state(
     placeholder: &str,
     query: &str,
     selected: Option<&str>,
+    loading: Option<CommandLoadingState>,
     items: &[CommandItemSample],
     groups: &[CommandGroupSample],
     dialog: bool,
@@ -3253,8 +3258,7 @@ fn command_state(
         query,
         selected,
         selected,
-        (!disabled && query == "deploy")
-            .then(|| open_gpui_ui_components::CommandLoadingState::new("Indexing commands", None)),
+        loading,
         "No results",
         dialog.then_some("Command palette".to_string()),
         dialog.then_some("Run a workspace command".to_string()),
