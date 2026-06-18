@@ -53,11 +53,12 @@ impl IconButtonMetrics {
 }
 
 /// Resolved icon button state used by tests, demos, and rendering.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IconButtonState {
     variant: ButtonVariant,
     size: Size,
     disabled: bool,
+    accessible_label: SharedString,
     metrics: IconButtonMetrics,
     colors: IconButtonColors,
     focus_ring: FocusRing,
@@ -69,6 +70,7 @@ impl IconButtonState {
         variant: ButtonVariant,
         size: Size,
         disabled: bool,
+        accessible_label: impl Into<SharedString>,
         tokens: ThemeTokens,
     ) -> Self {
         let colors = ThemeResolver::button_colors(tokens, variant, false);
@@ -77,6 +79,7 @@ impl IconButtonState {
             variant,
             size,
             disabled,
+            accessible_label: accessible_label.into(),
             metrics: IconButtonMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -84,43 +87,48 @@ impl IconButtonState {
     }
 
     /// Returns the visual variant.
-    pub const fn variant(self) -> ButtonVariant {
+    pub const fn variant(&self) -> ButtonVariant {
         self.variant
     }
 
     /// Returns the foundation size.
-    pub const fn size(self) -> Size {
+    pub const fn size(&self) -> Size {
         self.size
     }
 
     /// Returns whether the button is disabled.
-    pub const fn disabled(self) -> bool {
+    pub const fn disabled(&self) -> bool {
         self.disabled
     }
 
     /// Returns whether activation handlers should run.
-    pub const fn activation_enabled(self) -> bool {
+    pub const fn activation_enabled(&self) -> bool {
         !self.disabled
     }
 
     /// Returns the accessibility role.
-    pub const fn role(self) -> Role {
+    pub const fn role(&self) -> Role {
         Role::Button
     }
 
     /// Returns resolved metrics.
-    pub const fn metrics(self) -> IconButtonMetrics {
+    pub const fn metrics(&self) -> IconButtonMetrics {
         self.metrics
     }
 
     /// Returns resolved color intents.
-    pub const fn colors(self) -> IconButtonColors {
+    pub const fn colors(&self) -> IconButtonColors {
         self.colors
     }
 
     /// Returns resolved focus ring metadata.
-    pub const fn focus_ring(self) -> FocusRing {
+    pub const fn focus_ring(&self) -> FocusRing {
         self.focus_ring
+    }
+
+    /// Returns the accessible label used by the icon button.
+    pub fn accessible_label(&self) -> &str {
+        &self.accessible_label
     }
 }
 
@@ -190,7 +198,13 @@ impl IconButton {
 
     /// Returns the resolved icon button state.
     pub fn state(&self) -> IconButtonState {
-        IconButtonState::resolve(self.variant, self.size, self.disabled, self.tokens)
+        IconButtonState::resolve(
+            self.variant,
+            self.size,
+            self.disabled,
+            self.accessible_label.clone(),
+            self.tokens,
+        )
     }
 }
 

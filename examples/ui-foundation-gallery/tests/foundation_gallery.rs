@@ -6,8 +6,8 @@ use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
     CommandOpenMode, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind,
     MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, TabsActivationMode, ThemeMode,
-    ToggleVariant, TooltipOpenIntent,
+    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode, ToggleVariant,
+    TooltipOpenIntent,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority},
 };
 use open_gpui_ui_core::{
@@ -631,13 +631,13 @@ fn overlay_page_dialog_samples_expose_modal_and_close_contracts() {
 
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "controlled-modal");
-    assert_eq!(samples[0].state.open_mode(), DialogOpenMode::Controlled);
-    assert!(!samples[0].state.open());
     assert_eq!(samples[0].state.title(), "Controlled dialog");
     assert_eq!(
         samples[0].state.description(),
         Some("Escape and the modal barrier can close it.")
     );
+    assert_eq!(samples[0].state.open_mode(), DialogOpenMode::Controlled);
+    assert!(!samples[0].state.open());
     assert_eq!(
         samples[0].state.overlay().policy().kind(),
         OverlayLayerKind::Modal
@@ -698,6 +698,11 @@ fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
 
     assert_eq!(samples.len(), 2);
     assert_eq!(samples[0].id, "destructive-confirm");
+    assert_eq!(samples[0].state.title(), "Delete this project?");
+    assert_eq!(
+        samples[0].state.description(),
+        "This permanently removes project data and cannot be undone."
+    );
     assert_eq!(
         samples[0].state.open_mode(),
         AlertDialogOpenMode::Controlled
@@ -725,6 +730,11 @@ fn overlay_page_alert_dialog_samples_expose_critical_action_contracts() {
     );
 
     assert_eq!(samples[1].id, "safe-cancel");
+    assert_eq!(samples[1].state.title(), "Archive this item?");
+    assert_eq!(
+        samples[1].state.description(),
+        "The item moves out of the active list and can be restored later."
+    );
     assert_eq!(
         samples[1].state.open_mode(),
         AlertDialogOpenMode::Uncontrolled
@@ -752,6 +762,11 @@ fn overlay_page_sheet_samples_expose_edge_and_policy_contracts() {
 
     assert_eq!(samples.len(), 3);
     assert_eq!(samples[0].id, "left-modal");
+    assert_eq!(samples[0].state.title(), "Workspace filters");
+    assert_eq!(
+        samples[0].state.description(),
+        Some("Filter active work without leaving the page.")
+    );
     assert_eq!(samples[0].state.open_mode(), SheetOpenMode::Uncontrolled);
     assert!(samples[0].state.default_open());
     assert!(samples[0].state.open());
@@ -1065,7 +1080,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(avatars[3].state.fallback(), "?");
 
     assert_eq!(icon_buttons.len(), 4);
-    assert_eq!(icon_buttons[0].accessible_label, "Search");
+    assert_eq!(icon_buttons[0].state.accessible_label(), "Search");
     assert_eq!(icon_buttons[0].state.role(), Role::Button);
     assert_eq!(icon_buttons[1].state.variant(), ButtonVariant::Outline);
     assert_eq!(
@@ -1192,7 +1207,7 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(commands.len(), 3);
     assert_eq!(commands[0].id, "workspace-command");
     assert_eq!(commands[0].state.open_mode(), CommandOpenMode::Controlled);
-    assert!(commands[0].loading.is_none());
+    assert!(commands[0].state.loading().is_none());
     assert!(commands[0].state.open());
     assert!(commands[0].state.dialog().is_some());
     assert_eq!(commands[0].state.list_role(), Role::ListBox);
@@ -1205,15 +1220,14 @@ fn components_page_samples_expose_component_metadata() {
             .iter()
             .any(|item| item.shortcut().is_some())
     );
-    assert!(commands[1].loading.is_some());
+    assert!(commands[1].state.loading().is_some());
     assert_eq!(
-        commands[1].loading.as_ref().unwrap().message(),
+        commands[1].state.loading().unwrap().message(),
         "Indexing commands"
     );
-    assert!(commands[1].loading.is_some());
     assert!(commands[1].state.loading().is_some());
     assert!(commands[1].state.empty());
-    assert!(commands[2].loading.is_none());
+    assert!(commands[2].state.loading().is_none());
     assert!(commands[2].state.disabled());
     assert!(!commands[2].state.open());
 
@@ -1226,11 +1240,11 @@ fn components_page_samples_expose_component_metadata() {
 
     assert_eq!(text_inputs.len(), 5);
     assert_eq!(text_inputs[0].state.role(), Role::TextInput);
-    assert!(text_inputs[0].controller_driven);
+    assert!(text_inputs[0].state.controller_driven());
     assert!(
         text_inputs[1..]
             .iter()
-            .all(|sample| !sample.controller_driven)
+            .all(|sample| !sample.state.controller_driven())
     );
     assert!(text_inputs[0].state.displaying_placeholder());
     assert!(text_inputs[1].state.has_value());
@@ -1278,13 +1292,47 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(splitters.len(), 2);
     assert_eq!(splitters[0].id, "workspace-split");
     assert_eq!(splitters[0].state.orientation(), Orientation::Horizontal);
+    assert_eq!(splitters[0].state.size(), Size::Medium);
     assert_eq!(splitters[0].state.panels().len(), 3);
     assert_eq!(splitters[0].state.handles().len(), 2);
     assert_eq!(splitters[0].state.panels()[0].id(), "navigator");
+    assert_eq!(splitters[0].state.panels()[0].min_fraction(), 0.18);
+    assert_eq!(splitters[0].state.panels()[0].max_fraction(), 0.34);
     assert!(!splitters[0].state.handles()[0].disabled());
     assert_eq!(splitters[1].state.orientation(), Orientation::Vertical);
+    assert_eq!(splitters[1].state.size(), Size::Small);
     assert!(splitters[1].state.panels()[0].collapsed());
     assert_eq!(splitters[1].state.panels()[0].collapsed_fraction(), 0.08);
+}
+
+#[test]
+fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
+    let shell_source = include_str!("../src/shell.rs");
+    let components_source = include_str!("../src/pages/components.rs");
+    let splitter_struct_start = components_source
+        .find("pub struct SplitterSample {")
+        .expect("expected SplitterSample struct to exist");
+    let splitter_struct_end = components_source[splitter_struct_start..]
+        .find("impl_component_sample_selectors!(SplitterSample, \"component-splitter-sample\");")
+        .map(|offset| splitter_struct_start + offset)
+        .expect("expected SplitterSample selector impl to exist");
+    let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
+    let splitter_section = shell_source
+        .split("splitter_samples.into_iter().map(|sample| {")
+        .nth(1)
+        .and_then(|section| {
+            section
+                .split("scroll_area_samples.into_iter().map(|sample| {")
+                .next()
+        })
+        .expect("expected Splitter section in shell source");
+
+    assert!(!splitter_struct.contains("pub orientation: Orientation,"));
+    assert!(!splitter_struct.contains("pub size: Size,"));
+    assert!(splitter_section.contains(".orientation(state.orientation())"));
+    assert!(splitter_section.contains(".with_size(state.size())"));
+    assert!(!splitter_section.contains(".orientation(sample.orientation)"));
+    assert!(!splitter_section.contains(".with_size(sample.size)"));
 }
 
 #[test]
@@ -1355,16 +1403,12 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
 
     assert_eq!(tabs.len(), 2);
     assert_eq!(tabs[0].id, "overview-tabs");
-    assert_eq!(tabs[0].orientation, Orientation::Horizontal);
-    assert_eq!(tabs[0].activation_mode, TabsActivationMode::Automatic);
     assert_eq!(tabs[0].state.selected_value(), Some("overview"));
     assert_eq!(tabs[0].state.focused_value(), Some("overview"));
     assert_eq!(tabs[0].state.tab_stop_value(), Some("overview"));
     assert!(tabs[0].items.iter().any(|item| item.disabled));
 
     assert_eq!(tabs[1].id, "workspace-tabs");
-    assert_eq!(tabs[1].orientation, Orientation::Vertical);
-    assert_eq!(tabs[1].activation_mode, TabsActivationMode::Manual);
     assert!(tabs[1].items.len() >= 12);
     assert_eq!(tabs[1].state.selected_value(), Some("profile"));
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
@@ -1548,6 +1592,8 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(workspace.selected_value(), Some("new-file"));
     assert_eq!(workspace.filtered_item_count(), 2);
     assert_eq!(workspace.groups().len(), 2);
+    assert!(workspace.groups()[0].standalone());
+    assert!(!workspace.groups()[1].standalone());
     assert!(
         workspace
             .items()
@@ -1584,7 +1630,7 @@ fn components_page_samples_keep_explicit_a11y_metadata() {
     assert!(
         icon_buttons
             .iter()
-            .all(|sample| !sample.accessible_label.trim().is_empty())
+            .all(|sample| !sample.state.accessible_label().trim().is_empty())
     );
     assert!(
         icon_buttons

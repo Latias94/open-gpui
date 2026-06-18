@@ -1,5 +1,6 @@
 //! Component consumer samples for the foundation gallery.
 
+use open_gpui::{ParentElement, Styled, div, rgb};
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOptionDescriptor, ComboboxState,
@@ -9,9 +10,9 @@ use open_gpui_ui_components::{
     RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
     SelectState, Separator, SeparatorState, SidebarCollapseMode, SidebarItemDescriptor,
     SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant, Skeleton, SkeletonState,
-    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, TabsActivationMode,
-    TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState, ToggleVariant,
-    ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
+    SplitterPanelDescriptor, SplitterState, Switch, SwitchState, Tabs, TabsActivationMode,
+    TabsItem, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToggleVariant, Toolbar, ToolbarItem, ToolbarItemDescriptor, ToolbarItemKind, ToolbarState,
 };
 use open_gpui_ui_core::{
     EscapeKeyPolicy, FocusRestoreIntent, InitialFocusIntent, Orientation, OutsidePressPolicy,
@@ -529,14 +530,12 @@ pub struct BadgeSample {
 }
 
 /// One icon button sample in the gallery.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IconButtonSample {
     /// Stable sample id.
     pub id: &'static str,
     /// Visible icon glyph.
     pub icon: &'static str,
-    /// Required accessible label.
-    pub accessible_label: &'static str,
     /// Resolved state.
     pub state: IconButtonState,
 }
@@ -548,12 +547,6 @@ pub struct SeparatorSample {
     pub id: &'static str,
     /// Visible sample title.
     pub title: &'static str,
-    /// Semantic orientation.
-    pub orientation: Orientation,
-    /// Whether the separator is decorative.
-    pub decorative: bool,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: SeparatorState,
 }
@@ -563,10 +556,6 @@ pub struct SeparatorSample {
 pub struct KbdSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Visible shortcut label.
-    pub label: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: KbdState,
 }
@@ -578,10 +567,6 @@ pub struct ProgressSample {
     pub id: &'static str,
     /// Accessible progress label.
     pub label: &'static str,
-    /// Determinate value, or `None` for indeterminate progress.
-    pub value_percent: Option<f32>,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: ProgressState,
 }
@@ -593,10 +578,6 @@ pub struct SkeletonSample {
     pub id: &'static str,
     /// Visible sample title.
     pub title: &'static str,
-    /// Whether the skeleton uses lower emphasis.
-    pub subtle: bool,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: SkeletonState,
 }
@@ -606,16 +587,6 @@ pub struct SkeletonSample {
 pub struct AvatarSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Display name.
-    pub name: &'static str,
-    /// Optional source URI metadata.
-    pub source: Option<&'static str>,
-    /// Explicit fallback text.
-    pub fallback: Option<&'static str>,
-    /// Explicit accessible label.
-    pub accessible_label: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Resolved state.
     pub state: AvatarState,
 }
@@ -658,8 +629,6 @@ pub struct TextInputSample {
     pub id: &'static str,
     /// Sample label.
     pub label: &'static str,
-    /// Whether this sample is rendered with an editable controller.
-    pub controller_driven: bool,
     /// Resolved state.
     pub state: TextInputState,
 }
@@ -697,18 +666,49 @@ pub struct TabsSample {
     pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Tab orientation.
-    pub orientation: Orientation,
-    /// Activation mode.
-    pub activation_mode: TabsActivationMode,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Selected tab value.
-    pub selected: &'static str,
     /// Tab items.
     pub items: Vec<TabsItemSample>,
     /// Resolved state.
     pub state: TabsState,
+}
+
+impl TabsSample {
+    /// Builds a tabs widget from the sample's resolved state and item descriptors.
+    pub fn build_tabs(&self, tokens: ThemeTokens) -> Tabs {
+        let tabs = self.items.iter().fold(
+            Tabs::new(format!("component-tabs:{}", self.id))
+                .orientation(self.state.orientation())
+                .activation_mode(self.state.activation_mode())
+                .with_size(self.state.size())
+                .tokens(tokens),
+            |tabs, item| {
+                tabs.item(
+                    TabsItem::new(
+                        format!("component-tabs-item:{}:{}", self.id, item.value),
+                        item.label,
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(open_gpui::FontWeight::BOLD)
+                                    .child(item.label),
+                            )
+                            .child(div().text_xs().text_color(rgb(0x5a6472)).child(item.panel)),
+                    )
+                    .disabled(item.disabled),
+                )
+            },
+        );
+
+        if let Some(selected) = self.state.selected_value() {
+            tabs.selected(selected)
+        } else {
+            tabs
+        }
+    }
 }
 
 /// One scroll area sample in the gallery.
@@ -748,10 +748,6 @@ pub struct SplitterSample {
     pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Splitter orientation.
-    pub orientation: Orientation,
-    /// Foundation size used by the sample.
-    pub size: Size,
     /// Splitter panels.
     pub panels: Vec<SplitterPanelSample>,
     /// Resolved state.
@@ -778,18 +774,6 @@ pub struct RadioGroupSample {
     pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Tab orientation.
-    pub orientation: Orientation,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Selected radio value.
-    pub selected: &'static str,
-    /// Whether the sample is disabled.
-    pub disabled: bool,
-    /// Whether the sample is required.
-    pub required: bool,
-    /// Radio items.
-    pub items: Vec<RadioItemSample>,
     /// Resolved state.
     pub state: RadioGroupState,
 }
@@ -827,20 +811,48 @@ pub struct ToolbarItemSample {
 pub struct ToolbarSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Toolbar orientation.
-    pub orientation: Orientation,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Seeded focused item.
-    pub focused: &'static str,
     /// Toolbar items.
     pub items: Vec<ToolbarItemSample>,
     /// Resolved state.
     pub state: ToolbarState,
+}
+
+impl ToolbarSample {
+    /// Builds a toolbar widget from the sample's resolved state and item descriptors.
+    pub fn build_toolbar(&self, tokens: ThemeTokens) -> Toolbar {
+        let mut toolbar = Toolbar::new(
+            format!("component-toolbar:{}", self.id),
+            self.state.label().to_string(),
+        )
+        .orientation(self.state.orientation())
+        .with_size(self.state.size())
+        .tokens(tokens);
+
+        if let Some(focused) = self.state.focused_value() {
+            toolbar = toolbar.focused(focused);
+        }
+
+        for item in &self.items {
+            let toolbar_item = match item.kind {
+                ToolbarItemKind::Action => match item.icon {
+                    Some(icon) => ToolbarItem::icon(item.value, icon, item.label),
+                    None => ToolbarItem::action(item.value, item.label),
+                },
+                ToolbarItemKind::Toggle => match item.icon {
+                    Some(icon) => ToolbarItem::toggle_icon(item.value, icon, item.label),
+                    None => ToolbarItem::toggle(item.value, item.label),
+                }
+                .pressed(item.pressed),
+                ToolbarItemKind::Separator => ToolbarItem::separator(item.value),
+            }
+            .disabled(item.disabled);
+            toolbar = toolbar.item(toolbar_item);
+        }
+
+        toolbar
+    }
 }
 
 /// One sidebar item sample in the gallery.
@@ -876,8 +888,6 @@ pub struct SidebarSectionSample {
 pub struct SidebarSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
     /// Resolved state.
@@ -911,22 +921,8 @@ pub struct ListboxGroupSample {
 pub struct ListboxSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Selected option value.
-    pub selected: Option<&'static str>,
-    /// Seeded active option value.
-    pub active: Option<&'static str>,
-    /// Whether the sample is disabled.
-    pub disabled: bool,
-    /// Standalone options.
-    pub options: Vec<ListboxOptionSample>,
-    /// Grouped options.
-    pub groups: Vec<ListboxGroupSample>,
     /// Resolved state.
     pub state: ListboxState,
 }
@@ -936,22 +932,8 @@ pub struct ListboxSample {
 pub struct SelectSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Placeholder text.
-    pub placeholder: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Selected option value.
-    pub selected: Option<&'static str>,
-    /// Whether the select is disabled.
-    pub disabled: bool,
-    /// Standalone options.
-    pub options: Vec<ListboxOptionSample>,
-    /// Grouped options.
-    pub groups: Vec<ListboxGroupSample>,
     /// Resolved state.
     pub state: SelectState,
 }
@@ -961,50 +943,10 @@ pub struct SelectSample {
 pub struct ComboboxSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Placeholder text.
-    pub placeholder: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Query text.
-    pub query: &'static str,
-    /// Selected option value.
-    pub selected: Option<&'static str>,
-    /// Whether the combobox is disabled.
-    pub disabled: bool,
-    /// Standalone options.
-    pub options: Vec<ListboxOptionSample>,
-    /// Grouped options.
-    pub groups: Vec<ListboxGroupSample>,
     /// Resolved state.
     pub state: ComboboxState,
-}
-
-/// One command item sample in the gallery.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandItemSample {
-    /// Stable command value.
-    pub value: &'static str,
-    /// Visible command label.
-    pub label: &'static str,
-    /// Optional shortcut display.
-    pub shortcut: Option<&'static str>,
-    /// Whether the command is disabled.
-    pub disabled: bool,
-}
-
-/// One command group sample in the gallery.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CommandGroupSample {
-    /// Stable group value.
-    pub value: &'static str,
-    /// Visible group label.
-    pub label: &'static str,
-    /// Commands in this group.
-    pub items: Vec<CommandItemSample>,
 }
 
 /// One command palette sample in the gallery.
@@ -1012,28 +954,8 @@ pub struct CommandGroupSample {
 pub struct CommandSample {
     /// Stable sample id.
     pub id: &'static str,
-    /// Sample title.
-    pub title: &'static str,
     /// Sample summary.
     pub summary: &'static str,
-    /// Placeholder text.
-    pub placeholder: &'static str,
-    /// Foundation size used by the sample.
-    pub size: Size,
-    /// Query text.
-    pub query: &'static str,
-    /// Selected command value.
-    pub selected: Option<&'static str>,
-    /// Whether the command surface is disabled.
-    pub disabled: bool,
-    /// Whether the surface models command dialog policy.
-    pub dialog: bool,
-    /// Optional loading metadata shown when the sample models deferred content.
-    pub loading: Option<CommandLoadingState>,
-    /// Standalone command items.
-    pub items: Vec<CommandItemSample>,
-    /// Grouped command items.
-    pub groups: Vec<CommandGroupSample>,
     /// Resolved state.
     pub state: CommandState,
 }
@@ -1205,7 +1127,6 @@ pub fn icon_button_samples(tokens: ThemeTokens) -> [IconButtonSample; 4] {
         |(id, icon, accessible_label, variant, disabled, size)| IconButtonSample {
             id,
             icon,
-            accessible_label,
             state: IconButton::new(id, icon, accessible_label)
                 .variant(variant)
                 .disabled(disabled)
@@ -1245,9 +1166,6 @@ pub fn separator_samples(tokens: ThemeTokens) -> [SeparatorSample; 3] {
         |(id, title, orientation, decorative, size)| SeparatorSample {
             id,
             title,
-            orientation,
-            decorative,
-            size,
             state: Separator::new(id)
                 .orientation(orientation)
                 .decorative(decorative)
@@ -1267,8 +1185,6 @@ pub fn kbd_samples(tokens: ThemeTokens) -> [KbdSample; 3] {
     ]
     .map(|(id, label, size)| KbdSample {
         id,
-        label,
-        size,
         state: Kbd::new(id, label).with_size(size).tokens(tokens).state(),
     })
 }
@@ -1290,8 +1206,6 @@ pub fn progress_samples(tokens: ThemeTokens) -> [ProgressSample; 3] {
         ProgressSample {
             id,
             label,
-            value_percent,
-            size,
             state: progress.state(),
         }
     })
@@ -1307,8 +1221,6 @@ pub fn skeleton_samples(tokens: ThemeTokens) -> [SkeletonSample; 3] {
     .map(|(id, title, subtle, size)| SkeletonSample {
         id,
         title,
-        subtle,
-        size,
         state: Skeleton::new(id)
             .subtle(subtle)
             .with_size(size)
@@ -1362,11 +1274,6 @@ pub fn avatar_samples(tokens: ThemeTokens) -> [AvatarSample; 4] {
 
         AvatarSample {
             id,
-            name,
-            source,
-            fallback,
-            accessible_label,
-            size,
             state: avatar.state(),
         }
     })
@@ -1600,21 +1507,19 @@ pub fn text_input_samples(tokens: ThemeTokens) -> [TextInputSample; 5] {
             size,
             controller_driven,
         )| {
-            TextInputSample {
-                id,
-                label,
+            let state = TextInputState::resolve(
+                value,
+                Some(placeholder),
+                size,
+                disabled,
+                read_only,
+                invalid,
+                required,
                 controller_driven,
-                state: TextInput::new(id, label)
-                    .value(value)
-                    .placeholder(placeholder)
-                    .disabled(disabled)
-                    .read_only(read_only)
-                    .required(required)
-                    .invalid(invalid)
-                    .with_size(size)
-                    .tokens(tokens)
-                    .state(),
-            }
+                tokens,
+            );
+
+            TextInputSample { id, label, state }
         },
     )
 }
@@ -1788,10 +1693,6 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             id: "overview-tabs",
             title: "Overview",
             summary: "Automatic activation with roving focus and one disabled tab.",
-            orientation: Orientation::Horizontal,
-            activation_mode: TabsActivationMode::Automatic,
-            size: Size::Medium,
-            selected: "overview",
             state: tabs_state(
                 Orientation::Horizontal,
                 TabsActivationMode::Automatic,
@@ -1806,10 +1707,6 @@ pub fn tabs_samples(tokens: ThemeTokens) -> [TabsSample; 2] {
             id: "workspace-tabs",
             title: "Workspace",
             summary: "Manual activation with vertical navigation.",
-            orientation: Orientation::Vertical,
-            activation_mode: TabsActivationMode::Manual,
-            size: Size::Small,
-            selected: "profile",
             state: tabs_state(
                 Orientation::Vertical,
                 TabsActivationMode::Manual,
@@ -1950,8 +1847,6 @@ pub fn splitter_samples(_tokens: ThemeTokens) -> [SplitterSample; 2] {
             id: "workspace-split",
             title: "Workspace split",
             summary: "Horizontal panels constrained by min and max fractions.",
-            orientation: Orientation::Horizontal,
-            size: Size::Medium,
             state: SplitterState::resolve(
                 "workspace-split",
                 Orientation::Horizontal,
@@ -1967,8 +1862,6 @@ pub fn splitter_samples(_tokens: ThemeTokens) -> [SplitterSample; 2] {
             id: "details-split",
             title: "Details split",
             summary: "Vertical stack with a collapsed but restorable panel.",
-            orientation: Orientation::Vertical,
-            size: Size::Small,
             state: SplitterState::resolve(
                 "details-split",
                 Orientation::Vertical,
@@ -2023,11 +1916,6 @@ pub fn radio_group_samples(tokens: ThemeTokens) -> [RadioGroupSample; 2] {
             id: "persona-radios",
             title: "Persona",
             summary: "Vertical group with required metadata and one disabled item.",
-            orientation: Orientation::Vertical,
-            size: Size::Medium,
-            selected: "team",
-            disabled: false,
-            required: true,
             state: radio_group_state(
                 Orientation::Vertical,
                 Size::Medium,
@@ -2037,17 +1925,11 @@ pub fn radio_group_samples(tokens: ThemeTokens) -> [RadioGroupSample; 2] {
                 &persona_items,
                 tokens,
             ),
-            items: persona_items,
         },
         RadioGroupSample {
             id: "region-radios",
             title: "Region",
             summary: "Horizontal group with compact sizing.",
-            orientation: Orientation::Horizontal,
-            size: Size::Small,
-            selected: "europe",
-            disabled: false,
-            required: false,
             state: radio_group_state(
                 Orientation::Horizontal,
                 Size::Small,
@@ -2057,7 +1939,6 @@ pub fn radio_group_samples(tokens: ThemeTokens) -> [RadioGroupSample; 2] {
                 &region_items,
                 tokens,
             ),
-            items: region_items,
         },
     ]
 }
@@ -2203,11 +2084,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
     [
         ToolbarSample {
             id: "editor-toolbar",
-            title: "Editor toolbar",
             summary: "Horizontal actions with separators, one disabled item, and pressed toggles.",
-            orientation: Orientation::Horizontal,
-            size: Size::Small,
-            focused: "bold",
             state: toolbar_state(
                 Orientation::Horizontal,
                 Size::Small,
@@ -2220,11 +2097,7 @@ pub fn toolbar_samples(tokens: ThemeTokens) -> [ToolbarSample; 2] {
         },
         ToolbarSample {
             id: "inspector-toolbar",
-            title: "Inspector rail",
             summary: "Vertical toolbar that keeps roving focus on command buttons.",
-            orientation: Orientation::Vertical,
-            size: Size::Medium,
-            focused: "pin",
             state: toolbar_state(
                 Orientation::Vertical,
                 Size::Medium,
@@ -2422,7 +2295,6 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
     [
         SidebarSample {
             id: "workspace-sidebar",
-            title: "Workspace sidebar",
             summary: "Expanded docked navigation with sections, badges, and one disabled item.",
             state: sidebar_state(
                 SidebarSide::Left,
@@ -2439,7 +2311,6 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
         },
         SidebarSample {
             id: "icon-sidebar",
-            title: "Icon rail",
             summary: "Icon collapse hides visible text while preserving explicit item labels.",
             state: sidebar_state(
                 SidebarSide::Left,
@@ -2456,7 +2327,6 @@ pub fn sidebar_samples(tokens: ThemeTokens) -> [SidebarSample; 3] {
         },
         SidebarSample {
             id: "long-sidebar",
-            title: "Scrollable reports",
             summary: "Constrained long navigation remains scrollable and skips disabled items.",
             state: sidebar_state(
                 SidebarSide::Right,
@@ -2533,12 +2403,7 @@ pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
     [
         ListboxSample {
             id: "assignee-listbox",
-            title: "Assignee",
             summary: "Grouped listbox with one disabled option and roving active metadata.",
-            size: Size::Medium,
-            selected: Some("owen"),
-            active: Some("maya"),
-            disabled: false,
             state: listbox_state(
                 Size::Medium,
                 false,
@@ -2549,17 +2414,10 @@ pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
                 &assigned_groups,
                 tokens,
             ),
-            options: assigned_options,
-            groups: assigned_groups,
         },
         ListboxSample {
             id: "empty-listbox",
-            title: "Empty list",
             summary: "Empty state keeps a listbox role but has no tab stop.",
-            size: Size::Small,
-            selected: None,
-            active: None,
-            disabled: false,
             state: listbox_state(
                 Size::Small,
                 false,
@@ -2570,8 +2428,6 @@ pub fn listbox_samples(tokens: ThemeTokens) -> [ListboxSample; 2] {
                 &empty_groups,
                 tokens,
             ),
-            options: empty_options,
-            groups: empty_groups,
         },
     ]
 }
@@ -2649,12 +2505,7 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
     [
         SelectSample {
             id: "priority-select",
-            title: "Priority",
             summary: "Open select composes non-modal overlay, listbox, and scroll metadata.",
-            placeholder: "Choose priority",
-            size: Size::Medium,
-            selected: Some("critical"),
-            disabled: false,
             state: select_state(
                 Size::Medium,
                 false,
@@ -2667,17 +2518,10 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
                 &priority_groups,
                 tokens,
             ),
-            options: priority_options,
-            groups: priority_groups,
         },
         SelectSample {
             id: "status-select",
-            title: "Status",
             summary: "Closed uncontrolled select with selected trigger label.",
-            placeholder: "Choose status",
-            size: Size::Small,
-            selected: Some("doing"),
-            disabled: false,
             state: select_state(
                 Size::Small,
                 false,
@@ -2690,17 +2534,10 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
                 &[],
                 tokens,
             ),
-            options: status_options,
-            groups: Vec::new(),
         },
         SelectSample {
             id: "disabled-select",
-            title: "Disabled",
             summary: "Disabled empty select suppresses popup presence and activation.",
-            placeholder: "Unavailable",
-            size: Size::Small,
-            selected: None,
-            disabled: true,
             state: select_state(
                 Size::Small,
                 true,
@@ -2713,8 +2550,6 @@ pub fn select_samples(tokens: ThemeTokens) -> [SelectSample; 3] {
                 &disabled_groups,
                 tokens,
             ),
-            options: disabled_options,
-            groups: disabled_groups,
         },
     ]
 }
@@ -2764,13 +2599,7 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
     [
         ComboboxSample {
             id: "framework-combobox",
-            title: "Framework",
             summary: "Editable combobox filters grouped options while keeping listbox navigation.",
-            placeholder: "Search frameworks",
-            size: Size::Medium,
-            query: "re",
-            selected: Some("solid"),
-            disabled: false,
             state: combobox_state(
                 Size::Medium,
                 false,
@@ -2784,18 +2613,10 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
                 &framework_groups,
                 tokens,
             ),
-            options: framework_options,
-            groups: framework_groups,
         },
         ComboboxSample {
             id: "empty-combobox",
-            title: "Empty search",
             summary: "Filtered empty state keeps the selected value independent from query text.",
-            placeholder: "Search stack",
-            size: Size::Small,
-            query: "zz",
-            selected: None,
-            disabled: false,
             state: combobox_state(
                 Size::Small,
                 false,
@@ -2809,18 +2630,10 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
                 &[],
                 tokens,
             ),
-            options: empty_options,
-            groups: Vec::new(),
         },
         ComboboxSample {
             id: "disabled-combobox",
-            title: "Disabled search",
             summary: "Disabled combobox preserves query metadata but suppresses popup presence.",
-            placeholder: "Unavailable",
-            size: Size::Small,
-            query: "",
-            selected: None,
-            disabled: true,
             state: combobox_state(
                 Size::Small,
                 true,
@@ -2834,71 +2647,40 @@ pub fn combobox_samples(tokens: ThemeTokens) -> [ComboboxSample; 3] {
                 &[],
                 tokens,
             ),
-            options: disabled_options,
-            groups: Vec::new(),
         },
     ]
 }
 
 /// Returns command palette samples backed by real component state.
 pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
-    let quick_items = vec![CommandItemSample {
-        value: "open-file",
-        label: "Open File",
-        shortcut: Some("Ctrl+O"),
-        disabled: false,
-    }];
-    let command_groups = vec![
-        CommandGroupSample {
-            value: "file",
-            label: "File",
-            items: vec![
-                CommandItemSample {
-                    value: "new-file",
-                    label: "New File",
-                    shortcut: Some("Ctrl+N"),
-                    disabled: false,
-                },
-                CommandItemSample {
-                    value: "close-window",
-                    label: "Close Window",
-                    shortcut: Some("Alt+F4"),
-                    disabled: true,
-                },
-            ],
-        },
-        CommandGroupSample {
-            value: "view",
-            label: "View",
-            items: vec![CommandItemSample {
-                value: "toggle-sidebar",
-                label: "Toggle Sidebar",
-                shortcut: Some("Ctrl+B"),
-                disabled: false,
-            }],
-        },
+    let quick_items = vec![
+        CommandItemDescriptor::new("open-file", "Open File")
+            .shortcut("Ctrl+O")
+            .disabled(false),
     ];
-    let empty_items = vec![CommandItemSample {
-        value: "save",
-        label: "Save",
-        shortcut: Some("Ctrl+S"),
-        disabled: false,
-    }];
+    let command_groups = vec![
+        CommandGroupDescriptor::new("file", "File").items(vec![
+            CommandItemDescriptor::new("new-file", "New File").shortcut("Ctrl+N"),
+            CommandItemDescriptor::new("close-window", "Close Window")
+                .shortcut("Alt+F4")
+                .disabled(true),
+        ]),
+        CommandGroupDescriptor::new("view", "View").item(
+            CommandItemDescriptor::new("toggle-sidebar", "Toggle Sidebar").shortcut("Ctrl+B"),
+        ),
+    ];
+    let empty_items = vec![
+        CommandItemDescriptor::new("save", "Save")
+            .shortcut("Ctrl+S")
+            .disabled(false),
+    ];
     let disabled_items = Vec::new();
     let loading = CommandLoadingState::new("Indexing commands", None);
 
     [
         CommandSample {
             id: "workspace-command",
-            title: "Workspace commands",
             summary: "Dialog-backed command palette filters groups and exposes shortcut metadata.",
-            placeholder: "Type a command",
-            size: Size::Medium,
-            query: "file",
-            selected: Some("new-file"),
-            disabled: false,
-            dialog: true,
-            loading: None,
             state: command_state(
                 Size::Medium,
                 false,
@@ -2914,20 +2696,10 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 true,
                 tokens,
             ),
-            items: quick_items,
-            groups: command_groups,
         },
         CommandSample {
             id: "empty-command",
-            title: "Empty commands",
             summary: "Filtered command palette keeps empty and loading states explicit.",
-            placeholder: "Search commands",
-            size: Size::Small,
-            query: "deploy",
-            selected: None,
-            disabled: false,
-            dialog: false,
-            loading: Some(loading.clone()),
             state: command_state(
                 Size::Small,
                 false,
@@ -2943,20 +2715,10 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 false,
                 tokens,
             ),
-            items: empty_items,
-            groups: Vec::new(),
         },
         CommandSample {
             id: "disabled-command",
-            title: "Disabled commands",
             summary: "Disabled command surface blocks editing and hides deferred content.",
-            placeholder: "Unavailable",
-            size: Size::Small,
-            query: "",
-            selected: None,
-            disabled: true,
-            dialog: false,
-            loading: None,
             state: command_state(
                 Size::Small,
                 true,
@@ -2972,8 +2734,6 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
                 false,
                 tokens,
             ),
-            items: disabled_items,
-            groups: Vec::new(),
         },
     ]
 }
@@ -3162,7 +2922,6 @@ fn combobox_state(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn command_state(
     size: Size,
     disabled: bool,
@@ -3173,8 +2932,8 @@ fn command_state(
     query: &str,
     selected: Option<&str>,
     loading: Option<CommandLoadingState>,
-    items: &[CommandItemSample],
-    groups: &[CommandGroupSample],
+    items: &[CommandItemDescriptor],
+    groups: &[CommandGroupDescriptor],
     dialog: bool,
     tokens: ThemeTokens,
 ) -> CommandState {
@@ -3193,8 +2952,8 @@ fn command_state(
         "No results",
         dialog.then_some("Command palette".to_string()),
         dialog.then_some("Run a workspace command".to_string()),
-        groups.iter().map(command_group_descriptor),
-        items.iter().map(command_item_descriptor),
+        groups.iter().cloned(),
+        items.iter().cloned(),
         OutsidePressPolicy::DismissAndConsume,
         EscapeKeyPolicy::Dismiss,
         InitialFocusIntent::FirstFocusable,
@@ -3219,19 +2978,6 @@ fn combobox_group_descriptor(group: &ListboxGroupSample) -> ComboboxGroupDescrip
 
 fn combobox_option_descriptor(option: &ListboxOptionSample) -> ComboboxOptionDescriptor {
     ComboboxOptionDescriptor::new(option.value, option.label).disabled(option.disabled)
-}
-
-fn command_group_descriptor(group: &CommandGroupSample) -> CommandGroupDescriptor {
-    CommandGroupDescriptor::new(group.value, group.label)
-        .items(group.items.iter().map(command_item_descriptor))
-}
-
-fn command_item_descriptor(item: &CommandItemSample) -> CommandItemDescriptor {
-    let mut descriptor = CommandItemDescriptor::new(item.value, item.label).disabled(item.disabled);
-    if let Some(shortcut) = item.shortcut {
-        descriptor = descriptor.shortcut(shortcut);
-    }
-    descriptor
 }
 
 fn radio_group_state(

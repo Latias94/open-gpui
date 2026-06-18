@@ -11,6 +11,58 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Deleted the remaining `Select` helper wrapper that only forwarded `selected` / `active` values into `Listbox`; the render path now applies those values inline.
+- Done: Added direct tests that lock `Menu` / `ContextMenu` default open focus to the first focusable item, so the shared entry-focus rule is now covered by the component test suite.
+- Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Select / Menu cleanup.
+- Next action: keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move to the next product slice.
+
+- Done: Rechecked the live gallery seams against `repo-ref/fret`'s `entry_focus` pattern. `Menu` / `ContextMenu` still do not have a deeper shared-rule seam worth extracting in this pass because the current code does not model modality as a separate public input; the current `first_focusable_value()` helper is the right stopping point for now.
+- Done: Confirmed again that `TabsSample.title` is page-card copy, not duplicated resolved state, and that the remaining overlay titles / descriptions / action labels are still constructor inputs or display content.
+- Next action: stop the seam hunt unless a new evidence-backed duplication appears; otherwise move to the next product slice and keep the current architecture pass narrow.
+
+- Done: Rechecked the live gallery seams against `repo-ref/fret` and the current code. `Menu` / `ContextMenu` first-focus handling is still the only clear shared-rule seam; `ScrollAreaState`, `ListboxState`, `SelectState`, `ComboboxState`, and `CommandState` are already deep enough for this pass.
+- Done: Confirmed that `TabsSample.title` is page-card copy, not duplicated resolved state. The remaining overlay titles, descriptions, and action labels are still constructor inputs or display content, so they should not be deleted just to move string literals around.
+- Next action: continue the architecture loop only if a new evidence-backed duplication seam appears; otherwise move to the next product slice and stop chasing shallow helpers.
+
+- Done: Removed the one-off `apply_optional_values` helper from `Combobox` and inlined the selected/active propagation, so the popup listbox setup now stays local to the render path.
+- Done: Added `combobox_state_scrollable_content_tracks_filtered_option_count()` to lock the filtered-option scroll contract alongside the existing `ListboxState::scrollable_content()` threshold test.
+- Next action: keep scanning for true ownership splits only; the `Tabs` / `Toolbar` / `Sidebar` item arrays are builder inputs, not duplicate state, so do not chase them as deletion seams.
+
+- Done: Added `ListboxState::scrollable_content()` so `SelectState` and `ComboboxState` read the same listbox-owned overflow threshold instead of duplicating `> 6` checks.
+- Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the listbox scrollability cleanup.
+- Next action: keep the architecture loop narrow; the current subagent review says the remaining `apply_optional_values` builder sugar is not deep enough to extract, so move on unless a new evidence-backed seam appears.
+
+- Done: Used the `MenuState::first_focusable_value()` seam to remove the duplicated local helper from `Menu` / `ContextMenu`. The gallery now reads the same behavior contract from state on both paths, so entry-focus selection is owned by the menu state instead of two call-site copies.
+- Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Menu / ContextMenu entry-focus cleanup.
+- Next action: continue the architecture loop only if a new evidence-backed duplicate seam appears; otherwise move to the next product slice.
+
+- Done: Used `repo-ref/fret` as the local architecture reference for the current pass. The durable takeaway is to keep public entry points thin and move behavior math into owned state/helper seams only when that removes duplicate policy.
+- Done: Added `ListboxState::standalone_options()` and `ListboxState::group_options()` so the gallery shell no longer filters `ListboxOptionState::group_index()` directly for Listbox / Select / Combobox reconstruction.
+- Done: Removed the now-unused Combobox option helper in the gallery shell and kept command reconstruction on the explicit `CommandState` standalone/grouped views.
+- Done: Captured the subagent architecture review in [Gallery architecture review 2026-06-18](subagents/gallery-architecture-review-20260618.md). The accepted next candidate is shared `Menu` / `ContextMenu` entry-focus handling; `ScrollAreaState`, `ListboxState`, `SelectState`, `ComboboxState`, and `CommandState` are deep enough for the current pass.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed.
+- Next action: continue the architecture loop on `Menu` / `ContextMenu` entry-focus only if it removes duplicate branching; otherwise pause for the next product slice.
+
+- Done: Read `repo-ref/fret` as the local reference repo for this pass and confirmed the useful pattern is a thin entry point at the edge, a real implementation crate underneath, and pure helper layers for visibility / overflow / viewport math. `crates/fretboard/src/diag.rs` is just a forwarder; the substantive logic lives in `crates/fret-diag`, and the scroll/viewport pattern in `fret-ui` is the model to borrow when we deepen scrolling later.
+- Done: Confirmed the gallery does not need to re-derive scroll-area policy. `ScrollAreaState` already owns the relevant reset/axis/viewport decisions, so future scroll work should stay on that seam instead of growing more gallery-local boolean logic.
+- Done: Continued the gallery contract cleanup by making the command palette's synthetic standalone group explicit in resolved state and adding iterator views for standalone items, grouped groups, and group items. The shell now reconstructs the command UI from those state views instead of splitting on a local magic-string seam.
+- Done: Kept overlay menu/context-menu initial focus intent builder-local rather than duplicating it in sample structs. The sample types no longer own a second `focused_value` field, but the builders still receive explicit initial focus input, which preserved the roving-focus and dismiss contracts.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-components --tests`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed.
+
+- Done: Re-reviewed the gallery Components/Overlay sample-state contract surface and confirmed there is no fresh evidence-backed deletion seam beyond the already-cleaned command standalone group and the current resolved-state ownership split. One earlier `TextInputSample.controller_driven` deletion attempt was rolled back after confirming that field is still the sample-side controller mount switch.
+- Done: Kept the Components gallery automation green after the review pass. The current verification set still passes: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests`.
+- Next action: keep searching only for real ownership splits that can be deleted or moved into resolved state without losing gallery-specific behavior.
+- Done: Read `repo-ref/fret` as the local reference repo for the current architecture pass. The useful pattern is a thin forwarder at the edge, a real implementation crate underneath, and headless pure helpers for viewport/visibility/overflow decisions.
+- Done: Confirmed that `ScrollAreaState` is already a reasonably deep seam. It owns `viewport_id`, axis, size, reset policy, reset key, and the `should_reset_for_key_change` / `scrolls_x` / `scrolls_y` decisions, so the gallery should keep using it instead of re-deriving scroll-area policy in the shell.
+- Done: Verified the current gallery contract cleanup is green after the latest state-first refactor. `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests`, `cargo check -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-components --tests` all passed.
+- Next action: if we deepen the scroll story further, do it as a pure helper for viewport containment / overflow membership / scroll-into-view math, not as another gallery-local boolean maze.
+
+- Done: Continued the Components gallery architecture pass by making the command palette's synthetic standalone group explicit in resolved state (`CommandGroupState::standalone()`), then switching the gallery shell away from the `commands`/`Commands` magic-string seam.
+- Done: Re-reviewed the low-state primitives (`Separator`, `Kbd`, `Progress`, `Skeleton`, `Avatar`) and found no further deletion value in moving their remaining display copy into state; the visible copy there is already the right level of surface metadata.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the command seam cleanup.
+- Next action: keep scanning the Components page for the next real deletion seam, but prefer only changes that remove an actual contract split rather than renaming display fields.
+
+
 - Done: Removed the redundant sample-side `open_mode` fields from the Overlay gallery samples
   (`HoverCard`, `Popover`, `Dialog`, `AlertDialog`, `Sheet`, `Menu`, and `ContextMenu`) and made
   `shell.rs` read `state.open_mode()` for controlled/uncontrolled reconstruction. The overlay

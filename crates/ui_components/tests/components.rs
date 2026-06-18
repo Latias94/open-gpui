@@ -731,6 +731,22 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
 }
 
 #[test]
+fn menu_state_defaults_focus_to_first_focusable_item_when_open() {
+    let state = Menu::new("file-menu", "File")
+        .open(true)
+        .item(MenuItem::separator("separator"))
+        .item(MenuItem::action("save", "Save"))
+        .item(MenuItem::action("delete", "Delete").disabled(true))
+        .state();
+
+    assert!(state.open());
+    assert_eq!(state.focused_value(), Some("save"));
+    assert_eq!(state.tab_stop_value(), Some("save"));
+    assert_eq!(state.items()[0].kind(), MenuItemKind::Separator);
+    assert!(state.items()[2].disabled());
+}
+
+#[test]
 fn menu_navigation_and_activation_skip_disabled_and_separator_items() {
     let state = Menu::new("edit-menu", "Edit")
         .open(true)
@@ -836,6 +852,22 @@ fn context_menu_state_reuses_menu_model_and_point_anchor_placement() {
     );
     assert_eq!(placement.position(), Some(point(px(280.0), px(161.0))));
     assert_eq!(placement.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
+}
+
+#[test]
+fn context_menu_state_defaults_focus_to_first_focusable_item_when_open() {
+    let anchor = point(px(280.0), px(160.0));
+    let state = ContextMenu::new("canvas-context-menu", "Canvas menu")
+        .open(true)
+        .anchor_point(anchor)
+        .item(MenuItem::separator("separator"))
+        .item(MenuItem::action("duplicate", "Duplicate"))
+        .item(MenuItem::action("delete", "Delete").disabled(true))
+        .state();
+
+    assert_eq!(state.menu().focused_value(), Some("duplicate"));
+    assert_eq!(state.menu().tab_stop_value(), Some("duplicate"));
+    assert!(state.menu().items()[0].kind() == MenuItemKind::Separator);
 }
 
 #[test]
@@ -2904,6 +2936,41 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
 }
 
 #[test]
+fn listbox_state_scrollable_content_tracks_flattened_option_count_threshold() {
+    let scrollable = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Scrollable",
+        None,
+        None,
+        None,
+        "No options",
+        [],
+        (0..7).map(|index| {
+            ListboxOptionDescriptor::option(format!("item-{index}"), format!("Item {index}"))
+        }),
+        ThemeTokens::default(),
+    );
+    let not_scrollable = ListboxState::resolve(
+        Size::Small,
+        false,
+        "Compact",
+        None,
+        None,
+        None,
+        "No options",
+        [],
+        (0..6).map(|index| {
+            ListboxOptionDescriptor::option(format!("item-{index}"), format!("Item {index}"))
+        }),
+        ThemeTokens::default(),
+    );
+
+    assert!(scrollable.scrollable_content());
+    assert!(!not_scrollable.scrollable_content());
+}
+
+#[test]
 fn listbox_builder_state_models_empty_disabled_and_tokens() {
     let tokens = custom_tokens();
     let empty = Listbox::new("empty-listbox", "Empty")
@@ -3398,6 +3465,45 @@ fn combobox_state_filters_query_without_clearing_selection() {
         OverlayLayerKind::NonModalDismissible
     );
     assert_eq!(state.input().placeholder(), Some("Search frameworks"));
+}
+
+#[test]
+fn combobox_state_scrollable_content_tracks_filtered_option_count() {
+    let scrollable = Combobox::new("scrolling-combobox", "Scrolling combobox")
+        .placeholder("Search frameworks")
+        .open(true)
+        .option(ComboboxOption::new("react", "React").keyword("library"))
+        .option(ComboboxOption::new("solid", "Solid"))
+        .option(ComboboxOption::new("ember", "Ember"))
+        .option(ComboboxOption::new("svelte", "Svelte"))
+        .option(ComboboxOption::new("angular", "Angular"))
+        .option(ComboboxOption::new("vue", "Vue"))
+        .group(
+            ComboboxGroup::new("meta", "Meta")
+                .option(ComboboxOption::new("remix", "Remix").keyword("react")),
+        )
+        .state();
+    let not_scrollable = Combobox::new("filtered-combobox", "Filtered combobox")
+        .placeholder("Search frameworks")
+        .open(true)
+        .query("re")
+        .option(ComboboxOption::new("react", "React").keyword("library"))
+        .option(ComboboxOption::new("solid", "Solid"))
+        .option(ComboboxOption::new("ember", "Ember"))
+        .group(
+            ComboboxGroup::new("meta", "Meta")
+                .option(ComboboxOption::new("remix", "Remix").keyword("react"))
+                .option(ComboboxOption::new("relay", "Relay").keyword("graphql")),
+        )
+        .state();
+
+    assert_eq!(scrollable.total_option_count(), 7);
+    assert_eq!(scrollable.filtered_option_count(), 7);
+    assert!(scrollable.scrollable_content());
+
+    assert_eq!(not_scrollable.total_option_count(), 5);
+    assert_eq!(not_scrollable.filtered_option_count(), 3);
+    assert!(!not_scrollable.scrollable_content());
 }
 
 #[test]

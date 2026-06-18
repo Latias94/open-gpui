@@ -405,12 +405,8 @@ pub struct DialogSample {
     pub id: &'static str,
     /// User-facing trigger label.
     pub label: &'static str,
-    /// Dialog title.
-    pub title: &'static str,
     /// Text shown by the dialog surface.
     pub content_text: &'static str,
-    /// Optional description shown by the dialog surface.
-    pub description: Option<&'static str>,
     /// Resolved dialog state.
     pub state: DialogState,
 }
@@ -428,9 +424,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
         DialogSample {
             id: "controlled-modal",
             label: "Controlled modal",
-            title: "Controlled dialog",
             content_text: "The gallery shell owns this modal open state.",
-            description: Some("Escape and the modal barrier can close it."),
             state: Dialog::new(
                 "overlay-dialog:controlled-modal",
                 "Controlled modal",
@@ -446,9 +440,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
         DialogSample {
             id: "default-open",
             label: "Default open",
-            title: "Default open dialog",
             content_text: "Uncontrolled modal initialized open.",
-            description: None,
             state: Dialog::new(
                 "overlay-dialog:default-open",
                 "Default open",
@@ -462,9 +454,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
         DialogSample {
             id: "outside-ignore",
             label: "Outside ignored",
-            title: "Sticky dialog",
             content_text: "Outside press does not dismiss this dialog.",
-            description: None,
             state: Dialog::new(
                 "overlay-dialog:outside-ignore",
                 "Outside ignored",
@@ -479,9 +469,7 @@ pub fn dialog_samples(tokens: ThemeTokens) -> [DialogSample; 4] {
         DialogSample {
             id: "disabled",
             label: "Disabled",
-            title: "Disabled dialog",
             content_text: "Disabled triggers stay closed and unfocusable.",
-            description: None,
             state: Dialog::new(
                 "overlay-dialog:disabled",
                 "Disabled",
@@ -503,12 +491,6 @@ pub struct AlertDialogSample {
     pub id: &'static str,
     /// User-facing trigger label.
     pub label: &'static str,
-    /// Alert dialog title.
-    pub title: &'static str,
-    /// Alert dialog description.
-    pub description: &'static str,
-    /// Primary action label.
-    pub action_label: &'static str,
     /// Resolved alert dialog state.
     pub state: AlertDialogState,
 }
@@ -526,9 +508,6 @@ pub fn alert_dialog_samples(tokens: ThemeTokens) -> [AlertDialogSample; 2] {
         AlertDialogSample {
             id: "destructive-confirm",
             label: "Delete project",
-            title: "Delete this project?",
-            description: "This permanently removes project data and cannot be undone.",
-            action_label: "Delete",
             state: AlertDialog::new(
                 "overlay-alert-dialog:destructive-confirm",
                 "Delete project",
@@ -545,9 +524,6 @@ pub fn alert_dialog_samples(tokens: ThemeTokens) -> [AlertDialogSample; 2] {
         AlertDialogSample {
             id: "safe-cancel",
             label: "Archive item",
-            title: "Archive this item?",
-            description: "The item moves out of the active list and can be restored later.",
-            action_label: "Archive",
             state: AlertDialog::new(
                 "overlay-alert-dialog:safe-cancel",
                 "Archive item",
@@ -570,8 +546,6 @@ pub struct SheetSample {
     pub id: &'static str,
     /// User-facing trigger label.
     pub label: &'static str,
-    /// Sheet title.
-    pub title: &'static str,
     /// Text shown by the sheet body.
     pub content_text: &'static str,
     /// Resolved sheet state.
@@ -591,7 +565,6 @@ pub fn sheet_samples(tokens: ThemeTokens) -> [SheetSample; 3] {
         SheetSample {
             id: "left-modal",
             label: "Left sheet",
-            title: "Workspace filters",
             content_text: "Modal left sheet with an explicit close affordance.",
             state: Sheet::new(
                 "overlay-sheet:left-modal",
@@ -608,7 +581,6 @@ pub fn sheet_samples(tokens: ThemeTokens) -> [SheetSample; 3] {
         SheetSample {
             id: "right-non-modal",
             label: "Right sheet",
-            title: "Inspector",
             content_text: "Non-modal right sheet keeps underlay dispatch explicit.",
             state: Sheet::new(
                 "overlay-sheet:right-non-modal",
@@ -626,7 +598,6 @@ pub fn sheet_samples(tokens: ThemeTokens) -> [SheetSample; 3] {
         SheetSample {
             id: "bottom-sticky",
             label: "Bottom sheet",
-            title: "Queue details",
             content_text: "Bottom sheet ignores outside press and hides the close control.",
             state: Sheet::new(
                 "overlay-sheet:bottom-sticky",
@@ -665,51 +636,71 @@ impl MenuSample {
 /// Returns deterministic menu samples for gallery dogfood.
 pub fn menu_samples(tokens: ThemeTokens) -> [MenuSample; 4] {
     [
-        MenuSample {
-            id: "default-open",
-            label: "Default open",
-            state: Menu::new("overlay-menu:default-open", "Default open")
-                .default_open(true)
-                .focused_value("save")
-                .item(MenuItem::action("new", "New"))
-                .item(MenuItem::action("save", "Save"))
-                .item(MenuItem::separator("separator"))
-                .item(MenuItem::action("delete", "Delete").disabled(true))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("new", "New"),
+                MenuItem::action("save", "Save"),
+                MenuItem::separator("separator"),
+                MenuItem::action("delete", "Delete").disabled(true),
+            ];
+            let focused_value = "save";
+            MenuSample {
+                id: "default-open",
+                label: "Default open",
+                state: Menu::new("overlay-menu:default-open", "Default open")
+                    .default_open(true)
+                    .focused_value(focused_value)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
-        MenuSample {
-            id: "controlled",
-            label: "Controlled",
-            state: Menu::new("overlay-menu:controlled", "Controlled")
-                .open(false)
-                .focused_value("copy")
-                .item(MenuItem::action("cut", "Cut"))
-                .item(MenuItem::action("copy", "Copy"))
-                .item(MenuItem::action("paste", "Paste").disabled(true))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("cut", "Cut"),
+                MenuItem::action("copy", "Copy"),
+                MenuItem::action("paste", "Paste").disabled(true),
+            ];
+            let focused_value = "copy";
+            MenuSample {
+                id: "controlled",
+                label: "Controlled",
+                state: Menu::new("overlay-menu:controlled", "Controlled")
+                    .open(false)
+                    .focused_value(focused_value)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
-        MenuSample {
-            id: "outside-ignore",
-            label: "Outside ignored",
-            state: Menu::new("overlay-menu:outside-ignore", "Outside ignored")
-                .default_open(true)
-                .outside_press_policy(OutsidePressPolicy::Ignore)
-                .item(MenuItem::action("rename", "Rename"))
-                .item(MenuItem::action("duplicate", "Duplicate"))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("rename", "Rename"),
+                MenuItem::action("duplicate", "Duplicate"),
+            ];
+            MenuSample {
+                id: "outside-ignore",
+                label: "Outside ignored",
+                state: Menu::new("overlay-menu:outside-ignore", "Outside ignored")
+                    .default_open(true)
+                    .outside_press_policy(OutsidePressPolicy::Ignore)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
-        MenuSample {
-            id: "disabled",
-            label: "Disabled",
-            state: Menu::new("overlay-menu:disabled", "Disabled")
-                .default_open(true)
-                .disabled(true)
-                .item(MenuItem::action("open", "Open"))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![MenuItem::action("open", "Open")];
+            MenuSample {
+                id: "disabled",
+                label: "Disabled",
+                state: Menu::new("overlay-menu:disabled", "Disabled")
+                    .default_open(true)
+                    .disabled(true)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
     ]
 }
@@ -735,41 +726,58 @@ impl ContextMenuSample {
 /// Returns deterministic context-menu samples for gallery dogfood.
 pub fn context_menu_samples(tokens: ThemeTokens) -> [ContextMenuSample; 3] {
     [
-        ContextMenuSample {
-            id: "point-anchor",
-            label: "Point anchor",
-            state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
-                .default_open(true)
-                .anchor_point(point(px(520.0), px(300.0)))
-                .focused_value("duplicate")
-                .item(MenuItem::action("duplicate", "Duplicate"))
-                .item(MenuItem::separator("separator"))
-                .item(MenuItem::action("delete", "Delete").disabled(true))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("duplicate", "Duplicate"),
+                MenuItem::separator("separator"),
+                MenuItem::action("delete", "Delete").disabled(true),
+            ];
+            let focused_value = "duplicate";
+            ContextMenuSample {
+                id: "point-anchor",
+                label: "Point anchor",
+                state: ContextMenu::new("overlay-context-menu:point-anchor", "Right click area")
+                    .default_open(true)
+                    .anchor_point(point(px(520.0), px(300.0)))
+                    .focused_value(focused_value)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
-        ContextMenuSample {
-            id: "controlled",
-            label: "Controlled",
-            state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
-                .open(false)
-                .anchor_point(point(px(280.0), px(160.0)))
-                .focused_value("inspect")
-                .item(MenuItem::action("inspect", "Inspect"))
-                .item(MenuItem::action("copy-link", "Copy link"))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("inspect", "Inspect"),
+                MenuItem::action("copy-link", "Copy link"),
+            ];
+            let focused_value = "inspect";
+            ContextMenuSample {
+                id: "controlled",
+                label: "Controlled",
+                state: ContextMenu::new("overlay-context-menu:controlled", "Controlled area")
+                    .open(false)
+                    .anchor_point(point(px(280.0), px(160.0)))
+                    .focused_value(focused_value)
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
-        ContextMenuSample {
-            id: "default-open",
-            label: "Default open",
-            state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
-                .default_open(true)
-                .anchor_point(point(px(96.0), px(96.0)))
-                .item(MenuItem::action("open", "Open"))
-                .item(MenuItem::action("close", "Close"))
-                .tokens(tokens)
-                .state(),
+        {
+            let items = vec![
+                MenuItem::action("open", "Open"),
+                MenuItem::action("close", "Close"),
+            ];
+            ContextMenuSample {
+                id: "default-open",
+                label: "Default open",
+                state: ContextMenu::new("overlay-context-menu:default-open", "Default area")
+                    .default_open(true)
+                    .anchor_point(point(px(96.0), px(96.0)))
+                    .items(items)
+                    .tokens(tokens)
+                    .state(),
+            }
         },
     ]
 }

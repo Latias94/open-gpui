@@ -590,7 +590,7 @@ impl ComboboxState {
 
     /// Returns whether popup content should use a scroll viewport.
     pub const fn scrollable_content(&self) -> bool {
-        self.filtered_option_count > 6
+        self.listbox.scrollable_content()
     }
 
     /// Returns resolved input state.
@@ -1203,7 +1203,16 @@ fn combobox_content_element(
                 }
             }
         });
-    let listbox = apply_optional_values(listbox, selected_value, active_value);
+    let listbox = if let Some(selected_value) = selected_value {
+        listbox.selected(selected_value)
+    } else {
+        listbox
+    };
+    let listbox = if let Some(active_value) = active_value {
+        listbox.active(active_value)
+    } else {
+        listbox
+    };
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
     let escape_runtime = runtime.clone();
     let escape_open_change = on_open_change.clone();
@@ -1251,20 +1260,6 @@ fn combobox_content_element(
                 .preserve_scroll()
                 .with_size(state.size()),
         )
-}
-
-fn apply_optional_values(
-    mut listbox: Listbox,
-    selected_value: Option<String>,
-    active_value: Option<String>,
-) -> Listbox {
-    if let Some(selected_value) = selected_value {
-        listbox = listbox.selected(selected_value);
-    }
-    if let Some(active_value) = active_value {
-        listbox = listbox.active(active_value);
-    }
-    listbox
 }
 
 fn close_combobox(

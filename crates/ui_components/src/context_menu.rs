@@ -364,7 +364,7 @@ impl RenderOnce for ContextMenu {
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement =
             GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
-        let first_focusable_value = first_focusable_value(state.menu());
+        let first_focusable_value = state.menu().first_focusable_value().map(str::to_owned);
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();
 
@@ -626,12 +626,4 @@ fn close_context_menu(
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
     }
-}
-
-fn first_focusable_value(state: &MenuState) -> Option<String> {
-    state
-        .items()
-        .iter()
-        .find(|item| item.focusable())
-        .map(|item| item.value().to_owned())
 }

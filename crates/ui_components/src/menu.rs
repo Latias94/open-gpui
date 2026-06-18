@@ -590,6 +590,14 @@ impl MenuState {
             .map(MenuItemState::value)
     }
 
+    /// Returns the first focusable item value in descriptor order.
+    pub fn first_focusable_value(&self) -> Option<&str> {
+        self.items
+            .iter()
+            .find(|item| item.focusable())
+            .map(MenuItemState::value)
+    }
+
     /// Returns current tab-stop item value.
     pub fn tab_stop_value(&self) -> Option<&str> {
         self.items
@@ -937,7 +945,7 @@ impl RenderOnce for Menu {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
-        let first_focusable_value = first_focusable_descriptor_value(&descriptors);
+        let first_focusable_value = state.first_focusable_value().map(str::to_owned);
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
@@ -1249,13 +1257,6 @@ fn close_menu(
     if let Some(on_open_change) = on_open_change.as_ref() {
         on_open_change(false, window, cx);
     }
-}
-
-fn first_focusable_descriptor_value(items: &[MenuItemDescriptor]) -> Option<String> {
-    items
-        .iter()
-        .find(|item| item.focusable())
-        .map(|item| item.value().to_owned())
 }
 
 impl ThemeResolver {

@@ -442,8 +442,8 @@ impl SelectState {
     }
 
     /// Returns whether content should use a scroll viewport.
-    pub fn scrollable_content(&self) -> bool {
-        self.listbox.options().len() > 6
+    pub const fn scrollable_content(&self) -> bool {
+        self.listbox.scrollable_content()
     }
 
     /// Returns resolved metrics.
@@ -924,7 +924,13 @@ fn select_content_element(
                 on_open_change(false, window, cx);
             }
         });
-    let listbox = apply_optional_values(listbox, selected_value, explicit_active_value);
+    let mut listbox = listbox;
+    if let Some(selected_value) = selected_value {
+        listbox = listbox.selected(selected_value);
+    }
+    if let Some(active_value) = explicit_active_value {
+        listbox = listbox.active(active_value);
+    }
 
     let scroll_viewport_id = state.scroll_area().viewport_id().to_owned();
 
@@ -974,20 +980,6 @@ fn select_content_element(
                 .preserve_scroll()
                 .with_size(state.size()),
         )
-}
-
-fn apply_optional_values(
-    mut listbox: Listbox,
-    selected_value: Option<String>,
-    active_value: Option<String>,
-) -> Listbox {
-    if let Some(selected_value) = selected_value {
-        listbox = listbox.selected(selected_value);
-    }
-    if let Some(active_value) = active_value {
-        listbox = listbox.active(active_value);
-    }
-    listbox
 }
 
 fn close_select(

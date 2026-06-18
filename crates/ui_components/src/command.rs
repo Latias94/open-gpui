@@ -388,6 +388,7 @@ pub struct CommandGroupState {
     value: String,
     label: String,
     item_count: usize,
+    standalone: bool,
 }
 
 impl CommandGroupState {
@@ -409,6 +410,11 @@ impl CommandGroupState {
     /// Returns visible item count.
     pub const fn item_count(&self) -> usize {
         self.item_count
+    }
+
+    /// Returns whether this is the synthetic standalone command group.
+    pub const fn standalone(&self) -> bool {
+        self.standalone
     }
 
     /// Returns group accessibility role.
@@ -650,6 +656,7 @@ impl CommandState {
                 value: "commands".to_string(),
                 label: "Commands".to_string(),
                 item_count: flattened.len(),
+                standalone: true,
             });
             for item in &mut flattened {
                 item.group_index = Some(group_index);
@@ -677,6 +684,7 @@ impl CommandState {
                 value: group.value().to_owned(),
                 label: group.label().to_owned(),
                 item_count: filtered_items.len(),
+                standalone: false,
             });
             filtered_group_descriptors.push(
                 ListboxGroupDescriptor::new(group.value().to_owned(), group.label().to_owned())
@@ -932,6 +940,29 @@ impl CommandState {
     /// Returns resolved group states.
     pub fn groups(&self) -> &[CommandGroupState] {
         &self.groups
+    }
+
+    /// Returns resolved standalone command items.
+    pub fn standalone_items(&self) -> impl Iterator<Item = &CommandItemState> + '_ {
+        let standalone_group_index = self.groups.iter().find(|group| group.standalone());
+        self.items
+            .iter()
+            .filter(move |item| match standalone_group_index {
+                Some(group) => item.group_index() == Some(group.index()),
+                None => item.group_index().is_none(),
+            })
+    }
+
+    /// Returns resolved non-synthetic command groups.
+    pub fn grouped_groups(&self) -> impl Iterator<Item = &CommandGroupState> + '_ {
+        self.groups.iter().filter(|group| !group.standalone())
+    }
+
+    /// Returns resolved items for one command group.
+    pub fn group_items(&self, group_index: usize) -> impl Iterator<Item = &CommandItemState> + '_ {
+        self.items
+            .iter()
+            .filter(move |item| item.group_index() == Some(group_index))
     }
 
     /// Returns resolved item states.
@@ -1951,5 +1982,23 @@ mod tests {
             command_keyboard_action(&state, "enter"),
             CommandKeyboardAction::Ignore
         );
+    }
+
+    #[test]
+    fn command_state_exposes_standalone_and_grouped_views() {
+        let state = keyboard_state(false);
+
+        let standalone_values = state
+            .standalone_items()
+            .map(|item| item.value().to_owned())
+            .collect::<Vec<_>>();
+        let grouped_values = state
+            .grouped_groups()
+            .map(|group| group.value().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(standalone_values, vec!["open-file".to_string()]);
+        assert_eq!(grouped_values, vec!["file".to_string()]);
+        assert_eq!(state.standalone_items().count(), 1);
     }
 }

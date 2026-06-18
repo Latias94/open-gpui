@@ -15,9 +15,8 @@ use open_gpui_ui_components::{
     Progress, ProgressState, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState,
     Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Sidebar, SidebarItem,
     SidebarSection, SidebarSide, SidebarState, Skeleton, SkeletonState, Splitter, SplitterPanel,
-    SplitterState, Switch, SwitchState, Tabs, TabsActivationMode, TabsItem, TabsState, TextInput,
-    TextInputState, Toggle, ToggleState, Toolbar, ToolbarItem, ToolbarItemKind, ToolbarState,
-    Tooltip,
+    SplitterState, Switch, SwitchState, TabsState, TextInput, TextInputState, Toggle, ToggleState,
+    ToolbarState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -756,6 +755,7 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         sidebar_samples.into_iter().map(|sample| {
                             let state = sample.state.clone();
+                            let title = state.label().to_owned();
                             let mut sidebar = Sidebar::new(
                                 format!("component-sidebar:{}", sample.id),
                                 state.label(),
@@ -800,7 +800,7 @@ impl GalleryShell {
                             div()
                                 .id(format!("component-sidebar-sample:{}", sample.id))
                                 .debug_selector({
-                                    let debug_selector = sample.debug_selector();
+                            let debug_selector = sample.debug_selector();
                                     move || debug_selector
                                 })
                                 .w(px(360.0))
@@ -822,7 +822,7 @@ impl GalleryShell {
                                             div()
                                                 .text_sm()
                                                 .font_weight(open_gpui::FontWeight::BOLD)
-                                                .child(sample.title),
+                                                .child(title),
                                         )
                                         .child(label_pill(state.collapse_mode().as_str())),
                                 )
@@ -864,36 +864,7 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         toolbar_samples.into_iter().map(|sample| {
                             let state = sample.state.clone();
-                            let mut toolbar = Toolbar::new(
-                                format!("component-toolbar:{}", sample.id),
-                                sample.title,
-                            )
-                            .orientation(sample.orientation)
-                            .focused(sample.focused)
-                            .with_size(sample.size)
-                            .tokens(snapshot.tokens);
-                            for item in sample.items.iter() {
-                                let toolbar_item = match item.kind {
-                                    ToolbarItemKind::Action => match item.icon {
-                                        Some(icon) => {
-                                            ToolbarItem::icon(item.value, icon, item.label)
-                                        }
-                                        None => ToolbarItem::action(item.value, item.label),
-                                    },
-                                    ToolbarItemKind::Toggle => match item.icon {
-                                        Some(icon) => {
-                                            ToolbarItem::toggle_icon(item.value, icon, item.label)
-                                        }
-                                        None => ToolbarItem::toggle(item.value, item.label),
-                                    }
-                                    .pressed(item.pressed),
-                                    ToolbarItemKind::Separator => {
-                                        ToolbarItem::separator(item.value)
-                                    }
-                                }
-                                .disabled(item.disabled);
-                                toolbar = toolbar.item(toolbar_item);
-                            }
+                            let toolbar = sample.build_toolbar(snapshot.tokens);
 
                             div()
                                 .id(format!("component-toolbar-sample:{}", sample.id))
@@ -920,9 +891,9 @@ impl GalleryShell {
                                             div()
                                                 .text_sm()
                                                 .font_weight(open_gpui::FontWeight::BOLD)
-                                                .child(sample.title),
+                                                .child(state.label().to_owned()),
                                         )
-                                        .child(label_pill(match sample.orientation {
+                                        .child(label_pill(match state.orientation() {
                                             Orientation::Horizontal => "horizontal",
                                             Orientation::Vertical => "vertical",
                                         })),
@@ -1018,8 +989,8 @@ impl GalleryShell {
                             let state = sample.state.clone();
                             let splitter = sample.panels.into_iter().fold(
                                 Splitter::new(format!("component-splitter:{}", sample.id))
-                                    .orientation(sample.orientation)
-                                    .with_size(sample.size),
+                                    .orientation(state.orientation())
+                                    .with_size(state.size()),
                                 |splitter, panel| {
                                     splitter.panel(SplitterPanel::new(
                                         panel.descriptor,
@@ -1072,7 +1043,7 @@ impl GalleryShell {
                                                 .font_weight(open_gpui::FontWeight::BOLD)
                                                 .child(sample.title),
                                         )
-                                        .child(label_pill(match sample.orientation {
+                                        .child(label_pill(match state.orientation() {
                                             Orientation::Horizontal => "horizontal",
                                             Orientation::Vertical => "vertical",
                                         })),
@@ -1350,20 +1321,21 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         radio_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
-                                    let debug_selector = sample.debug_selector();
+                            let debug_selector = sample.debug_selector();
                             let state = sample.state.clone();
                             let mut radio =
                                 RadioGroup::new(format!("component-radio:{}", sample.id))
                                     .label(sample.title)
-                                    .orientation(sample.orientation)
-                                    .selected(sample.selected)
-                                    .required(sample.required)
-                                    .disabled(sample.disabled)
+                                    .orientation(state.orientation())
+                                    .selected(state.selected_value().unwrap_or("none"))
+                                    .required(state.required())
+                                    .disabled(state.disabled())
                                     .with_size(state.size())
                                     .tokens(snapshot.tokens);
-                            for item in sample.items.iter() {
+                            for item in state.items().iter() {
                                 radio = radio.item(
-                                    RadioItem::new(item.value, item.label).disabled(item.disabled),
+                                    RadioItem::new(item.value(), item.label())
+                                        .disabled(item.disabled()),
                                 );
                             }
 
@@ -1441,8 +1413,9 @@ impl GalleryShell {
                     .child(div().flex().gap_3().flex_wrap().children(
                         icon_button_samples.into_iter().map(|sample| {
                             let sample_id = sample.id;
-                                    let debug_selector = sample.debug_selector();
+                            let debug_selector = sample.debug_selector();
                             let state = sample.state;
+                            let accessible_label = state.accessible_label().to_owned();
                             div()
                                 .id(format!("component-icon-button-sample:{sample_id}"))
                                 .debug_selector(move || debug_selector)
@@ -1460,7 +1433,7 @@ impl GalleryShell {
                                     IconButton::new(
                                         format!("component-icon-button:{}", sample.id),
                                         sample.icon,
-                                        sample.accessible_label,
+                                        accessible_label.clone(),
                                     )
                                     .variant(state.variant())
                                     .disabled(state.disabled())
@@ -1468,7 +1441,7 @@ impl GalleryShell {
                                     .tokens(snapshot.tokens),
                                 )
                                 .child(component_icon_button_state_row(
-                                    sample.accessible_label,
+                                    &accessible_label,
                                     state,
                                 ))
                         }),
@@ -1534,8 +1507,8 @@ impl GalleryShell {
                                     let sample_id = sample.id;
                                     let debug_selector = sample.debug_selector();
                                     let state = sample.state.clone();
-                                    let controller = sample
-                                        .controller_driven
+                                    let controller = state
+                                        .controller_driven()
                                         .then(|| self.editable_text_input.clone());
                                     div()
                                         .id(format!("component-text-input-sample:{sample_id}"))
@@ -1565,7 +1538,6 @@ impl GalleryShell {
                                         ))
                                         .child(component_text_input_state_row(
                                             &state,
-                                            sample.controller_driven,
                                         ))
                                 }),
                         ),
@@ -1636,45 +1608,9 @@ impl GalleryShell {
                     )
                     .child(div().flex().gap_3().flex_wrap().children(
                         tabs_samples.into_iter().map(|sample| {
-                            let sample_id = sample.id;
                             let debug_selector = sample.debug_selector();
                             let state = sample.state.clone();
-                            let tabs = sample.items.into_iter().fold(
-                                Tabs::new(format!("component-tabs:{}", sample_id))
-                                    .orientation(sample.orientation)
-                                    .activation_mode(sample.activation_mode)
-                                    .with_size(sample.size)
-                                    .selected(sample.selected)
-                                    .tokens(snapshot.tokens),
-                                |tabs, item| {
-                                    tabs.item(
-                                        TabsItem::new(
-                                            format!(
-                                                "component-tabs-item:{}:{}",
-                                                sample_id, item.value
-                                            ),
-                                            item.label,
-                                            div()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_1()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(open_gpui::FontWeight::BOLD)
-                                                        .child(item.label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(rgb(0x5a6472))
-                                                        .child(item.panel),
-                                                ),
-                                        )
-                                        .disabled(item.disabled),
-                                    )
-                                },
-                            );
+                            let tabs = sample.build_tabs(snapshot.tokens);
 
                             div()
                                 .id(format!("component-tabs-sample:{}", sample.id))
@@ -1700,7 +1636,7 @@ impl GalleryShell {
                                                 .font_weight(open_gpui::FontWeight::BOLD)
                                                 .child(sample.title),
                                         )
-                                        .child(label_pill(sample.activation_mode.as_str())),
+                                        .child(label_pill(state.activation_mode().as_str())),
                                 )
                                 .child(
                                     div()
@@ -1710,17 +1646,12 @@ impl GalleryShell {
                                 )
                                 .child(
                                     div()
-                                        .when(sample.orientation == Orientation::Vertical, |this| {
+                                        .when(state.orientation() == Orientation::Vertical, |this| {
                                             this.h(px(240.0))
                                         })
                                         .child(tabs),
                                 )
-                                .child(component_tabs_state_row(
-                                    sample.orientation,
-                                    sample.activation_mode,
-                                    sample.size,
-                                    &state,
-                                ))
+                                .child(component_tabs_state_row(&state))
                         }),
                     )),
             )
@@ -1753,7 +1684,7 @@ impl GalleryShell {
                             .gap_3()
                             .rounded_sm()
                             .border_1()
-                            .border_color(if sample.size == snapshot.control_size {
+                            .border_color(if snapshot.control_size == sample.size {
                                 rgb(0x1f7a66)
                             } else {
                                 rgb(0xd6d8ce)
@@ -2799,10 +2730,15 @@ impl GalleryShell {
             Dialog::new(
                 format!("overlay-dialog-sample:{}", sample.id),
                 sample.label,
-                sample.title,
+                sample.state.title(),
                 sample.content_text,
             )
-            .description("Escape and the modal barrier can close it.")
+            .description(
+                sample
+                    .state
+                    .description()
+                    .expect("controlled dialog sample should define a description"),
+            )
             .open(controlled_open)
             .outside_press_policy(sample.state.outside_press_policy())
             .escape_key_policy(sample.state.escape_key_policy())
@@ -2813,13 +2749,12 @@ impl GalleryShell {
         let sample_id = sample.id;
         let debug_selector = sample.debug_selector();
         let label = sample.label;
-        let title = sample.title;
         let content_text = sample.content_text;
         let shell = cx.entity().downgrade();
         let dialog = Dialog::new(
             format!("overlay-dialog-demo:{}", sample_id),
             label,
-            title,
+            sample.state.title(),
             content_text,
         )
         .disabled(state.disabled())
@@ -2828,7 +2763,11 @@ impl GalleryShell {
         let dialog = match state.open_mode() {
             open_gpui_ui_components::DialogOpenMode::Controlled => dialog
                 .open(state.open())
-                .description("Escape and the modal barrier can close it.")
+                .description(
+                    state
+                        .description()
+                        .expect("controlled dialog sample should define a description"),
+                )
                 .on_open_change(move |open, _, cx| {
                     shell
                         .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
@@ -2888,9 +2827,9 @@ impl GalleryShell {
             AlertDialog::new(
                 format!("overlay-alert-dialog-sample:{}", sample.id),
                 sample.label,
-                sample.title,
-                sample.description,
-                sample.action_label,
+                sample.state.title(),
+                sample.state.description(),
+                sample.state.action().label(),
             )
             .cancel_label(sample.state.cancel().label().to_owned())
             .intent(sample.state.intent())
@@ -2907,9 +2846,9 @@ impl GalleryShell {
         let alert_dialog = AlertDialog::new(
             format!("overlay-alert-dialog-demo:{}", sample_id),
             sample.label,
-            sample.title,
-            sample.description,
-            sample.action_label,
+            sample.state.title(),
+            sample.state.description(),
+            sample.state.action().label(),
         )
         .cancel_label(state.cancel().label().to_owned())
         .intent(state.intent())
@@ -2980,7 +2919,7 @@ impl GalleryShell {
             Sheet::new(
                 format!("overlay-sheet-sample:{}", sample.id),
                 sample.label,
-                sample.title,
+                sample.state.title(),
                 sample.content_text,
             )
             .description(
@@ -3003,7 +2942,7 @@ impl GalleryShell {
         let sheet = Sheet::new(
             format!("overlay-sheet-demo:{}", sample_id),
             sample.label,
-            sample.title,
+            sample.state.title(),
             sample.content_text,
         )
         .disabled(state.disabled())
@@ -3082,7 +3021,7 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state_items = resolved_menu_item_descriptors(sample.state.items());
+        let state_items = resolved_menu_items(sample.state.items());
         let state = if matches!(
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
@@ -3169,7 +3108,7 @@ impl GalleryShell {
         controlled_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let state_items = resolved_menu_item_descriptors(sample.state.menu().items());
+        let state_items = resolved_menu_items(sample.state.menu().items());
         let state = if matches!(
             sample.state.open_mode(),
             open_gpui_ui_components::MenuOpenMode::Controlled
@@ -3635,7 +3574,7 @@ fn component_avatar_state_row(state: &AvatarState) -> impl IntoElement {
 }
 
 fn component_icon_button_state_row(
-    accessible_label: &'static str,
+    accessible_label: &str,
     state: IconButtonState,
 ) -> impl IntoElement {
     div()
@@ -3832,10 +3771,7 @@ fn component_field(
     }
 }
 
-fn component_text_input_state_row(
-    state: &TextInputState,
-    controller_driven: bool,
-) -> impl IntoElement {
+fn component_text_input_state_row(state: &TextInputState) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -3861,7 +3797,7 @@ fn component_text_input_state_row(
                 "display value"
             }
         ))
-        .child(if controller_driven || state.controller_driven() {
+        .child(if state.controller_driven() {
             "controller"
         } else {
             "static"
@@ -3903,12 +3839,7 @@ fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl
         })
 }
 
-fn component_tabs_state_row(
-    orientation: Orientation,
-    activation_mode: TabsActivationMode,
-    size: Size,
-    state: &TabsState,
-) -> impl IntoElement {
+fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let focused = state.focused_value().unwrap_or("none");
     let tab_stop = state.tab_stop_value().unwrap_or("none");
@@ -3922,12 +3853,12 @@ fn component_tabs_state_row(
         .text_color(rgb(0x5a6472))
         .child(format!(
             "{} / {} / {}",
-            match orientation {
+            match state.orientation() {
                 Orientation::Horizontal => "horizontal",
                 Orientation::Vertical => "vertical",
             },
-            activation_mode.as_str(),
-            size.as_str()
+            state.activation_mode().as_str(),
+            state.size().as_str()
         ))
         .child(format!(
             "selected {} / focus {} / tab stop {}",
@@ -4059,9 +3990,9 @@ fn component_primitive_samples_section(
                     let state = sample.state;
                     let debug_selector = sample.debug_selector();
                     let separator = Separator::new(format!("component-separator:{}", sample.id))
-                        .orientation(sample.orientation)
-                        .decorative(sample.decorative)
-                        .with_size(sample.size)
+                        .orientation(state.orientation())
+                        .decorative(state.decorative())
+                        .with_size(state.size())
                         .tokens(tokens);
 
                     gallery_card_shell(
@@ -4085,7 +4016,7 @@ fn component_primitive_samples_section(
                                     .font_weight(open_gpui::FontWeight::BOLD)
                                     .child(sample.title),
                             )
-                            .child(label_pill(match sample.orientation {
+                            .child(label_pill(match state.orientation() {
                                 Orientation::Horizontal => "horizontal",
                                 Orientation::Vertical => "vertical",
                             })),
@@ -4100,7 +4031,7 @@ fn component_primitive_samples_section(
                             .border_1()
                             .border_color(rgb(0xe2e4dc))
                             .bg(rgb(0xfcfcf8))
-                            .child(if sample.orientation == Orientation::Vertical {
+                            .child(if state.orientation() == Orientation::Vertical {
                                 div().h_full().child(separator).into_any_element()
                             } else {
                                 div().w_full().child(separator).into_any_element()
@@ -4127,8 +4058,8 @@ fn component_primitive_samples_section(
                     .items_start()
                     .gap_2()
                     .child(
-                        Kbd::new(format!("component-kbd:{}", sample.id), sample.label)
-                            .with_size(sample.size)
+                        Kbd::new(format!("component-kbd:{}", sample.id), state.label())
+                            .with_size(state.size())
                             .tokens(tokens),
                     )
                     .child(component_kbd_state_row(state))
@@ -4144,9 +4075,9 @@ fn component_primitive_samples_section(
                     let debug_selector = sample.debug_selector();
                     let progress =
                         Progress::new(format!("component-progress:{}", sample.id), sample.label)
-                            .with_size(sample.size)
+                            .with_size(state.size())
                             .tokens(tokens);
-                    let progress = match sample.value_percent {
+                    let progress = match state.value_percent() {
                         Some(value) => progress.value(value),
                         None => progress.indeterminate(),
                     };
@@ -4193,8 +4124,8 @@ fn component_primitive_samples_section(
                     )
                     .child(
                         Skeleton::new(format!("component-skeleton:{}", sample.id))
-                            .subtle(sample.subtle)
-                            .with_size(sample.size)
+                            .subtle(state.subtle())
+                            .with_size(state.size())
                             .tokens(tokens),
                     )
                     .child(component_skeleton_state_row(state))
@@ -4208,19 +4139,22 @@ fn component_primitive_samples_section(
                 .children(avatars.into_iter().map(move |sample| {
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
-                    let avatar =
-                        Avatar::new(format!("component-avatar:{}", sample.id), sample.name)
-                            .accessible_label(sample.accessible_label)
-                            .with_size(sample.size)
-                            .tokens(tokens);
-                    let avatar = match sample.source {
+                    let avatar_name = state.name().to_owned();
+                    let accessible_label = state.accessible_label().to_owned();
+                    let fallback = state.fallback().to_owned();
+                    let source = state.source().map(|source| source.uri().to_owned());
+                    let avatar = Avatar::new(
+                        format!("component-avatar:{}", sample.id),
+                        avatar_name.clone(),
+                    )
+                    .accessible_label(accessible_label.clone())
+                    .with_size(state.size())
+                    .tokens(tokens);
+                    let avatar = match source {
                         Some(source) => avatar.source(source),
                         None => avatar,
                     };
-                    let avatar = match sample.fallback {
-                        Some(fallback) => avatar.fallback(fallback),
-                        None => avatar,
-                    };
+                    let avatar = avatar.fallback(fallback);
 
                     gallery_card_shell(
                         format!("component-avatar-sample:{}", sample.id),
@@ -4240,17 +4174,17 @@ fn component_primitive_samples_section(
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(if sample.name.trim().is_empty() {
-                                            "Empty name"
+                                        .child(if avatar_name.trim().is_empty() {
+                                            "Empty name".to_owned()
                                         } else {
-                                            sample.name
+                                            avatar_name.clone()
                                         }),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(rgb(0x5a6472))
-                                        .child(sample.accessible_label),
+                                        .child(accessible_label),
                                 ),
                         ),
                     )
@@ -4282,22 +4216,32 @@ fn component_listbox_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    let label = state.label().to_owned();
+                    let listbox_options: Vec<_> = state
+                        .standalone_options()
+                        .map(resolved_listbox_option)
+                        .collect();
+                    let listbox_groups: Vec<_> = state
+                        .groups()
+                        .iter()
+                        .map(|group_state| resolved_listbox_group(group_state, &state))
+                        .collect();
                     let mut listbox =
-                        Listbox::new(format!("component-listbox:{}", sample.id), sample.title)
-                            .with_size(sample.size)
-                            .disabled(sample.disabled)
+                        Listbox::new(format!("component-listbox:{}", sample.id), label.clone())
+                            .with_size(state.size())
+                            .disabled(state.disabled())
                             .tokens(tokens);
-                    if let Some(selected) = sample.selected {
+                    if let Some(selected) = state.selected_value() {
                         listbox = listbox.selected(selected);
                     }
-                    if let Some(active) = sample.active {
+                    if let Some(active) = state.active_value() {
                         listbox = listbox.active(active);
                     }
-                    for option in sample.options.iter() {
-                        listbox = listbox.option(component_listbox_option(option));
+                    for option in listbox_options.iter() {
+                        listbox = listbox.option(option.clone());
                     }
-                    for group in sample.groups.iter() {
-                        listbox = listbox.group(component_listbox_group(group));
+                    for group in listbox_groups.iter() {
+                        listbox = listbox.group(group.clone());
                     }
 
                     div()
@@ -4322,9 +4266,9 @@ fn component_listbox_samples_section(
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(sample.title),
+                                        .child(label.clone()),
                                 )
-                                .child(label_pill(sample.size.as_str())),
+                                .child(label_pill(state.size().as_str())),
                         )
                         .child(
                             div()
@@ -4361,14 +4305,27 @@ fn component_select_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    let label = state.label().to_owned();
+                    let title = label.clone();
+                    let listbox_options: Vec<_> = state
+                        .listbox()
+                        .standalone_options()
+                        .map(resolved_listbox_option)
+                        .collect();
+                    let listbox_groups: Vec<_> = state
+                        .listbox()
+                        .groups()
+                        .iter()
+                        .map(|group_state| resolved_listbox_group(group_state, state.listbox()))
+                        .collect();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
                     let mut select =
-                        Select::new(format!("component-select:{}", sample.id), sample.title)
-                            .placeholder(sample.placeholder)
-                            .with_size(sample.size)
-                            .disabled(sample.disabled)
+                        Select::new(format!("component-select:{}", sample.id), label.clone())
+                            .placeholder(state.placeholder())
+                            .with_size(state.size())
+                            .disabled(state.disabled())
                             .tokens(tokens);
-                    if let Some(selected) = sample.selected {
+                    if let Some(selected) = state.selected_value() {
                         select = select.selected(selected);
                     }
                     select = match state.open_mode() {
@@ -4377,11 +4334,11 @@ fn component_select_samples_section(
                             select.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
                         }
                     };
-                    for option in sample.options.iter() {
-                        select = select.option(component_listbox_option(option));
+                    for group in listbox_groups.iter() {
+                        select = select.group(group.clone());
                     }
-                    for group in sample.groups.iter() {
-                        select = select.group(component_listbox_group(group));
+                    for option in listbox_options.iter() {
+                        select = select.option(option.clone());
                     }
 
                     div()
@@ -4406,7 +4363,7 @@ fn component_select_samples_section(
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(sample.title),
+                                        .child(title),
                                 )
                                 .child(label_pill(if GALLERY_SAMPLE_MOUNT_OPEN {
                                     "mount open"
@@ -4449,15 +4406,28 @@ fn component_combobox_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    let label = state.label().to_owned();
+                    let title = label.clone();
+                    let combobox_options: Vec<_> = state
+                        .listbox()
+                        .standalone_options()
+                        .map(resolved_combobox_option)
+                        .collect();
+                    let combobox_groups: Vec<_> = state
+                        .listbox()
+                        .groups()
+                        .iter()
+                        .map(|group_state| resolved_combobox_group(group_state, state.listbox()))
+                        .collect();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
                     let mut combobox =
-                        Combobox::new(format!("component-combobox:{}", sample.id), sample.title)
-                            .placeholder(sample.placeholder)
-                            .query(sample.query)
-                            .with_size(sample.size)
-                            .disabled(sample.disabled)
+                        Combobox::new(format!("component-combobox:{}", sample.id), label.clone())
+                            .placeholder(state.placeholder())
+                            .query(state.query())
+                            .with_size(state.size())
+                            .disabled(state.disabled())
                             .tokens(tokens);
-                    if let Some(selected) = sample.selected {
+                    if let Some(selected) = state.selected_value() {
                         combobox = combobox.selected(selected);
                     }
                     combobox = match state.open_mode() {
@@ -4466,11 +4436,11 @@ fn component_combobox_samples_section(
                             combobox.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
                         }
                     };
-                    for option in sample.options.iter() {
-                        combobox = combobox.option(component_combobox_option(option));
+                    for option in combobox_options.iter() {
+                        combobox = combobox.option(option.clone());
                     }
-                    for group in sample.groups.iter() {
-                        combobox = combobox.group(component_combobox_group(group));
+                    for group in combobox_groups.iter() {
+                        combobox = combobox.group(group.clone());
                     }
 
                     div()
@@ -4495,7 +4465,7 @@ fn component_combobox_samples_section(
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(sample.title),
+                                        .child(title),
                                 )
                                 .child(label_pill(if GALLERY_SAMPLE_MOUNT_OPEN {
                                     "mount open"
@@ -4538,23 +4508,34 @@ fn component_command_samples_section(
                     let sample_id = sample.id;
                     let debug_selector = sample.debug_selector();
                     let state = sample.state.clone();
+                    let label = state.label().to_owned();
+                    let title = label.clone();
+                    let command_items: Vec<_> = state
+                        .standalone_items()
+                        .map(resolved_command_item)
+                        .collect();
+                    let command_groups: Vec<CommandGroup> = state
+                        .grouped_groups()
+                        .map(|group_state| resolved_command_group(group_state, &state))
+                        .collect();
                     // Keep the gallery sample closed on mount so the page stays scrollable.
                     let mut command =
-                        Command::new(format!("component-command:{}", sample.id), sample.title)
-                            .placeholder(sample.placeholder)
-                            .query(sample.query)
-                            .with_size(sample.size)
-                            .disabled(sample.disabled)
+                        Command::new(format!("component-command:{}", sample.id), label.clone())
+                            .placeholder(state.placeholder())
+                            .query(state.query())
+                            .with_size(state.size())
+                            .disabled(state.disabled())
                             .tokens(tokens);
-                    if let Some(selected) = sample.selected {
+                    if let Some(selected) = state.selected_value() {
                         command = command.selected(selected);
                     }
-                    if sample.dialog {
-                        command = command
-                            .dialog("Command palette")
-                            .dialog_description("Run a workspace command");
+                    if let Some(dialog) = state.dialog() {
+                        command = command.dialog(dialog.title());
+                        if let Some(description) = dialog.description() {
+                            command = command.dialog_description(description);
+                        }
                     }
-                    if let Some(loading) = sample.loading.as_ref() {
+                    if let Some(loading) = state.loading() {
                         command = command.loading(loading.message(), loading.progress_percent());
                     }
                     command = match state.open_mode() {
@@ -4563,11 +4544,11 @@ fn component_command_samples_section(
                             command.default_open(GALLERY_SAMPLE_MOUNT_OPEN)
                         }
                     };
-                    for item in sample.items.iter() {
-                        command = command.item(component_command_item(item));
+                    for item in command_items.iter() {
+                        command = command.item(item.clone());
                     }
-                    for group in sample.groups.iter() {
-                        command = command.group(component_command_group(group));
+                    for group in command_groups.iter() {
+                        command = command.group(group.clone());
                     }
 
                     div()
@@ -4592,9 +4573,13 @@ fn component_command_samples_section(
                                     div()
                                         .text_sm()
                                         .font_weight(open_gpui::FontWeight::BOLD)
-                                        .child(sample.title),
+                                        .child(title),
                                 )
-                                .child(label_pill(if sample.dialog { "dialog" } else { "inline" })),
+                                .child(label_pill(if state.dialog().is_some() {
+                                    "dialog"
+                                } else {
+                                    "inline"
+                                })),
                         )
                         .child(
                             div()
@@ -4608,45 +4593,64 @@ fn component_command_samples_section(
         )
 }
 
-fn component_listbox_group(group: &pages::components::ListboxGroupSample) -> ListboxGroup {
-    group.options.iter().fold(
-        ListboxGroup::new(group.value, group.label),
-        |group, option| group.option(component_listbox_option(option)),
+fn resolved_listbox_option(
+    option_state: &open_gpui_ui_components::ListboxOptionState,
+) -> ListboxOption {
+    match option_state.kind() {
+        open_gpui_ui_components::ListboxOptionKind::Separator => {
+            ListboxOption::separator(option_state.value())
+        }
+        open_gpui_ui_components::ListboxOptionKind::Option => {
+            ListboxOption::new(option_state.value(), option_state.label())
+                .disabled(option_state.disabled())
+        }
+    }
+}
+
+fn resolved_listbox_group(
+    group_state: &open_gpui_ui_components::ListboxGroupState,
+    state: &ListboxState,
+) -> ListboxGroup {
+    state.group_options(group_state.index()).fold(
+        ListboxGroup::new(group_state.value(), group_state.label()),
+        |group, option_state| group.option(resolved_listbox_option(option_state)),
     )
 }
 
-fn component_combobox_group(group: &pages::components::ListboxGroupSample) -> ComboboxGroup {
-    group.options.iter().fold(
-        ComboboxGroup::new(group.value, group.label),
-        |group, option| group.option(component_combobox_option(option)),
+fn resolved_combobox_option(
+    option_state: &open_gpui_ui_components::ListboxOptionState,
+) -> ComboboxOption {
+    ComboboxOption::new(option_state.value(), option_state.label())
+        .disabled(option_state.disabled())
+}
+
+fn resolved_combobox_group(
+    group_state: &open_gpui_ui_components::ListboxGroupState,
+    state: &ListboxState,
+) -> ComboboxGroup {
+    state.group_options(group_state.index()).fold(
+        ComboboxGroup::new(group_state.value(), group_state.label()),
+        |group, option_state| group.option(resolved_combobox_option(option_state)),
     )
 }
 
-fn component_combobox_option(option: &pages::components::ListboxOptionSample) -> ComboboxOption {
-    ComboboxOption::new(option.value, option.label).disabled(option.disabled)
-}
-
-fn component_command_group(group: &pages::components::CommandGroupSample) -> CommandGroup {
-    group.items.iter().fold(
-        CommandGroup::new(group.value, group.label),
-        |group, item| group.item(component_command_item(item)),
-    )
-}
-
-fn component_command_item(item: &pages::components::CommandItemSample) -> CommandItem {
-    let mut command_item = CommandItem::new(item.value, item.label).disabled(item.disabled);
-    if let Some(shortcut) = item.shortcut {
+fn resolved_command_item(item_state: &open_gpui_ui_components::CommandItemState) -> CommandItem {
+    let mut command_item =
+        CommandItem::new(item_state.value(), item_state.label()).disabled(item_state.disabled());
+    if let Some(shortcut) = item_state.shortcut() {
         command_item = command_item.shortcut(shortcut);
     }
     command_item
 }
 
-fn component_listbox_option(option: &pages::components::ListboxOptionSample) -> ListboxOption {
-    if option.label.is_empty() {
-        ListboxOption::separator(option.value)
-    } else {
-        ListboxOption::new(option.value, option.label).disabled(option.disabled)
-    }
+fn resolved_command_group(
+    group_state: &open_gpui_ui_components::command::CommandGroupState,
+    state: &CommandState,
+) -> CommandGroup {
+    state.group_items(group_state.index()).fold(
+        CommandGroup::new(group_state.value(), group_state.label()),
+        |group, item_state| group.item(resolved_command_item(item_state)),
+    )
 }
 
 fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
@@ -5190,25 +5194,6 @@ fn sheet_state_row(state: &open_gpui_ui_components::SheetState) -> impl IntoElem
         ))
 }
 
-fn resolved_menu_item_descriptors(
-    items: &[open_gpui_ui_components::MenuItemState],
-) -> Vec<MenuItem> {
-    items
-        .iter()
-        .map(|item| match item.kind() {
-            open_gpui_ui_components::MenuItemKind::Action => {
-                let descriptor = MenuItem::action(item.value(), item.label());
-                if item.disabled() {
-                    descriptor.disabled(true)
-                } else {
-                    descriptor
-                }
-            }
-            open_gpui_ui_components::MenuItemKind::Separator => MenuItem::separator(item.value()),
-        })
-        .collect()
-}
-
 fn menu_state_row(state: &open_gpui_ui_components::MenuState) -> impl IntoElement {
     let outside = state.outside_press_policy().resolve();
     let focused = state.focused_value().unwrap_or("none");
@@ -5337,4 +5322,19 @@ fn format_px(value: impl DisplayPx) -> String {
 
 fn bool_label(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+fn resolved_menu_items(items: &[open_gpui_ui_components::MenuItemState]) -> Vec<MenuItem> {
+    items
+        .iter()
+        .map(|item_state| match item_state.kind() {
+            open_gpui_ui_components::MenuItemKind::Separator => {
+                MenuItem::separator(item_state.value())
+            }
+            open_gpui_ui_components::MenuItemKind::Action => {
+                MenuItem::action(item_state.value(), item_state.label().to_owned())
+                    .disabled(item_state.disabled())
+            }
+        })
+        .collect()
 }

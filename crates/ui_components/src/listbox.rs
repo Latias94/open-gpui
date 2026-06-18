@@ -489,6 +489,8 @@ pub struct ListboxState {
     focus_ring: FocusRing,
 }
 
+const DEFAULT_SCROLLABLE_OPTION_COUNT_THRESHOLD: usize = 6;
+
 impl ListboxState {
     /// Resolves public state for a listbox.
     #[allow(clippy::too_many_arguments)]
@@ -645,6 +647,28 @@ impl ListboxState {
     /// Returns resolved group states.
     pub fn groups(&self) -> &[ListboxGroupState] {
         &self.groups
+    }
+
+    /// Returns standalone option states.
+    pub fn standalone_options(&self) -> impl Iterator<Item = &ListboxOptionState> + '_ {
+        self.options
+            .iter()
+            .filter(|option| option.group_index().is_none())
+    }
+
+    /// Returns option states owned by the given group index.
+    pub fn group_options(
+        &self,
+        group_index: usize,
+    ) -> impl Iterator<Item = &ListboxOptionState> + '_ {
+        self.options
+            .iter()
+            .filter(move |option| option.group_index() == Some(group_index))
+    }
+
+    /// Returns whether the listbox content should use a scroll viewport.
+    pub const fn scrollable_content(&self) -> bool {
+        self.options.len() > DEFAULT_SCROLLABLE_OPTION_COUNT_THRESHOLD
     }
 
     /// Returns flattened option states.
