@@ -1,6 +1,23 @@
 # Engineering Memory Update Log
 
 ## 2026-06-18
+* **Update**: Continued the overlay ownership cleanup by adding explicit `open_mode` metadata to
+  the hover-card, popover, dialog, alert-dialog, and sheet samples, and by keeping `Command`'s
+  loading metadata sample-owned instead of shell-inferred. The gallery shell now routes these
+  cases from sample contracts instead of `sample.id` branches.
+* **Verification**: The overlay and command ownership cleanup passed `cargo fmt --all`, focused
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` checks for hover-card, popover, dialog,
+  alert-dialog, sheet, and command contract tests, full `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` with 43 passing tests, and `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`.
+* **Update**: Continued the overlay gallery ownership cleanup by adding explicit `open_mode`
+  metadata to the hover-card, popover, dialog, alert-dialog, and sheet samples. The gallery shell
+  now routes controlled versus uncontrolled behavior from sample-owned contract fields instead of
+  inferring those cases from `sample.id`.
+* **Verification**: The overlay ownership cleanup passed `cargo fmt --all`, focused `cargo nextest
+  run -p open-gpui-ui-foundation-gallery` checks for hover-card, popover, dialog, alert-dialog,
+  and sheet contracts, full `cargo nextest run -p open-gpui-ui-foundation-gallery` with 43 passing
+  tests, and `cargo check -p open-gpui-ui-foundation-gallery --tests`.
 * **Update**: Removed the last implicit `sample_id` branching from the overlay gallery shell for
   menu and context-menu open ownership. Overlay samples now carry explicit `open_mode` metadata,
   and the shell routes controlled versus uncontrolled behavior from the sample-owned contract

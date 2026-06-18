@@ -2643,18 +2643,21 @@ impl GalleryShell {
         .placement_side(state.placement_side())
         .placement_alignment(state.placement_alignment())
         .with_size(state.size());
-        let hover_card = match sample_id {
-            "manual-controlled" => {
-                hover_card
-                    .open(state.open())
-                    .on_open_change(move |open, _, cx| {
-                        shell
-                            .update(cx, |this, cx| this.set_controlled_hover_card_open(open, cx))
-                            .ok();
-                    })
+        let hover_card = match sample.open_mode {
+            open_gpui_ui_components::HoverCardOpenMode::Controlled => hover_card
+                .open(state.open())
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_hover_card_open(open, cx))
+                        .ok();
+                }),
+            open_gpui_ui_components::HoverCardOpenMode::Uncontrolled => {
+                if sample.default_open {
+                    hover_card.default_open(true)
+                } else {
+                    hover_card
+                }
             }
-            "profile-preview" => hover_card.default_open(false),
-            _ => hover_card,
         };
 
         overlay_sample_card_shell(
@@ -2662,26 +2665,32 @@ impl GalleryShell {
             Some(debug_selector),
         )
         .child(hover_card)
-        .when(sample_id == "manual-controlled", |card| {
-            card.child(
-                div()
-                    .id("overlay-hover-card-controlled-toggle")
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(0xd6d8ce))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_controlled_hover_card_open(!controlled_open, cx);
-                    }))
-                    .child(if controlled_open {
-                        "close hover card"
-                    } else {
-                        "open hover card"
-                    }),
-            )
-        })
+        .when(
+            matches!(
+                sample.open_mode,
+                open_gpui_ui_components::HoverCardOpenMode::Controlled
+            ),
+            |card| {
+                card.child(
+                    div()
+                        .id("overlay-hover-card-controlled-toggle")
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_hover_card_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close hover card"
+                        } else {
+                            "open hover card"
+                        }),
+                )
+            },
+        )
         .child(hover_card_state_row(&state, effective_open))
     }
 
@@ -2718,15 +2727,15 @@ impl GalleryShell {
         .placement_side(state.placement_side())
         .placement_alignment(state.placement_alignment())
         .outside_press_policy(state.outside_press_policy());
-        let popover = match sample_id {
-            "controlled" => popover
+        let popover = match sample.open_mode {
+            open_gpui_ui_components::PopoverOpenMode::Controlled => popover
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
                     shell
                         .update(cx, |this, cx| this.set_controlled_popover_open(open, cx))
                         .ok();
                 }),
-            _ => popover.default_open(false),
+            open_gpui_ui_components::PopoverOpenMode::Uncontrolled => popover.default_open(false),
         };
 
         overlay_sample_card_shell(
@@ -2734,30 +2743,36 @@ impl GalleryShell {
             Some(debug_selector),
         )
         .child(popover)
-        .when(sample_id == "controlled", |card| {
-            card.child(
-                div()
-                    .id("overlay-popover-controlled-toggle")
-                    .debug_selector({
-                        let sample_id = sample_id.to_owned();
-                        move || format!("gallery:overlay-popover-control:{sample_id}")
-                    })
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(0xd6d8ce))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_controlled_popover_open(!controlled_open, cx);
-                    }))
-                    .child(if controlled_open {
-                        "close controlled"
-                    } else {
-                        "open controlled"
-                    }),
-            )
-        })
+        .when(
+            matches!(
+                sample.open_mode,
+                open_gpui_ui_components::PopoverOpenMode::Controlled
+            ),
+            |card| {
+                card.child(
+                    div()
+                        .id("overlay-popover-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-popover-control:{sample_id}")
+                        })
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_popover_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close controlled"
+                        } else {
+                            "open controlled"
+                        }),
+                )
+            },
+        )
         .child(popover_state_row(&state))
     }
 
@@ -2797,8 +2812,8 @@ impl GalleryShell {
         .disabled(state.disabled())
         .outside_press_policy(state.outside_press_policy())
         .escape_key_policy(state.escape_key_policy());
-        let dialog = match sample_id {
-            "controlled-modal" => dialog
+        let dialog = match sample.open_mode {
+            open_gpui_ui_components::DialogOpenMode::Controlled => dialog
                 .open(state.open())
                 .description("Escape and the modal barrier can close it.")
                 .on_open_change(move |open, _, cx| {
@@ -2806,7 +2821,7 @@ impl GalleryShell {
                         .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
                         .ok();
                 }),
-            _ => dialog.default_open(false),
+            open_gpui_ui_components::DialogOpenMode::Uncontrolled => dialog.default_open(false),
         };
 
         overlay_sample_card_shell(
@@ -2814,30 +2829,36 @@ impl GalleryShell {
             Some(debug_selector),
         )
         .child(dialog)
-        .when(sample_id == "controlled-modal", |card| {
-            card.child(
-                div()
-                    .id("overlay-dialog-controlled-toggle")
-                    .debug_selector({
-                        let sample_id = sample_id.to_owned();
-                        move || format!("gallery:overlay-dialog-control:{sample_id}")
-                    })
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(0xd6d8ce))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_controlled_dialog_open(!controlled_open, cx);
-                    }))
-                    .child(if controlled_open {
-                        "close dialog"
-                    } else {
-                        "open dialog"
-                    }),
-            )
-        })
+        .when(
+            matches!(
+                sample.open_mode,
+                open_gpui_ui_components::DialogOpenMode::Controlled
+            ),
+            |card| {
+                card.child(
+                    div()
+                        .id("overlay-dialog-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-dialog-control:{sample_id}")
+                        })
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_dialog_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close dialog"
+                        } else {
+                            "open dialog"
+                        }),
+                )
+            },
+        )
         .child(dialog_state_row(&state))
     }
 
@@ -2879,19 +2900,19 @@ impl GalleryShell {
         .disabled(state.disabled())
         .outside_press_policy(state.outside_press_policy())
         .escape_key_policy(state.escape_key_policy());
-        let alert_dialog = match sample_id {
-            "destructive-confirm" => {
-                alert_dialog
-                    .open(state.open())
-                    .on_open_change(move |open, _, cx| {
-                        shell
-                            .update(cx, |this, cx| {
-                                this.set_controlled_alert_dialog_open(open, cx)
-                            })
-                            .ok();
-                    })
+        let alert_dialog = match sample.open_mode {
+            open_gpui_ui_components::AlertDialogOpenMode::Controlled => alert_dialog
+                .open(state.open())
+                .on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| {
+                            this.set_controlled_alert_dialog_open(open, cx)
+                        })
+                        .ok();
+                }),
+            open_gpui_ui_components::AlertDialogOpenMode::Uncontrolled => {
+                alert_dialog.default_open(false)
             }
-            _ => alert_dialog.default_open(false),
         };
 
         overlay_sample_card_shell(
@@ -2899,30 +2920,36 @@ impl GalleryShell {
             Some(debug_selector),
         )
         .child(alert_dialog)
-        .when(sample_id == "destructive-confirm", |card| {
-            card.child(
-                div()
-                    .id("overlay-alert-dialog-controlled-toggle")
-                    .debug_selector({
-                        let sample_id = sample_id.to_owned();
-                        move || format!("gallery:overlay-alert-dialog-control:{sample_id}")
-                    })
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(0xd6d8ce))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.set_controlled_alert_dialog_open(!controlled_open, cx);
-                    }))
-                    .child(if controlled_open {
-                        "close alert"
-                    } else {
-                        "open alert"
-                    }),
-            )
-        })
+        .when(
+            matches!(
+                sample.open_mode,
+                open_gpui_ui_components::AlertDialogOpenMode::Controlled
+            ),
+            |card| {
+                card.child(
+                    div()
+                        .id("overlay-alert-dialog-controlled-toggle")
+                        .debug_selector({
+                            let sample_id = sample_id.to_owned();
+                            move || format!("gallery:overlay-alert-dialog-control:{sample_id}")
+                        })
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0xd6d8ce))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.set_controlled_alert_dialog_open(!controlled_open, cx);
+                        }))
+                        .child(if controlled_open {
+                            "close alert"
+                        } else {
+                            "open alert"
+                        }),
+                )
+            },
+        )
         .child(alert_dialog_state_row(&state))
     }
 
@@ -2973,13 +3000,15 @@ impl GalleryShell {
         } else {
             sheet
         };
-        let sheet = match sample_id {
-            "right-non-modal" => sheet.open(state.open()).on_open_change(move |open, _, cx| {
-                shell
-                    .update(cx, |this, cx| this.set_controlled_sheet_open(open, cx))
-                    .ok();
-            }),
-            _ => sheet.default_open(false),
+        let sheet = match sample.open_mode {
+            open_gpui_ui_components::SheetOpenMode::Controlled => {
+                sheet.open(state.open()).on_open_change(move |open, _, cx| {
+                    shell
+                        .update(cx, |this, cx| this.set_controlled_sheet_open(open, cx))
+                        .ok();
+                })
+            }
+            open_gpui_ui_components::SheetOpenMode::Uncontrolled => sheet.default_open(false),
         };
 
         div()
@@ -2997,30 +3026,36 @@ impl GalleryShell {
             .text_xs()
             .text_color(rgb(0x3f4a57))
             .child(sheet)
-            .when(sample_id == "right-non-modal", |card| {
-                card.child(
-                    div()
-                        .id("overlay-sheet-controlled-toggle")
-                        .debug_selector({
-                            let sample_id = sample_id.to_owned();
-                            move || format!("gallery:overlay-sheet-control:{sample_id}")
-                        })
-                        .px_2()
-                        .py_1()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(rgb(0xd6d8ce))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_sheet_open(!controlled_open, cx);
-                        }))
-                        .child(if controlled_open {
-                            "close sheet"
-                        } else {
-                            "open sheet"
-                        }),
-                )
-            })
+            .when(
+                matches!(
+                    sample.open_mode,
+                    open_gpui_ui_components::SheetOpenMode::Controlled
+                ),
+                |card| {
+                    card.child(
+                        div()
+                            .id("overlay-sheet-controlled-toggle")
+                            .debug_selector({
+                                let sample_id = sample_id.to_owned();
+                                move || format!("gallery:overlay-sheet-control:{sample_id}")
+                            })
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xd6d8ce))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_controlled_sheet_open(!controlled_open, cx);
+                            }))
+                            .child(if controlled_open {
+                                "close sheet"
+                            } else {
+                                "open sheet"
+                            }),
+                    )
+                },
+            )
             .child(sheet_state_row(&state))
     }
 
@@ -4477,8 +4512,8 @@ fn component_command_samples_section(
                             .dialog("Command palette")
                             .dialog_description("Run a workspace command");
                     }
-                    if sample.id == "empty-command" {
-                        command = command.loading("Indexing commands", None);
+                    if let Some(loading) = sample.loading.as_ref() {
+                        command = command.loading(loading.message(), loading.progress_percent());
                     }
                     command = match sample.open_mode {
                         CommandOpenMode::Controlled => command.open(sample.interactive_open),

@@ -3,11 +3,11 @@
 use open_gpui_ui_components::{
     Avatar, AvatarState, Badge, BadgeState, BadgeVariant, Button, ButtonState, ButtonVariant,
     Checkbox, CheckboxState, ComboboxGroupDescriptor, ComboboxOpenMode, ComboboxOptionDescriptor,
-    ComboboxState, CommandGroupDescriptor, CommandItemDescriptor, CommandOpenMode, CommandState,
-    Field, FieldState, IconButton, IconButtonState, Kbd, KbdState, Label, LabelState,
-    ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress, ProgressState,
-    RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState, ScrollResetPolicy,
-    SelectOpenMode, SelectState, Separator, SeparatorState, SidebarCollapseMode,
+    ComboboxState, CommandGroupDescriptor, CommandItemDescriptor, CommandLoadingState,
+    CommandOpenMode, CommandState, Field, FieldState, IconButton, IconButtonState, Kbd, KbdState,
+    Label, LabelState, ListboxGroupDescriptor, ListboxOptionDescriptor, ListboxState, Progress,
+    ProgressState, RadioGroupState, RadioItemDescriptor, ScrollAreaAxis, ScrollAreaState,
+    ScrollResetPolicy, SelectOpenMode, SelectState, Separator, SeparatorState, SidebarCollapseMode,
     SidebarItemDescriptor, SidebarSectionDescriptor, SidebarSide, SidebarState, SidebarVariant,
     Skeleton, SkeletonState, SplitterPanelDescriptor, SplitterState, Switch, SwitchState,
     TabsActivationMode, TabsItemDescriptor, TabsState, TextInput, TextInputState, Toggle,
@@ -1056,6 +1056,8 @@ pub struct CommandSample {
     pub interactive_open: bool,
     /// Whether the surface models command dialog policy.
     pub dialog: bool,
+    /// Optional loading metadata shown when the sample models deferred content.
+    pub loading: Option<CommandLoadingState>,
     /// Standalone command items.
     pub items: Vec<CommandItemSample>,
     /// Grouped command items.
@@ -2960,6 +2962,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             open_mode: CommandOpenMode::Controlled,
             interactive_open: false,
             dialog: true,
+            loading: None,
             state: command_state(
                 Size::Medium,
                 false,
@@ -2989,6 +2992,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             open_mode: CommandOpenMode::Controlled,
             interactive_open: false,
             dialog: false,
+            loading: Some(CommandLoadingState::new("Indexing commands", None)),
             state: command_state(
                 Size::Small,
                 false,
@@ -3018,6 +3022,7 @@ pub fn command_samples(tokens: ThemeTokens) -> [CommandSample; 3] {
             open_mode: CommandOpenMode::Uncontrolled,
             interactive_open: false,
             dialog: false,
+            loading: None,
             state: command_state(
                 Size::Small,
                 true,

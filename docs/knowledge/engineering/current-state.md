@@ -11,6 +11,28 @@ status: "active"
 
 ## 2026-06-18
 
+- Done: Continued the overlay ownership cleanup by adding explicit `open_mode` metadata to the
+  hover-card, popover, dialog, alert-dialog, and sheet samples, and by keeping `Command`'s loading
+  metadata sample-owned instead of shell-inferred. The gallery shell now routes these cases from
+  sample contracts instead of `sample.id` branches.
+- Last verified for the overlay and command ownership cleanup: `cargo fmt --all`, focused
+  `cargo nextest run -p open-gpui-ui-foundation-gallery` checks for hover-card, popover, dialog,
+  alert-dialog, sheet, and command contract tests, full `cargo nextest run -p
+  open-gpui-ui-foundation-gallery` with 43 passing tests, and `cargo check -p
+  open-gpui-ui-foundation-gallery --tests`.
+- Next action: stop the seam hunt unless a new evidence-backed asymmetry appears; the remaining
+  Sidebar and choice/search cases are state-bearing sample pages, not a missing abstraction.
+- Done: Continued the overlay gallery ownership cleanup by adding explicit `open_mode` metadata to
+  the hover-card, popover, dialog, alert-dialog, and sheet samples. The gallery shell now routes
+  controlled versus uncontrolled behavior from sample-owned contract fields instead of inferring
+  those cases from `sample.id`.
+- Last verified for the overlay ownership cleanup: `cargo fmt --all`, focused `cargo nextest run
+  -p open-gpui-ui-foundation-gallery` checks for hover-card, popover, dialog, alert-dialog, and
+  sheet contracts, full `cargo nextest run -p open-gpui-ui-foundation-gallery` with 43 passing
+  tests, and `cargo check -p open-gpui-ui-foundation-gallery --tests`.
+- Next action: stop the seam hunt unless a new evidence-backed asymmetry appears; the remaining
+  Sidebar and choice/search cases are currently state-bearing shell samples, not a missing
+  abstraction.
 - Done: Continued the component productization pass by removing the last implicit `sample_id`
   branching from the overlay gallery shell for menu and context-menu open ownership. The overlay
   sample data now carries explicit `open_mode` metadata, and the shell routes controlled versus
