@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Added a browser-level smoke for the controlled hover card toggle surface and gave the toggle a gallery debug selector. The gallery now proves the shell-controlled hover card can be opened from the control surface and dismissed with Escape.
+- Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (50/50), and `cargo nextest run -p open-gpui-ui-components --tests` (147/147) passed after the hover-card control-surface cleanup.
+- Next action: keep scanning for the next evidence-backed seam; do not treat the current hover-card chain as a remaining gap unless a new behavior split appears.
+
 - Done: Added a browser-level smoke for the tooltip manual delayed sample so gallery automation proves the forced-open tooltip content renders directly from state, not only from hover/focus interaction.
 - Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed with 49/49 tests.
 - Next action: keep scanning for the next evidence-backed seam; do not force a shallow refactor unless a stronger contract split appears.

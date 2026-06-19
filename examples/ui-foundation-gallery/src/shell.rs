@@ -2645,6 +2645,9 @@ impl GalleryShell {
                 card.child(
                     div()
                         .id("overlay-hover-card-controlled-toggle")
+                        .debug_selector(|| {
+                            "gallery:overlay-hover-card-controlled-toggle".to_string()
+                        })
                         .px_2()
                         .py_1()
                         .rounded_sm()

@@ -1873,6 +1873,29 @@ fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_toggles_hover_card_from_control_surface(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-hover-card-controlled-toggle");
+    click(cx, "gallery:overlay-hover-card-controlled-toggle");
+    settle(cx);
+    assert!(
+        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
+            .is_some(),
+        "expected the controlled HoverCard toggle to open its content"
+    );
+
+    press_escape(cx);
+    assert!(
+        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
+            .is_none(),
+        "expected Escape to close the controlled HoverCard after opening it from the toggle"
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {
