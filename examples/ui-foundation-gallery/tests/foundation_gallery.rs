@@ -5,11 +5,10 @@ use open_gpui::{
 use open_gpui_ui_components::{
     AlertDialogIntent, AlertDialogOpenMode, BadgeVariant, ButtonVariant, ComboboxOpenMode,
     CommandOpenMode, DialogOpenMode, HoverCardOpenIntent, HoverCardOpenMode, MenuItemKind,
-    MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
-    SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode, ToggleVariant,
-    TooltipOpenIntent,
+    MenuOpenMode, OverlayResolvedState, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy,
+    SelectOpenMode, SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode,
+    ToggleVariant, TooltipOpenIntent,
     gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
-    OverlayResolvedState,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -1818,6 +1817,19 @@ fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
         cx.debug_bounds("tooltip:overlay-tooltip-content:disabled:content")
             .is_none(),
         "expected disabled tooltip trigger to stay closed"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_renders_manual_tooltip_from_state(cx: &mut open_gpui::TestAppContext) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-tooltip-sample:delayed-manual");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:delayed-manual:content")
+            .is_some(),
+        "expected manual delayed tooltip content to render from gallery state"
     );
 }
 

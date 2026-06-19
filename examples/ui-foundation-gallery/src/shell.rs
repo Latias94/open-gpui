@@ -11,17 +11,16 @@ use open_gpui_ui_components::{
     CheckboxState, ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption,
     ComboboxState, Command, CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu,
     Dialog, Field, FieldState, FocusRing, HoverCard, IconButton, IconButtonState, Kbd, KbdState,
-    Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, Popover,
-    Progress, ProgressState, RadioGroup, RadioItem, ScrollArea, ScrollAreaAxis, ScrollAreaState,
-    Select, SelectOpenMode, SelectState, Separator, SeparatorState, Sheet, Sidebar, SidebarItem,
-    SidebarSection, SidebarSide, SidebarState, Skeleton, SkeletonState, Splitter, SplitterPanel,
-    SplitterState, Switch, SwitchState, TabsState, TextInput, TextInputState, Toggle, ToggleState,
-    ToolbarState, Tooltip,
+    Label, LabelState, Listbox, ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem,
+    OverlayResolvedState, Popover, Progress, ProgressState, RadioGroup, RadioItem, ScrollArea,
+    ScrollAreaAxis, ScrollAreaState, Select, SelectOpenMode, SelectState, Separator,
+    SeparatorState, Sheet, Sidebar, SidebarItem, SidebarSection, SidebarSide, SidebarState,
+    Skeleton, SkeletonState, Splitter, SplitterPanel, SplitterState, Switch, SwitchState,
+    TabsState, TextInput, TextInputState, Toggle, ToggleState, ToolbarState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
     },
-    OverlayResolvedState,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -39,7 +38,9 @@ pub const COMPACT_GALLERY_WIDTH: Pixels = px(720.0);
 /// Desktop gallery width used by the manual adaptive switch.
 pub const DESKTOP_GALLERY_WIDTH: Pixels = DEFAULT_GALLERY_WIDTH;
 const GALLERY_SAMPLE_MOUNT_OPEN: bool = false;
+const OVERLAY_CONTROLLED_SAMPLE_COUNT: usize = 7;
 
+#[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverlayControlledSample {
     HoverCard,
@@ -53,53 +54,43 @@ enum OverlayControlledSample {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct OverlayControlledOpenState {
-    hover_card: bool,
-    popover: bool,
-    dialog: bool,
-    alert_dialog: bool,
-    sheet: bool,
-    menu: bool,
-    context_menu: bool,
+    open: [bool; OVERLAY_CONTROLLED_SAMPLE_COUNT],
 }
 
 impl OverlayControlledOpenState {
+    #[cfg(test)]
+    const ALL: [OverlayControlledSample; OVERLAY_CONTROLLED_SAMPLE_COUNT] = [
+        OverlayControlledSample::HoverCard,
+        OverlayControlledSample::Popover,
+        OverlayControlledSample::Dialog,
+        OverlayControlledSample::AlertDialog,
+        OverlayControlledSample::Sheet,
+        OverlayControlledSample::Menu,
+        OverlayControlledSample::ContextMenu,
+    ];
+
     const fn is_open(self, sample: OverlayControlledSample) -> bool {
-        match sample {
-            OverlayControlledSample::HoverCard => self.hover_card,
-            OverlayControlledSample::Popover => self.popover,
-            OverlayControlledSample::Dialog => self.dialog,
-            OverlayControlledSample::AlertDialog => self.alert_dialog,
-            OverlayControlledSample::Sheet => self.sheet,
-            OverlayControlledSample::Menu => self.menu,
-            OverlayControlledSample::ContextMenu => self.context_menu,
-        }
+        self.open[sample as usize]
     }
 
     fn set_open(&mut self, sample: OverlayControlledSample, open: bool) -> bool {
-        let current = self.is_open(sample);
+        let index = sample as usize;
+        let current = self.open[index];
         if current == open {
             return false;
         }
 
-        match sample {
-            OverlayControlledSample::HoverCard => self.hover_card = open,
-            OverlayControlledSample::Popover => self.popover = open,
-            OverlayControlledSample::Dialog => self.dialog = open,
-            OverlayControlledSample::AlertDialog => self.alert_dialog = open,
-            OverlayControlledSample::Sheet => self.sheet = open,
-            OverlayControlledSample::Menu => self.menu = open,
-            OverlayControlledSample::ContextMenu => self.context_menu = open,
-        }
+        self.open[index] = open;
 
         true
     }
 
     fn reset(&mut self) -> bool {
-        if *self == Self::default() {
+        if self.open.iter().all(|open| !*open) {
             return false;
         }
 
-        *self = Self::default();
+        self.open = [false; OVERLAY_CONTROLLED_SAMPLE_COUNT];
         true
     }
 }
@@ -5473,17 +5464,8 @@ mod tests {
     #[test]
     fn overlay_controlled_open_state_tracks_each_sample_and_resets_cleanly() {
         let mut state = OverlayControlledOpenState::default();
-        let samples = [
-            OverlayControlledSample::HoverCard,
-            OverlayControlledSample::Popover,
-            OverlayControlledSample::Dialog,
-            OverlayControlledSample::AlertDialog,
-            OverlayControlledSample::Sheet,
-            OverlayControlledSample::Menu,
-            OverlayControlledSample::ContextMenu,
-        ];
 
-        for sample in samples {
+        for sample in OverlayControlledOpenState::ALL {
             assert!(!state.is_open(sample));
         }
 
@@ -5497,7 +5479,7 @@ mod tests {
         assert!(state.is_open(OverlayControlledSample::Menu));
 
         assert!(state.reset());
-        for sample in samples {
+        for sample in OverlayControlledOpenState::ALL {
             assert!(!state.is_open(sample));
         }
         assert!(!state.reset());

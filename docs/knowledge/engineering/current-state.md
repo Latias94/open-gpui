@@ -11,6 +11,18 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Added a browser-level smoke for the tooltip manual delayed sample so gallery automation proves the forced-open tooltip content renders directly from state, not only from hover/focus interaction.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed with 49/49 tests.
+- Next action: keep scanning for the next evidence-backed seam; do not force a shallow refactor unless a stronger contract split appears.
+
+- Done: Collapsed the gallery shell's `OverlayControlledOpenState` from seven named booleans into a fixed array keyed by `OverlayControlledSample`, which removes the field list and repeated match arms while keeping the same controlled overlay behavior.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed with 48/48 tests after the controlled-open state refactor.
+- Next action: keep scanning for the next evidence-backed seam; the shell state is now compact enough that further changes should come from a real contract split, not representation cleanup.
+
+- Done: Added a state-driven tooltip smoke for the delayed/manual sample, so the overlay gallery now proves the tooltip content renders directly from gallery state without pointer interaction.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the tooltip state smoke addition.
+- Next action: keep the overlay coverage focused on real behavior paths; avoid extra shell-side duplication unless a new contract split appears.
+
 - Done: Removed the `OverlayBehaviorSample.adapter` duplicate ownership seam from the overlay gallery. `shell.rs` now derives the GPUI adapter from `OverlayResolvedState::resolve(policy)` at render time, so the sample only owns policy + display metadata.
 - Done: Added tooltip gallery debug selectors plus a smoke test that covers hover, focus, and disabled behavior. The new test proves the tooltip content can be located and closed from the gallery automation path instead of hanging as an unaddressable popup.
 - Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --tests` (147/147), and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (48/48) passed after the overlay/tooltip cleanup.
