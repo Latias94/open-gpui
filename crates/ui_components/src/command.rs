@@ -1008,7 +1008,6 @@ impl CommandState {
 #[derive(Debug, Clone)]
 struct CommandRuntime {
     open: bool,
-    query: String,
     active_value: Option<String>,
     selected_value: Option<String>,
 }
@@ -1275,7 +1274,6 @@ impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| CommandRuntime {
             open: self.default_open,
-            query: self.query.clone(),
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
         });
@@ -1331,10 +1329,6 @@ impl RenderOnce for Command {
                 controller.set_placeholder(self.placeholder.clone(), cx);
             }
         });
-        runtime.update(cx, |runtime, _| {
-            runtime.query = query.clone();
-        });
-
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();

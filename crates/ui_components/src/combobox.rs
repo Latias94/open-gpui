@@ -632,7 +632,6 @@ impl ComboboxState {
 #[derive(Debug, Clone)]
 struct ComboboxRuntime {
     open: bool,
-    query: String,
     active_value: Option<String>,
     selected_value: Option<String>,
 }
@@ -849,7 +848,6 @@ impl RenderOnce for Combobox {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| ComboboxRuntime {
             open: self.default_open,
-            query: self.query.clone(),
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
         });
@@ -905,10 +903,6 @@ impl RenderOnce for Combobox {
                 controller.set_placeholder(self.placeholder.clone(), cx);
             }
         });
-        runtime.update(cx, |runtime, _| {
-            runtime.query = query.clone();
-        });
-
         let id = self.id;
         let debug_id = id.to_string();
         let input_id: ElementId = (id.clone(), "input").into();
@@ -990,7 +984,6 @@ impl RenderOnce for Combobox {
                                 runtime.update(cx, |runtime, _| {
                                     runtime.selected_value = Some(selection.value().to_owned());
                                     runtime.active_value = Some(selection.value().to_owned());
-                                    runtime.query = selection.label().to_owned();
                                     runtime.open = false;
                                 });
                                 input_controller.update(cx, |controller, cx| {
@@ -1189,7 +1182,6 @@ fn combobox_content_element(
                 runtime.update(cx, |runtime, _| {
                     runtime.selected_value = Some(payload.value().to_owned());
                     runtime.active_value = Some(payload.value().to_owned());
-                    runtime.query = payload.label().to_owned();
                     runtime.open = false;
                 });
                 input_controller.update(cx, |controller, cx| {

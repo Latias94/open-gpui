@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Removed the dead `query` field from `ComboboxRuntime` and `CommandRuntime`. Those components now keep query ownership in the `TextInputController`/resolved state path instead of mirroring it into keyed runtime state.
+- Last verified: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components` passed after the runtime cleanup.
+- Next action: keep scanning for the next evidence-backed duplicated runtime field; stop when the remaining state is real interaction state, not a mirror of resolved data.
+
 - Done: Checked `Listbox` for the same open-time seed pattern and found no redundant runtime write to remove. `Combobox` and `Command` keep their runtime `active_value` because they own real navigation/selection interaction state, so the runtime-seed cleanup stops here.
 - Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads select_state_records_popup_listbox_overlay_and_scroll_contract select_state_models_disabled_empty_and_policy_overrides`, and `cargo check -p open-gpui-ui-components` passed.
 - Next action: move on from runtime-seed cleanup unless a new evidence-backed duplication seam appears.
