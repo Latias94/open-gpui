@@ -580,7 +580,7 @@ fn context_menu_item_elements(
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()
-                    .tab_stop(item_state.tab_stop())
+                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

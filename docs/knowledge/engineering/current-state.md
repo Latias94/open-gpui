@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, and switched the render paths to derive tab-stop placement from focused/active state directly. The menu, listbox, command, and context-menu flows now keep tab-stop ownership on the resolved state contract instead of duplicating it per item.
+- Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
+- Next action: keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
 - Done: Removed the last item-level `tab_stop` storage from `RadioItemState` and `TabsItemState`, and made the render path derive tab-stop placement from `state.tab_stop_index()` directly. The radio and tabs modules now keep tab-stop ownership on the resolved state contract instead of duplicating it per item.
 - Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components tabs_state_resolution_tracks_selected_focus_and_tab_stop tabs_builder_state_falls_back_to_first_enabled_tab radio_group_state_skips_disabled_selection radio_group_reuses_roving_focus_helpers_and_skips_disabled_items radio_group_builder_state_falls_back_to_first_enabled_item`, and `cargo nextest run -p open-gpui-ui-foundation-gallery components_page_samples_expose_component_metadata components_page_sidebar_samples_expose_navigation_contract components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition` passed after the radio/tabs cleanup.
 - Next action: keep scanning for the next evidence-backed seam; the current radio/tabs pass is now fully closed and the remaining work should come from the next duplicated ownership split.

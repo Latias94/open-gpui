@@ -308,7 +308,6 @@ pub struct MenuItemState {
     kind: MenuItemKind,
     disabled: bool,
     focused: bool,
-    tab_stop: bool,
 }
 
 impl MenuItemState {
@@ -345,11 +344,6 @@ impl MenuItemState {
     /// Returns whether the item has roving focus.
     pub const fn focused(&self) -> bool {
         self.focused
-    }
-
-    /// Returns whether the item is the current tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns whether activation handlers should run for this item.
@@ -466,7 +460,6 @@ impl MenuState {
             .enumerate()
             .map(|(index, item)| {
                 let focused = focused_index == Some(index);
-                let focusable = item.focusable();
                 MenuItemState {
                     index,
                     value: item.value,
@@ -474,7 +467,6 @@ impl MenuState {
                     kind: item.kind,
                     disabled: item.disabled,
                     focused,
-                    tab_stop: focused && focusable,
                 }
             })
             .collect();
@@ -600,10 +592,7 @@ impl MenuState {
 
     /// Returns current tab-stop item value.
     pub fn tab_stop_value(&self) -> Option<&str> {
-        self.items
-            .iter()
-            .find(|item| item.tab_stop())
-            .map(MenuItemState::value)
+        self.focused_value()
     }
 
     /// Resolves a focus target for an APG-style menu navigation key.
@@ -1216,7 +1205,7 @@ fn menu_item_elements(
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()
-                    .tab_stop(item_state.tab_stop())
+                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

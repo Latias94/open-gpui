@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, then switched menu/listbox/context-menu/command render paths to derive tab-stop placement from focused or active state directly. The resolved state contract now owns the tab-stop decision instead of caching one more boolean per item.
+* **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
+* **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
 * **Update**: Removed the last sidebar-local visibility storage (`SidebarSectionState.visible` and `SidebarItemState.visible`) and removed item-level `tab_stop` storage from `ToolbarItemState`, `TabsItemState`, and `RadioItemState`. The sidebar, toolbar, tabs, and radio render paths now derive tab-stop/visibility behavior from the higher-level resolved indices and collapse mode instead of carrying duplicate per-item booleans.
 * **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the deeper derived-state cleanup.
 * **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.

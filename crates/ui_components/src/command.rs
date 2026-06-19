@@ -434,7 +434,6 @@ pub struct CommandItemState {
     disabled: bool,
     selected: bool,
     active: bool,
-    tab_stop: bool,
     position_in_set: Option<usize>,
     size_of_set: usize,
 }
@@ -483,11 +482,6 @@ impl CommandItemState {
     /// Returns whether the item is active.
     pub const fn active(&self) -> bool {
         self.active
-    }
-
-    /// Returns whether the item owns the tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns the item's accessibility role.
@@ -731,7 +725,6 @@ impl CommandState {
                     disabled: item.descriptor.disabled,
                     selected: option.selected(),
                     active: option.active(),
-                    tab_stop: option.tab_stop(),
                     position_in_set: option.position_in_set(),
                     size_of_set: option.size_of_set(),
                 })
@@ -845,6 +838,11 @@ impl CommandState {
     /// Returns active command value.
     pub fn active_value(&self) -> Option<&str> {
         self.active_value.as_deref()
+    }
+
+    /// Returns the current tab-stop value.
+    pub fn tab_stop_value(&self) -> Option<&str> {
+        self.active_value()
     }
 
     /// Returns whether the dialog wrapper is open.
