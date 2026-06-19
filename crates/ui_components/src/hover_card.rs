@@ -794,6 +794,7 @@ impl RenderOnce for HoverCard {
             self.tokens,
         );
         let id = self.id;
+        let debug_id = id.to_string();
         let content_id: ElementId = (id.clone(), "content").into();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
         let trigger_label = self.trigger_label;
@@ -823,6 +824,10 @@ impl RenderOnce for HoverCard {
 
         div()
             .id(id)
+            .debug_selector({
+                let debug_id = debug_id.clone();
+                move || format!("hover-card:{debug_id}:root")
+            })
             .relative()
             .flex()
             .flex_col()
@@ -830,6 +835,10 @@ impl RenderOnce for HoverCard {
             .child(
                 div()
                     .id(trigger_id)
+                    .debug_selector({
+                        let debug_id = debug_id.clone();
+                        move || format!("hover-card:{debug_id}:trigger")
+                    })
                     .min_h(gpui_px_from_ui(metrics.trigger_height()))
                     .px(gpui_px_from_ui(metrics.trigger_padding_x()))
                     .py(gpui_px_from_ui(metrics.trigger_padding_y()))
@@ -930,6 +939,7 @@ impl RenderOnce for HoverCard {
                                 runtime.clone(),
                                 content_focus.clone(),
                                 on_open_change.clone(),
+                                debug_id.clone(),
                             )),
                     )
                     .priority(overlay_adapter.deferred_priority()),
@@ -945,6 +955,7 @@ fn hover_card_content_element(
     runtime: Entity<HoverCardRuntime>,
     content_focus: FocusHandle,
     on_open_change: Option<HoverCardOpenChangeHandler>,
+    debug_id: String,
 ) -> impl IntoElement {
     let metrics = state.metrics();
     let colors = state.colors();
@@ -954,6 +965,7 @@ fn hover_card_content_element(
 
     div()
         .id(content_id)
+        .debug_selector(move || format!("hover-card:{debug_id}:content"))
         .min_w(gpui_px_from_ui(metrics.min_width()))
         .max_w(gpui_px_from_ui(metrics.max_width()))
         .max_h(gpui_px_from_ui(metrics.max_height()))

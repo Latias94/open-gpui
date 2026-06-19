@@ -39,6 +39,70 @@ pub const COMPACT_GALLERY_WIDTH: Pixels = px(720.0);
 pub const DESKTOP_GALLERY_WIDTH: Pixels = DEFAULT_GALLERY_WIDTH;
 const GALLERY_SAMPLE_MOUNT_OPEN: bool = false;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlayControlledSample {
+    HoverCard,
+    Popover,
+    Dialog,
+    AlertDialog,
+    Sheet,
+    Menu,
+    ContextMenu,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OverlayControlledOpenState {
+    hover_card: bool,
+    popover: bool,
+    dialog: bool,
+    alert_dialog: bool,
+    sheet: bool,
+    menu: bool,
+    context_menu: bool,
+}
+
+impl OverlayControlledOpenState {
+    const fn is_open(self, sample: OverlayControlledSample) -> bool {
+        match sample {
+            OverlayControlledSample::HoverCard => self.hover_card,
+            OverlayControlledSample::Popover => self.popover,
+            OverlayControlledSample::Dialog => self.dialog,
+            OverlayControlledSample::AlertDialog => self.alert_dialog,
+            OverlayControlledSample::Sheet => self.sheet,
+            OverlayControlledSample::Menu => self.menu,
+            OverlayControlledSample::ContextMenu => self.context_menu,
+        }
+    }
+
+    fn set_open(&mut self, sample: OverlayControlledSample, open: bool) -> bool {
+        let current = self.is_open(sample);
+        if current == open {
+            return false;
+        }
+
+        match sample {
+            OverlayControlledSample::HoverCard => self.hover_card = open,
+            OverlayControlledSample::Popover => self.popover = open,
+            OverlayControlledSample::Dialog => self.dialog = open,
+            OverlayControlledSample::AlertDialog => self.alert_dialog = open,
+            OverlayControlledSample::Sheet => self.sheet = open,
+            OverlayControlledSample::Menu => self.menu = open,
+            OverlayControlledSample::ContextMenu => self.context_menu = open,
+        }
+
+        true
+    }
+
+    fn reset(&mut self) -> bool {
+        if *self == Self::default() {
+            return false;
+        }
+
+        *self = Self::default();
+        true
+    }
+}
+
 /// Derived foundation state shown by the gallery shell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GalleryShellSnapshot {
@@ -88,13 +152,7 @@ pub struct GalleryShell {
     a11y_enabled: bool,
     overlay_open: bool,
     hovered_tooltip_sample: Option<&'static str>,
-    overlay_controlled_popover_open: bool,
-    overlay_controlled_dialog_open: bool,
-    overlay_controlled_alert_dialog_open: bool,
-    overlay_controlled_sheet_open: bool,
-    overlay_controlled_hover_card_open: bool,
-    overlay_controlled_menu_open: bool,
-    overlay_controlled_context_menu_open: bool,
+    overlay_controlled_open: OverlayControlledOpenState,
 }
 
 impl GalleryShell {
@@ -124,13 +182,7 @@ impl GalleryShell {
             a11y_enabled: false,
             overlay_open: false,
             hovered_tooltip_sample: None,
-            overlay_controlled_popover_open: false,
-            overlay_controlled_dialog_open: false,
-            overlay_controlled_alert_dialog_open: false,
-            overlay_controlled_sheet_open: false,
-            overlay_controlled_hover_card_open: false,
-            overlay_controlled_menu_open: false,
-            overlay_controlled_context_menu_open: false,
+            overlay_controlled_open: OverlayControlledOpenState::default(),
         }
     }
 }
@@ -160,13 +212,7 @@ impl GalleryShell {
         if self.selected_page != page {
             self.selected_page = page;
             self.hovered_tooltip_sample = None;
-            self.overlay_controlled_popover_open = false;
-            self.overlay_controlled_dialog_open = false;
-            self.overlay_controlled_alert_dialog_open = false;
-            self.overlay_controlled_sheet_open = false;
-            self.overlay_controlled_hover_card_open = false;
-            self.overlay_controlled_menu_open = false;
-            self.overlay_controlled_context_menu_open = false;
+            self.overlay_controlled_open.reset();
             cx.notify();
         }
     }
@@ -217,51 +263,19 @@ impl GalleryShell {
         }
     }
 
-    fn set_controlled_popover_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_popover_open != open {
-            self.overlay_controlled_popover_open = open;
+    fn set_overlay_controlled_open(
+        &mut self,
+        sample: OverlayControlledSample,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.overlay_controlled_open.set_open(sample, open) {
             cx.notify();
         }
     }
 
-    fn set_controlled_dialog_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_dialog_open != open {
-            self.overlay_controlled_dialog_open = open;
-            cx.notify();
-        }
-    }
-
-    fn set_controlled_alert_dialog_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_alert_dialog_open != open {
-            self.overlay_controlled_alert_dialog_open = open;
-            cx.notify();
-        }
-    }
-
-    fn set_controlled_sheet_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_sheet_open != open {
-            self.overlay_controlled_sheet_open = open;
-            cx.notify();
-        }
-    }
-
-    fn set_controlled_hover_card_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_hover_card_open != open {
-            self.overlay_controlled_hover_card_open = open;
-            cx.notify();
-        }
-    }
-
-    fn set_controlled_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_menu_open != open {
-            self.overlay_controlled_menu_open = open;
-            cx.notify();
-        }
-    }
-
-    fn set_controlled_context_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        if self.overlay_controlled_context_menu_open != open {
-            self.overlay_controlled_context_menu_open = open;
+    fn close_controlled_overlays(&mut self, cx: &mut Context<Self>) {
+        if self.overlay_controlled_open.reset() {
             cx.notify();
         }
     }
@@ -284,13 +298,7 @@ impl Render for GalleryShell {
                 if event.keystroke.key.as_str() == "escape" {
                     this.set_overlay_open(false, cx);
                     this.set_hovered_tooltip_sample(None, cx);
-                    this.set_controlled_popover_open(false, cx);
-                    this.set_controlled_dialog_open(false, cx);
-                    this.set_controlled_alert_dialog_open(false, cx);
-                    this.set_controlled_sheet_open(false, cx);
-                    this.set_controlled_hover_card_open(false, cx);
-                    this.set_controlled_menu_open(false, cx);
-                    this.set_controlled_context_menu_open(false, cx);
+                    this.close_controlled_overlays(cx);
                 }
             }))
             .child(self.render_navigation(snapshot, page, cx))
@@ -2236,11 +2244,14 @@ impl GalleryShell {
                                 false,
                                 cx,
                             ))
-                            .child(self.render_hover_card_sample_card(
-                                &hover_card_samples[2],
-                                self.overlay_controlled_hover_card_open,
-                                cx,
-                            )),
+                            .child(
+                                self.render_hover_card_sample_card(
+                                    &hover_card_samples[2],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::HoverCard),
+                                    cx,
+                                ),
+                            ),
                     ),
             )
             .child(
@@ -2321,11 +2332,14 @@ impl GalleryShell {
                             .grid_cols(4)
                             .gap_3()
                             .child(self.render_popover_sample_card(&popover_samples[0], false, cx))
-                            .child(self.render_popover_sample_card(
-                                &popover_samples[1],
-                                self.overlay_controlled_popover_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_popover_sample_card(
+                                    &popover_samples[1],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::Popover),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_popover_sample_card(&popover_samples[2], false, cx))
                             .child(self.render_popover_sample_card(&popover_samples[3], false, cx)),
                     ),
@@ -2346,11 +2360,14 @@ impl GalleryShell {
                             .grid()
                             .grid_cols(4)
                             .gap_3()
-                            .child(self.render_dialog_sample_card(
-                                &dialog_samples[0],
-                                self.overlay_controlled_dialog_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_dialog_sample_card(
+                                    &dialog_samples[0],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::Dialog),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_dialog_sample_card(&dialog_samples[1], false, cx))
                             .child(self.render_dialog_sample_card(&dialog_samples[2], false, cx))
                             .child(self.render_dialog_sample_card(&dialog_samples[3], false, cx)),
@@ -2372,11 +2389,14 @@ impl GalleryShell {
                             .grid()
                             .grid_cols(2)
                             .gap_3()
-                            .child(self.render_alert_dialog_sample_card(
-                                &alert_dialog_samples[0],
-                                self.overlay_controlled_alert_dialog_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_alert_dialog_sample_card(
+                                    &alert_dialog_samples[0],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::AlertDialog),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_alert_dialog_sample_card(
                                 &alert_dialog_samples[1],
                                 false,
@@ -2401,11 +2421,14 @@ impl GalleryShell {
                             .grid_cols(3)
                             .gap_3()
                             .child(self.render_sheet_sample_card(&sheet_samples[0], false, cx))
-                            .child(self.render_sheet_sample_card(
-                                &sheet_samples[1],
-                                self.overlay_controlled_sheet_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_sheet_sample_card(
+                                    &sheet_samples[1],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::Sheet),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_sheet_sample_card(&sheet_samples[2], false, cx)),
                     ),
             )
@@ -2426,11 +2449,14 @@ impl GalleryShell {
                             .grid_cols(4)
                             .gap_3()
                             .child(self.render_menu_sample_card(&menu_samples[0], false, cx))
-                            .child(self.render_menu_sample_card(
-                                &menu_samples[1],
-                                self.overlay_controlled_menu_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_menu_sample_card(
+                                    &menu_samples[1],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::Menu),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_menu_sample_card(&menu_samples[2], false, cx))
                             .child(self.render_menu_sample_card(&menu_samples[3], false, cx)),
                     ),
@@ -2456,11 +2482,14 @@ impl GalleryShell {
                                 false,
                                 cx,
                             ))
-                            .child(self.render_context_menu_sample_card(
-                                &context_menu_samples[1],
-                                self.overlay_controlled_context_menu_open,
-                                cx,
-                            ))
+                            .child(
+                                self.render_context_menu_sample_card(
+                                    &context_menu_samples[1],
+                                    self.overlay_controlled_open
+                                        .is_open(OverlayControlledSample::ContextMenu),
+                                    cx,
+                                ),
+                            )
                             .child(self.render_context_menu_sample_card(
                                 &context_menu_samples[2],
                                 false,
@@ -2597,7 +2626,13 @@ impl GalleryShell {
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
                     shell
-                        .update(cx, |this, cx| this.set_controlled_hover_card_open(open, cx))
+                        .update(cx, |this, cx| {
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::HoverCard,
+                                open,
+                                cx,
+                            )
+                        })
                         .ok();
                 }),
             open_gpui_ui_components::HoverCardOpenMode::Uncontrolled => hover_card,
@@ -2624,7 +2659,11 @@ impl GalleryShell {
                         .border_color(rgb(0xd6d8ce))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_hover_card_open(!controlled_open, cx);
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::HoverCard,
+                                !controlled_open,
+                                cx,
+                            );
                         }))
                         .child(if controlled_open {
                             "close hover card"
@@ -2678,7 +2717,13 @@ impl GalleryShell {
                 .open(state.open())
                 .on_open_change(move |open, _, cx| {
                     shell
-                        .update(cx, |this, cx| this.set_controlled_popover_open(open, cx))
+                        .update(cx, |this, cx| {
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Popover,
+                                open,
+                                cx,
+                            )
+                        })
                         .ok();
                 }),
             open_gpui_ui_components::PopoverOpenMode::Uncontrolled => popover,
@@ -2709,7 +2754,11 @@ impl GalleryShell {
                         .border_color(rgb(0xd6d8ce))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_popover_open(!controlled_open, cx);
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Popover,
+                                !controlled_open,
+                                cx,
+                            );
                         }))
                         .child(if controlled_open {
                             "close controlled"
@@ -2775,7 +2824,13 @@ impl GalleryShell {
                 )
                 .on_open_change(move |open, _, cx| {
                     shell
-                        .update(cx, |this, cx| this.set_controlled_dialog_open(open, cx))
+                        .update(cx, |this, cx| {
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Dialog,
+                                open,
+                                cx,
+                            )
+                        })
                         .ok();
                 }),
             open_gpui_ui_components::DialogOpenMode::Uncontrolled => dialog,
@@ -2806,7 +2861,11 @@ impl GalleryShell {
                         .border_color(rgb(0xd6d8ce))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_dialog_open(!controlled_open, cx);
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Dialog,
+                                !controlled_open,
+                                cx,
+                            );
                         }))
                         .child(if controlled_open {
                             "close dialog"
@@ -2866,7 +2925,11 @@ impl GalleryShell {
                 .on_open_change(move |open, _, cx| {
                     shell
                         .update(cx, |this, cx| {
-                            this.set_controlled_alert_dialog_open(open, cx)
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::AlertDialog,
+                                open,
+                                cx,
+                            )
                         })
                         .ok();
                 }),
@@ -2898,7 +2961,11 @@ impl GalleryShell {
                         .border_color(rgb(0xd6d8ce))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_controlled_alert_dialog_open(!controlled_open, cx);
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::AlertDialog,
+                                !controlled_open,
+                                cx,
+                            );
                         }))
                         .child(if controlled_open {
                             "close alert"
@@ -2965,7 +3032,13 @@ impl GalleryShell {
             open_gpui_ui_components::SheetOpenMode::Controlled => {
                 sheet.open(state.open()).on_open_change(move |open, _, cx| {
                     shell
-                        .update(cx, |this, cx| this.set_controlled_sheet_open(open, cx))
+                        .update(cx, |this, cx| {
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Sheet,
+                                open,
+                                cx,
+                            )
+                        })
                         .ok();
                 })
             }
@@ -3007,7 +3080,11 @@ impl GalleryShell {
                             .border_color(rgb(0xd6d8ce))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_controlled_sheet_open(!controlled_open, cx);
+                                this.set_overlay_controlled_open(
+                                    OverlayControlledSample::Sheet,
+                                    !controlled_open,
+                                    cx,
+                                );
                             }))
                             .child(if controlled_open {
                                 "close sheet"
@@ -3058,7 +3135,13 @@ impl GalleryShell {
             open_gpui_ui_components::MenuOpenMode::Controlled => {
                 menu.open(state.open()).on_open_change(move |open, _, cx| {
                     shell
-                        .update(cx, |this, cx| this.set_controlled_menu_open(open, cx))
+                        .update(cx, |this, cx| {
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::Menu,
+                                open,
+                                cx,
+                            )
+                        })
                         .ok();
                 })
             }
@@ -3100,7 +3183,11 @@ impl GalleryShell {
                             .border_color(rgb(0xd6d8ce))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_controlled_menu_open(!controlled_open, cx);
+                                this.set_overlay_controlled_open(
+                                    OverlayControlledSample::Menu,
+                                    !controlled_open,
+                                    cx,
+                                );
                             }))
                             .child(if controlled_open {
                                 "close menu"
@@ -3161,7 +3248,11 @@ impl GalleryShell {
                 .on_open_change(move |open, _, cx| {
                     shell
                         .update(cx, |this, cx| {
-                            this.set_controlled_context_menu_open(open, cx)
+                            this.set_overlay_controlled_open(
+                                OverlayControlledSample::ContextMenu,
+                                open,
+                                cx,
+                            )
                         })
                         .ok();
                 }),
@@ -3203,7 +3294,11 @@ impl GalleryShell {
                             .border_color(rgb(0xd6d8ce))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_controlled_context_menu_open(!controlled_open, cx);
+                                this.set_overlay_controlled_open(
+                                    OverlayControlledSample::ContextMenu,
+                                    !controlled_open,
+                                    cx,
+                                );
                             }))
                             .child(if controlled_open {
                                 "close context menu"
@@ -5366,4 +5461,42 @@ fn resolved_menu_items(items: &[open_gpui_ui_components::MenuItemState]) -> Vec<
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_controlled_open_state_tracks_each_sample_and_resets_cleanly() {
+        let mut state = OverlayControlledOpenState::default();
+        let samples = [
+            OverlayControlledSample::HoverCard,
+            OverlayControlledSample::Popover,
+            OverlayControlledSample::Dialog,
+            OverlayControlledSample::AlertDialog,
+            OverlayControlledSample::Sheet,
+            OverlayControlledSample::Menu,
+            OverlayControlledSample::ContextMenu,
+        ];
+
+        for sample in samples {
+            assert!(!state.is_open(sample));
+        }
+
+        assert!(state.set_open(OverlayControlledSample::HoverCard, true));
+        assert!(state.is_open(OverlayControlledSample::HoverCard));
+        assert!(!state.is_open(OverlayControlledSample::Popover));
+        assert!(!state.set_open(OverlayControlledSample::HoverCard, true));
+
+        assert!(state.set_open(OverlayControlledSample::Menu, true));
+        assert!(state.is_open(OverlayControlledSample::HoverCard));
+        assert!(state.is_open(OverlayControlledSample::Menu));
+
+        assert!(state.reset());
+        for sample in samples {
+            assert!(!state.is_open(sample));
+        }
+        assert!(!state.reset());
+    }
 }

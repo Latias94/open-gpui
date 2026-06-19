@@ -1767,6 +1767,45 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_opens_hover_card_from_real_trigger_and_dismisses(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(
+        cx,
+        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
+    );
+    click(
+        cx,
+        "hover-card:overlay-hover-card-demo:manual-controlled:trigger",
+    );
+    settle(cx);
+    assert!(
+        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
+            .is_some(),
+        "expected controlled HoverCard content to open from its real trigger"
+    );
+
+    let hover_card_content = bounds(
+        cx,
+        "hover-card:overlay-hover-card-demo:manual-controlled:content",
+    );
+    let outside_target = point(
+        hover_card_content.right() + px(24.0),
+        hover_card_content.bottom() + px(24.0),
+    );
+    click_point(cx, outside_target);
+    settle(cx);
+
+    assert!(
+        cx.debug_bounds("hover-card:overlay-hover-card-demo:manual-controlled:content")
+            .is_none(),
+        "expected outside press to dismiss the controlled HoverCard"
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
     cx: &mut open_gpui::TestAppContext,
 ) {

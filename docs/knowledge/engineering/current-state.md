@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Consolidated the GalleryShell overlay controlled-open booleans into a single `OverlayControlledOpenState` with `OverlayControlledSample` selectors, and added hover card debug selectors plus a real hover-card smoke test so the controlled overlay families now share the same automation shape.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed with 47/47 tests.
+- Next action: commit the shell/state/refinement pass now that the subagent review gap is closed.
+
 - Done: Re-read `repo-ref/fret`'s diag layering pattern and compared it with the gallery overlay `Menu` / `ContextMenu` line (`render_menu_sample_card` / `render_context_menu_sample_card`). The diag example is a useful thin-entry-point / deep-implementation reference, but this overlay code is still gallery-specific reconstruction glue; extracting a page-local helper/module would mostly move code, not increase leverage.
 - Next action: move to the next evidence-backed seam instead of deepening the overlay menu/context-menu line for layering symmetry.
 
