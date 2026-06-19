@@ -4369,7 +4369,7 @@ impl DisplayPx for UiPx {
     }
 }
 
-fn format_px(value: impl DisplayPx) -> String {
+pub(crate) fn format_px(value: impl DisplayPx) -> String {
     format!("{:.0}px", value.display_px())
 }
 

@@ -23,10 +23,6 @@ use open_gpui_ui_core::{
 mod render;
 
 pub(crate) use render::render_components_page;
-pub(crate) use render::{
-    component_scroll_area_state_row, component_sidebar_state_row, component_splitter_state_row,
-    component_tabs_state_row, gallery_card_shell,
-};
 
 /// Page title.
 pub const TITLE: &str = "Components";
