@@ -1310,8 +1310,8 @@ fn components_page_samples_expose_component_metadata() {
 
 #[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
-    let shell_source = include_str!("../src/shell.rs");
     let components_source = include_str!("../src/pages/components.rs");
+    let render_source = include_str!("../src/pages/components/render.rs");
     let splitter_struct_start = components_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
@@ -1320,7 +1320,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         .map(|offset| splitter_struct_start + offset)
         .expect("expected SplitterSample selector impl to exist");
     let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
-    let splitter_section = shell_source
+    let splitter_section = render_source
         .split("splitter_samples.into_iter().map(|sample| {")
         .nth(1)
         .and_then(|section| {
@@ -1328,7 +1328,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
                 .split("scroll_area_samples.into_iter().map(|sample| {")
                 .next()
         })
-        .expect("expected Splitter section in shell source");
+        .expect("expected Splitter section in components render source");
 
     assert!(!splitter_struct.contains("pub orientation: Orientation,"));
     assert!(!splitter_struct.contains("pub size: Size,"));
