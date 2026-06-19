@@ -448,13 +448,6 @@ impl RadioGroupState {
         }
     }
 
-    /// Returns the current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index()
-            .and_then(|index| self.items.get(index))
-            .map(RadioItemState::value)
-    }
-
     /// Returns whether there are no radio items.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
@@ -955,7 +948,6 @@ mod tests {
         assert!(state.required());
         assert_eq!(state.selected_value(), Some("personal"));
         assert_eq!(state.focused_value(), Some("personal"));
-        assert_eq!(state.tab_stop_value(), Some("personal"));
         assert_eq!(state.tab_stop_index(), state.focused_index());
         assert!(state.items()[1].disabled());
         assert_eq!(state.items()[0].role(), Role::RadioButton);

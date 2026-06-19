@@ -11,6 +11,10 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Removed the last `tab_stop_value()` accessors from `RadioGroupState`, `SidebarState`, `ToolbarState`, and `TabsState`, and dropped the gallery tabs row's redundant tab-stop display. The public surface now keeps tab-stop ownership on the focused/selected contract instead of exposing a second value accessor.
+- Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the final tab-stop cleanup.
+- Next action: keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
 - Done: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, and switched the render paths to derive tab-stop placement from focused/active state directly. The menu, listbox, command, and context-menu flows now keep tab-stop ownership on the resolved state contract instead of duplicating it per item.
 - Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
 - Next action: keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.

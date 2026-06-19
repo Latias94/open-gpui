@@ -3953,7 +3953,6 @@ fn component_field_state_row(field: &FieldState, input: &TextInputState) -> impl
 fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let focused = state.focused_value().unwrap_or("none");
-    let tab_stop = state.tab_stop_value().unwrap_or("none");
     let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
 
     div()
@@ -3971,10 +3970,7 @@ fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
             state.activation_mode().as_str(),
             state.size().as_str()
         ))
-        .child(format!(
-            "selected {} / focus {} / tab stop {}",
-            selected, focused, tab_stop
-        ))
+        .child(format!("selected {} / focus {}", selected, focused))
         .child(format!(
             "{} items / {} disabled",
             state.items().len(),
@@ -4776,7 +4772,6 @@ fn resolved_command_group(
 fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let active = state.active_value().unwrap_or("none");
-    let tab_stop = state.tab_stop_value().unwrap_or("none");
     let disabled_count = state
         .options()
         .iter()
@@ -4790,10 +4785,7 @@ fn component_listbox_state_row(state: &ListboxState) -> impl IntoElement {
         .text_xs()
         .text_color(rgb(0x5a6472))
         .child(format!("{:?} / {}", state.role(), state.size().as_str()))
-        .child(format!(
-            "selected {} / active {} / tab stop {}",
-            selected, active, tab_stop
-        ))
+        .child(format!("selected {} / active {}", selected, active))
         .child(format!(
             "{} groups / {} options / {} disabled",
             state.groups().len(),
@@ -4904,7 +4896,6 @@ fn component_command_state_row(state: &CommandState) -> impl IntoElement {
 fn component_radio_state_row(state: &open_gpui_ui_components::RadioGroupState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let focused = state.focused_value().unwrap_or("none");
-    let tab_stop = state.tab_stop_value().unwrap_or("none");
     let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
 
     div()
@@ -4930,10 +4921,7 @@ fn component_radio_state_row(state: &open_gpui_ui_components::RadioGroupState) -
                 "disabled"
             }
         ))
-        .child(format!(
-            "selected {} / focus {} / tab stop {}",
-            selected, focused, tab_stop
-        ))
+        .child(format!("selected {} / focus {}", selected, focused))
         .child(format!(
             "{} items / {} disabled",
             state.items().len(),
@@ -4968,7 +4956,6 @@ fn component_toggle_state_row(state: &ToggleState) -> impl IntoElement {
 fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
     let selected = state.selected_value().unwrap_or("none");
     let focused = state.focused_value().unwrap_or("none");
-    let tab_stop = state.tab_stop_value().unwrap_or("none");
     let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
 
     div()
@@ -4984,10 +4971,7 @@ fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
             state.variant().as_str(),
             state.collapse_mode().as_str()
         ))
-        .child(format!(
-            "selected {} / focus {} / tab stop {}",
-            selected, focused, tab_stop
-        ))
+        .child(format!("selected {} / focus {}", selected, focused))
         .child(format!(
             "{} sections / {} items / {} disabled / width {}",
             state.sections().len(),
@@ -4999,7 +4983,6 @@ fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
 
 fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
     let focused = state.focused_value().unwrap_or("none");
-    let tab_stop = state.tab_stop_value().unwrap_or("none");
     let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
     let kinds = state
         .items()
@@ -5023,7 +5006,7 @@ fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
             },
             state.size().as_str()
         ))
-        .child(format!("focus {} / tab stop {}", focused, tab_stop))
+        .child(format!("focus {}", focused))
         .child(format!(
             "{} items / {} disabled / {}",
             state.items().len(),

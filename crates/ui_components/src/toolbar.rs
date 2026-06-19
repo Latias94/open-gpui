@@ -436,13 +436,6 @@ impl ToolbarState {
         self.focused_index
     }
 
-    /// Returns the current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index()
-            .and_then(|index| self.items.get(index))
-            .map(ToolbarItemState::value)
-    }
-
     /// Resolves a focus target for an APG-style toolbar navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<&ToolbarItemState> {
         let current = self.focused_index?;

@@ -590,11 +590,6 @@ impl MenuState {
             .map(MenuItemState::value)
     }
 
-    /// Returns current tab-stop item value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.focused_value()
-    }
-
     /// Resolves a focus target for an APG-style menu navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<&MenuItemState> {
         let current = self.focused_index?;

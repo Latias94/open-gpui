@@ -474,13 +474,6 @@ impl TabsState {
         }
     }
 
-    /// Returns the current tab stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index()
-            .and_then(|index| self.items.get(index))
-            .map(|item| item.value())
-    }
-
     /// Returns the current tab stop item.
     pub fn tab_stop_item(&self) -> Option<&TabsItemState> {
         self.tab_stop_index()
@@ -1050,7 +1043,6 @@ mod tests {
         assert_eq!(state.activation_mode(), TabsActivationMode::Manual);
         assert_eq!(state.selected_value(), Some("details"));
         assert_eq!(state.focused_value(), Some("details"));
-        assert_eq!(state.tab_stop_value(), Some("details"));
         assert!(state.items()[1].selected());
         assert!(state.items()[1].focused());
         assert_eq!(state.tab_stop_index(), Some(1));

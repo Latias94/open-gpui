@@ -716,7 +716,6 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
     );
     assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Dismiss);
     assert_eq!(state.focused_value(), Some("save"));
-    assert_eq!(state.tab_stop_value(), Some("save"));
     assert_eq!(state.items().len(), 4);
     assert_eq!(state.items()[0].role(), Some(Role::MenuItem));
     assert_eq!(state.items()[2].kind(), MenuItemKind::Separator);
@@ -741,7 +740,6 @@ fn menu_state_defaults_focus_to_first_focusable_item_when_open() {
 
     assert!(state.open());
     assert_eq!(state.focused_value(), Some("save"));
-    assert_eq!(state.tab_stop_value(), Some("save"));
     assert_eq!(state.items()[0].kind(), MenuItemKind::Separator);
     assert!(state.items()[2].disabled());
 }
@@ -866,7 +864,6 @@ fn context_menu_state_defaults_focus_to_first_focusable_item_when_open() {
         .state();
 
     assert_eq!(state.menu().focused_value(), Some("duplicate"));
-    assert_eq!(state.menu().tab_stop_value(), Some("duplicate"));
     assert!(state.menu().items()[0].kind() == MenuItemKind::Separator);
 }
 
@@ -961,7 +958,6 @@ fn tabs_state_resolution_tracks_selected_focus_and_tab_stop() {
     assert_eq!(state.size(), Size::Small);
     assert_eq!(state.selected_value(), Some("security"));
     assert_eq!(state.focused_value(), Some("security"));
-    assert_eq!(state.tab_stop_value(), Some("security"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].selected());
     assert!(state.items()[1].focused());
@@ -986,7 +982,6 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.selected_value(), Some("overview"));
     assert_eq!(state.focused_value(), Some("overview"));
-    assert_eq!(state.tab_stop_value(), Some("overview"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[2].disabled());
@@ -1958,7 +1953,6 @@ fn radio_group_state_exposes_selection_required_and_disabled_items() {
     assert!(state.required());
     assert_eq!(state.selected_value(), Some("team"));
     assert_eq!(state.focused_value(), Some("team"));
-    assert_eq!(state.tab_stop_value(), Some("team"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[1].selected());
@@ -1989,7 +1983,6 @@ fn radio_group_reuses_roving_focus_helpers_and_skips_disabled_items() {
     assert_eq!(state.size(), Size::Small);
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("enterprise"));
-    assert_eq!(state.tab_stop_value(), Some("enterprise"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].disabled());
     assert!(!state.items()[1].focused());
@@ -2013,7 +2006,6 @@ fn radio_group_builder_state_falls_back_to_first_enabled_item() {
     assert!(state.required());
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("starter"));
-    assert_eq!(state.tab_stop_value(), Some("starter"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
@@ -2826,7 +2818,6 @@ fn toolbar_state_exposes_roving_focus_and_toggle_metadata() {
     assert_eq!(state.label(), "Editor toolbar");
     assert_eq!(state.items().len(), 5);
     assert_eq!(state.focused_value(), Some("bold"));
-    assert_eq!(state.tab_stop_value(), Some("bold"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items()[0].role(), Some(Role::Button));
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
@@ -2862,7 +2853,6 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
     assert_eq!(state.orientation(), Orientation::Vertical);
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.focused_value(), Some("copy"));
-    assert_eq!(state.tab_stop_value(), Some("copy"));
     assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[0].disabled());
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
@@ -2908,7 +2898,6 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
     assert_eq!(state.options().len(), 5);
     assert_eq!(state.selected_value(), Some("bravo"));
     assert_eq!(state.active_value(), Some("bravo"));
-    assert_eq!(state.tab_stop_value(), Some("bravo"));
     assert_eq!(state.options()[1].kind(), ListboxOptionKind::Separator);
     assert_eq!(state.options()[1].role(), None);
     assert!(!state.options()[1].focusable());
@@ -2991,7 +2980,6 @@ fn listbox_builder_state_models_empty_disabled_and_tokens() {
 
     assert!(empty.empty());
     assert_eq!(empty.empty_label(), "Nothing available");
-    assert_eq!(empty.tab_stop_value(), None);
     assert_eq!(empty.colors().surface().token(), tokens.surface);
     assert!(disabled.disabled());
     assert_eq!(disabled.selected_value(), None);

@@ -897,13 +897,6 @@ impl SidebarState {
         self.focused_index
     }
 
-    /// Returns tab-stop item value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index()
-            .and_then(|index| self.items.get(index))
-            .map(SidebarItemState::value)
-    }
-
     /// Returns whether menu content should be scrollable.
     pub const fn scrollable(&self) -> bool {
         !self.offcanvas_collapsed()

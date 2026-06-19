@@ -678,11 +678,6 @@ impl ListboxState {
         self.selected_index
     }
 
-    /// Returns current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.active_value()
-    }
-
     /// Returns whether the listbox has no selectable option rows.
     pub fn empty(&self) -> bool {
         self.options

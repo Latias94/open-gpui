@@ -840,11 +840,6 @@ impl CommandState {
         self.active_value.as_deref()
     }
 
-    /// Returns the current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.active_value()
-    }
-
     /// Returns whether the dialog wrapper is open.
     pub const fn open(&self) -> bool {
         self.open
