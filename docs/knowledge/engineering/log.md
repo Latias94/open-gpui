@@ -1,6 +1,14 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Checked `Listbox` for the same open-time seed pattern and found no redundant runtime write to remove. `Combobox` and `Command` keep their runtime `active_value` because they own real navigation/selection interaction state, so the runtime-seed cleanup stops here.
+* **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads select_state_records_popup_listbox_overlay_and_scroll_contract select_state_models_disabled_empty_and_policy_overrides`, and `cargo check -p open-gpui-ui-components` passed.
+* **Decision**: Move on from runtime-seed cleanup unless a new evidence-backed duplication seam appears.
+
+* **Update**: Removed the open-time `active_value` seed write from `Select` render. `SelectState::resolve` and `ListboxState::resolve` already derive the default active item, so runtime now only owns post-open interaction state.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo nextest run -p open-gpui-ui-components --test components menu_state_records_items_roving_focus_and_overlay_policy menu_state_defaults_focus_to_first_focusable_item_when_open context_menu_state_reuses_menu_model_and_point_anchor_placement context_menu_state_defaults_focus_to_first_focusable_item_when_open select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`, and `cargo check -p open-gpui-ui-components` passed.
+* **Decision**: Keep the runtime-seed cleanup evidence-backed. If `Listbox` does not still need an open-time seed write after the current scan, stop deleting derived state here.
+
 * **Update**: Removed the redundant `first_focusable_value` runtime write from both `Menu` and `ContextMenu` open paths. The shared default-first-focus behavior now comes from `MenuState::resolve`, and closing clears stale runtime focus so reopen does not inherit old selection state.
 * **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo check -p open-gpui-ui-components` passed.
 * **Decision**: Keep the menu/context-menu seam narrow. Do not force `Menu` and `ContextMenu` to share more runtime behavior than the evidence supports.

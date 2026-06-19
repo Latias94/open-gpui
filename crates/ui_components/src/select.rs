@@ -797,7 +797,6 @@ impl RenderOnce for Select {
                     .on_key_down({
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
-                        let initial_active = state.active_value().map(str::to_owned);
                         move |event: &KeyDownEvent, window, cx| {
                             let key = event.keystroke.key.as_str();
                             if matches!(key, "enter" | "space" | "down" | "up") {
@@ -805,9 +804,6 @@ impl RenderOnce for Select {
                                 window.prevent_default();
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = true;
-                                    if runtime.active_value.is_none() {
-                                        runtime.active_value = initial_active.clone();
-                                    }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
                                     on_open_change(true, window, cx);
@@ -823,7 +819,6 @@ impl RenderOnce for Select {
                     .when(!disabled, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = self.on_open_change.clone();
-                        let initial_active = state.active_value().map(str::to_owned);
                         this.cursor_pointer()
                             .hover(move |style| {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
@@ -833,9 +828,6 @@ impl RenderOnce for Select {
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
-                                    if next_open && runtime.active_value.is_none() {
-                                        runtime.active_value = initial_active.clone();
-                                    }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
                                     on_open_change(next_open, window, cx);

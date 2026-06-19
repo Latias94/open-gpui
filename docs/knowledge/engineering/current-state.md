@@ -11,6 +11,14 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Checked `Listbox` for the same open-time seed pattern and found no redundant runtime write to remove. `Combobox` and `Command` keep their runtime `active_value` because they own real navigation/selection interaction state, so the runtime-seed cleanup stops here.
+- Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads select_state_records_popup_listbox_overlay_and_scroll_contract select_state_models_disabled_empty_and_policy_overrides`, and `cargo check -p open-gpui-ui-components` passed.
+- Next action: move on from runtime-seed cleanup unless a new evidence-backed duplication seam appears.
+
+- Done: Removed the open-time `active_value` seed write from `Select` render. `SelectState::resolve` and `ListboxState::resolve` already supply the default active item, and the runtime now keeps only post-open interaction state.
+- Last verified: `cargo fmt -p open-gpui-ui-components --all`, `cargo nextest run -p open-gpui-ui-components --test components menu_state_records_items_roving_focus_and_overlay_policy menu_state_defaults_focus_to_first_focusable_item_when_open context_menu_state_reuses_menu_model_and_point_anchor_placement context_menu_state_defaults_focus_to_first_focusable_item_when_open select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`, and `cargo check -p open-gpui-ui-components` passed.
+- Next action: check whether `Listbox` still carries any open-time runtime seed that is only mirroring resolved state; if not, stop the runtime-seed cleanup here.
+
 - Done: Tightened the overlay menu seam. `Menu` and `ContextMenu` no longer write `first_focusable_value` into runtime on open; they now rely on `MenuState::resolve` for default first-focus selection, and closing clears stale runtime focus so reopen does not inherit it.
 - Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo check -p open-gpui-ui-components` passed.
 - Next action: keep the architecture pass evidence-backed; the next seam should come from a real duplicate rule, not from forcing `Menu` / `ContextMenu` symmetry.
