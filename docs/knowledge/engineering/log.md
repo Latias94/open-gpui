@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Rechecked the Components gallery render split against the current shell/page-local code and removed the remaining shell-level Components wrapper so the page routes directly to `pages::components::render_components_page(...)`.
+* **Verification**: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the wrapper removal.
+* **Decision**: Stop the gallery seam hunt unless a new evidence-backed mismatch appears; the remaining shell warnings are unused imports, not behavior debt.
+
 * **Update**: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, then switched menu/listbox/context-menu/command render paths to derive tab-stop placement from focused or active state directly. The resolved state contract now owns the tab-stop decision instead of caching one more boolean per item.
 * **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
 * **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
