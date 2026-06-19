@@ -7,13 +7,14 @@ use open_gpui::{
     WindowBounds, WindowOptions, anchored, deferred, div, px, rgb, size,
 };
 use open_gpui_ui_components::{
-    AlertDialog, Avatar, AvatarState, BadgeState, Checkbox, CheckboxState, ColorIntent, Combobox,
-    ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxState, Command, CommandGroup,
-    CommandItem, CommandOpenMode, CommandState, ContextMenu, Dialog, Field, FieldState, FocusRing,
-    HoverCard, Kbd, KbdState, Label, LabelState, Listbox, ListboxGroup, ListboxOption,
-    ListboxState, Menu, MenuItem, OverlayResolvedState, Popover, Progress, ProgressState,
-    ScrollArea, ScrollAreaState, Select, SelectOpenMode, SelectState, Separator, SeparatorState,
-    Sheet, Skeleton, SkeletonState, TabsState, TextInput, TextInputState, ToolbarState, Tooltip,
+    AlertDialog, Avatar, AvatarState, BadgeState, ButtonState, Checkbox, CheckboxState,
+    ColorIntent, Combobox, ComboboxGroup, ComboboxOpenMode, ComboboxOption, ComboboxState, Command,
+    CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu, Dialog, Field,
+    FieldState, FocusRing, HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox,
+    ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover,
+    Progress, ProgressState, ScrollArea, ScrollAreaState, Select, SelectOpenMode, SelectState,
+    Separator, SeparatorState, Sheet, SidebarState, Skeleton, SkeletonState, SplitterState,
+    SwitchState, TabsState, TextInput, TextInputState, ToggleState, ToolbarState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -482,7 +483,9 @@ impl GalleryShell {
             GalleryPage::Overlay => self
                 .render_overlay_page(snapshot, window, cx)
                 .into_any_element(),
-            GalleryPage::Components => self.render_components_page(snapshot).into_any_element(),
+            GalleryPage::Components => {
+                pages::components::render_components_page(self, snapshot).into_any_element()
+            }
         }
     }
 
@@ -604,9 +607,6 @@ impl GalleryShell {
             .child(self.render_signal_list(snapshot.selected_page))
     }
 
-    fn render_components_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
-        pages::components::render_components_page(self, snapshot)
-    }
     fn render_sizing_page(&self, snapshot: GalleryShellSnapshot) -> impl IntoElement {
         div()
             .id("gallery-sizing-page")

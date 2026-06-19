@@ -1190,6 +1190,10 @@ status: "active"
 - Done: Updated `docs/ui/component-contract.md` to include Checkbox indeterminate state and Label
   association metadata in the resolved-state contract.
 - Blocked: None.
+
+- Done: Split the Components gallery render logic out of `examples/ui-foundation-gallery/src/shell.rs` into `examples/ui-foundation-gallery/src/pages/components/render.rs`, removed the remaining shell-level Components wrapper, and kept the page-local composition in the Components module tree.
+- Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split.
+- Next action: stop the gallery seam hunt unless a new evidence-backed mismatch appears; the remaining shell warnings are unused imports, not behavior debt.
 - Next action: Commit the Checkbox/Label slice, then start U4 on roving focus and Tabs.
 
 # Citations

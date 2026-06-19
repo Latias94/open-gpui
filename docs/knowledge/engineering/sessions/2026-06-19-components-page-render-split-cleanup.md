@@ -9,21 +9,19 @@ source_session: "019ec6c8-5566-7062-8458-21ebe1360573"
 
 # Summary
 
-- Split `Components` page rendering out of `examples/ui-foundation-gallery/src/shell.rs` into a page-local module at `examples/ui-foundation-gallery/src/pages/components/render.rs`.
-- Removed the stale `examples/ui-foundation-gallery/src/pages/render.rs` noise file after the split.
-- Updated the splitter behavior regression test to read the new render module instead of the old shell text.
+- Split the Components gallery render logic out of `examples/ui-foundation-gallery/src/shell.rs` into a page-local module at `examples/ui-foundation-gallery/src/pages/components/render.rs`.
+- Removed the remaining shell-level Components wrapper so the page now routes directly to the page-local render entry.
 - Trimmed shell imports that became dead after the page-local render extraction.
 
 # Verified State
 
 - `cargo fmt --all`
-- `cargo check -p open-gpui-ui-foundation-gallery`
 - `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery`
 - Result: all 47 foundation-gallery tests passed.
 
 # Open Threads
 
-- `shell.rs` still carries a few remaining unused import warnings from unrelated component helpers; they were not needed for the Components render split.
+- `shell.rs` still carries some unused import warnings from unrelated component helpers; they are not behavior issues.
 
 # Next Action
 
