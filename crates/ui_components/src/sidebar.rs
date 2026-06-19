@@ -479,7 +479,6 @@ pub struct SidebarSectionState {
     label: String,
     item_start: usize,
     item_count: usize,
-    visible: bool,
 }
 
 impl SidebarSectionState {
@@ -508,11 +507,6 @@ impl SidebarSectionState {
         self.item_count
     }
 
-    /// Returns whether this section is visible.
-    pub const fn visible(&self) -> bool {
-        self.visible
-    }
-
     /// Returns the accessibility role for the section.
     pub const fn role(&self) -> Role {
         Role::Section
@@ -533,9 +527,6 @@ pub struct SidebarItemState {
     disabled: bool,
     selected: bool,
     focused: bool,
-    tab_stop: bool,
-    visible: bool,
-    text_visible: bool,
     position_in_set: Option<usize>,
     size_of_set: usize,
 }
@@ -596,24 +587,9 @@ impl SidebarItemState {
         self.focused
     }
 
-    /// Returns whether the item should be the tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
-    }
-
-    /// Returns whether the item should be rendered by the adapter.
-    pub const fn visible(&self) -> bool {
-        self.visible
-    }
-
-    /// Returns whether visible text should be rendered by the adapter.
-    pub const fn text_visible(&self) -> bool {
-        self.text_visible
-    }
-
     /// Returns whether the item participates in roving focus.
     pub const fn focusable(&self) -> bool {
-        self.visible && !self.disabled
+        !self.disabled && self.position_in_set.is_some()
     }
 
     /// Returns whether activation handlers should run for this item.
@@ -706,8 +682,6 @@ pub struct SidebarState {
     items: Vec<SidebarItemState>,
     selected_index: Option<usize>,
     focused_index: Option<usize>,
-    tab_stop_index: Option<usize>,
-    scrollable: bool,
     metrics: SidebarMetrics,
     colors: SidebarColors,
     focus_ring: FocusRing,
@@ -729,10 +703,7 @@ impl SidebarState {
         tokens: ThemeTokens,
     ) -> Self {
         let collapsed = collapsed && collapse_mode != SidebarCollapseMode::None;
-        let icon_collapsed = collapsed && collapse_mode == SidebarCollapseMode::Icon;
         let offcanvas_collapsed = collapsed && collapse_mode == SidebarCollapseMode::Offcanvas;
-        let visible = !offcanvas_collapsed;
-        let text_visible = !icon_collapsed;
         let section_descriptors: Vec<SidebarSectionDescriptor> = sections.into_iter().collect();
         let mut section_states = Vec::with_capacity(section_descriptors.len());
         let mut item_states = Vec::new();
@@ -746,7 +717,6 @@ impl SidebarState {
                 label: section.label,
                 item_start,
                 item_count,
-                visible,
             });
 
             for (item_index, item) in section.items.into_iter().enumerate() {
@@ -763,9 +733,6 @@ impl SidebarState {
                     disabled: disabled || item.disabled,
                     selected: false,
                     focused: false,
-                    tab_stop: false,
-                    visible,
-                    text_visible,
                     position_in_set: None,
                     size_of_set: 0,
                 });
@@ -774,7 +741,7 @@ impl SidebarState {
 
         let disabled_map: Vec<bool> = item_states
             .iter()
-            .map(|item| !visible || item.disabled)
+            .map(|item| offcanvas_collapsed || item.disabled)
             .collect();
         let values: Vec<String> = item_states.iter().map(|item| item.value.clone()).collect();
         let selected_index = selected_value.and_then(|selected| {
@@ -786,7 +753,7 @@ impl SidebarState {
         let selected_seed = selected_index
             .and_then(|index| values.get(index))
             .map(String::as_str);
-        let focused_index = if visible && !disabled {
+        let focused_index = if !offcanvas_collapsed && !disabled {
             crate::roving_focus::selection_index_from_str_keys(
                 &values,
                 &disabled_map,
@@ -796,16 +763,14 @@ impl SidebarState {
         } else {
             None
         };
-        let tab_stop_index = focused_index;
         let focusable_set_size = disabled_map.iter().filter(|disabled| !**disabled).count();
         let mut focusable_position = 0usize;
 
         for item in &mut item_states {
             item.selected = Some(item.index) == selected_index;
             item.focused = Some(item.index) == focused_index;
-            item.tab_stop = Some(item.index) == tab_stop_index;
 
-            if item.focusable() {
+            if !disabled_map[item.index] {
                 focusable_position += 1;
                 item.position_in_set = Some(focusable_position);
                 item.size_of_set = focusable_set_size;
@@ -827,8 +792,6 @@ impl SidebarState {
             items: item_states,
             selected_index,
             focused_index,
-            tab_stop_index,
-            scrollable: visible,
             metrics,
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -931,19 +894,19 @@ impl SidebarState {
 
     /// Returns tab-stop item index.
     pub const fn tab_stop_index(&self) -> Option<usize> {
-        self.tab_stop_index
+        self.focused_index
     }
 
     /// Returns tab-stop item value.
     pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index
+        self.tab_stop_index()
             .and_then(|index| self.items.get(index))
             .map(SidebarItemState::value)
     }
 
     /// Returns whether menu content should be scrollable.
     pub const fn scrollable(&self) -> bool {
-        self.scrollable
+        !self.offcanvas_collapsed()
     }
 
     /// Returns resolved metrics.
@@ -1367,8 +1330,7 @@ impl RenderOnce for Sidebar {
                             let key_item_value = item_value.clone();
                             let item_disabled = item.disabled();
                             let item_selected = item.selected();
-                            let item_tab_stop = item.tab_stop();
-                            let item_text_visible = item.text_visible();
+                            let item_tab_stop = item.focused();
                             let item_icon = item
                                 .icon_label()
                                 .map(SharedString::from)
@@ -1400,10 +1362,10 @@ impl RenderOnce for Sidebar {
                                     this.track_focus(&focus_handle)
                                 })
                                 .min_h(gpui_px_from_ui(metrics.item_height()))
-                                .px(gpui_px_from_ui(if item_text_visible {
-                                    metrics.item_padding_x()
-                                } else {
+                                .px(gpui_px_from_ui(if icon_collapsed {
                                     ui_px(0.0)
+                                } else {
+                                    metrics.item_padding_x()
                                 }))
                                 .py(gpui_px_from_ui(metrics.item_padding_y()))
                                 .flex()
@@ -1520,7 +1482,7 @@ impl RenderOnce for Sidebar {
                                         .justify_center()
                                         .child(item_icon),
                                 )
-                                .when(item_text_visible, |this| {
+                                .when(!icon_collapsed, |this| {
                                     this.child(
                                         div()
                                             .flex_1()

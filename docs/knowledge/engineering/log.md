@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Removed the last sidebar-local visibility storage (`SidebarSectionState.visible` and `SidebarItemState.visible`) and removed item-level `tab_stop` storage from `ToolbarItemState`, `TabsItemState`, and `RadioItemState`. The sidebar, toolbar, tabs, and radio render paths now derive tab-stop/visibility behavior from the higher-level resolved indices and collapse mode instead of carrying duplicate per-item booleans.
+* **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the deeper derived-state cleanup.
+* **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
 * **Update**: Added a browser-level smoke for the controlled hover card toggle surface and gave the toggle a gallery debug selector. The gallery now proves the shell-controlled hover card can be opened from the control surface and dismissed with Escape.
 * **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (50/50), and `cargo nextest run -p open-gpui-ui-components --tests` (147/147) passed after the hover-card control-surface cleanup.
 * **Decision**: Keep scanning for the next evidence-backed seam; do not treat the current hover-card chain as a remaining gap unless a new behavior split appears.

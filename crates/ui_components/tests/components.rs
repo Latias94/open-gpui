@@ -962,11 +962,11 @@ fn tabs_state_resolution_tracks_selected_focus_and_tab_stop() {
     assert_eq!(state.selected_value(), Some("security"));
     assert_eq!(state.focused_value(), Some("security"));
     assert_eq!(state.tab_stop_value(), Some("security"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].selected());
     assert!(state.items()[1].focused());
-    assert!(state.items()[1].tab_stop());
     assert!(state.items()[2].disabled());
-    assert!(!state.items()[2].tab_stop());
+    assert!(!state.items()[2].focused());
 }
 
 #[test]
@@ -987,6 +987,7 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
     assert_eq!(state.selected_value(), Some("overview"));
     assert_eq!(state.focused_value(), Some("overview"));
     assert_eq!(state.tab_stop_value(), Some("overview"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
@@ -1958,10 +1959,10 @@ fn radio_group_state_exposes_selection_required_and_disabled_items() {
     assert_eq!(state.selected_value(), Some("team"));
     assert_eq!(state.focused_value(), Some("team"));
     assert_eq!(state.tab_stop_value(), Some("team"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[1].selected());
     assert!(state.items()[1].focused());
-    assert!(state.items()[1].tab_stop());
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].activation_enabled());
     assert_eq!(state.items()[0].role(), Role::RadioButton);
@@ -1989,8 +1990,9 @@ fn radio_group_reuses_roving_focus_helpers_and_skips_disabled_items() {
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("enterprise"));
     assert_eq!(state.tab_stop_value(), Some("enterprise"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].disabled());
-    assert!(!state.items()[1].tab_stop());
+    assert!(!state.items()[1].focused());
 }
 
 #[test]
@@ -2012,6 +2014,7 @@ fn radio_group_builder_state_falls_back_to_first_enabled_item() {
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("starter"));
     assert_eq!(state.tab_stop_value(), Some("starter"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
 }
@@ -2704,7 +2707,8 @@ fn sidebar_state_exposes_shell_navigation_contract() {
     assert_eq!(state.items().len(), 5);
     assert_eq!(state.selected_value(), Some("projects"));
     assert_eq!(state.focused_value(), Some("projects"));
-    assert_eq!(state.tab_stop_value(), Some("projects"));
+    assert_eq!(state.focused_index(), Some(1));
+    assert!(state.scrollable());
     assert!(state.items()[1].selected());
     assert_eq!(state.items()[1].badge_label(), Some("12"));
     assert!(!state.items()[2].activation_enabled());
@@ -2745,8 +2749,8 @@ fn sidebar_icon_collapse_keeps_accessible_items_but_hides_text() {
     );
     assert_eq!(state.selected_value(), Some("dashboard"));
     assert_eq!(state.focused_value(), Some("dashboard"));
-    assert!(state.items()[0].visible());
-    assert!(!state.items()[0].text_visible());
+    assert!(state.scrollable());
+    assert!(state.items()[0].focusable());
     assert_eq!(state.items()[0].label(), "Dashboard");
     assert_eq!(state.items()[1].badge_label(), Some("4"));
 }
@@ -2775,8 +2779,8 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
     assert_eq!(state.metrics().resolved_width(), ui_px(0.0));
     assert_eq!(state.selected_value(), None);
     assert_eq!(state.focused_value(), None);
-    assert_eq!(state.tab_stop_value(), None);
-    assert!(!state.items()[0].visible());
+    assert_eq!(state.focused_index(), None);
+    assert!(!state.scrollable());
     assert!(!state.items()[0].focusable());
     assert!(state.activation_for_key("space").is_none());
 }
@@ -2823,6 +2827,7 @@ fn toolbar_state_exposes_roving_focus_and_toggle_metadata() {
     assert_eq!(state.items().len(), 5);
     assert_eq!(state.focused_value(), Some("bold"));
     assert_eq!(state.tab_stop_value(), Some("bold"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items()[0].role(), Some(Role::Button));
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
     assert_eq!(state.items()[1].role(), None);
@@ -2858,6 +2863,7 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.focused_value(), Some("copy"));
     assert_eq!(state.tab_stop_value(), Some("copy"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[0].disabled());
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
     assert!(state.items()[3].pressed());

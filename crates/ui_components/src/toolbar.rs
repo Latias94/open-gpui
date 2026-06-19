@@ -200,7 +200,6 @@ pub struct ToolbarItemState {
     disabled: bool,
     pressed: bool,
     focused: bool,
-    tab_stop: bool,
 }
 
 impl ToolbarItemState {
@@ -242,11 +241,6 @@ impl ToolbarItemState {
     /// Returns whether the item has roving focus.
     pub const fn focused(&self) -> bool {
         self.focused
-    }
-
-    /// Returns whether the item is the current tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns whether activation handlers should run for this item.
@@ -329,7 +323,6 @@ pub struct ToolbarState {
     label: String,
     items: Vec<ToolbarItemState>,
     focused_index: Option<usize>,
-    tab_stop_index: Option<usize>,
     metrics: ToolbarMetrics,
     colors: ToolbarColors,
     focus_ring: FocusRing,
@@ -357,7 +350,6 @@ impl ToolbarState {
         } else {
             active_index_from_str_keys(&values, focused_value, &disabled_map)
         };
-        let tab_stop_index = focused_index;
         let colors = ThemeResolver::button_colors(tokens, ButtonVariant::Outline, false);
 
         let items = descriptors
@@ -366,7 +358,6 @@ impl ToolbarState {
             .map(|(index, descriptor)| {
                 let item_disabled = disabled || descriptor.disabled;
                 let focused = Some(index) == focused_index;
-                let tab_stop = Some(index) == tab_stop_index;
 
                 ToolbarItemState {
                     index,
@@ -376,7 +367,6 @@ impl ToolbarState {
                     disabled: item_disabled,
                     pressed: descriptor.pressed,
                     focused,
-                    tab_stop,
                 }
             })
             .collect();
@@ -388,7 +378,6 @@ impl ToolbarState {
             label: label.into(),
             items,
             focused_index,
-            tab_stop_index,
             metrics: ToolbarMetrics::from_size(size),
             colors,
             focus_ring: FocusRing::from_color(colors.focus_ring()),
@@ -444,12 +433,12 @@ impl ToolbarState {
 
     /// Returns the current tab-stop index.
     pub const fn tab_stop_index(&self) -> Option<usize> {
-        self.tab_stop_index
+        self.focused_index
     }
 
     /// Returns the current tab-stop value.
     pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index
+        self.tab_stop_index()
             .and_then(|index| self.items.get(index))
             .map(ToolbarItemState::value)
     }
@@ -757,6 +746,7 @@ impl RenderOnce for Toolbar {
             };
             let focusable_set_size = state.items().iter().filter(|item| item.focusable()).count();
             let mut focusable_position = 0usize;
+            let tab_stop_index = state.tab_stop_index();
 
             div()
                 .id(id.clone())
@@ -794,7 +784,7 @@ impl RenderOnce for Toolbar {
                     let item_index = index;
                     let item_kind = item.kind();
                     let item_disabled = item.disabled();
-                    let item_tab_stop = item.tab_stop();
+                    let item_tab_stop = Some(index) == tab_stop_index;
                     let item_pressed = item.pressed();
                     let item_value = item.value().to_owned();
                     let item_position = if item.focusable() {

@@ -1158,7 +1158,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[0].state.items()[1].badge_label(), Some("12"));
     assert!(!sidebars[0].state.items()[3].activation_enabled());
     assert!(sidebars[1].state.icon_collapsed());
-    assert!(!sidebars[1].state.items()[0].text_visible());
     assert_eq!(sidebars[1].state.items()[0].label(), "Home");
     assert_eq!(sidebars[2].state.side().as_str(), "right");
     assert!(sidebars[2].state.scrollable());
@@ -1476,12 +1475,11 @@ fn components_page_sidebar_samples_expose_navigation_contract() {
     );
     assert!(workspace.items().iter().any(|item| item.disabled()));
 
-    assert!(icon.icon_collapsed());
     assert_eq!(
         icon.metrics().resolved_width(),
         icon.metrics().collapsed_width()
     );
-    assert!(icon.items().iter().all(|item| !item.text_visible()));
+    assert!(icon.icon_collapsed());
     assert!(icon.items().iter().all(|item| !item.label().is_empty()));
 
     assert_eq!(long.side().as_str(), "right");
