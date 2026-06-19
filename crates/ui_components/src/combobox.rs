@@ -257,20 +257,14 @@ impl ComboboxMetrics {
 pub struct ComboboxSelection {
     value: String,
     label: String,
-    query: String,
 }
 
 impl ComboboxSelection {
     /// Creates a selection payload.
-    pub fn new(
-        value: impl Into<String>,
-        label: impl Into<String>,
-        query: impl Into<String>,
-    ) -> Self {
+    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             value: value.into(),
             label: label.into(),
-            query: query.into(),
         }
     }
 
@@ -282,11 +276,6 @@ impl ComboboxSelection {
     /// Returns selected label.
     pub fn label(&self) -> &str {
         &self.label
-    }
-
-    /// Returns query at selection time.
-    pub fn query(&self) -> &str {
-        &self.query
     }
 }
 
@@ -1120,7 +1109,6 @@ fn combobox_keyboard_action(state: &ComboboxState, key: &str) -> ComboboxKeyboar
         return ComboboxKeyboardAction::Select(ComboboxSelection::new(
             selection.value().to_owned(),
             selection.label().to_owned(),
-            state.query().to_owned(),
         ));
     }
 
@@ -1177,7 +1165,6 @@ fn combobox_content_element(
                 let payload = ComboboxSelection::new(
                     selection.value().to_owned(),
                     selection.label().to_owned(),
-                    query.clone(),
                 );
                 runtime.update(cx, |runtime, _| {
                     runtime.selected_value = Some(payload.value().to_owned());
@@ -1421,7 +1408,6 @@ mod tests {
             ComboboxKeyboardAction::Select(ComboboxSelection::new(
                 "react".to_string(),
                 "React".to_string(),
-                "re".to_string(),
             ))
         );
         assert_eq!(

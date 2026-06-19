@@ -3643,7 +3643,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         events.borrow().clone(),
         vec![
             ComboboxRuntimeEvent::Open(true),
-            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix")),
             ComboboxRuntimeEvent::Open(false),
         ]
     );
@@ -3737,7 +3737,7 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
         events.borrow().clone(),
         vec![
             ComboboxRuntimeEvent::Open(true),
-            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix")),
             ComboboxRuntimeEvent::Open(false),
         ]
     );

@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Removed the selection-time `query` payload from `ComboboxSelection`, and simplified the two Combobox runtime selection tests to assert only the real selection contract (`value` / `label`). The component no longer mirrors query text into selection events.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components combobox_runtime_filters_input_and_selects_filtered_option combobox_runtime_keyboard_selects_filtered_option` passed after the payload cleanup.
+* **Decision**: Check whether `CommandSelection` still carries a mirrored selection-time field or whether the remaining query/shortcut data is actual contract, then stop if no new evidence-backed seam appears.
+
 * **Update**: Removed the dead `query` field from `ComboboxRuntime` and `CommandRuntime`. Those components now keep query ownership in the `TextInputController`/resolved state path instead of mirroring it into keyed runtime state.
 * **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components` passed after the runtime cleanup.
 * **Decision**: Keep scanning for the next evidence-backed duplicated runtime field; stop when the remaining state is real interaction state, not a mirror of resolved data.
