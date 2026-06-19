@@ -1,6 +1,17 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Re-read `repo-ref/fret`'s diagnostics architecture and the windowed-row / virtual-list / wheel-scroll gating code. The part worth borrowing is the layering discipline: thin entry points, deeper engine modules, and pure helper logic for scroll and visible-range math.
+* **Decision**: Keep the current UI crates as the home for any shared viewport logic for now. If we need to extract anything, it should be a small renderer-neutral helper, not a new headless crate copied from the reference repo's diagnostics stack.
+
+* **Update**: Rechecked `examples/ui-foundation-gallery/src/pages/components.rs` sample/state boundaries and did not find a new evidence-backed deletion seam. The remaining samples are still either sample fixtures or real builder inputs, not duplicated resolved state.
+* **Verification**: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed during the review pass.
+* **Decision**: Stop the Components seam hunt for now; only reopen it if new evidence appears or a later product slice makes a new split worthwhile.
+
+* **Update**: Closed the Components page-local render split. The toolbar state row now lives in `examples/ui-foundation-gallery/src/pages/components/render.rs`, and `shell.rs` dropped the old Components-page helper cluster plus the now-unused imports.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split was closed.
+* **Decision**: Keep the next pass focused on `examples/ui-foundation-gallery/src/pages/components.rs` sample/state boundaries; do not reopen shell-local split work unless a new evidence-backed seam appears.
+
 * **Update**: Rechecked the Components gallery render split against the current shell/page-local code, moved the last toolbar row helper into the page-local module, and trimmed the remaining shell imports. The Components page now owns its helpers inside the page-local module tree.
 * **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split and shell cleanup.
 * **Decision**: Stop the gallery seam hunt unless a new evidence-backed mismatch appears; the Components page-local split is closed.

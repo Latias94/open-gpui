@@ -11,6 +11,17 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Re-read `repo-ref/fret`'s diagnostics architecture and windowed-row / virtual-list gating code. The useful signal is the layering, not the domain: thin entry points forward into a deeper engine crate, and pure helper logic owns scroll/visible-range math.
+- Next action: keep `shell.rs` thin and prefer small renderer-neutral helpers in existing crates when sharing is needed. Do not create a new headless crate just to mirror the reference repo's structure.
+
+- Done: Rechecked `examples/ui-foundation-gallery/src/pages/components.rs` sample/state boundaries and did not find a new evidence-backed deletion seam. `TabsSample`, `ToolbarSample`, `SidebarSample`, `ScrollAreaSample`, `SplitterSample`, `ListboxSample`, `SelectSample`, `ComboboxSample`, and `CommandSample` are still carrying sample fixtures or real builder inputs rather than duplicated resolved state.
+- Last verified: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed.
+- Next action: stop the Components seam hunt for now; only reopen it if new evidence appears or a later product slice calls for it.
+
+- Done: Closed the Components page-local render split. `render.rs` now owns the page-local helper for the toolbar state row, and `shell.rs` no longer carries the old Components-page helper cluster or extra imports.
+- Last verified: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split was closed.
+- Next action: keep scanning `examples/ui-foundation-gallery/src/pages/components.rs` for a real sample/state deletion seam; do not re-open shell-local split work unless new evidence appears.
+
 - Done: Removed the last `tab_stop_value()` accessors from `RadioGroupState`, `SidebarState`, `ToolbarState`, and `TabsState`, and dropped the gallery tabs row's redundant tab-stop display. The public surface now keeps tab-stop ownership on the focused/selected contract instead of exposing a second value accessor.
 - Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the final tab-stop cleanup.
 - Next action: keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
