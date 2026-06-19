@@ -8,7 +8,8 @@ use open_gpui_ui_components::{
     MenuOpenMode, PopoverOpenMode, ScrollAreaAxis, ScrollResetPolicy, SelectOpenMode,
     SheetCloseAffordance, SheetModalMode, SheetOpenMode, SheetSide, ThemeMode, ToggleVariant,
     TooltipOpenIntent,
-    gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority},
+    gpui_adapter::{DEFAULT_OVERLAY_SAFE_MARGIN, default_deferred_priority, gpui_overlay_state},
+    OverlayResolvedState,
 };
 use open_gpui_ui_core::{
     Density, DeviceAdaptiveClass, DeviceShellMode, EscapeKeyPolicy, FocusRestoreIntent,
@@ -421,14 +422,12 @@ fn overlay_page_samples_expose_behavior_contracts() {
     assert_eq!(samples.len(), 4);
     assert_eq!(samples[0].id, "tooltip");
     assert_eq!(samples[0].policy.kind(), OverlayLayerKind::Tooltip);
+    let adapter = gpui_overlay_state(&OverlayResolvedState::resolve(samples[0].policy.clone()));
     assert_eq!(
-        samples[0].adapter.deferred_priority(),
+        adapter.deferred_priority(),
         default_deferred_priority(OverlayLayerKind::Tooltip)
     );
-    assert_eq!(
-        samples[0].adapter.snap_margin(),
-        DEFAULT_OVERLAY_SAFE_MARGIN
-    );
+    assert_eq!(adapter.snap_margin(), DEFAULT_OVERLAY_SAFE_MARGIN);
     assert_eq!(
         samples[0].policy.outside_press_policy(),
         OutsidePressPolicy::Ignore
@@ -460,7 +459,8 @@ fn overlay_page_samples_expose_behavior_contracts() {
         &FocusRestoreIntent::Trigger
     );
     assert!(samples[1].policy.layer_state().wants_outside_press());
-    assert!(samples[1].adapter.wants_outside_press_handler());
+    let adapter = gpui_overlay_state(&OverlayResolvedState::resolve(samples[1].policy.clone()));
+    assert!(adapter.wants_outside_press_handler());
 
     assert_eq!(samples[2].id, "dialog");
     assert_eq!(samples[2].policy.kind(), OverlayLayerKind::Modal);
@@ -473,8 +473,9 @@ fn overlay_page_samples_expose_behavior_contracts() {
         &InitialFocusIntent::FirstFocusable
     );
     assert!(samples[2].policy.layer_state().blocks_underlay_input());
+    let adapter = gpui_overlay_state(&OverlayResolvedState::resolve(samples[2].policy.clone()));
     assert_eq!(
-        samples[2].adapter.deferred_priority(),
+        adapter.deferred_priority(),
         default_deferred_priority(OverlayLayerKind::Modal)
     );
 
@@ -1763,6 +1764,60 @@ fn overlay_gallery_smoke_dismisses_popover_from_outside_press(cx: &mut open_gpui
     assert!(
         cx.debug_selector_is_focused("popover:overlay-popover-demo:controlled:trigger"),
         "expected outside-dismissed Popover to restore focus to its trigger"
+    );
+}
+
+#[open_gpui::test]
+fn overlay_gallery_smoke_opens_tooltip_from_hover_focus_and_ignores_disabled(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+
+    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:hover-focus");
+    let hover_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:hover-focus").center();
+    cx.simulate_mouse_move(hover_trigger, MouseButton::Left, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
+            .is_some(),
+        "expected hover tooltip content to open from pointer hover"
+    );
+
+    let outside_target = bounds(cx, "gallery:content").center();
+    cx.simulate_mouse_move(outside_target, MouseButton::Left, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:hover-focus:content")
+            .is_none(),
+        "expected hover tooltip content to dismiss after leaving the trigger"
+    );
+
+    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:focus-only");
+    click(cx, "gallery:overlay-tooltip-trigger:focus-only");
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
+            .is_some(),
+        "expected focus-only tooltip content to open from keyboard focus"
+    );
+
+    let content_center = bounds(cx, "gallery:content").center();
+    click_point(cx, content_center);
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:focus-only:content")
+            .is_none(),
+        "expected focus-only tooltip content to dismiss after focus leaves"
+    );
+
+    scroll_page_until_visible(cx, "gallery:overlay-tooltip-trigger:disabled");
+    let disabled_trigger = bounds(cx, "gallery:overlay-tooltip-trigger:disabled").center();
+    cx.simulate_mouse_move(disabled_trigger, MouseButton::Left, Default::default());
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("tooltip:overlay-tooltip-content:disabled:content")
+            .is_none(),
+        "expected disabled tooltip trigger to stay closed"
     );
 }
 

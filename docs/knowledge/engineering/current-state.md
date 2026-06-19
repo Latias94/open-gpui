@@ -11,6 +11,11 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Removed the `OverlayBehaviorSample.adapter` duplicate ownership seam from the overlay gallery. `shell.rs` now derives the GPUI adapter from `OverlayResolvedState::resolve(policy)` at render time, so the sample only owns policy + display metadata.
+- Done: Added tooltip gallery debug selectors plus a smoke test that covers hover, focus, and disabled behavior. The new test proves the tooltip content can be located and closed from the gallery automation path instead of hanging as an unaddressable popup.
+- Last verified: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --tests` (147/147), and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (48/48) passed after the overlay/tooltip cleanup.
+- Next action: keep scanning for the next evidence-backed seam, especially any remaining sample/state duplication that can be deleted instead of preserved.
+
 - Done: Consolidated the GalleryShell overlay controlled-open booleans into a single `OverlayControlledOpenState` with `OverlayControlledSample` selectors, and added hover card debug selectors plus a real hover-card smoke test so the controlled overlay families now share the same automation shape.
 - Last verified: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed with 47/47 tests.
 - Next action: commit the shell/state/refinement pass now that the subagent review gap is closed.

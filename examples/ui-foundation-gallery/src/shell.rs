@@ -19,8 +19,9 @@ use open_gpui_ui_components::{
     ToolbarState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
-        gpui_point_from_ui, gpui_px_from_ui, init_text_input,
+        gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
     },
+    OverlayResolvedState,
 };
 use open_gpui_ui_core::{
     AccessibleAction, Density, DeviceAdaptivePolicy, DeviceShellMode, DeviceShellSwitchPolicy,
@@ -2531,6 +2532,7 @@ impl GalleryShell {
         .child(
             div()
                 .id(format!("overlay-tooltip-trigger:{}", sample_id))
+                .debug_selector(move || format!("gallery:overlay-tooltip-trigger:{sample_id}"))
                 .min_h(px(44.0))
                 .flex()
                 .items_center()
@@ -5038,7 +5040,8 @@ fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
 
 fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl IntoElement {
     let policy = &sample.policy;
-    let adapter = &sample.adapter;
+    let resolved = OverlayResolvedState::resolve(policy.clone());
+    let adapter = gpui_overlay_state(&resolved);
     let presence = policy.presence();
     let layer_state = policy.layer_state();
     let outside = policy.outside_press_policy().resolve();

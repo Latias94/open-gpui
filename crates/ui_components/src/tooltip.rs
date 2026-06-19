@@ -446,11 +446,13 @@ impl RenderOnce for Tooltip {
         let metrics = state.metrics();
         let colors = state.colors();
         let id = self.id;
+        let debug_id = id.to_string();
         let accessible_label = accessible_label_for_content(&self.content);
         let children = children_from_content(self.content);
 
         div()
             .id(id)
+            .debug_selector(move || format!("tooltip:{debug_id}:content"))
             .max_w(gpui_px_from_ui(metrics.max_width()))
             .px(gpui_px_from_ui(metrics.padding_x()))
             .py(gpui_px_from_ui(metrics.padding_y()))

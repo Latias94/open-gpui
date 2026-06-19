@@ -8,7 +8,6 @@ use open_gpui_ui_components::{
     DialogState, HoverCard, HoverCardDelayPolicy, HoverCardOpenIntent, HoverCardState, Menu,
     MenuItem, MenuState, Popover, PopoverState, Sheet, SheetCloseAffordance, SheetModalMode,
     SheetSide, SheetState, Tooltip, TooltipDelayPolicy, TooltipOpenIntent, TooltipState,
-    gpui_adapter::{GpuiOverlayAdapterConfig, GpuiOverlayState},
 };
 use open_gpui_ui_core::{
     OutsidePressPolicy, OverlayLayerKind, OverlayLayerPolicy, OverlayPlacementAlignment,
@@ -105,8 +104,6 @@ pub struct OverlayBehaviorSample {
     pub label: &'static str,
     /// Resolved behavior policy.
     pub policy: OverlayLayerPolicy,
-    /// Resolved GPUI adapter state.
-    pub adapter: GpuiOverlayState,
 }
 
 /// Returns deterministic overlay behavior samples for the gallery.
@@ -116,11 +113,6 @@ pub fn behavior_samples() -> [OverlayBehaviorSample; 4] {
             id: "tooltip",
             label: "Tooltip",
             policy: OverlayLayerPolicy::new(OverlayLayerKind::Tooltip, OverlayPresence::open()),
-            adapter: GpuiOverlayAdapterConfig::new(
-                OverlayLayerKind::Tooltip,
-                OverlayPresence::open(),
-            )
-            .state(),
         },
         OverlayBehaviorSample {
             id: "popover",
@@ -129,28 +121,16 @@ pub fn behavior_samples() -> [OverlayBehaviorSample; 4] {
                 OverlayLayerKind::NonModalDismissible,
                 OverlayPresence::open(),
             ),
-            adapter: GpuiOverlayAdapterConfig::new(
-                OverlayLayerKind::NonModalDismissible,
-                OverlayPresence::open(),
-            )
-            .state(),
         },
         OverlayBehaviorSample {
             id: "dialog",
             label: "Dialog",
             policy: OverlayLayerPolicy::new(OverlayLayerKind::Modal, OverlayPresence::open()),
-            adapter: GpuiOverlayAdapterConfig::new(
-                OverlayLayerKind::Modal,
-                OverlayPresence::open(),
-            )
-            .state(),
         },
         OverlayBehaviorSample {
             id: "menu",
             label: "Menu",
             policy: OverlayLayerPolicy::new(OverlayLayerKind::Menu, OverlayPresence::open()),
-            adapter: GpuiOverlayAdapterConfig::new(OverlayLayerKind::Menu, OverlayPresence::open())
-                .state(),
         },
     ]
 }
