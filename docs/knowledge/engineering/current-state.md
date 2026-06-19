@@ -11,6 +11,15 @@ status: "active"
 
 ## 2026-06-19
 
+- Done: Tightened the overlay menu seam. `Menu` and `ContextMenu` no longer write `first_focusable_value` into runtime on open; they now rely on `MenuState::resolve` for default first-focus selection, and closing clears stale runtime focus so reopen does not inherit it.
+- Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo check -p open-gpui-ui-components` passed.
+- Next action: keep the architecture pass evidence-backed; the next seam should come from a real duplicate rule, not from forcing `Menu` / `ContextMenu` symmetry.
+
+- Done: Reconfirmed `repo-ref/fret`'s diagnostics layering at `repo-ref/fret/crates/fretboard/src/diag.rs`, `repo-ref/fret/crates/fret-diag/src/stats/windowed_rows.rs`, `repo-ref/fret/crates/fret-diag/src/stats/vlist.rs`, and `repo-ref/fret/crates/fret-diag/src/stats/wheel_scroll.rs`. The reusable signal is still thin entry points plus deeper helper modules, not a new headless crate.
+- Done: Checked the gallery geometry helpers in `examples/ui-foundation-gallery/tests/foundation_gallery.rs` and kept them in the test layer. `scroll_until_visible`, `scroll_page_until_visible`, `scroll_navigation_until_visible`, `bounds_overlap_y`, `visible_outside_point`, and `outside_top_left` all depend on `VisualTestContext` / `Bounds<Pixels>` and are not renderer-neutral enough to promote into `ui_core`.
+- Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` and `cargo check -p open-gpui-ui-foundation-gallery` passed.
+- Next action: keep the architecture pass evidence-backed; do not extract gallery test geometry helpers unless a real renderer-neutral seam appears.
+
 - Done: Re-read `repo-ref/fret`'s diagnostics architecture and windowed-row / virtual-list gating code. The useful signal is the layering, not the domain: thin entry points forward into a deeper engine crate, and pure helper logic owns scroll/visible-range math.
 - Next action: keep `shell.rs` thin and prefer small renderer-neutral helpers in existing crates when sharing is needed. Do not create a new headless crate just to mirror the reference repo's structure.
 
@@ -113,7 +122,7 @@ status: "active"
 - Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Select / Menu cleanup.
 - Next action: keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move to the next product slice.
 
-- Done: Rechecked the live gallery seams against `repo-ref/fret`'s `entry_focus` pattern. `Menu` / `ContextMenu` still do not have a deeper shared-rule seam worth extracting in this pass because the current code does not model modality as a separate public input; the current `first_focusable_value()` helper is the right stopping point for now.
+- Done: Rechecked the live gallery seams against `repo-ref/fret`'s `entry_focus` pattern. The useful seam is still state-owned default focus, not more runtime symmetry; the open path now only clears stale focus on close.
 - Done: Confirmed again that `TabsSample.title` is page-card copy, not duplicated resolved state, and that the remaining overlay titles / descriptions / action labels are still constructor inputs or display content.
 - Next action: stop the seam hunt unless a new evidence-backed duplication appears; otherwise move to the next product slice and keep the current architecture pass narrow.
 
@@ -129,7 +138,7 @@ status: "active"
 - Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the listbox scrollability cleanup.
 - Next action: keep the architecture loop narrow; the current subagent review says the remaining `apply_optional_values` builder sugar is not deep enough to extract, so move on unless a new evidence-backed seam appears.
 
-- Done: Used the `MenuState::first_focusable_value()` seam to remove the duplicated local helper from `Menu` / `ContextMenu`. The gallery now reads the same behavior contract from state on both paths, so entry-focus selection is owned by the menu state instead of two call-site copies.
+- Done: Tightened the menu / context-menu entry-focus contract so `MenuState::resolve` owns the default first-focus selection, and the runtime path only clears stale focus on close.
 - Last verified: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Menu / ContextMenu entry-focus cleanup.
 - Next action: continue the architecture loop only if a new evidence-backed duplicate seam appears; otherwise move to the next product slice.
 

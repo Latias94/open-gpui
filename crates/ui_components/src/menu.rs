@@ -582,14 +582,6 @@ impl MenuState {
             .map(MenuItemState::value)
     }
 
-    /// Returns the first focusable item value in descriptor order.
-    pub fn first_focusable_value(&self) -> Option<&str> {
-        self.items
-            .iter()
-            .find(|item| item.focusable())
-            .map(MenuItemState::value)
-    }
-
     /// Resolves a focus target for an APG-style menu navigation key.
     pub fn navigation_target(&self, key: &str) -> Option<&MenuItemState> {
         let current = self.focused_index?;
@@ -907,6 +899,9 @@ impl RenderOnce for Menu {
         if controlled_open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
+                if !resolved_open {
+                    runtime.focused_value = None;
+                }
             });
         }
 
@@ -929,7 +924,6 @@ impl RenderOnce for Menu {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
-        let first_focusable_value = state.first_focusable_value().map(str::to_owned);
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
@@ -1012,7 +1006,6 @@ impl RenderOnce for Menu {
                     .when(!disabled, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
-                        let first_focusable_value = first_focusable_value.clone();
                         this.cursor_pointer()
                             .hover(move |style| {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
@@ -1022,8 +1015,9 @@ impl RenderOnce for Menu {
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
-                                    runtime.focused_value =
-                                        next_open.then(|| first_focusable_value.clone()).flatten();
+                                    if !next_open {
+                                        runtime.focused_value = None;
+                                    }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
                                     on_open_change(next_open, window, cx);
