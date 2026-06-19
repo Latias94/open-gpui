@@ -1199,6 +1199,40 @@ pub(crate) fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElem
         ))
 }
 
+pub(crate) fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
+    let focused = state.focused_value().unwrap_or("none");
+    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
+    let kinds = state
+        .items()
+        .iter()
+        .map(|item| item.kind().as_str())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_xs()
+        .text_color(rgb(0x5a6472))
+        .child(format!(
+            "{:?} / {} / {}",
+            state.role(),
+            match state.orientation() {
+                Orientation::Horizontal => "horizontal",
+                Orientation::Vertical => "vertical",
+            },
+            state.size().as_str()
+        ))
+        .child(format!("focus {}", focused))
+        .child(format!(
+            "{} items / {} disabled / {}",
+            state.items().len(),
+            disabled_count,
+            kinds
+        ))
+}
+
 pub(crate) fn gallery_card_shell(
     id: impl Into<open_gpui::ElementId>,
     debug_selector: Option<String>,

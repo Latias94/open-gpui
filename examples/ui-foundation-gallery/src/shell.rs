@@ -12,9 +12,9 @@ use open_gpui_ui_components::{
     CommandGroup, CommandItem, CommandOpenMode, CommandState, ContextMenu, Dialog, Field,
     FieldState, FocusRing, HoverCard, IconButtonState, Kbd, KbdState, Label, LabelState, Listbox,
     ListboxGroup, ListboxOption, ListboxState, Menu, MenuItem, OverlayResolvedState, Popover,
-    Progress, ProgressState, ScrollArea, ScrollAreaState, Select, SelectOpenMode, SelectState,
-    Separator, SeparatorState, Sheet, SidebarState, Skeleton, SkeletonState, SplitterState,
-    SwitchState, TabsState, TextInput, TextInputState, ToggleState, ToolbarState, Tooltip,
+    Progress, ProgressState, ScrollArea, Select, SelectOpenMode, SelectState, Separator,
+    SeparatorState, Sheet, Skeleton, SkeletonState, SwitchState, TextInput, TextInputState,
+    ToggleState, Tooltip,
     gpui_adapter::{
         DEFAULT_OVERLAY_SAFE_MARGIN, TextInputController, UiA11yElementExt, focus_ring_shadow,
         gpui_overlay_state, gpui_point_from_ui, gpui_px_from_ui, init_text_input,
@@ -2897,96 +2897,6 @@ pub(crate) fn component_field_state_row(
         })
 }
 
-pub(crate) fn component_tabs_state_row(state: &TabsState) -> impl IntoElement {
-    let selected = state.selected_value().unwrap_or("none");
-    let focused = state.focused_value().unwrap_or("none");
-    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .text_xs()
-        .text_color(rgb(0x5a6472))
-        .child(format!(
-            "{} / {} / {}",
-            match state.orientation() {
-                Orientation::Horizontal => "horizontal",
-                Orientation::Vertical => "vertical",
-            },
-            state.activation_mode().as_str(),
-            state.size().as_str()
-        ))
-        .child(format!("selected {} / focus {}", selected, focused))
-        .child(format!(
-            "{} items / {} disabled",
-            state.items().len(),
-            disabled_count
-        ))
-}
-
-pub(crate) fn component_scroll_area_state_row(state: &ScrollAreaState) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .text_xs()
-        .text_color(rgb(0x5a6472))
-        .child(format!(
-            "{} / {} / {}",
-            state.axis().as_str(),
-            state.reset_policy().as_str(),
-            state.size().as_str()
-        ))
-        .child(format!(
-            "viewport {} / scrollbar {}",
-            state.viewport_id(),
-            format_px(state.metrics().scrollbar_width())
-        ))
-        .child(format!(
-            "x {} / y {}",
-            if state.scrolls_x() { "scroll" } else { "clip" },
-            if state.scrolls_y() { "scroll" } else { "clip" }
-        ))
-}
-
-pub(crate) fn component_splitter_state_row(state: &SplitterState) -> impl IntoElement {
-    let fractions = state
-        .panels()
-        .iter()
-        .map(|panel| {
-            if panel.collapsed() {
-                format!("{}:{:.0}% collapsed", panel.id(), panel.fraction() * 100.0)
-            } else {
-                format!("{}:{:.0}%", panel.id(), panel.fraction() * 100.0)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" / ");
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .text_xs()
-        .text_color(rgb(0x5a6472))
-        .child(format!(
-            "{} / {} panels / {} handles",
-            match state.orientation() {
-                Orientation::Horizontal => "horizontal",
-                Orientation::Vertical => "vertical",
-            },
-            state.panels().len(),
-            state.handles().len()
-        ))
-        .child(fractions)
-        .child(format!(
-            "handle {} hit {}",
-            format_px(state.metrics().handle_thickness()),
-            format_px(state.metrics().handle_hit_size())
-        ))
-}
-
 pub(crate) fn gallery_card_shell(
     id: impl Into<open_gpui::ElementId>,
     debug_selector: Option<String>,
@@ -3902,68 +3812,6 @@ pub(crate) fn component_toggle_state_row(state: &ToggleState) -> impl IntoElemen
         ))
 }
 
-pub(crate) fn component_sidebar_state_row(state: &SidebarState) -> impl IntoElement {
-    let selected = state.selected_value().unwrap_or("none");
-    let focused = state.focused_value().unwrap_or("none");
-    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .text_xs()
-        .text_color(rgb(0x5a6472))
-        .child(format!(
-            "{:?} / {} / {} / {}",
-            state.role(),
-            state.side().as_str(),
-            state.variant().as_str(),
-            state.collapse_mode().as_str()
-        ))
-        .child(format!("selected {} / focus {}", selected, focused))
-        .child(format!(
-            "{} sections / {} items / {} disabled / width {}",
-            state.sections().len(),
-            state.items().len(),
-            disabled_count,
-            format_px(state.metrics().resolved_width())
-        ))
-}
-
-pub(crate) fn component_toolbar_state_row(state: &ToolbarState) -> impl IntoElement {
-    let focused = state.focused_value().unwrap_or("none");
-    let disabled_count = state.items().iter().filter(|item| item.disabled()).count();
-    let kinds = state
-        .items()
-        .iter()
-        .map(|item| item.kind().as_str())
-        .collect::<Vec<_>>()
-        .join("/");
-
-    div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .text_xs()
-        .text_color(rgb(0x5a6472))
-        .child(format!(
-            "{:?} / {} / {}",
-            state.role(),
-            match state.orientation() {
-                Orientation::Horizontal => "horizontal",
-                Orientation::Vertical => "vertical",
-            },
-            state.size().as_str()
-        ))
-        .child(format!("focus {}", focused))
-        .child(format!(
-            "{} items / {} disabled / {}",
-            state.items().len(),
-            disabled_count,
-            kinds
-        ))
-}
-
 fn overlay_behavior_card(sample: &pages::overlay::OverlayBehaviorSample) -> impl IntoElement {
     let policy = &sample.policy;
     let resolved = OverlayResolvedState::resolve(policy.clone());
@@ -4353,7 +4201,7 @@ fn format_ui_px(value: UiPx) -> String {
     format!("{:.0}px", value.as_f32())
 }
 
-trait DisplayPx {
+pub(crate) trait DisplayPx {
     fn display_px(self) -> f32;
 }
 

@@ -1,9 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
-* **Update**: Rechecked the Components gallery render split against the current shell/page-local code and removed the remaining shell-level Components wrapper so the page routes directly to `pages::components::render_components_page(...)`.
-* **Verification**: `cargo fmt --all` and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the wrapper removal.
-* **Decision**: Stop the gallery seam hunt unless a new evidence-backed mismatch appears; the remaining shell warnings are unused imports, not behavior debt.
+* **Update**: Rechecked the Components gallery render split against the current shell/page-local code, moved the last toolbar row helper into the page-local module, and trimmed the remaining shell imports. The Components page now owns its helpers inside the page-local module tree.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split and shell cleanup.
+* **Decision**: Stop the gallery seam hunt unless a new evidence-backed mismatch appears; the Components page-local split is closed.
 
 * **Update**: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, then switched menu/listbox/context-menu/command render paths to derive tab-stop placement from focused or active state directly. The resolved state contract now owns the tab-stop decision instead of caching one more boolean per item.
 * **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
