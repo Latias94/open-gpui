@@ -80,9 +80,10 @@ pub(crate) fn resolve_workspace_target_for_route(
                 Some(DockResolvedViewportTarget::Valid(target)) => {
                     DockViewportWorkspaceRouteTarget::Resolved(target)
                 }
-                Some(DockResolvedViewportTarget::Rejected { .. }) | None => {
-                    DockViewportWorkspaceRouteTarget::Missing
+                Some(DockResolvedViewportTarget::Rejected { target, reason }) => {
+                    DockViewportWorkspaceRouteTarget::Rejected { target, reason }
                 }
+                None => DockViewportWorkspaceRouteTarget::Missing,
             }
         }
         DockViewportDropRoute::KnownViewport { target, .. } => {
@@ -300,12 +301,13 @@ fn target_facts_generation_is_current(
 mod tests {
     use super::*;
     use crate::{
-        DockGraph, DockItemId, DockNode, DockNodeId, DockViewportTargetContext,
-        DockViewportWindowFacts,
+        DockClassId, DockGraph, DockItemId, DockNode, DockNodeId, DockPanel,
+        DockViewportTargetContext, DockViewportWindowFacts,
         drag::DockDragTearOffGeometry,
         drop_runtime::DockHostDropSceneFact,
         drop_target::{DockEmptySpaceDropTarget, DockLeafDropTarget, DockResolvedDropTargetKind},
         geometry::{self, DockDropBoxKind, DockDropBoxSet},
+        host_test_support::center_drop_position,
         viewport_drop_scene::DockViewportHostSceneSnapshot,
         viewport_registry::DockViewportWindowBoundsFrame,
         viewport_test_support::{bounds, handle, item, register_viewport, space},
@@ -386,6 +388,126 @@ mod tests {
     }
 
     #[test]
+    fn local_route_preserves_policy_rejected_target() {
+        let source_space = space("source");
+        let window = handle(3);
+        let mut graph = DockGraph::new();
+        let tabs = graph.insert_node(DockNode::Tabs {
+            items: vec![DockItemId::from("a")],
+            selected: Some(DockItemId::from("a")),
+        });
+        graph.set_root(source_space.clone(), tabs);
+
+        let mut adapter = DockViewportAdapter::new();
+        register_viewport(&mut adapter, source_space.clone(), window);
+        adapter.update_snapshot(
+            &source_space,
+            DockViewportWindowFacts::from_window_bounds(WindowBounds::Windowed(bounds(
+                100.0, 100.0, 320.0, 240.0,
+            ))),
+            bounds(0.0, 0.0, 320.0, 240.0),
+        );
+        let facts_generation = adapter
+            .snapshot_facts_generation(&source_space, window.window_id())
+            .expect("source snapshot should have facts");
+
+        let mut host_scenes = DockViewportHostSceneRegistry::default();
+        let host_position = center_drop_position(bounds(0.0, 0.0, 320.0, 240.0));
+        let frame = host_scenes
+            .register(DockViewportHostSceneSnapshot::new(
+                source_space.clone(),
+                window.window_id(),
+                DockViewportWindowBoundsFrame::GlobalScreen(bounds(100.0, 100.0, 320.0, 240.0)),
+                bounds(0.0, 0.0, 320.0, 240.0),
+                host_position,
+                crate::DockDropGuideStyle::default(),
+            ))
+            .frame;
+        assert!(
+            host_scenes
+                .push_frame_fact(
+                    &frame,
+                    DockHostDropSceneFact::Leaf(DockLeafDropTarget {
+                        root: tabs,
+                        target_tabs: tabs,
+                        bounds: bounds(0.0, 0.0, 320.0, 240.0),
+                        is_central: true,
+                    })
+                )
+                .is_some()
+        );
+
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.register_panel(
+            item("a"),
+            DockPanel::lazy("Panel A", |_| unreachable!()).with_dock_class("editor"),
+        );
+        workspace
+            .policy_mut()
+            .set_allowed_dock_classes_for_space(source_space.clone(), ["inspector"]);
+
+        let payload = DockViewportDropPayload::Item(DockItemId::from("a"));
+        let payload_classes =
+            workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
+        let request = DockViewportDropRouteRequest::from_target_context(
+            source_space.clone(),
+            DockNodeId::null(),
+            payload,
+            point(px(220.0), px(200.0)),
+            None,
+            DockViewportTargetContext::new().with_trusted_hovered_window(window),
+        )
+        .with_tear_off_geometry(Some(
+            DockDragTearOffGeometry::from_source_bounds(
+                Bounds::new(point(px(0.0), px(0.0)), size(px(240.0), px(180.0))),
+                point(px(12.0), px(12.0)),
+            )
+            .with_preferred_size(size(px(240.0), px(180.0))),
+        ));
+
+        let target = resolve_workspace_target_for_route(
+            &adapter,
+            &host_scenes,
+            &DockViewportDropRoute::Local {
+                host_position,
+                window_id: window.window_id(),
+                facts_generation,
+                authority: crate::DockViewportAuthorizedRouteAuthority::TrustedHoveredWindow,
+            },
+            &request,
+            &workspace,
+            &payload_classes,
+        );
+
+        match target {
+            DockViewportWorkspaceRouteTarget::Rejected { target, reason } => {
+                assert_eq!(
+                    reason,
+                    DockPolicyError::DockClassRejected {
+                        space: source_space.clone(),
+                        item: DockItemId::from("a"),
+                        dock_class: Some(DockClassId::from("editor")),
+                    }
+                );
+                assert_eq!(target.target_space(), &source_space);
+                assert_eq!(target.target_window_id(), Some(window.window_id()));
+            }
+            DockViewportWorkspaceRouteTarget::Resolved(_) => {
+                panic!("local route should not resolve when policy rejects the payload")
+            }
+            DockViewportWorkspaceRouteTarget::Missing => {
+                panic!("local route should preserve rejected target instead of missing it")
+            }
+            DockViewportWorkspaceRouteTarget::Unavailable => {
+                panic!("local route should not be unavailable when the current facts match")
+            }
+            DockViewportWorkspaceRouteTarget::NotWorkspaceRoute => {
+                panic!("local route should not be classified as non-workspace")
+            }
+        }
+    }
+
+    #[test]
     fn known_viewport_route_requires_current_target_window_facts() {
         let source_space = space("source");
         let target_space = space("target");
@@ -436,7 +558,11 @@ mod tests {
                 .is_some()
         );
 
-        let workspace = DockWorkspace::new(source_space.clone(), graph);
+        let mut workspace = DockWorkspace::new(source_space.clone(), graph);
+        workspace.register_panel_descriptor(
+            item("a"),
+            crate::DockPanelDescriptor::new("Panel A").with_dock_class("editor"),
+        );
         let payload = DockViewportDropPayload::Item(item("a"));
         let payload_classes =
             workspace.payload_dock_classes_for_viewport_payload(&payload, DockNodeId::null());
