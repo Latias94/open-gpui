@@ -11,6 +11,11 @@ status: "active"
 
 ## 2026-06-20
 
+- Done: Re-ran the Components gallery / scroll-smoke verification loop and confirmed the current `Tabs` / `ScrollArea` evidence still points to the gallery constraint chain, not a forced component wrapper. The gallery layout remains the right place to look, but no new code change was justified from the existing evidence.
+- Done: Unblocked `open-gpui-windows` validation by encapsulating `WindowsWindowState::accepts_pointer_input()` and routing the Windows hit-test path through it. Also silenced the ignored `SetWindowPos` result warning in the pointer-input toggle path.
+- Last verified: `cargo fmt -p open-gpui-windows` and `cargo check -p open-gpui-windows` passed after the Windows cleanup.
+- Next: continue the gallery constraint / component contract audit from the verified state, and keep looking for a real behavior mismatch before changing the gallery layout.
+
 - Done: Rechecked the vertical `Tabs` rail and the gallery scroll surface with subagent review. The current evidence says `Tabs` does not need a forced `ScrollArea` wrapper: `overflow_y_scroll()` plus `h_full()` is the intended shape, and both the component test and the gallery smoke already cover the constrained-scroll behavior.
 - Last verified: `cargo nextest run -p open-gpui-ui-components --test components tabs_vertical_tablist_scrolls_when_constrained scroll_area_default_handle_survives_reconstructed_component_values scroll_area_reset_key_resets_default_runtime_handle` and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery components_gallery_smoke_scroll_area_samples_scroll_inside_page components_gallery_smoke_sidebar_long_navigation_scrolls_inside_sample components_gallery_smoke_tabs_and_splitter_interactions_survive_full_page_composition` passed.
 - Next: keep looking for a real gallery-constraint mismatch or another evidence-backed seam; do not refactor `Tabs` into a `ScrollArea` wrapper just for symmetry.

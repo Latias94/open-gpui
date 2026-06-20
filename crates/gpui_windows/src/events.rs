@@ -888,7 +888,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        if !self.state.accepts_pointer_input.get() {
+        if !self.state.accepts_pointer_input() {
             return Some(HTTRANSPARENT as _);
         }
 

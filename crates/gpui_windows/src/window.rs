@@ -189,6 +189,10 @@ impl WindowsWindowState {
         self.fullscreen.get().is_some()
     }
 
+    pub(crate) fn accepts_pointer_input(&self) -> bool {
+        self.accepts_pointer_input.get()
+    }
+
     pub(crate) fn is_maximized(&self) -> bool {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
@@ -641,7 +645,7 @@ impl PlatformWindow for WindowsWindow {
                 style |= WS_EX_TRANSPARENT.0 as isize;
             }
             set_window_long(self.0.hwnd, GWL_EXSTYLE, style);
-            SetWindowPos(
+            let _ = SetWindowPos(
                 self.0.hwnd,
                 None,
                 0,
