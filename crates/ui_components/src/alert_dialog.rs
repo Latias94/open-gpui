@@ -1069,7 +1069,10 @@ fn alert_dialog_layer_element(
         .child(
             div()
                 .id("alert-dialog-surface")
-                .debug_selector(move || format!("alert-dialog:{debug_id}:surface"))
+                .debug_selector({
+                    let debug_id = debug_id.clone();
+                    move || format!("alert-dialog:{debug_id}:surface")
+                })
                 .absolute()
                 .left(x)
                 .top(y)
@@ -1135,6 +1138,7 @@ fn alert_dialog_layer_element(
                             &state,
                             runtime.clone(),
                             cancel_focus.clone(),
+                            debug_id.clone(),
                             on_cancel,
                             on_open_change.clone(),
                         ))
@@ -1142,6 +1146,7 @@ fn alert_dialog_layer_element(
                             &state,
                             runtime.clone(),
                             action_focus.clone(),
+                            debug_id.clone(),
                             on_action,
                             on_open_change,
                         )),
@@ -1153,6 +1158,7 @@ fn alert_dialog_cancel_button(
     state: &AlertDialogState,
     runtime: Entity<AlertDialogRuntime>,
     cancel_focus: FocusHandle,
+    debug_id: String,
     on_cancel: Option<ActionHandler>,
     on_open_change: Option<OpenChangeHandler>,
 ) -> impl IntoElement {
@@ -1178,6 +1184,10 @@ fn alert_dialog_cancel_button(
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("alert-dialog:{debug_id}:cancel")
+        })
         .track_focus(&cancel_focus)
         .tab_stop(cancel.activation_enabled())
         .ui_role(cancel.role())
@@ -1213,6 +1223,7 @@ fn alert_dialog_action_button(
     state: &AlertDialogState,
     runtime: Entity<AlertDialogRuntime>,
     action_focus: FocusHandle,
+    debug_id: String,
     on_action: Option<ActionHandler>,
     on_open_change: Option<OpenChangeHandler>,
 ) -> impl IntoElement {
@@ -1238,6 +1249,10 @@ fn alert_dialog_action_button(
         .text_size(gpui_px_from_ui(metrics.text_size()))
         .line_height(gpui_px_from_ui(metrics.text_size()))
         .focusable()
+        .debug_selector({
+            let debug_id = debug_id.clone();
+            move || format!("alert-dialog:{debug_id}:action")
+        })
         .track_focus(&action_focus)
         .tab_stop(action.activation_enabled())
         .ui_role(action.role())

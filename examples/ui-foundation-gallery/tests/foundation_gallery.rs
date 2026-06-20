@@ -1943,6 +1943,56 @@ fn overlay_gallery_smoke_closes_dialog_from_modal_barrier_and_escape(
 }
 
 #[open_gpui::test]
+fn overlay_gallery_smoke_closes_alert_dialog_from_action_and_escape(
+    cx: &mut open_gpui::TestAppContext,
+) {
+    let cx = open_overlay_gallery(cx);
+    let trigger = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:trigger";
+    let surface = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:surface";
+    let cancel = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:cancel";
+    let action = "alert-dialog:overlay-alert-dialog-demo:destructive-confirm:action";
+
+    scroll_page_until_visible(cx, trigger);
+    click(cx, trigger);
+    settle(cx);
+    assert!(
+        cx.debug_bounds(surface).is_some(),
+        "expected controlled AlertDialog surface to open from its real trigger"
+    );
+    assert!(
+        cx.debug_selector_is_focused(cancel),
+        "expected opened AlertDialog to move focus to the default cancel action"
+    );
+
+    click(cx, action);
+    settle(cx);
+    assert!(
+        cx.debug_bounds(surface).is_none(),
+        "expected the primary action to close the controlled AlertDialog"
+    );
+    assert!(
+        cx.debug_selector_is_focused(trigger),
+        "expected action-dismissed AlertDialog to restore focus to its trigger"
+    );
+
+    click(cx, trigger);
+    settle(cx);
+    assert!(
+        cx.debug_bounds(surface).is_some(),
+        "expected controlled AlertDialog surface to reopen after gallery control dismissal"
+    );
+    press_escape(cx);
+    assert!(
+        cx.debug_bounds(surface).is_none(),
+        "expected Escape to dismiss the controlled AlertDialog"
+    );
+    assert!(
+        cx.debug_selector_is_focused(trigger),
+        "expected Escape-dismissed AlertDialog to restore focus to its trigger"
+    );
+}
+
+#[open_gpui::test]
 fn overlay_gallery_smoke_closes_non_modal_sheet_from_outside_press(
     cx: &mut open_gpui::TestAppContext,
 ) {

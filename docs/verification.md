@@ -92,12 +92,14 @@ compact viewport policy, verifies the derived mobile shell and compact density, 
 navigation rail to deep pages, and confirms switching away and back resets the page scroll position.
 
 The gallery package also includes Overlay-page runtime smoke coverage for popover, modal dialog,
-non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape dismissal. Popover
-and Dialog smokes open the real component trigger, assert Dialog initial focus, and assert focus
-restoration to the trigger after outside press, modal barrier dismissal, and Escape dismissal. The
-Overlay gallery intentionally keeps default-open contract samples visually closed at page load so
-modal barriers and floating layers do not block page scrolling; the metadata rows still report each
-sample's resolved default-open contract.
+alert dialog, non-modal sheet, menu, and ContextMenu right-click hotspot opening plus Escape
+dismissal. Popover and Dialog smokes open the real component trigger, assert Dialog initial focus,
+and assert focus restoration to the trigger after outside press, modal barrier dismissal, and
+Escape dismissal. The AlertDialog smoke opens the real trigger, confirms the cancel action gets the
+default focus, verifies the primary action closes the dialog, and confirms Escape dismissal
+restores focus to the trigger. The Overlay gallery intentionally keeps default-open contract
+samples visually closed at page load so modal barriers and floating layers do not block page
+scrolling; the metadata rows still report each sample's resolved default-open contract.
 
 The `open-gpui-ui-core` overlay tests are the renderer-neutral gate for shared overlay behavior.
 They should cover layer kind, presence, outside-press policy, Escape policy, focus restore intent,
