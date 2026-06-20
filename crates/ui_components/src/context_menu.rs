@@ -332,6 +332,9 @@ impl RenderOnce for ContextMenu {
         if controlled_open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
+                if !resolved_open {
+                    runtime.focused_value = None;
+                }
             });
         }
 
@@ -364,7 +367,6 @@ impl RenderOnce for ContextMenu {
         let overlay_adapter = gpui_overlay_state(state.overlay());
         let placement =
             GpuiOverlayPlacement::resolve(state.placement_input(), overlay_adapter.snap_margin());
-        let first_focusable_value = state.menu().first_focusable_value().map(str::to_owned);
         let open_runtime = runtime.clone();
         let open_change = on_open_change.clone();
 
@@ -389,7 +391,6 @@ impl RenderOnce for ContextMenu {
                 open_runtime.update(cx, |runtime, _| {
                     runtime.open = true;
                     runtime.anchor_point = event.position;
-                    runtime.focused_value = first_focusable_value.clone();
                 });
                 if let Some(on_open_change) = open_change.as_ref() {
                     on_open_change(true, window, cx);
@@ -580,7 +581,7 @@ fn context_menu_item_elements(
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()
-                    .tab_stop(item_state.tab_stop())
+                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

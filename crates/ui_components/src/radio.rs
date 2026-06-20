@@ -205,7 +205,6 @@ pub struct RadioItemState {
     disabled: bool,
     selected: bool,
     focused: bool,
-    tab_stop: bool,
 }
 
 impl RadioItemState {
@@ -237,11 +236,6 @@ impl RadioItemState {
     /// Returns whether the item has roving focus.
     pub const fn focused(&self) -> bool {
         self.focused
-    }
-
-    /// Returns whether the item is the current tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns whether activation handlers should run for this item.
@@ -302,7 +296,6 @@ pub struct RadioGroupState {
     items: Vec<RadioItemState>,
     selected_index: Option<usize>,
     focused_index: Option<usize>,
-    tab_stop_index: Option<usize>,
 }
 
 impl RadioGroupState {
@@ -329,11 +322,6 @@ impl RadioGroupState {
         } else {
             resolve_radio_index(&values, &item_disabled, focused_value, selected_seed)
         };
-        let tab_stop_index = if disabled {
-            None
-        } else {
-            focused_index.or(selected_index)
-        };
         let metrics = RadioGroupMetrics::from_size(size);
         let colors = ThemeResolver::radio_group_colors(tokens);
         let focus_ring = FocusRing::from_color(colors.focus_ring());
@@ -344,7 +332,6 @@ impl RadioGroupState {
             .map(|(index, descriptor)| {
                 let selected = Some(index) == selected_index;
                 let focused = Some(index) == focused_index;
-                let tab_stop = Some(index) == tab_stop_index;
 
                 RadioItemState {
                     index,
@@ -353,7 +340,6 @@ impl RadioGroupState {
                     disabled: disabled || descriptor.disabled,
                     selected,
                     focused,
-                    tab_stop,
                 }
             })
             .collect();
@@ -369,7 +355,6 @@ impl RadioGroupState {
             items,
             selected_index,
             focused_index,
-            tab_stop_index,
         }
     }
 
@@ -454,14 +439,13 @@ impl RadioGroupState {
 
     /// Returns the current tab-stop index.
     pub const fn tab_stop_index(&self) -> Option<usize> {
-        self.tab_stop_index
-    }
-
-    /// Returns the current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index
-            .and_then(|index| self.items.get(index))
-            .map(RadioItemState::value)
+        if self.disabled {
+            None
+        } else if self.focused_index.is_some() {
+            self.focused_index
+        } else {
+            self.selected_index
+        }
     }
 
     /// Returns whether there are no radio items.
@@ -664,6 +648,7 @@ impl RenderOnce for RadioGroup {
             let colors = state.colors();
             let focus_ring = state.focus_ring();
             let is_vertical = matches!(orientation, Orientation::Vertical);
+            let tab_stop_index = state.tab_stop_index();
             let focus_handles = {
                 let runtime = runtime.read(cx);
                 state
@@ -701,7 +686,7 @@ impl RenderOnce for RadioGroup {
                     let key_item_descriptors = item_descriptors.clone();
                     let item_index = index;
                     let is_selected = item.selected();
-                    let is_tab_stop = item.tab_stop();
+                    let is_tab_stop = Some(index) == tab_stop_index;
                     let item_value = item.value().to_owned();
 
                     div()
@@ -963,9 +948,8 @@ mod tests {
         assert!(state.required());
         assert_eq!(state.selected_value(), Some("personal"));
         assert_eq!(state.focused_value(), Some("personal"));
-        assert_eq!(state.tab_stop_value(), Some("personal"));
+        assert_eq!(state.tab_stop_index(), state.focused_index());
         assert!(state.items()[1].disabled());
-        assert!(!state.items()[1].tab_stop());
         assert_eq!(state.items()[0].role(), Role::RadioButton);
     }
 

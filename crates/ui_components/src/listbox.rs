@@ -350,7 +350,6 @@ pub struct ListboxOptionState {
     disabled: bool,
     selected: bool,
     active: bool,
-    tab_stop: bool,
     position_in_set: Option<usize>,
     size_of_set: usize,
 }
@@ -399,11 +398,6 @@ impl ListboxOptionState {
     /// Returns whether the option is the active descendant.
     pub const fn active(&self) -> bool {
         self.active
-    }
-
-    /// Returns whether the option is the current tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns whether activation handlers should run.
@@ -568,7 +562,6 @@ impl ListboxState {
                 };
                 let selected = selected_index == Some(index);
                 let active = active_index == Some(index);
-                let focusable = option.descriptor.focusable();
 
                 ListboxOptionState {
                     index,
@@ -579,7 +572,6 @@ impl ListboxState {
                     disabled: option.descriptor.disabled,
                     selected,
                     active,
-                    tab_stop: active && focusable,
                     position_in_set,
                     size_of_set: selectable_count,
                 }
@@ -684,14 +676,6 @@ impl ListboxState {
     /// Returns selected option index.
     pub const fn selected_index(&self) -> Option<usize> {
         self.selected_index
-    }
-
-    /// Returns current tab-stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.options
-            .iter()
-            .find(|option| option.tab_stop())
-            .map(ListboxOptionState::value)
     }
 
     /// Returns whether the listbox has no selectable option rows.
@@ -1302,7 +1286,7 @@ fn listbox_option_elements(
                     .aria_selected(state.selected())
                     .aria_disabled(disabled)
                     .focusable()
-                    .tab_stop(state.tab_stop())
+                    .tab_stop(state.active())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

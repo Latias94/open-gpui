@@ -266,7 +266,6 @@ pub struct TabsItemState {
     disabled: bool,
     selected: bool,
     focused: bool,
-    tab_stop: bool,
 }
 
 impl TabsItemState {
@@ -298,11 +297,6 @@ impl TabsItemState {
     /// Returns whether the tab currently has roving focus.
     pub const fn focused(&self) -> bool {
         self.focused
-    }
-
-    /// Returns whether the tab should be the tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 }
 
@@ -351,7 +345,6 @@ pub struct TabsState {
     items: Vec<TabsItemState>,
     selected_index: Option<usize>,
     focused_index: Option<usize>,
-    tab_stop_index: Option<usize>,
 }
 
 impl TabsState {
@@ -375,7 +368,6 @@ impl TabsState {
             .map(String::as_str);
         let focused_index =
             selection_index_from_str_keys(&values, &disabled, focused_value, selected_seed);
-        let tab_stop_index = focused_index.or(selected_index);
         let metrics = TabsMetrics::from_size(size);
         let colors = TabsColors::from_tokens(tokens);
 
@@ -385,7 +377,6 @@ impl TabsState {
             .map(|(index, descriptor)| {
                 let selected = Some(index) == selected_index;
                 let focused = Some(index) == focused_index;
-                let tab_stop = Some(index) == tab_stop_index;
 
                 TabsItemState {
                     index,
@@ -394,7 +385,6 @@ impl TabsState {
                     disabled: descriptor.disabled,
                     selected,
                     focused,
-                    tab_stop,
                 }
             })
             .collect();
@@ -408,7 +398,6 @@ impl TabsState {
             items,
             selected_index,
             focused_index,
-            tab_stop_index,
         }
     }
 
@@ -478,19 +467,17 @@ impl TabsState {
 
     /// Returns the current tab stop index.
     pub const fn tab_stop_index(&self) -> Option<usize> {
-        self.tab_stop_index
-    }
-
-    /// Returns the current tab stop value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.tab_stop_index
-            .and_then(|index| self.items.get(index))
-            .map(|item| item.value())
+        if self.focused_index.is_some() {
+            self.focused_index
+        } else {
+            self.selected_index
+        }
     }
 
     /// Returns the current tab stop item.
     pub fn tab_stop_item(&self) -> Option<&TabsItemState> {
-        self.tab_stop_index.and_then(|index| self.items.get(index))
+        self.tab_stop_index()
+            .and_then(|index| self.items.get(index))
     }
 
     /// Returns the item at the given index.
@@ -718,6 +705,7 @@ impl RenderOnce for Tabs {
                     .map(|item| runtime.focus_handles.get(item.value()).cloned())
                     .collect::<Vec<_>>()
             };
+            let tab_stop_index = state.tab_stop_index();
 
             div()
                 .id(id.clone())
@@ -762,7 +750,7 @@ impl RenderOnce for Tabs {
                             let key_item_descriptors = item_descriptors.clone();
                             let item_index = index;
                             let is_selected = item.selected();
-                            let is_tab_stop = item.tab_stop();
+                            let is_tab_stop = Some(index) == tab_stop_index;
                             let focus_handle = focus_handles[index].clone();
 
                             div()
@@ -1055,9 +1043,8 @@ mod tests {
         assert_eq!(state.activation_mode(), TabsActivationMode::Manual);
         assert_eq!(state.selected_value(), Some("details"));
         assert_eq!(state.focused_value(), Some("details"));
-        assert_eq!(state.tab_stop_value(), Some("details"));
         assert!(state.items()[1].selected());
         assert!(state.items()[1].focused());
-        assert!(!state.items()[2].tab_stop());
+        assert_eq!(state.tab_stop_index(), Some(1));
     }
 }

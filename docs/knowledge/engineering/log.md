@@ -1,6 +1,53 @@
 # Engineering Memory Update Log
 
 ## 2026-06-19
+* **Update**: Removed the selection-time `query` payload from `ComboboxSelection`, and simplified the two Combobox runtime selection tests to assert only the real selection contract (`value` / `label`). The component no longer mirrors query text into selection events.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components combobox_runtime_filters_input_and_selects_filtered_option combobox_runtime_keyboard_selects_filtered_option` passed after the payload cleanup.
+* **Decision**: Check whether `CommandSelection` still carries a mirrored selection-time field or whether the remaining query/shortcut data is actual contract, then stop if no new evidence-backed seam appears.
+
+* **Update**: Removed the dead `query` field from `ComboboxRuntime` and `CommandRuntime`. Those components now keep query ownership in the `TextInputController`/resolved state path instead of mirroring it into keyed runtime state.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, and `cargo nextest run -p open-gpui-ui-components --test components` passed after the runtime cleanup.
+* **Decision**: Keep scanning for the next evidence-backed duplicated runtime field; stop when the remaining state is real interaction state, not a mirror of resolved data.
+
+* **Update**: Checked `Listbox` for the same open-time seed pattern and found no redundant runtime write to remove. `Combobox` and `Command` keep their runtime `active_value` because they own real navigation/selection interaction state, so the runtime-seed cleanup stops here.
+* **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads select_state_records_popup_listbox_overlay_and_scroll_contract select_state_models_disabled_empty_and_policy_overrides`, and `cargo check -p open-gpui-ui-components` passed.
+* **Decision**: Move on from runtime-seed cleanup unless a new evidence-backed duplication seam appears.
+
+* **Update**: Removed the open-time `active_value` seed write from `Select` render. `SelectState::resolve` and `ListboxState::resolve` already derive the default active item, so runtime now only owns post-open interaction state.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo nextest run -p open-gpui-ui-components --test components menu_state_records_items_roving_focus_and_overlay_policy menu_state_defaults_focus_to_first_focusable_item_when_open context_menu_state_reuses_menu_model_and_point_anchor_placement context_menu_state_defaults_focus_to_first_focusable_item_when_open select_runtime_click_and_keyboard_selection_close_popup_and_emit_payloads`, and `cargo check -p open-gpui-ui-components` passed.
+* **Decision**: Keep the runtime-seed cleanup evidence-backed. If `Listbox` does not still need an open-time seed write after the current scan, stop deleting derived state here.
+
+* **Update**: Removed the redundant `first_focusable_value` runtime write from both `Menu` and `ContextMenu` open paths. The shared default-first-focus behavior now comes from `MenuState::resolve`, and closing clears stale runtime focus so reopen does not inherit old selection state.
+* **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo check -p open-gpui-ui-components` passed.
+* **Decision**: Keep the menu/context-menu seam narrow. Do not force `Menu` and `ContextMenu` to share more runtime behavior than the evidence supports.
+
+* **Update**: Reconfirmed `repo-ref/fret` diagnostics layering from the local checkout (`diag.rs`, `windowed_rows.rs`, `vlist.rs`, `wheel_scroll.rs`). The useful pattern is still thin entry points and deeper helper modules, not a prompt to add a new headless crate.
+* **Decision**: Keep the gallery geometry helpers in `examples/ui-foundation-gallery/tests/foundation_gallery.rs`. They are test-only helpers tied to `VisualTestContext` / `Bounds<Pixels>`, so they are not the right shape to promote into `ui_core`.
+* **Verification**: `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` and `cargo check -p open-gpui-ui-foundation-gallery` passed.
+
+* **Update**: Re-read `repo-ref/fret`'s diagnostics architecture and the windowed-row / virtual-list / wheel-scroll gating code. The part worth borrowing is the layering discipline: thin entry points, deeper engine modules, and pure helper logic for scroll and visible-range math.
+* **Decision**: Keep the current UI crates as the home for any shared viewport logic for now. If we need to extract anything, it should be a small renderer-neutral helper, not a new headless crate copied from the reference repo's diagnostics stack.
+
+* **Update**: Rechecked `examples/ui-foundation-gallery/src/pages/components.rs` sample/state boundaries and did not find a new evidence-backed deletion seam. The remaining samples are still either sample fixtures or real builder inputs, not duplicated resolved state.
+* **Verification**: `cargo fmt --all --check`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed during the review pass.
+* **Decision**: Stop the Components seam hunt for now; only reopen it if new evidence appears or a later product slice makes a new split worthwhile.
+
+* **Update**: Closed the Components page-local render split. The toolbar state row now lives in `examples/ui-foundation-gallery/src/pages/components/render.rs`, and `shell.rs` dropped the old Components-page helper cluster plus the now-unused imports.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split was closed.
+* **Decision**: Keep the next pass focused on `examples/ui-foundation-gallery/src/pages/components.rs` sample/state boundaries; do not reopen shell-local split work unless a new evidence-backed seam appears.
+
+* **Update**: Rechecked the Components gallery render split against the current shell/page-local code, moved the last toolbar row helper into the page-local module, and trimmed the remaining shell imports. The Components page now owns its helpers inside the page-local module tree.
+* **Verification**: `cargo fmt --all`, `cargo check -p open-gpui-ui-foundation-gallery`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the split and shell cleanup.
+* **Decision**: Stop the gallery seam hunt unless a new evidence-backed mismatch appears; the Components page-local split is closed.
+
+* **Update**: Removed the remaining item-level `tab_stop` storage from `MenuItemState`, `ListboxOptionState`, and `CommandItemState`, then switched menu/listbox/context-menu/command render paths to derive tab-stop placement from focused or active state directly. The resolved state contract now owns the tab-stop decision instead of caching one more boolean per item.
+* **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the menu/listbox/command cleanup.
+* **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
+* **Update**: Removed the last sidebar-local visibility storage (`SidebarSectionState.visible` and `SidebarItemState.visible`) and removed item-level `tab_stop` storage from `ToolbarItemState`, `TabsItemState`, and `RadioItemState`. The sidebar, toolbar, tabs, and radio render paths now derive tab-stop/visibility behavior from the higher-level resolved indices and collapse mode instead of carrying duplicate per-item booleans.
+* **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the deeper derived-state cleanup.
+* **Decision**: Keep scanning for the next evidence-backed seam; prefer deleting duplicated derived state when the resolved contract already exposes a stronger source of truth.
+
 * **Update**: Added a browser-level smoke for the controlled hover card toggle surface and gave the toggle a gallery debug selector. The gallery now proves the shell-controlled hover card can be opened from the control surface and dismissed with Escape.
 * **Verification**: `cargo fmt --all`, `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (50/50), and `cargo nextest run -p open-gpui-ui-components --tests` (147/147) passed after the hover-card control-surface cleanup.
 * **Decision**: Keep scanning for the next evidence-backed seam; do not treat the current hover-card chain as a remaining gap unless a new behavior split appears.
@@ -61,7 +108,7 @@
 * **Update**: Added direct tests that lock `Menu` / `ContextMenu` default open focus to the first focusable item, so the shared entry-focus rule is now covered by the component suite.
 * **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` all passed after the Select / Menu cleanup.
 * **Decision**: Keep the architecture loop narrow unless a new evidence-backed duplication seam appears; otherwise move on to the next product slice.
-* **Update**: Rechecked `Menu` / `ContextMenu` against `repo-ref/fret`'s `entry_focus` pattern. The current code does not expose modality as a separate public input, so `first_focusable_value()` is the correct stopping point for this pass rather than another extracted helper.
+* **Update**: Rechecked `Menu` / `ContextMenu` against `repo-ref/fret`'s `entry_focus` pattern. The useful seam is state-owned default focus; the runtime open path should only preserve or clear stale focus, not re-derive it.
 * **Decision**: Stop chasing a deeper `Menu` / `ContextMenu` seam unless a new evidence-backed duplication appears.
 * **Update**: Rechecked the current gallery seams against `repo-ref/fret` and confirmed the only clear shared-rule seam left is `Menu` / `ContextMenu` first-focus handling.
 * **Decision**: Do not keep deleting overlay sample titles / descriptions / action labels or `TabsSample.title`; those are still constructor inputs or page-card copy, not duplicated resolved state.
@@ -72,8 +119,8 @@
 * **Update**: Added `ListboxState::scrollable_content()` and moved the `Select` / `Combobox` scrollability threshold onto the shared listbox state instead of duplicating `> 6` checks in each adapter.
 * **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the listbox scrollability cleanup.
 * **Decision**: Keep the architecture loop narrow. The current subagent review says the remaining `apply_optional_values` builder sugar is not deep enough to extract, so do not keep chasing that seam.
-* **Update**: Removed the duplicated local `first_focusable_value` helper from `Menu` / `ContextMenu` by moving the lookup onto `MenuState::first_focusable_value()`. The gallery now consumes the same state-owned entry-focus contract from both code paths.
-* **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the Menu / ContextMenu entry-focus cleanup.
+* **Update**: Tightened the menu / context-menu entry-focus contract so `MenuState::resolve` owns the default first-focus selection, and the runtime path only clears stale focus on close.
+* **Verification**: `cargo fmt --all --check`, `cargo nextest run -p open-gpui-ui-components --tests`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the menu / context-menu entry-focus cleanup.
 * **Decision**: Keep the architecture loop narrow. The next pass should only continue if a new evidence-backed duplicate seam appears; otherwise move on to the next product slice.
 * **Update**: Used `repo-ref/fret` as the local architecture reference and applied the useful pattern back to the current gallery pass: thin shell reconstruction, resolved state as the behavior contract, and pure helper seams only when they remove duplicated policy.
 * **Update**: Added `ListboxState::standalone_options()` and `ListboxState::group_options()` so Listbox / Select / Combobox gallery reconstruction consumes state-owned grouping views instead of filtering `group_index()` in the shell.
@@ -1051,3 +1098,6 @@
 * **Update**: Implemented the first Open GPUI UI foundation slice on `feat/open-gpui-ui-core` with the new `open-gpui-ui-core` crate, sizing/adaptive/token/overlay helpers, a11y/focus re-exports, and passing `cargo nextest run -p open-gpui-ui-core`.
 * **Update**: Updated ADR 0004 to prioritize a11y, focus, overlay, tokens, sizing, density, and adaptive layout before broad component rollout; added decision and session memory for the UI foundation-first strategy.
 * **Initialization**: Created engineering wiki memory bundle.
+* **Update**: Removed `ComboboxState.selected_label`, `SelectState.trigger_label` / `SelectState.selected_value` / `SelectState.active_value`, and `CommandState.active_value` plus the mirrored test/gallery assertions. The choice states now keep the stable selected value contracts and derive display labels and active values from option data and listbox state in the render path.
+* **Verification**: `cargo fmt -p open-gpui-ui-components --all`, `cargo check -p open-gpui-ui-components`, `cargo nextest run -p open-gpui-ui-components --test components`, and `cargo nextest run -p open-gpui-ui-foundation-gallery --test foundation_gallery` passed after the cleanup.
+* **Decision**: Keep scanning adjacent choice components for the next evidence-backed redundant state; do not remove `Tabs` fields without stronger proof.

@@ -308,7 +308,6 @@ pub struct MenuItemState {
     kind: MenuItemKind,
     disabled: bool,
     focused: bool,
-    tab_stop: bool,
 }
 
 impl MenuItemState {
@@ -345,11 +344,6 @@ impl MenuItemState {
     /// Returns whether the item has roving focus.
     pub const fn focused(&self) -> bool {
         self.focused
-    }
-
-    /// Returns whether the item is the current tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns whether activation handlers should run for this item.
@@ -466,7 +460,6 @@ impl MenuState {
             .enumerate()
             .map(|(index, item)| {
                 let focused = focused_index == Some(index);
-                let focusable = item.focusable();
                 MenuItemState {
                     index,
                     value: item.value,
@@ -474,7 +467,6 @@ impl MenuState {
                     kind: item.kind,
                     disabled: item.disabled,
                     focused,
-                    tab_stop: focused && focusable,
                 }
             })
             .collect();
@@ -587,22 +579,6 @@ impl MenuState {
     pub fn focused_value(&self) -> Option<&str> {
         self.focused_index
             .and_then(|index| self.items.get(index))
-            .map(MenuItemState::value)
-    }
-
-    /// Returns the first focusable item value in descriptor order.
-    pub fn first_focusable_value(&self) -> Option<&str> {
-        self.items
-            .iter()
-            .find(|item| item.focusable())
-            .map(MenuItemState::value)
-    }
-
-    /// Returns current tab-stop item value.
-    pub fn tab_stop_value(&self) -> Option<&str> {
-        self.items
-            .iter()
-            .find(|item| item.tab_stop())
             .map(MenuItemState::value)
     }
 
@@ -923,6 +899,9 @@ impl RenderOnce for Menu {
         if controlled_open.is_some() && runtime_state.open != resolved_open {
             runtime.update(cx, |runtime, _| {
                 runtime.open = resolved_open;
+                if !resolved_open {
+                    runtime.focused_value = None;
+                }
             });
         }
 
@@ -945,7 +924,6 @@ impl RenderOnce for Menu {
             self.focus_restore_intent.clone(),
             self.tokens,
         );
-        let first_focusable_value = state.first_focusable_value().map(str::to_owned);
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();
@@ -1028,7 +1006,6 @@ impl RenderOnce for Menu {
                     .when(!disabled, |this| {
                         let runtime = runtime.clone();
                         let on_open_change = on_open_change.clone();
-                        let first_focusable_value = first_focusable_value.clone();
                         this.cursor_pointer()
                             .hover(move |style| {
                                 style.bg(ThemeResolver::resolve(colors.trigger_hover_background()))
@@ -1038,8 +1015,9 @@ impl RenderOnce for Menu {
                                 let next_open = !open;
                                 runtime.update(cx, |runtime, _| {
                                     runtime.open = next_open;
-                                    runtime.focused_value =
-                                        next_open.then(|| first_focusable_value.clone()).flatten();
+                                    if !next_open {
+                                        runtime.focused_value = None;
+                                    }
                                 });
                                 if let Some(on_open_change) = on_open_change.as_ref() {
                                     on_open_change(next_open, window, cx);
@@ -1216,7 +1194,7 @@ fn menu_item_elements(
                     .aria_label(item_state.label().to_owned())
                     .aria_disabled(disabled)
                     .focusable()
-                    .tab_stop(item_state.tab_stop())
+                    .tab_stop(item_state.focused())
                     .when(disabled, |this| this.opacity(0.56).cursor_not_allowed())
                     .when(!disabled, |this| {
                         this.cursor_pointer()

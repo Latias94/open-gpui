@@ -19,6 +19,11 @@ use open_gpui_ui_core::{
     OverlayPlacementAlignment, OverlayPlacementSide, Sizable, Size, ThemeTokens,
 };
 
+#[path = "components/render.rs"]
+mod render;
+
+pub(crate) use render::render_components_page;
+
 /// Page title.
 pub const TITLE: &str = "Components";
 /// Page summary.

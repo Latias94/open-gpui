@@ -434,7 +434,6 @@ pub struct CommandItemState {
     disabled: bool,
     selected: bool,
     active: bool,
-    tab_stop: bool,
     position_in_set: Option<usize>,
     size_of_set: usize,
 }
@@ -483,11 +482,6 @@ impl CommandItemState {
     /// Returns whether the item is active.
     pub const fn active(&self) -> bool {
         self.active
-    }
-
-    /// Returns whether the item owns the tab stop.
-    pub const fn tab_stop(&self) -> bool {
-        self.tab_stop
     }
 
     /// Returns the item's accessibility role.
@@ -567,8 +561,6 @@ pub struct CommandState {
     label: String,
     placeholder: String,
     query: String,
-    selected_value: Option<String>,
-    active_value: Option<String>,
     open: bool,
     default_open: bool,
     open_mode: CommandOpenMode,
@@ -731,7 +723,6 @@ impl CommandState {
                     disabled: item.descriptor.disabled,
                     selected: option.selected(),
                     active: option.active(),
-                    tab_stop: option.tab_stop(),
                     position_in_set: option.position_in_set(),
                     size_of_set: option.size_of_set(),
                 })
@@ -788,8 +779,6 @@ impl CommandState {
             label,
             placeholder,
             query,
-            selected_value,
-            active_value: listbox.active_value().map(str::to_owned),
             open,
             default_open,
             open_mode,
@@ -839,12 +828,12 @@ impl CommandState {
 
     /// Returns selected command value.
     pub fn selected_value(&self) -> Option<&str> {
-        self.selected_value.as_deref()
+        self.listbox.selected_value()
     }
 
     /// Returns active command value.
     pub fn active_value(&self) -> Option<&str> {
-        self.active_value.as_deref()
+        self.listbox.active_value()
     }
 
     /// Returns whether the dialog wrapper is open.
@@ -1015,7 +1004,6 @@ impl CommandState {
 #[derive(Debug, Clone)]
 struct CommandRuntime {
     open: bool,
-    query: String,
     active_value: Option<String>,
     selected_value: Option<String>,
 }
@@ -1282,7 +1270,6 @@ impl RenderOnce for Command {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let runtime = window.use_keyed_state(self.id.clone(), cx, |_, _| CommandRuntime {
             open: self.default_open,
-            query: self.query.clone(),
             active_value: self.active_value.clone(),
             selected_value: self.selected_value.clone(),
         });
@@ -1338,10 +1325,6 @@ impl RenderOnce for Command {
                 controller.set_placeholder(self.placeholder.clone(), cx);
             }
         });
-        runtime.update(cx, |runtime, _| {
-            runtime.query = query.clone();
-        });
-
         let id = self.id;
         let debug_id = id.to_string();
         let trigger_id: ElementId = (id.clone(), "trigger").into();

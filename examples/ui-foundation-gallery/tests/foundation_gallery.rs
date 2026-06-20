@@ -1120,7 +1120,6 @@ fn components_page_samples_expose_component_metadata() {
     assert!(radio_groups[0].state.required());
     assert_eq!(radio_groups[0].state.selected_value(), Some("team"));
     assert_eq!(radio_groups[0].state.focused_value(), Some("team"));
-    assert_eq!(radio_groups[0].state.tab_stop_value(), Some("team"));
     assert!(radio_groups[0].state.items()[2].disabled());
     assert_eq!(radio_groups[0].state.items()[0].role(), Role::RadioButton);
     assert_eq!(radio_groups[1].state.orientation(), Orientation::Horizontal);
@@ -1138,7 +1137,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(toolbars[0].state.role(), Role::Toolbar);
     assert_eq!(toolbars[0].state.orientation(), Orientation::Horizontal);
     assert_eq!(toolbars[0].state.focused_value(), Some("bold"));
-    assert_eq!(toolbars[0].state.tab_stop_value(), Some("bold"));
     assert_eq!(toolbars[0].state.items()[2].kind().as_str(), "separator");
     assert!(!toolbars[0].state.items()[2].focusable());
     assert!(toolbars[0].state.items()[3].pressed());
@@ -1158,7 +1156,6 @@ fn components_page_samples_expose_component_metadata() {
     assert_eq!(sidebars[0].state.items()[1].badge_label(), Some("12"));
     assert!(!sidebars[0].state.items()[3].activation_enabled());
     assert!(sidebars[1].state.icon_collapsed());
-    assert!(!sidebars[1].state.items()[0].text_visible());
     assert_eq!(sidebars[1].state.items()[0].label(), "Home");
     assert_eq!(sidebars[2].state.side().as_str(), "right");
     assert!(sidebars[2].state.scrollable());
@@ -1181,7 +1178,6 @@ fn components_page_samples_expose_component_metadata() {
             .any(|option| option.disabled())
     );
     assert!(listboxes[1].state.empty());
-    assert_eq!(listboxes[1].state.tab_stop_value(), None);
 
     assert_eq!(selects.len(), 3);
     assert_eq!(selects[0].id, "priority-select");
@@ -1314,8 +1310,8 @@ fn components_page_samples_expose_component_metadata() {
 
 #[test]
 fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
-    let shell_source = include_str!("../src/shell.rs");
     let components_source = include_str!("../src/pages/components.rs");
+    let render_source = include_str!("../src/pages/components/render.rs");
     let splitter_struct_start = components_source
         .find("pub struct SplitterSample {")
         .expect("expected SplitterSample struct to exist");
@@ -1324,7 +1320,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
         .map(|offset| splitter_struct_start + offset)
         .expect("expected SplitterSample selector impl to exist");
     let splitter_struct = &components_source[splitter_struct_start..splitter_struct_end];
-    let splitter_section = shell_source
+    let splitter_section = render_source
         .split("splitter_samples.into_iter().map(|sample| {")
         .nth(1)
         .and_then(|section| {
@@ -1332,7 +1328,7 @@ fn component_gallery_shell_reads_splitter_behavior_from_resolved_state() {
                 .split("scroll_area_samples.into_iter().map(|sample| {")
                 .next()
         })
-        .expect("expected Splitter section in shell source");
+        .expect("expected Splitter section in components render source");
 
     assert!(!splitter_struct.contains("pub orientation: Orientation,"));
     assert!(!splitter_struct.contains("pub size: Size,"));
@@ -1443,14 +1439,12 @@ fn components_page_tabs_samples_expose_roving_focus_contract() {
     assert_eq!(tabs[0].id, "overview-tabs");
     assert_eq!(tabs[0].state.selected_value(), Some("overview"));
     assert_eq!(tabs[0].state.focused_value(), Some("overview"));
-    assert_eq!(tabs[0].state.tab_stop_value(), Some("overview"));
     assert!(tabs[0].items.iter().any(|item| item.disabled));
 
     assert_eq!(tabs[1].id, "workspace-tabs");
     assert!(tabs[1].items.len() >= 12);
     assert_eq!(tabs[1].state.selected_value(), Some("profile"));
     assert_eq!(tabs[1].state.focused_value(), Some("profile"));
-    assert_eq!(tabs[1].state.tab_stop_value(), Some("profile"));
     assert!(tabs[1].items[3].disabled);
 }
 
@@ -1476,12 +1470,11 @@ fn components_page_sidebar_samples_expose_navigation_contract() {
     );
     assert!(workspace.items().iter().any(|item| item.disabled()));
 
-    assert!(icon.icon_collapsed());
     assert_eq!(
         icon.metrics().resolved_width(),
         icon.metrics().collapsed_width()
     );
-    assert!(icon.items().iter().all(|item| !item.text_visible()));
+    assert!(icon.icon_collapsed());
     assert!(icon.items().iter().all(|item| !item.label().is_empty()));
 
     assert_eq!(long.side().as_str(), "right");
@@ -1553,7 +1546,6 @@ fn components_page_choice_samples_expose_listbox_and_select_contracts() {
 
     assert!(empty.empty());
     assert_eq!(empty.active_value(), None);
-    assert_eq!(empty.tab_stop_value(), None);
 
     assert_eq!(priority.open_mode(), SelectOpenMode::Controlled);
     assert!(priority.open());
@@ -1607,7 +1599,6 @@ fn components_page_search_samples_expose_combobox_and_command_contracts() {
     assert_eq!(framework.total_option_count(), 5);
     assert_eq!(framework.filtered_option_count(), 3);
     assert_eq!(framework.selected_value(), Some("solid"));
-    assert_eq!(framework.selected_label(), Some("Solid"));
     assert_eq!(framework.listbox().selected_value(), None);
     assert_eq!(framework.active_value(), Some("react"));
     assert_eq!(framework.listbox().typeahead_query(), Some("re"));

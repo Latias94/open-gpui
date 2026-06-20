@@ -716,7 +716,6 @@ fn menu_state_records_items_roving_focus_and_overlay_policy() {
     );
     assert_eq!(state.escape_key_policy(), EscapeKeyPolicy::Dismiss);
     assert_eq!(state.focused_value(), Some("save"));
-    assert_eq!(state.tab_stop_value(), Some("save"));
     assert_eq!(state.items().len(), 4);
     assert_eq!(state.items()[0].role(), Some(Role::MenuItem));
     assert_eq!(state.items()[2].kind(), MenuItemKind::Separator);
@@ -741,7 +740,6 @@ fn menu_state_defaults_focus_to_first_focusable_item_when_open() {
 
     assert!(state.open());
     assert_eq!(state.focused_value(), Some("save"));
-    assert_eq!(state.tab_stop_value(), Some("save"));
     assert_eq!(state.items()[0].kind(), MenuItemKind::Separator);
     assert!(state.items()[2].disabled());
 }
@@ -866,7 +864,6 @@ fn context_menu_state_defaults_focus_to_first_focusable_item_when_open() {
         .state();
 
     assert_eq!(state.menu().focused_value(), Some("duplicate"));
-    assert_eq!(state.menu().tab_stop_value(), Some("duplicate"));
     assert!(state.menu().items()[0].kind() == MenuItemKind::Separator);
 }
 
@@ -961,12 +958,11 @@ fn tabs_state_resolution_tracks_selected_focus_and_tab_stop() {
     assert_eq!(state.size(), Size::Small);
     assert_eq!(state.selected_value(), Some("security"));
     assert_eq!(state.focused_value(), Some("security"));
-    assert_eq!(state.tab_stop_value(), Some("security"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].selected());
     assert!(state.items()[1].focused());
-    assert!(state.items()[1].tab_stop());
     assert!(state.items()[2].disabled());
-    assert!(!state.items()[2].tab_stop());
+    assert!(!state.items()[2].focused());
 }
 
 #[test]
@@ -986,7 +982,7 @@ fn tabs_builder_state_falls_back_to_first_enabled_tab() {
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.selected_value(), Some("overview"));
     assert_eq!(state.focused_value(), Some("overview"));
-    assert_eq!(state.tab_stop_value(), Some("overview"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
@@ -1957,11 +1953,10 @@ fn radio_group_state_exposes_selection_required_and_disabled_items() {
     assert!(state.required());
     assert_eq!(state.selected_value(), Some("team"));
     assert_eq!(state.focused_value(), Some("team"));
-    assert_eq!(state.tab_stop_value(), Some("team"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items().len(), 3);
     assert!(state.items()[1].selected());
     assert!(state.items()[1].focused());
-    assert!(state.items()[1].tab_stop());
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].activation_enabled());
     assert_eq!(state.items()[0].role(), Role::RadioButton);
@@ -1988,9 +1983,9 @@ fn radio_group_reuses_roving_focus_helpers_and_skips_disabled_items() {
     assert_eq!(state.size(), Size::Small);
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("enterprise"));
-    assert_eq!(state.tab_stop_value(), Some("enterprise"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[1].disabled());
-    assert!(!state.items()[1].tab_stop());
+    assert!(!state.items()[1].focused());
 }
 
 #[test]
@@ -2011,7 +2006,7 @@ fn radio_group_builder_state_falls_back_to_first_enabled_item() {
     assert!(state.required());
     assert_eq!(state.selected_value(), Some("starter"));
     assert_eq!(state.focused_value(), Some("starter"));
-    assert_eq!(state.tab_stop_value(), Some("starter"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[2].disabled());
     assert!(!state.items()[2].selected());
 }
@@ -2704,7 +2699,8 @@ fn sidebar_state_exposes_shell_navigation_contract() {
     assert_eq!(state.items().len(), 5);
     assert_eq!(state.selected_value(), Some("projects"));
     assert_eq!(state.focused_value(), Some("projects"));
-    assert_eq!(state.tab_stop_value(), Some("projects"));
+    assert_eq!(state.focused_index(), Some(1));
+    assert!(state.scrollable());
     assert!(state.items()[1].selected());
     assert_eq!(state.items()[1].badge_label(), Some("12"));
     assert!(!state.items()[2].activation_enabled());
@@ -2745,8 +2741,8 @@ fn sidebar_icon_collapse_keeps_accessible_items_but_hides_text() {
     );
     assert_eq!(state.selected_value(), Some("dashboard"));
     assert_eq!(state.focused_value(), Some("dashboard"));
-    assert!(state.items()[0].visible());
-    assert!(!state.items()[0].text_visible());
+    assert!(state.scrollable());
+    assert!(state.items()[0].focusable());
     assert_eq!(state.items()[0].label(), "Dashboard");
     assert_eq!(state.items()[1].badge_label(), Some("4"));
 }
@@ -2775,8 +2771,8 @@ fn sidebar_offcanvas_collapse_removes_items_from_roving_focus() {
     assert_eq!(state.metrics().resolved_width(), ui_px(0.0));
     assert_eq!(state.selected_value(), None);
     assert_eq!(state.focused_value(), None);
-    assert_eq!(state.tab_stop_value(), None);
-    assert!(!state.items()[0].visible());
+    assert_eq!(state.focused_index(), None);
+    assert!(!state.scrollable());
     assert!(!state.items()[0].focusable());
     assert!(state.activation_for_key("space").is_none());
 }
@@ -2822,7 +2818,7 @@ fn toolbar_state_exposes_roving_focus_and_toggle_metadata() {
     assert_eq!(state.label(), "Editor toolbar");
     assert_eq!(state.items().len(), 5);
     assert_eq!(state.focused_value(), Some("bold"));
-    assert_eq!(state.tab_stop_value(), Some("bold"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert_eq!(state.items()[0].role(), Some(Role::Button));
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
     assert_eq!(state.items()[1].role(), None);
@@ -2857,7 +2853,7 @@ fn toolbar_builder_state_skips_disabled_and_separator_items() {
     assert_eq!(state.orientation(), Orientation::Vertical);
     assert_eq!(state.size(), Size::Large);
     assert_eq!(state.focused_value(), Some("copy"));
-    assert_eq!(state.tab_stop_value(), Some("copy"));
+    assert_eq!(state.tab_stop_index(), state.focused_index());
     assert!(state.items()[0].disabled());
     assert_eq!(state.items()[1].kind(), ToolbarItemKind::Separator);
     assert!(state.items()[3].pressed());
@@ -2902,7 +2898,6 @@ fn listbox_state_resolves_grouped_options_navigation_and_typeahead() {
     assert_eq!(state.options().len(), 5);
     assert_eq!(state.selected_value(), Some("bravo"));
     assert_eq!(state.active_value(), Some("bravo"));
-    assert_eq!(state.tab_stop_value(), Some("bravo"));
     assert_eq!(state.options()[1].kind(), ListboxOptionKind::Separator);
     assert_eq!(state.options()[1].role(), None);
     assert!(!state.options()[1].focusable());
@@ -2985,7 +2980,6 @@ fn listbox_builder_state_models_empty_disabled_and_tokens() {
 
     assert!(empty.empty());
     assert_eq!(empty.empty_label(), "Nothing available");
-    assert_eq!(empty.tab_stop_value(), None);
     assert_eq!(empty.colors().surface().token(), tokens.surface);
     assert!(disabled.disabled());
     assert_eq!(disabled.selected_value(), None);
@@ -3451,7 +3445,6 @@ fn combobox_state_filters_query_without_clearing_selection() {
     assert_eq!(state.filtered_option_count(), 3);
     assert!(state.filtered());
     assert_eq!(state.selected_value(), Some("solid"));
-    assert_eq!(state.selected_label(), Some("Solid"));
     assert_eq!(state.active_value(), Some("react"));
     assert_eq!(state.listbox().role(), Role::ListBox);
     assert_eq!(state.listbox().selected_value(), None);
@@ -3649,7 +3642,7 @@ fn combobox_runtime_filters_input_and_selects_filtered_option(cx: &mut open_gpui
         events.borrow().clone(),
         vec![
             ComboboxRuntimeEvent::Open(true),
-            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix")),
             ComboboxRuntimeEvent::Open(false),
         ]
     );
@@ -3743,7 +3736,7 @@ fn combobox_runtime_keyboard_selects_filtered_option(cx: &mut open_gpui::TestApp
         events.borrow().clone(),
         vec![
             ComboboxRuntimeEvent::Open(true),
-            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix", "re")),
+            ComboboxRuntimeEvent::Select(ComboboxSelection::new("remix", "Remix")),
             ComboboxRuntimeEvent::Open(false),
         ]
     );
