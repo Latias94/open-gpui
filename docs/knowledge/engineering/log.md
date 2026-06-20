@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-20
+* **Update**: Made the Components gallery `Combobox` sample pass `selected_value` and `active_value` explicitly instead of deriving active from selected. The search contract test now asserts `selected != active` for `Select`, `Combobox`, and `Command`.
+* **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the explicit Combobox contract cleanup.
+* **Commit**: Pushed `b66b5a0 refactor(gallery): make combobox choice contract explicit` to `origin/main`. Only `examples/ui-foundation-gallery/src/pages/components.rs` and `examples/ui-foundation-gallery/tests/foundation_gallery.rs` were staged; the existing `crates/gpui_docking/*` dirty files were left untouched.
 * **Update**: Re-scanned the Components page choice/search family and found no safe deletion seam in `ListboxSample`, `SelectSample`, `ComboboxSample`, or `CommandSample`. The useful seam was contract hardening instead: `Select` / `Command` samples now keep `selected_value` and `active_value` distinct, and the gallery tests assert that distinction directly.
 * **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` (51/51) passed after the choice/search contract hardening.
 * **Decision**: Stop deleting state in the Components choice/search family for now. Keep the page-local sample shells and deepen tests around resolved-state distinctions instead.

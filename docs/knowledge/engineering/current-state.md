@@ -9,11 +9,11 @@ timestamp: 2026-06-20
 
 - Goal: Continue UI component contract alignment and remove evidence-backed behavioral drift without preserving old compatibility layers.
 - Branch: `main`
-- Last verified: `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` after tightening the Components-page choice/search contract so `Select` and `Command` now keep `selected_value` and `active_value` distinct in gallery samples and tests.
-- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state. The latest choice/search scan did not find a safe deletion seam, so the work shifted to contract hardening instead of more field removal.
-- In progress: The gallery contract pass is still compile-healthy; the remaining work is to record the new choice/search evidence and decide whether to commit the contract hardening.
+- Last verified: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` after tightening the Components-page choice/search contract so `Select`, `Combobox`, and `Command` now keep `selected_value` and `active_value` distinct in gallery samples and tests.
+- Done: Re-checked the Components-page crash line and `repo-ref/fret`'s scroll/list-box helper layering. Also moved Focus & A11y and Overlay page-local shell state out of `shell.rs` into page modules so the shell only retains cross-page/navigation state. The latest choice/search scan did not find a safe deletion seam, so the work shifted to explicit contract hardening and was committed as `b66b5a0`.
+- In progress: Current automatically discoverable gallery contract drift is closed. The checkout still has unrelated `crates/gpui_docking/*` dirty files that were intentionally not staged or committed in this pass.
 - Blocked: None.
-- Next action: Commit the choice/search contract hardening if the diff remains scoped to the gallery sample/test files.
+- Next action: If continuing the architecture loop, start from the remaining `gpui_docking` dirty files or run a fresh plan for the next UI component slice; do not re-open the completed gallery choice/search contract pass without new evidence.
 
 # Citations
 
