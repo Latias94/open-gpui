@@ -1,6 +1,9 @@
 # Engineering Memory Update Log
 
 ## 2026-06-20
+* **Update**: Rechecked the current `crates/gpui_docking/*` dirty work and confirmed the close-recovery regression was a test-source mismatch rather than a runtime bug. `host_render_tests::close_recovery_does_not_reveal_hidden_recorded_panel` now uses `DockViewportFocusCommandSource::CloseRecovery`, and the nearby close-recovery / merge-back tests pass under focused `cargo nextest run -p open-gpui-docking`.
+* **Verification**: `cargo nextest run -p open-gpui-docking host_render_tests::close_recovery_does_not_reveal_hidden_recorded_panel host_render_tests::close_recovery_restore_failure_does_not_overwrite_had_panel_focus_fact --no-capture` and `cargo nextest run -p open-gpui-docking host_render_tests::close_recovery_does_not_reveal_hidden_recorded_panel close_recovery_without_source_focus_clears_target_panel_focus viewport_runtime_does_not_refresh_recent_focus_stamp_for_close_activation_before_render platform_activation_does_not_override_pending_close_recovery --no-capture` both passed.
+* **Decision**: Treat the docking close-recovery line as a test-grammar cleanup, not a runtime fix. Continue only if a new evidence-backed behavioral drift appears.
 * **Update**: Made the Components gallery `Combobox` sample pass `selected_value` and `active_value` explicitly instead of deriving active from selected. The search contract test now asserts `selected != active` for `Select`, `Combobox`, and `Command`.
 * **Verification**: `cargo fmt --all --check` and `cargo nextest run -p open-gpui-ui-foundation-gallery --tests` passed after the explicit Combobox contract cleanup.
 * **Commit**: Pushed `b66b5a0 refactor(gallery): make combobox choice contract explicit` to `origin/main`. Only `examples/ui-foundation-gallery/src/pages/components.rs` and `examples/ui-foundation-gallery/tests/foundation_gallery.rs` were staged; the existing `crates/gpui_docking/*` dirty files were left untouched.
