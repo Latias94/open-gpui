@@ -1,6 +1,10 @@
 # Engineering Memory Update Log
 
 ## 2026-06-20
+* **Update**: Re-ran the Components-page crash line after the recent UI contract scan. Focused `open-gpui-ui-foundation-gallery` parser tests passed, and a direct `cargo run -p open-gpui-ui-foundation-gallery -- --page components` stayed alive until timeout instead of reproducing the earlier `accesskit_consumer` exit.
+* **Update**: Rechecked `repo-ref/fret`'s scroll/list-box helper layering. The useful pattern is still thin entry points with deeper helper modules, which supports the current-crate productization roadmap rather than a new headless boundary.
+* **Subagent Finding**: `components_a11y_audit` and `fret_scroll_audit` both returned no new actionable issues. The Components-page crash is not reproducible in this checkout, and the fret reference still reads as helper-depth guidance rather than a new seam to extract.
+* **Decision**: Treat the old Components-page exit as currently not reproducible in this checkout. Keep the regression note in verification docs, but do not force a code change without a fresh failing path.
 * **Update**: Resumed the UI component contract alignment pass from a codex session recovery. Re-checked the current plan, confirmed the worktree still contains unrelated `crates/gpui_docking/*` dirt, and kept that scope untouched.
 * **Update**: Fixed a `menu.rs` compile regression introduced by a bad enumerate binding in `MenuState::resolve` (`_index` vs `index`). The change unblocked `open-gpui-ui-components` compilation without altering the broader menu/runtime focus work.
 * **Verification**: `cargo check -p open-gpui-ui-components` passed, and `cargo nextest run -p open-gpui-ui-components --test components menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender context_menu_runtime_keyboard_navigation_preserves_focused_value_after_rerender` passed.
